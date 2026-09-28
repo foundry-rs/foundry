@@ -30,7 +30,11 @@ impl<D: Database + Clone> LocalState<D> {
     }
 
     /// Sets an account's balance while retaining its other fields from the backing database.
-    pub fn set_balance(&mut self, address: Address, balance: U256) -> Result<(), evm2::AnyError> {
+    pub fn set_balance(
+        &mut self,
+        address: Address,
+        balance: U256,
+    ) -> Result<(), evm2::DatabaseError> {
         let db = self.database_mut();
         let mut info = Database::get_account(db, &address)?.unwrap_or_default();
         info.balance = balance;
@@ -39,7 +43,7 @@ impl<D: Database + Clone> LocalState<D> {
     }
 
     /// Sets an account's nonce while retaining its other fields from the backing database.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> Result<(), evm2::AnyError> {
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> Result<(), evm2::DatabaseError> {
         let db = self.database_mut();
         let mut info = Database::get_account(db, &address)?.unwrap_or_default();
         info.nonce = nonce;
@@ -55,7 +59,7 @@ impl Default for LocalState {
 }
 
 impl<D: Database + Clone + 'static> Database for LocalState<D> {
-    type Error = evm2::AnyError;
+    type Error = evm2::DatabaseError;
 
     fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
         Database::get_account(self.database_mut(), address)

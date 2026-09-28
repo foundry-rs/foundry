@@ -352,8 +352,8 @@ svm = { package = "svm-rs", version = "0.5.28", default-features = false, featur
 ] }
 
 ## evm2
-evm2 = { git = "https://github.com/mablr/evm2", rev = "9cd52551e93dd569b93db7d3e2853e8af741bdd6" }
-evm2-macros = { git = "https://github.com/mablr/evm2", rev = "9cd52551e93dd569b93db7d3e2853e8af741bdd6" }
+evm2 = { git = "https://github.com/mablr/evm2", rev = "6eb1d262cd6049a9e709e517e97a0bea8877b9f9" }
+evm2-macros = { git = "https://github.com/mablr/evm2", rev = "6eb1d262cd6049a9e709e517e97a0bea8877b9f9" }
 
 ## alloy
 alloy-consensus = { version = "2.5.0", default-features = false }

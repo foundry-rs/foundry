@@ -275,12 +275,12 @@ impl EthereumCheatcodes {
                 let updated = interp
                     .host()
                     .state_mut()
-                    .account(&call.account, false)
+                    .account(&call.account)
                     .map(|mut account| account.set_balance(call.newBalance));
                 match updated {
                     Ok(()) => (InstrStop::Return, Bytes::new()),
                     Err(error) => {
-                        interp.host().set_error_code(error);
+                        let _ = interp.fail(error);
                         (InstrStop::FatalExternalError, Bytes::new())
                     }
                 }
@@ -374,15 +374,12 @@ impl EthereumCheatcodes {
                 U256::from(interp.host().version().chain_id).abi_encode().into(),
             ),
             Vm::VmCalls::getNonce_0(call) => {
-                let nonce = interp
-                    .host()
-                    .state_mut()
-                    .account(&call.account, false)
-                    .map(|account| account.nonce());
+                let nonce =
+                    interp.host().state_mut().account(&call.account).map(|account| account.nonce());
                 match nonce {
                     Ok(nonce) => (InstrStop::Return, nonce.abi_encode().into()),
                     Err(error) => {
-                        interp.host().set_error_code(error);
+                        let _ = interp.fail(error);
                         (InstrStop::FatalExternalError, Bytes::new())
                     }
                 }
@@ -397,14 +394,14 @@ impl EthereumCheatcodes {
                 let value = interp
                     .host()
                     .state_mut()
-                    .storage_slot(&call.target, call.slot.into(), false)
+                    .storage_slot(&call.target, call.slot.into())
                     .map(|slot| slot.current());
                 match value {
                     Ok(value) => {
                         (InstrStop::Return, B256::from(value.to_be_bytes()).abi_encode().into())
                     }
                     Err(error) => {
-                        interp.host().set_error_code(error);
+                        let _ = interp.fail(error);
                         (InstrStop::FatalExternalError, Bytes::new())
                     }
                 }
@@ -421,15 +418,15 @@ impl EthereumCheatcodes {
                 }
                 let written = (|| {
                     let state = interp.host().state_mut();
-                    state.account(&call.target, false)?;
+                    state.account(&call.target)?;
                     state
-                        .storage_slot(&call.target, call.slot.into(), false)
+                        .storage_slot(&call.target, call.slot.into())
                         .map(|mut slot| slot.set(call.value.into()))
                 })();
                 match written {
                     Ok(()) => (InstrStop::Return, Bytes::new()),
                     Err(error) => {
-                        interp.host().set_error_code(error);
+                        let _ = interp.fail(error);
                         (InstrStop::FatalExternalError, Bytes::new())
                     }
                 }
@@ -742,7 +739,7 @@ impl EthereumCheatcodes {
         let nonce = match interp.host().state_mut().account_info_untracked(&message.caller) {
             Ok(account) => account.map_or(0, |account| account.nonce),
             Err(error) => {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 return CallAction::Override(Self::result(
                     message,
                     InstrStop::FatalExternalError,
@@ -806,19 +803,19 @@ impl EthereumCheatcodes {
         };
         let updated = (|| {
             let state = interp.host().state_mut();
-            let old_hash = state.account(&target, false)?.code_hash();
+            let old_hash = state.account(&target)?.code_hash();
             if target == HISTORY_STORAGE_ADDRESS
                 && old_hash == keccak256(&HISTORY_STORAGE_CODE)
                 && code.hash_slow() != old_hash
             {
                 state.storage(&target).wipe_journaled();
             }
-            state.account(&target, false).map(|mut account| account.set_code_slow(code))
+            state.account(&target).map(|mut account| account.set_code_slow(code))
         })();
         match updated {
             Ok(()) => (InstrStop::Return, Bytes::new()),
             Err(error) => {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 (InstrStop::FatalExternalError, Bytes::new())
             }
         }
@@ -830,9 +827,9 @@ impl EthereumCheatcodes {
     ) -> (InstrStop, Bytes) {
         let current_height = interp.host().block().number;
         if interp.spec() >= evm2::SpecId::PRAGUE && new_height > current_height {
-            let filled = (|| -> Result<(), evm2::ErrorCode> {
+            let filled = (|| -> Result<(), evm2::DatabaseError> {
                 let state = interp.host().state_mut();
-                let history_code_hash = state.account(&HISTORY_STORAGE_ADDRESS, false)?.code_hash();
+                let history_code_hash = state.account(&HISTORY_STORAGE_ADDRESS)?.code_hash();
                 if history_code_hash == keccak256(&HISTORY_STORAGE_CODE) {
                     let mut number = forward_fill_start(current_height, new_height);
                     while number < new_height {
@@ -840,7 +837,7 @@ impl EthereumCheatcodes {
                             .unwrap_or_default();
                         let slot = history_storage_slot(number);
                         state
-                            .storage_slot(&HISTORY_STORAGE_ADDRESS, slot, false)?
+                            .storage_slot(&HISTORY_STORAGE_ADDRESS, slot)?
                             .set(history_storage_value(hash));
                         number += U256::ONE;
                     }
@@ -848,7 +845,7 @@ impl EthereumCheatcodes {
                 Ok(())
             })();
             if let Err(error) = filled {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 return (InstrStop::FatalExternalError, Bytes::new());
             }
         }
@@ -896,7 +893,7 @@ impl EthereumCheatcodes {
         nonce: u64,
         checked: bool,
     ) -> (InstrStop, Bytes) {
-        let updated = interp.host().state_mut().account(&address, false).map(|mut account| {
+        let updated = interp.host().state_mut().account(&address).map(|mut account| {
             let current = account.nonce();
             if checked && nonce < current {
                 Some(current)
@@ -914,7 +911,7 @@ impl EthereumCheatcodes {
             ),
             Ok(None) => (InstrStop::Return, Bytes::new()),
             Err(error) => {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 (InstrStop::FatalExternalError, Bytes::new())
             }
         }
@@ -985,11 +982,11 @@ impl EthereumCheatcodes {
             .or(context.transaction_origin)
             .unwrap_or(self.config.evm_opts.sender);
         let new_origin = origin.unwrap_or(original_origin);
-        let loaded = interp.host().state_mut().account(&new_origin, false).map(|mut account| {
+        let loaded = interp.host().state_mut().account(&new_origin).map(|mut account| {
             account.touch();
         });
         if let Err(error) = loaded {
-            interp.host().set_error_code(error);
+            let _ = interp.fail(error);
             return (InstrStop::FatalExternalError, Bytes::new());
         }
         self.broadcast = Some(Broadcast {
@@ -1054,7 +1051,7 @@ impl EthereumCheatcodes {
         }
 
         let origin = broadcast.new_origin;
-        let nonce = interp.host().state_mut().account(&origin, false).map(|mut account| {
+        let nonce = interp.host().state_mut().account(&origin).map(|mut account| {
             let nonce = account.nonce();
             nonce.checked_add(1).map(|next_nonce| {
                 account.set_nonce(next_nonce);
@@ -1067,7 +1064,7 @@ impl EthereumCheatcodes {
                 return Some((InstrStop::Revert, Error::encode("broadcast nonce overflow")));
             }
             Err(error) => {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 return Some((InstrStop::FatalExternalError, Bytes::new()));
             }
         };
@@ -1115,11 +1112,11 @@ impl EthereumCheatcodes {
         }
 
         let origin = broadcast.new_origin;
-        let nonce = interp.host().state_mut().account(&origin, false).map(|a| a.nonce());
+        let nonce = interp.host().state_mut().account(&origin).map(|a| a.nonce());
         let nonce = match nonce {
             Ok(nonce) => nonce,
             Err(error) => {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 return Some(Self::result(message, InstrStop::FatalExternalError, Bytes::new()));
             }
         };
@@ -1174,15 +1171,10 @@ impl EthereumCheatcodes {
                 );
             }
         }
-        let loaded =
-            interp.host().state_mut().account(&new_caller, false).and_then(|mut account| {
-                account.touch();
-                if delegate_call {
-                    account.load_code().map(|code| !code.is_empty())
-                } else {
-                    Ok(true)
-                }
-            });
+        let loaded = interp.host().state_mut().account(&new_caller).and_then(|mut account| {
+            account.touch();
+            if delegate_call { account.load_code().map(|code| !code.is_empty()) } else { Ok(true) }
+        });
         match loaded {
             Ok(true) => {}
             Ok(false) => {
@@ -1192,7 +1184,7 @@ impl EthereumCheatcodes {
                 );
             }
             Err(error) => {
-                interp.host().set_error_code(error);
+                let _ = interp.fail(error);
                 return (InstrStop::FatalExternalError, Bytes::new());
             }
         }
@@ -1498,15 +1490,12 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
                     });
                 }
                 if depth == prank.depth {
-                    let nonce = interp
-                        .host()
-                        .state_mut()
-                        .account(&prank.new_caller, false)
-                        .map(|a| a.nonce());
+                    let nonce =
+                        interp.host().state_mut().account(&prank.new_caller).map(|a| a.nonce());
                     let nonce = match nonce {
                         Ok(nonce) => nonce,
                         Err(error) => {
-                            interp.host().set_error_code(error);
+                            let _ = interp.fail(error);
                             return Some(MessageResultExt {
                                 stop: InstrStop::FatalExternalError,
                                 gas: GasTracker::new(message.gas_limit),

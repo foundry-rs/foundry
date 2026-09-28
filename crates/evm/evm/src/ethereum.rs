@@ -309,7 +309,7 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
     ) -> HandlerResult<Recovered<TxEnvelope>> {
         let mut state = self.state.clone();
         let nonce = Database::get_account(&mut state, &caller)
-            .map_err(HandlerError::External)?
+            .map_err(HandlerError::Database)?
             .map_or(0, |account| account.nonce);
         Ok(Recovered::new_unchecked(
             TxEnvelope::Legacy(TxLegacy {
