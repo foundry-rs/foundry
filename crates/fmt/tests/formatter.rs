@@ -743,6 +743,7 @@ fmt_tests! {
     VariableDefinition,
     WhileStatement,
     Yul,
+    YulInlineBlock,
     YulStrings,
 }
 
