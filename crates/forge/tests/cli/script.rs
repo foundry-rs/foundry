@@ -409,6 +409,58 @@ Script ran successfully.
 "#]]);
 });
 
+forgetest!(ethereum_script_inherits_setup_state, |prj, cmd| {
+    let script = prj.add_source(
+        "SetupScript",
+        r#"
+contract SetupScript {
+    event log_string(string);
+    string private message;
+
+    function setUp() external {
+        message = "setup ran";
+    }
+
+    function run() external {
+        emit log_string(message);
+    }
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  setup ran
+
+"#]]);
+});
+
+forgetest!(ethereum_script_reports_setup_revert, |prj, cmd| {
+    let script = prj.add_source(
+        "SetupRevert",
+        r#"
+contract SetupRevert {
+    function setUp() external pure {
+        revert("setup failed");
+    }
+
+    function run() external pure {}
+}
+"#,
+    );
+
+    cmd.arg("script").arg(script).assert_failure().stderr_eq(str![[r#"
+Error: script failed: setup failed
+
+"#]]);
+});
+
 forgetest!(verbosity_five_shows_script_storage_changes, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(

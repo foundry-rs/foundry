@@ -77,6 +77,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 
 mod broadcast;
 mod build;
+mod ethereum;
 mod execute;
 mod gas_search;
 mod library_deployments;
@@ -495,12 +496,7 @@ impl ScriptArgs {
             .await;
         }
 
-        Box::pin(self.run_generic_script::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        ))
-        .await
+        Box::pin(self.run_ethereum_script(config, evm_opts)).await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -513,7 +509,31 @@ impl ScriptArgs {
         evm_opts: EvmOpts,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<Option<BundledState<FEN>>> {
-        let Some(prepared) = self.prepare_script(config, evm_opts, executor_builder).await? else {
+        self.prepare_bundled_with(
+            config,
+            evm_opts,
+            executor_builder,
+            execute::PreExecutionState::<FEN>::execute,
+        )
+        .await
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    async fn prepare_bundled_with<FEN, Execute, Future>(
+        self,
+        config: Config,
+        evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
+        execute: Execute,
+    ) -> Result<Option<BundledState<FEN>>>
+    where
+        FEN: FoundryEvmNetwork,
+        Execute: FnOnce(execute::PreExecutionState<FEN>) -> Future,
+        Future: std::future::Future<Output = Result<execute::ExecutedState<FEN>>>,
+    {
+        let Some(prepared) =
+            self.prepare_script_with(config, evm_opts, executor_builder, execute).await?
+        else {
             return Ok(None);
         };
         let bundled = match prepared {
@@ -526,6 +546,7 @@ impl ScriptArgs {
     }
 
     /// Compiles and executes the local script, leaving on-chain simulation to its concrete owner.
+    #[cfg(feature = "monad")]
     #[allow(clippy::large_stack_frames)]
     async fn prepare_script<FEN: FoundryEvmNetwork>(
         self,
@@ -533,6 +554,28 @@ impl ScriptArgs {
         evm_opts: EvmOpts,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<Option<PreparedScript<FEN>>> {
+        self.prepare_script_with(
+            config,
+            evm_opts,
+            executor_builder,
+            execute::PreExecutionState::<FEN>::execute,
+        )
+        .await
+    }
+
+    #[allow(clippy::large_stack_frames)]
+    async fn prepare_script_with<FEN, Execute, Future>(
+        self,
+        config: Config,
+        evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
+        execute: Execute,
+    ) -> Result<Option<PreparedScript<FEN>>>
+    where
+        FEN: FoundryEvmNetwork,
+        Execute: FnOnce(execute::PreExecutionState<FEN>) -> Future,
+        Future: std::future::Future<Output = Result<execute::ExecutedState<FEN>>>,
+    {
         let state = self.preprocess::<FEN>(config, evm_opts, executor_builder).await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
@@ -543,12 +586,8 @@ impl ScriptArgs {
             PreparedScript::Resume(Box::new(compiled.resume().await?))
         } else {
             // Drive state machine to point at which we have everything needed for simulation.
-            let pre_simulation = compiled
-                .link()
-                .await?
-                .prepare_execution()
-                .await?
-                .execute()
+            let execution = compiled.link().await?.prepare_execution().await?;
+            let pre_simulation = execute(execution)
                 .await?
                 .prepare_simulation()
                 .await?
@@ -647,6 +686,22 @@ impl ScriptArgs {
         };
 
         // Wait for pending txes and broadcast others.
+        Self::broadcast_bundle(bundled).await
+    }
+
+    async fn run_ethereum_script(self, config: Config, evm_opts: EvmOpts) -> Result<()> {
+        let bundled = match self
+            .prepare_bundled_with(
+                config,
+                evm_opts,
+                ExecutorBuilder::<EthEvmNetwork>::new(),
+                execute::PreExecutionState::<EthEvmNetwork>::execute_ethereum,
+            )
+            .await?
+        {
+            Some(bundled) => bundled,
+            None => return Ok(()),
+        };
         Self::broadcast_bundle(bundled).await
     }
 
