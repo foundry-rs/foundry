@@ -1,8 +1,8 @@
 //! Cheatcode inspection for Ethereum evm2 execution.
 
 use crate::{CheatsConfig, Error, Vm, dispatch};
-use alloy_primitives::{Address, Bytes, map::AddressHashSet};
-use alloy_sol_types::SolInterface;
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashSet};
+use alloy_sol_types::{SolInterface, SolValue};
 use evm2::{
     Inspector,
     bytecode::Bytecode,
@@ -85,6 +85,19 @@ impl EthereumCheatcodes {
                 Error::encode(format!("vm.{name}: disabled during restricted execution")),
             );
         }
+        if interp.is_static()
+            && matches!(
+                &decoded,
+                Vm::VmCalls::deal(_)
+                    | Vm::VmCalls::warp(_)
+                    | Vm::VmCalls::allowCheatcodes(_)
+                    | Vm::VmCalls::store(_)
+                    | Vm::VmCalls::setNonce(_)
+                    | Vm::VmCalls::setNonceUnsafe(_)
+            )
+        {
+            return (InstrStop::StateChangeDuringStaticCall, Bytes::new());
+        }
 
         match decoded {
             Vm::VmCalls::assume(call) => {
@@ -94,7 +107,7 @@ impl EthereumCheatcodes {
                     (InstrStop::Revert, Bytes::from_static(MAGIC_ASSUME))
                 }
             }
-            Vm::VmCalls::deal(call) if !interp.is_static() => {
+            Vm::VmCalls::deal(call) => {
                 let updated = interp
                     .host()
                     .state_mut()
@@ -108,21 +121,122 @@ impl EthereumCheatcodes {
                     }
                 }
             }
-            Vm::VmCalls::warp(call) if !interp.is_static() => {
+            Vm::VmCalls::warp(call) => {
                 let host = interp.host();
                 let mut block = *host.block();
                 block.timestamp = call.newTimestamp;
                 host.set_block(block);
                 (InstrStop::Return, Bytes::new())
             }
-            Vm::VmCalls::allowCheatcodes(call) if !interp.is_static() => {
+            Vm::VmCalls::allowCheatcodes(call) => {
                 self.allow_caller(call.account);
                 (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::getBlockNumber(_) => {
+                (InstrStop::Return, interp.host().block().number.abi_encode().into())
+            }
+            Vm::VmCalls::getBlockTimestamp(_) => {
+                (InstrStop::Return, interp.host().block().timestamp.abi_encode().into())
+            }
+            Vm::VmCalls::getChainId(_) => (
+                InstrStop::Return,
+                U256::from(interp.host().version().chain_id).abi_encode().into(),
+            ),
+            Vm::VmCalls::getNonce_0(call) => {
+                let nonce = interp
+                    .host()
+                    .state_mut()
+                    .account(&call.account, false)
+                    .map(|account| account.nonce());
+                match nonce {
+                    Ok(nonce) => (InstrStop::Return, nonce.abi_encode().into()),
+                    Err(error) => {
+                        interp.host().set_error_code(error);
+                        (InstrStop::FatalExternalError, Bytes::new())
+                    }
+                }
+            }
+            Vm::VmCalls::setNonce(call) => {
+                Self::set_nonce(interp, call.account, call.newNonce, true)
+            }
+            Vm::VmCalls::setNonceUnsafe(call) => {
+                Self::set_nonce(interp, call.account, call.newNonce, false)
+            }
+            Vm::VmCalls::load(call) => {
+                let value = interp
+                    .host()
+                    .state_mut()
+                    .storage_slot(&call.target, call.slot.into(), false)
+                    .map(|slot| slot.current());
+                match value {
+                    Ok(value) => {
+                        (InstrStop::Return, B256::from(value.to_be_bytes()).abi_encode().into())
+                    }
+                    Err(error) => {
+                        interp.host().set_error_code(error);
+                        (InstrStop::FatalExternalError, Bytes::new())
+                    }
+                }
+            }
+            Vm::VmCalls::store(call) => {
+                if interp.host().precompiles().contains(&call.target) {
+                    return (
+                        InstrStop::Revert,
+                        Error::encode(format!(
+                            "cannot use precompile {} as an argument",
+                            call.target
+                        )),
+                    );
+                }
+                let written = (|| {
+                    let state = interp.host().state_mut();
+                    state.account(&call.target, false)?;
+                    state
+                        .storage_slot(&call.target, call.slot.into(), false)
+                        .map(|mut slot| slot.set(call.value.into()))
+                })();
+                match written {
+                    Ok(()) => (InstrStop::Return, Bytes::new()),
+                    Err(error) => {
+                        interp.host().set_error_code(error);
+                        (InstrStop::FatalExternalError, Bytes::new())
+                    }
+                }
             }
             _ => (
                 InstrStop::Revert,
                 Error::encode(format!("vm.{name}: unsupported in evm2 execution")),
             ),
+        }
+    }
+
+    fn set_nonce(
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        address: Address,
+        nonce: u64,
+        checked: bool,
+    ) -> (InstrStop, Bytes) {
+        let updated = interp.host().state_mut().account(&address, false).map(|mut account| {
+            let current = account.nonce();
+            if checked && nonce < current {
+                Some(current)
+            } else {
+                account.set_nonce(nonce);
+                None
+            }
+        });
+        match updated {
+            Ok(Some(current)) => (
+                InstrStop::Revert,
+                Error::encode(format!(
+                    "new nonce ({nonce}) must be strictly equal to or higher than the account's current nonce ({current})"
+                )),
+            ),
+            Ok(None) => (InstrStop::Return, Bytes::new()),
+            Err(error) => {
+                interp.host().set_error_code(error);
+                (InstrStop::FatalExternalError, Bytes::new())
+            }
         }
     }
 }

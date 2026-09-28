@@ -428,6 +428,136 @@ mod tests {
         );
     }
 
+    #[test]
+    fn state_cheatcodes_commit_and_read_journaled_state() {
+        let caller = Address::with_last_byte(0xa);
+        let target = Address::with_last_byte(0xb);
+        let slot = U256::from(2).into();
+        let value = U256::from(17).into();
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt {
+                number: U256::from(8),
+                timestamp: U256::from(9),
+                gas_limit: U256::from(30_000_000),
+                ..Default::default()
+            },
+        );
+        let mut executor = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::default(),
+            CheatcodeAccessMode::Local,
+        );
+        let store = cheatcode_tx(caller, Vm::storeCall { target, slot, value }.abi_encode().into());
+        assert!(executor.transact(&store).unwrap().status);
+        let load =
+            cheatcode_tx_at_nonce(caller, Vm::loadCall { target, slot }.abi_encode().into(), 1);
+        assert_eq!(executor.call(&load).unwrap().output.as_ref(), value.as_slice());
+
+        let set_nonce = cheatcode_tx_at_nonce(
+            caller,
+            Vm::setNonceCall { account: target, newNonce: 8 }.abi_encode().into(),
+            1,
+        );
+        assert!(executor.transact(&set_nonce).unwrap().status);
+        let get_nonce = cheatcode_tx_at_nonce(
+            caller,
+            Vm::getNonce_0Call { account: target }.abi_encode().into(),
+            2,
+        );
+        assert_eq!(U256::from_be_slice(&executor.call(&get_nonce).unwrap().output), U256::from(8));
+        let decrease = cheatcode_tx_at_nonce(
+            caller,
+            Vm::setNonceCall { account: target, newNonce: 7 }.abi_encode().into(),
+            2,
+        );
+        assert!(!executor.call(&decrease).unwrap().status);
+        assert_eq!(executor.state().database().account_info(&target).unwrap().nonce, 8);
+        let set_nonce_unsafe = cheatcode_tx_at_nonce(
+            caller,
+            Vm::setNonceUnsafeCall { account: target, newNonce: 7 }.abi_encode().into(),
+            2,
+        );
+        assert!(executor.transact(&set_nonce_unsafe).unwrap().status);
+        assert_eq!(executor.state().database().account_info(&target).unwrap().nonce, 7);
+
+        let height =
+            cheatcode_tx_at_nonce(caller, Vm::getBlockNumberCall {}.abi_encode().into(), 3);
+        let timestamp =
+            cheatcode_tx_at_nonce(caller, Vm::getBlockTimestampCall {}.abi_encode().into(), 3);
+        assert_eq!(U256::from_be_slice(&executor.call(&height).unwrap().output), U256::from(8));
+        assert_eq!(U256::from_be_slice(&executor.call(&timestamp).unwrap().output), U256::from(9));
+
+        let precompile = cheatcode_tx_at_nonce(
+            caller,
+            Vm::storeCall { target: Address::with_last_byte(1), slot, value }.abi_encode().into(),
+            3,
+        );
+        let result = executor.call(&precompile).unwrap();
+        assert!(!result.status);
+        assert_eq!(
+            result.output,
+            Error::encode(format!(
+                "cannot use precompile {} as an argument",
+                Address::with_last_byte(1)
+            ))
+        );
+    }
+
+    #[test]
+    fn nested_revert_rolls_back_cheatcode_storage_write() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let target = Address::with_last_byte(0xc);
+        let slot = U256::from(2).into();
+        let value = U256::from(17).into();
+        let calldata = Vm::storeCall { target, slot, value }.abi_encode();
+        let normal_code = cheatcode_calling_contract_code(&calldata);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default().with_code(Bytecode::new_legacy(normal_code.clone().into())),
+        );
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                gas_limit: 100_000,
+                to: TxKind::Call(contract),
+                ..Default::default()
+            }),
+            caller,
+        );
+        let mut normal = EthereumExecutor::new_foundry(
+            env,
+            state.clone(),
+            Arc::default(),
+            CheatcodeAccessMode::Local,
+        );
+        assert!(normal.transact(&tx).unwrap().status);
+        assert_eq!(
+            Database::get_storage(&mut normal.state().clone(), &target, &U256::from(2)).unwrap(),
+            U256::from(17)
+        );
+
+        let mut revert_code = normal_code;
+        revert_code.truncate(revert_code.len() - calldata.len() - 1);
+        revert_code.extend_from_slice(&[0x50, 0x5f, 0x5f, 0xfd]);
+        revert_code[3] += 3;
+        revert_code.extend_from_slice(&calldata);
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default().with_code(Bytecode::new_legacy(revert_code.into())),
+        );
+        let mut executor =
+            EthereumExecutor::new_foundry(env, state, Arc::default(), CheatcodeAccessMode::Local);
+        assert!(!executor.transact(&tx).unwrap().status);
+        assert!(executor.state().database().account_info(&target).is_none());
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn rpc_fork_reads_do_not_commit_to_the_backing_database() {
         let server = Server::http("127.0.0.1:0").unwrap();
@@ -490,9 +620,14 @@ mod tests {
     }
 
     fn cheatcode_tx(caller: Address, input: Bytes) -> Recovered<TxEnvelope> {
+        cheatcode_tx_at_nonce(caller, input, 0)
+    }
+
+    fn cheatcode_tx_at_nonce(caller: Address, input: Bytes, nonce: u64) -> Recovered<TxEnvelope> {
         Recovered::new_unchecked(
             TxEnvelope::Legacy(TxLegacy {
                 gas_limit: 100_000,
+                nonce,
                 to: TxKind::Call(CHEATCODE_ADDRESS),
                 input,
                 ..Default::default()
