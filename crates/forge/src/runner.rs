@@ -3456,6 +3456,107 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         (!outcome.success && outcome.replayed_entirely).then_some(outcome)
     }
 
+    fn replay_invariant_checkpoints(
+        &self,
+        invariant_contract: &InvariantContract<'_>,
+        invariant_config: &InvariantConfig,
+        sequence: &[BasicTxDetails],
+        terminal_checkpoint: bool,
+    ) -> (Vec<(usize, CheckSequenceOutcome)>, Option<CheckSequenceOutcome>) {
+        let mut broken_invariants = Vec::new();
+        let mut remaining_invariants = vec![true; invariant_contract.invariant_fns.len()];
+        let replay_order = (0..sequence.len()).collect::<Vec<_>>();
+
+        if !invariant_contract.is_optimization() {
+            for accepted_calls in 1..=sequence.len() {
+                let should_check = invariant_config.check_interval == 1
+                    || (invariant_config.check_interval > 1
+                        && accepted_calls.is_multiple_of(invariant_config.check_interval as usize))
+                    || (terminal_checkpoint && accepted_calls == sequence.len());
+                if !should_check {
+                    continue;
+                }
+
+                for (invariant_idx, pending) in remaining_invariants.iter_mut().enumerate() {
+                    if !*pending {
+                        continue;
+                    }
+                    let Some(replay) = self.replay_invariant_sequence(
+                        invariant_contract,
+                        invariant_idx,
+                        &sequence[..accepted_calls],
+                        &replay_order[..accepted_calls],
+                        false,
+                    ) else {
+                        continue;
+                    };
+                    if matches!(
+                        replay.failure_site,
+                        Some(CheckSequenceFailureSite::Invariant { selector, .. })
+                            if selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
+                    ) {
+                        *pending = false;
+                        broken_invariants.push((invariant_idx, replay));
+                    }
+                }
+            }
+        }
+
+        let after_invariant_failure = if terminal_checkpoint
+            && invariant_contract.call_after_invariant
+            && broken_invariants.is_empty()
+        {
+            invariant_contract
+                .abi
+                .functions()
+                .find(|function| {
+                    function.name == "afterInvariant" && function.inputs.is_empty()
+                })
+                .and_then(|after_invariant| {
+                    let calldata = after_invariant.abi_encode_input(&[]).ok()?.into();
+                    let mut replay = check_sequence(
+                        self.clone_executor(),
+                        sequence,
+                        &replay_order,
+                        invariant_contract.address,
+                        calldata,
+                        CheckSequenceOptions {
+                            accumulate_warp_roll: false,
+                            fail_on_revert: false,
+                            expect_assertion_failure: false,
+                            call_after_invariant: false,
+                            rd: Some(self.revert_decoder()),
+                        },
+                    )
+                    .ok()?;
+                    if replay.success || !replay.replayed_entirely {
+                        return None;
+                    }
+                    let Some(CheckSequenceFailureSite::Invariant {
+                        target,
+                        selector,
+                        fingerprint,
+                    }) = replay.failure_site
+                    else {
+                        return None;
+                    };
+                    if selector != after_invariant.selector() {
+                        return None;
+                    }
+                    replay.failure_site = Some(CheckSequenceFailureSite::AfterInvariant {
+                        target,
+                        selector,
+                        fingerprint,
+                    });
+                    Some(replay)
+                })
+        } else {
+            None
+        };
+
+        (broken_invariants, after_invariant_failure)
+    }
+
     fn solve_invariants_from_frontier_prefix(
         &self,
         invariant_contract: &InvariantContract<'_>,
@@ -3571,11 +3672,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         {
             let id = frontier.id;
             let call_index = frontier.call_index;
-            if call_index >= invariant_config.depth as usize {
+            let max_depth = match invariant_config.depth_mode {
+                InvariantDepthMode::Fixed => invariant_config.depth,
+                InvariantDepthMode::Random => invariant_config.depth.max(1),
+            };
+            if call_index >= max_depth as usize {
                 debug!(
                     id,
                     call_index,
-                    depth = invariant_config.depth,
+                    depth = max_depth,
                     "skipping invariant frontier beyond campaign depth"
                 );
                 continue;
@@ -3597,10 +3702,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 }
             };
-            let predicate_checkpoint = terminal_checkpoint
-                || invariant_config.check_interval == 1
-                || (invariant_config.check_interval > 1
-                    && accepted_calls.is_multiple_of(invariant_config.check_interval as usize));
             let Some(selector) = call
                 .call_details
                 .calldata
@@ -3689,71 +3790,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     let rotation = (checked_property_calls.len() - 1) % invariant_indexes.len();
                     invariant_indexes.rotate_left(rotation);
                 }
-                for (invariant_idx, replay, solved_sequence) in self
-                    .solve_invariants_from_frontier_prefix(
-                        invariant_contract,
-                        &invariant_indexes,
-                        &prefix_executor,
-                        &invariant_target,
-                        call.sender,
-                        &sequence[..call_index],
-                    )
-                {
-                    let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
-                    let failure_site =
-                        replay.failure_site.expect("failing replay has a failure site");
-                    match failure_site {
-                        CheckSequenceFailureSite::Invariant { .. }
-                            if !is_optimization
-                                && predicate_checkpoint
-                                && reported_invariants.insert(invariant_idx) =>
-                        {
+                for (_, _, solved_sequence) in self.solve_invariants_from_frontier_prefix(
+                    invariant_contract,
+                    &invariant_indexes,
+                    &prefix_executor,
+                    &invariant_target,
+                    call.sender,
+                    &sequence[..call_index],
+                ) {
+                    let (broken_invariants, after_invariant_failure) = self
+                        .replay_invariant_checkpoints(
+                            invariant_contract,
+                            invariant_config,
+                            &solved_sequence,
+                            terminal_checkpoint,
+                        );
+                    for (invariant_idx, replay) in broken_invariants {
+                        if reported_invariants.insert(invariant_idx) {
                             confirmed_failures.push(ConfirmedFrontierInvariantFailure {
                                 invariant_idx,
                                 call_sequence: solved_sequence.clone(),
                                 replay,
                             });
                         }
-                        CheckSequenceFailureSite::AfterInvariant { .. } => {
-                            let broken_invariants = if predicate_checkpoint && !is_optimization {
-                                (0..invariant_contract.invariant_fns.len())
-                                    .filter_map(|idx| {
-                                        self.replay_invariant_sequence(
-                                            invariant_contract,
-                                            idx,
-                                            &solved_sequence,
-                                            &replay_order,
-                                            false,
-                                        )
-                                        .map(|predicate_replay| (idx, predicate_replay))
-                                    })
-                                    .collect::<Vec<_>>()
-                            } else {
-                                Vec::new()
-                            };
-                            for (idx, predicate_replay) in &broken_invariants {
-                                if reported_invariants.insert(*idx) {
-                                    confirmed_failures.push(ConfirmedFrontierInvariantFailure {
-                                        invariant_idx: *idx,
-                                        call_sequence: solved_sequence.clone(),
-                                        replay: predicate_replay.clone(),
-                                    });
-                                }
-                            }
-                            if terminal_checkpoint
-                                && broken_invariants.is_empty()
-                                && !after_invariant_reported
-                            {
-                                after_invariant_reported = true;
-                                confirmed_failures.push(ConfirmedFrontierInvariantFailure {
-                                    invariant_idx,
-                                    call_sequence: solved_sequence.clone(),
-                                    replay,
-                                });
-                            }
-                        }
-                        CheckSequenceFailureSite::Invariant { .. }
-                        | CheckSequenceFailureSite::SequenceCall { .. } => {}
+                    }
+                    if let Some(replay) = after_invariant_failure
+                        && !after_invariant_reported
+                    {
+                        after_invariant_reported = true;
+                        confirmed_failures.push(ConfirmedFrontierInvariantFailure {
+                            invariant_idx: invariant_contract.anchor_idx,
+                            call_sequence: solved_sequence.clone(),
+                            replay,
+                        });
                     }
                     match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
                         Ok(path) => {
@@ -3833,71 +3902,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     );
                     continue;
                 }
-
-                let replay_order = (0..solved_sequence.len()).collect::<Vec<_>>();
-                if is_optimization
-                    && self
-                        .replay_invariant_sequence(
-                            invariant_contract,
-                            invariant_contract.anchor_idx,
-                            &solved_sequence,
-                            &replay_order,
-                            false,
-                        )
-                        .is_some()
-                {
-                    debug!(
-                        id,
-                        "skipping invariant frontier seed rejected by optimization objective"
-                    );
-                    continue;
-                }
-                let broken_invariants = if predicate_checkpoint && !is_optimization {
-                    (0..invariant_contract.invariant_fns.len())
-                        .filter_map(|invariant_idx| {
-                            let replay = self.replay_invariant_sequence(
-                                invariant_contract,
-                                invariant_idx,
-                                &solved_sequence,
-                                &replay_order,
-                                false,
-                            )?;
-                            matches!(
-                                replay.failure_site,
-                                Some(CheckSequenceFailureSite::Invariant { selector, .. })
-                                    if selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
-                            )
-                            .then_some((invariant_idx, replay))
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                };
-                let after_invariant_failure = if terminal_checkpoint
-                    && invariant_contract.call_after_invariant
-                    && broken_invariants.is_empty()
-                    && !after_invariant_reported
-                {
-                    self.replay_invariant_sequence(
+                let (broken_invariants, after_invariant_failure) = self
+                    .replay_invariant_checkpoints(
                         invariant_contract,
-                        invariant_contract.anchor_idx,
+                        invariant_config,
                         &solved_sequence,
-                        &replay_order,
-                        true,
-                    )
-                    .filter(|replay| {
-                        matches!(
-                            replay.failure_site,
-                            Some(CheckSequenceFailureSite::AfterInvariant { .. })
-                        )
-                    })
-                } else {
-                    None
-                };
+                        terminal_checkpoint,
+                    );
                 let newly_broken_invariants = broken_invariants
                     .iter()
                     .filter(|(idx, _)| reported_invariants.insert(*idx))
                     .collect::<Vec<_>>();
+                let after_invariant_failure =
+                    after_invariant_failure.filter(|_| !after_invariant_reported);
                 if !newly_broken_invariants.is_empty() || after_invariant_failure.is_some() {
                     for (invariant_idx, replay) in newly_broken_invariants {
                         confirmed_failures.push(ConfirmedFrontierInvariantFailure {
