@@ -2,7 +2,7 @@ use crate::sequence::SequenceData;
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
@@ -734,14 +734,19 @@ where
     // Preserve network-specific execution fields while allowing the signer to choose gas and fees.
     let resolved =
         <N::TransactionRequest as From<N::TransactionResponse>>::from(transaction.clone());
+    let sender = planned.from().context("delegated request has no sender")?;
+    let planned_tempo_aa = planned.is_tempo_aa();
+    let resolved_tempo_aa = resolved.is_tempo_aa();
     if transaction.tx_hash() != hash
-        || transaction.from() != planned.from().context("delegated request has no sender")?
+        || transaction.from() != sender
         || transaction.chain_id() != Some(chain)
         || planned.chain_id() != Some(chain)
         || transaction.nonce() != planned.nonce().context("delegated request has no nonce")?
-        || resolved.to() != planned.to()
-        || resolved.value().unwrap_or_default() != planned.value().unwrap_or_default()
-        || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()
+        || planned_tempo_aa != resolved_tempo_aa
+        || (!planned_tempo_aa
+            && (resolved.kind() != planned.kind()
+                || resolved.value().unwrap_or_default() != planned.value().unwrap_or_default()
+                || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()))
         || transaction.authorization_list().unwrap_or_default()
             != planned.authorization_list().map(Vec::as_slice).unwrap_or_default()
     {
@@ -758,18 +763,58 @@ where
     };
     if !same_list("accessList")
         || !same_list("blobVersionedHashes")
-        || !same_list("calls")
+        || (planned_tempo_aa
+            && canonical_tempo_calls::<N>(planned, &planned_fields)?
+                != canonical_tempo_calls::<N>(&resolved, &resolved_fields)?)
         || !same_list("aaAuthorizationList")
-        || planned.is_tempo_aa() != resolved.is_tempo_aa()
         || planned.nonce_key().unwrap_or_default() != resolved.nonce_key().unwrap_or_default()
         || !same("feeToken")
         || !same("validBefore")
         || !same("validAfter")
         || !same("keyAuthorization")
+        || delegated_fee_payer::<N>(planned, sender)?
+            != delegated_fee_payer::<N>(&resolved, sender)?
     {
         bail!("resolved transaction does not match its delegated submission attempt");
     }
     Ok(())
+}
+
+fn canonical_tempo_calls<N: Network>(
+    request: &N::TransactionRequest,
+    fields: &serde_json::Value,
+) -> Result<Vec<serde_json::Value>>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let mut calls =
+        fields.get("calls").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+    if let Some(to) = request.kind() {
+        calls.push(serde_json::to_value(tempo_primitives::transaction::Call {
+            to,
+            value: request.value().unwrap_or_default(),
+            input: request.input().cloned().unwrap_or_default(),
+        })?);
+    }
+    Ok(calls)
+}
+
+fn delegated_fee_payer<N: Network>(
+    request: &N::TransactionRequest,
+    sender: Address,
+) -> Result<Option<Address>>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let Some(signature) = request.fee_payer_signature() else { return Ok(None) };
+    let hash = request
+        .compute_sponsor_hash(sender)
+        .context("failed to compute delegated Tempo sponsor hash")?;
+    Ok(Some(
+        signature
+            .recover_address_from_prehash(&hash)
+            .wrap_err("failed to recover delegated Tempo sponsor")?,
+    ))
 }
 
 fn write_snapshot<N: Network>(path: &Path, plan: &RecoveryPlan<N>) -> Result<()>
@@ -809,8 +854,9 @@ mod tests {
     use super::*;
     use alloy_consensus::{TxEnvelope, transaction::Recovered};
     use alloy_network::Ethereum;
-    use alloy_primitives::{Address, TxKind, U256, hex};
+    use alloy_primitives::{TxKind, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionRequest};
+    use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
     use tempo_primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope, transaction::Call,
@@ -865,6 +911,34 @@ mod tests {
             block_timestamp: None,
         };
         (request, transaction)
+    }
+
+    fn tempo_transaction(
+        request: TempoTransactionRequest,
+        from: Address,
+    ) -> RpcTransaction<TempoTxEnvelope> {
+        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
+            request.build_aa().unwrap(),
+            TempoSignature::default(),
+        ));
+        RpcTransaction {
+            inner: Recovered::new_unchecked(envelope, from),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            block_timestamp: None,
+        }
+    }
+
+    fn sign_tempo_sponsor(
+        request: &mut TempoTransactionRequest,
+        from: Address,
+        sponsor: &impl SignerSync,
+    ) {
+        request.fee_payer_signature = None;
+        let hash = request.compute_sponsor_hash(from).unwrap();
+        request.fee_payer_signature = Some(sponsor.sign_hash_sync(&hash).unwrap());
     }
 
     fn load(paths: &(PathBuf, PathBuf), batch: bool) -> Result<RecoveryStore<Ethereum>> {
@@ -1093,16 +1167,94 @@ mod tests {
         let hash = transaction.tx_hash();
         validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash).unwrap();
 
+        let top_level = request.calls.pop().unwrap();
+        request.inner.to = Some(top_level.to);
+        request.inner.value = Some(top_level.value);
+        request.inner.input = top_level.input.into();
+        validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash).unwrap();
+
         request.nonce_key = Some(U256::from(8));
         assert!(
             validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash)
                 .is_err()
         );
         request.nonce_key = Some(U256::from(7));
+        request.calls.push(Call {
+            to: request.inner.to.take().unwrap(),
+            value: request.inner.value.take().unwrap(),
+            input: request.inner.input.input.take().unwrap(),
+        });
         request.calls.swap(0, 1);
         assert!(
             validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn delegated_tempo_resolution_checks_sponsor_identity() {
+        let from = Address::repeat_byte(0x11);
+        let sponsor = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let other_sponsor = foundry_wallets::utils::create_local_signer(
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+        )
+        .unwrap();
+        assert_ne!(sponsor.address(), other_sponsor.address());
+
+        let mut planned = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(from),
+                to: Some(TxKind::Call(Address::repeat_byte(0x22))),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                nonce: Some(0),
+                chain_id: Some(4217),
+                ..Default::default()
+            },
+            nonce_key: Some(U256::from(7)),
+            ..Default::default()
+        };
+        sign_tempo_sponsor(&mut planned, from, &sponsor);
+
+        let mut resolved = planned.clone();
+        resolved.inner.gas = Some(120_000);
+        resolved.inner.max_fee_per_gas = Some(12);
+        sign_tempo_sponsor(&mut resolved, from, &sponsor);
+        let transaction = tempo_transaction(resolved.clone(), from);
+        validate_delegated_transaction::<TempoNetwork>(
+            &transaction,
+            &planned,
+            4217,
+            transaction.tx_hash(),
+        )
+        .unwrap();
+
+        resolved.fee_payer_signature = None;
+        let transaction = tempo_transaction(resolved.clone(), from);
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(
+                &transaction,
+                &planned,
+                4217,
+                transaction.tx_hash(),
+            )
+            .is_err()
+        );
+
+        sign_tempo_sponsor(&mut resolved, from, &other_sponsor);
+        let transaction = tempo_transaction(resolved, from);
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(
+                &transaction,
+                &planned,
+                4217,
+                transaction.tx_hash(),
+            )
+            .is_err()
         );
     }
 
