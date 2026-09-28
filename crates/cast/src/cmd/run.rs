@@ -529,6 +529,10 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+        // The fork is pinned to the parent block, but the replayed transactions execute in the
+        // target's block, which block queries such as Arbitrum's `ArbSys.arbBlockNumber()` must
+        // report.
+        executor.backend_mut().set_fork_block_number_override(tx_block_number);
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 

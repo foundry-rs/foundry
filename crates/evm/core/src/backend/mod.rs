@@ -802,6 +802,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.networks = networks;
     }
 
+    /// Sets the block number the active fork reports while executing transactions of that block
+    /// on top of its parent's state.
+    pub const fn set_fork_block_number_override(&mut self, block_number: u64) {
+        self.fork_block_number_override = Some(block_number);
+    }
+
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
         if let Some(db) = self.active_fork_db_mut() {
             db.insert_account_info(address, account)

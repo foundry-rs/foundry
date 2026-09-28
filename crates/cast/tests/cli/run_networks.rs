@@ -304,3 +304,41 @@ casttest!(flaky_run_celo_cip64, |_prj, cmd| {
         },
     );
 });
+
+// The bot behind this transaction reverts unless `ArbSys.arbBlockNumber()` returns the block it
+// targeted, the one before the block the transaction landed in. Replay executes on the parent
+// block's state but must report the transaction's own block, or the transaction succeeds.
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the nightly test log")]
+fn assert_arbitrum_arb_block_number(cmd: &mut TestCommand) {
+    const RPC_URL: &str = "https://arbitrum-one.public.blastapi.io";
+    const TX_HASH: &str = "0x3823e04a8def5dc41ffdd2528997a2c70f2337caabfd8039d1e28db4bc71b8b1";
+
+    if json_output(cmd, &["receipt", TX_HASH, "--rpc-url", RPC_URL]).is_none() {
+        eprintln!("skipping arbitrum: archive endpoint unreachable");
+        return;
+    }
+
+    cmd.cast_fuse()
+        .args(["run", TX_HASH, "--rpc-url", RPC_URL])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0xeAB71344cc3D1BF0803BbFCb36bAB6ee07650B74::01000000([..]1e5c14c0)
+    ├─ [3] 0x0000000000000000000000000000000000000064::[..] [staticcall]
+    │   └─ ← [Return] 0x000000000000000000000000000000000000000000000000000000001e5c14c1
+    └─ ← [Revert] EvmError: Revert
+
+
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+
+"#]]);
+}
+
+casttest!(flaky_run_arbitrum_arb_block_number, |_prj, cmd| {
+    assert_arbitrum_arb_block_number(&mut cmd);
+});
