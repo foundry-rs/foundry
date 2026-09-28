@@ -13,7 +13,7 @@ use evm2::{
     },
 };
 use foundry_evm_core::{
-    constants::{CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME},
+    constants::{CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME, MAGIC_SKIP},
     ethereum::{FoundryEvmTypes, LocalState},
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -25,6 +25,7 @@ pub struct EthereumCheatcodes {
     access_mode: CheatcodeAccessMode,
     allowed_callers: AddressHashSet,
     pranks: BTreeMap<usize, Prank>,
+    skip_payloads: Vec<Bytes>,
 }
 
 /// Caller authorization policy for the active execution database.
@@ -44,6 +45,7 @@ impl EthereumCheatcodes {
             access_mode,
             allowed_callers: AddressHashSet::default(),
             pranks: BTreeMap::new(),
+            skip_payloads: Vec::new(),
         }
     }
 
@@ -55,6 +57,11 @@ impl EthereumCheatcodes {
     /// Grants a contract access to cheatcodes while a fork is active.
     pub fn allow_caller(&mut self, address: Address) -> bool {
         self.allowed_callers.insert(address)
+    }
+
+    /// Drains genuine skip payloads recorded during the last execution.
+    pub fn take_skip_payloads(&mut self) -> Vec<Bytes> {
+        std::mem::take(&mut self.skip_payloads)
     }
 
     /// Installs the cheatcode contract account used by Solidity code checks.
@@ -127,6 +134,8 @@ impl EthereumCheatcodes {
                     (InstrStop::Revert, Bytes::from_static(MAGIC_ASSUME))
                 }
             }
+            Vm::VmCalls::skip_0(call) => self.skip(message, call.skipTest, ""),
+            Vm::VmCalls::skip_1(call) => self.skip(message, call.skipTest, &call.reason),
             Vm::VmCalls::deal(call) => {
                 let updated = interp
                     .host()
@@ -284,6 +293,23 @@ impl EthereumCheatcodes {
                 Error::encode(format!("vm.{name}: unsupported in evm2 execution")),
             ),
         }
+    }
+
+    fn skip(
+        &mut self,
+        message: &Message<FoundryEvmTypes>,
+        skip_test: bool,
+        reason: &str,
+    ) -> (InstrStop, Bytes) {
+        if !skip_test {
+            return (InstrStop::Return, Bytes::new());
+        }
+        if message.depth > 1 {
+            return (InstrStop::Revert, Error::encode("`skip` can only be used at test level"));
+        }
+        let payload = Bytes::from([MAGIC_SKIP, reason.as_bytes()].concat());
+        self.skip_payloads.push(payload.clone());
+        (InstrStop::Revert, payload)
     }
 
     fn set_nonce(

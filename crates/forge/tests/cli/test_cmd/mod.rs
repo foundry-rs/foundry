@@ -3631,6 +3631,83 @@ contract CounterRevertTest is DSTest {
 "#]]);
 });
 
+forgetest!(ethereum_skip_authenticity, |prj, cmd| {
+    prj.add_source(
+        "EthereumSkip.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmSkip {
+    function skip(bool) external;
+    function skip(bool, string calldata) external;
+}
+
+contract EthereumSkipUnitTest {
+    VmSkip constant vm = VmSkip(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function testNoSkip() public { vm.skip(false); }
+    function testSkip() public { vm.skip(true, "unit"); }
+}
+
+contract EthereumSkipSetupTest {
+    VmSkip constant vm = VmSkip(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function setUp() public { vm.skip(true, "setup"); }
+    function testNeverRuns() public pure { require(false); }
+}
+
+contract EthereumForgedSkipTest {
+    VmSkip constant vm = VmSkip(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testCaughtThenForgery() public {
+        (bool success,) = address(vm).call(
+            abi.encodeWithSignature("skip(bool,string)", true, "genuine")
+        );
+        require(!success);
+        bytes memory payload = bytes("FOUNDRY::SKIPforged");
+        assembly { revert(add(payload, 32), mload(payload)) }
+    }
+
+    function testForgery() public pure {
+        bytes memory payload = bytes("FOUNDRY::SKIPforged");
+        assembly { revert(add(payload, 32), mload(payload)) }
+    }
+}
+
+contract EthereumNestedSkipper {
+    VmSkip constant vm = VmSkip(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function skip() external { vm.skip(true, "nested"); }
+}
+
+contract EthereumNestedSkipTest {
+    function testNestedSkipFails() public { new EthereumNestedSkipper().skip(); }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumSkip(Unit|Setup)Test$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[SKIP: skipped: setup] setUp() ([GAS])
+...
+[PASS] testNoSkip() ([GAS])
+[SKIP: unit] testSkip() ([GAS])
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^Ethereum(Forged|Nested)SkipTest$"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: FOUNDRY::SKIPforged] testCaughtThenForgery() ([GAS])
+[FAIL: FOUNDRY::SKIPforged] testForgery() ([GAS])
+...
+[FAIL: `skip` can only be used at test level] testNestedSkipFails() ([GAS])
+...
+"#]]);
+});
+
 forgetest_init!(skip_output, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();

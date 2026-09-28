@@ -20,7 +20,7 @@ use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
     core::{
         constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, GLOBAL_FAIL_SLOT},
-        decode::RevertDecoder,
+        decode::{RevertDecoder, SkipReason},
         ethereum::{EthereumEnv, LocalState},
     },
     ethereum::{EthereumExecutor, EthereumInspectorStack},
@@ -88,11 +88,15 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
             ) {
                 Ok(runner) => runner,
                 Err(failure) => {
+                    let mut result = TestResult::fail(failure.reason);
+                    if failure.skipped {
+                        result.status = TestStatus::Skipped;
+                    }
                     suites.insert(
                         id.identifier(),
                         SuiteResult::new(
                             suite_start.elapsed(),
-                            [(failure.name.to_string(), TestResult::fail(failure.reason))].into(),
+                            [(failure.name.to_string(), result)].into(),
                             Vec::new(),
                         ),
                     );
@@ -144,26 +148,27 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                     0,
                     U256::ZERO,
                 );
-                tests.insert(
-                    function.signature(),
-                    TestResult {
-                        status: if success { TestStatus::Success } else { TestStatus::Failure },
-                        reason: (!success).then(|| {
-                            if execution.assertion_failed {
-                                "assertion failed".to_string()
-                            } else {
-                                self.prepared
-                                    .revert_decoder
-                                    .maybe_decode_known(&result.output)
-                                    .unwrap_or_else(|| format!("{:?}", result.stop))
-                            }
-                        }),
-                        kind: TestKind::Unit { gas: result.tx_gas_used().saturating_sub(stipend) },
-                        logs: execution.logs,
-                        duration: start.elapsed(),
-                        ..Default::default()
-                    },
-                );
+                let mut test_result = TestResult {
+                    status: if success { TestStatus::Success } else { TestStatus::Failure },
+                    reason: (!success).then(|| {
+                        if execution.assertion_failed {
+                            "assertion failed".to_string()
+                        } else {
+                            self.prepared
+                                .revert_decoder
+                                .maybe_decode(&result.output, None)
+                                .unwrap_or_else(|| format!("{:?}", result.stop))
+                        }
+                    }),
+                    kind: TestKind::Unit { gas: result.tx_gas_used().saturating_sub(stipend) },
+                    logs: execution.logs,
+                    duration: start.elapsed(),
+                    ..Default::default()
+                };
+                if let Some(reason) = execution.skip_reason {
+                    test_result.single_skip(reason);
+                }
+                tests.insert(function.signature(), test_result);
             }
             suites.insert(
                 id.identifier(),
@@ -186,6 +191,7 @@ pub(crate) struct EthereumContractRunner<D: Database + Clone = EmptyDB> {
 pub(crate) struct EthereumSetupFailure {
     name: &'static str,
     reason: String,
+    skipped: bool,
 }
 
 pub(crate) struct EthereumTestConfig<'a> {
@@ -205,6 +211,7 @@ pub(crate) struct EthereumTestExecution {
     pub result: TxResult,
     pub logs: Vec<Log>,
     pub assertion_failed: bool,
+    pub skip_reason: Option<SkipReason>,
 }
 
 impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
@@ -288,7 +295,7 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                 deployed.status && deployed.created_address == Some(address),
                 "{}",
                 revert_decoder
-                    .maybe_decode_known(&deployed.output)
+                    .maybe_decode(&deployed.output, None)
                     .unwrap_or_else(|| format!("{:?}", deployed.stop))
             );
             executor.state_mut().set_balance(sender, initial_balance)?;
@@ -298,11 +305,13 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                 executor.deploy_create2_deployer()?;
             }
             executor.inspector_mut().take_logs();
+            executor.inspector_mut().cheatcodes_mut().take_skip_payloads();
             Ok((executor, address))
         })();
         let (mut executor, address) = deployment.map_err(|error| EthereumSetupFailure {
             name: "constructor()",
             reason: error.to_string(),
+            skipped: false,
         })?;
         if let Some(setup) =
             contract.abi.functions().find(|f| f.name == "setUp" && f.inputs.is_empty())
@@ -312,21 +321,30 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
                 .map_err(|error| EthereumSetupFailure {
                     name: "setUp()",
                     reason: error.to_string(),
+                    skipped: false,
                 })?;
+            let skip_reason = Self::take_skip_reason(&mut executor, &result);
             let assertion_failed = result.status
                 && Self::assertion_failed(&mut executor, address, legacy_assertions).map_err(
-                    |error| EthereumSetupFailure { name: "setUp()", reason: error.to_string() },
+                    |error| EthereumSetupFailure {
+                        name: "setUp()",
+                        reason: error.to_string(),
+                        skipped: false,
+                    },
                 )?;
             if !result.status || assertion_failed {
                 return Err(EthereumSetupFailure {
                     name: "setUp()",
-                    reason: if assertion_failed {
+                    reason: if let Some(reason) = &skip_reason {
+                        reason.to_string()
+                    } else if assertion_failed {
                         "assertion failed".to_string()
                     } else {
                         revert_decoder
-                            .maybe_decode_known(&result.output)
+                            .maybe_decode(&result.output, None)
                             .unwrap_or_else(|| format!("{:?}", result.stop))
                     },
+                    skipped: skip_reason.is_some(),
                 });
             }
             executor.inspector_mut().take_logs();
@@ -344,9 +362,20 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
         let mut executor = self.executor.clone();
         let result = executor.transact_raw(CALLER, self.address, calldata, value)?;
         let logs = executor.inspector_mut().take_logs();
+        let skip_reason = Self::take_skip_reason(&mut executor, &result);
         let assertion_failed = result.status
             && Self::assertion_failed(&mut executor, self.address, self.legacy_assertions)?;
-        Ok(EthereumTestExecution { result, logs, assertion_failed })
+        Ok(EthereumTestExecution { result, logs, assertion_failed, skip_reason })
+    }
+
+    fn take_skip_reason(
+        executor: &mut EthereumExecutor<D, EthereumInspectorStack>,
+        result: &TxResult,
+    ) -> Option<SkipReason> {
+        let payloads = executor.inspector_mut().cheatcodes_mut().take_skip_payloads();
+        (!result.status && payloads.contains(&result.output))
+            .then(|| SkipReason::decode(&result.output))
+            .flatten()
     }
 
     fn assertion_failed(
