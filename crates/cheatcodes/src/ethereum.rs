@@ -7,6 +7,7 @@ use crate::{
     expected_call::{self, ExpectedCallKind, ExpectedCallTracker, ExpectedCallType},
     fs::{ConfigCheatcode, get_artifact_code, get_artifact_selectors},
     prank::Prank,
+    recorded_logs,
     script::Wallets,
 };
 use alloy_network::{Ethereum, TransactionBuilder};
@@ -44,6 +45,7 @@ pub struct EthereumCheatcodes {
     allowed_callers: AddressHashSet,
     pranks: BTreeMap<usize, Prank>,
     expected_calls: ExpectedCallTracker,
+    recorded_logs: Option<Vec<Vm::Log>>,
     broadcast: Option<Broadcast>,
     broadcastable_transactions: BroadcastableTransactions<Ethereum>,
     wallets: Option<Wallets>,
@@ -82,6 +84,7 @@ impl EthereumCheatcodes {
                 .collect(),
             pranks: BTreeMap::new(),
             expected_calls: Default::default(),
+            recorded_logs: None,
             broadcast: None,
             broadcastable_transactions: Default::default(),
             wallets: None,
@@ -113,6 +116,11 @@ impl EthereumCheatcodes {
     /// Drains transactions collected during script execution.
     pub fn take_broadcastable_transactions(&mut self) -> BroadcastableTransactions<Ethereum> {
         std::mem::take(&mut self.broadcastable_transactions)
+    }
+
+    /// Observes an EVM log for active cheatcode recording.
+    pub fn observe_log(&mut self, log: &alloy_primitives::Log) {
+        recorded_logs::record(&mut self.recorded_logs, log);
     }
 
     /// Installs the cheatcode contract account used by Solidity code checks.
@@ -450,6 +458,17 @@ impl EthereumCheatcodes {
                 } else {
                     (InstrStop::Revert, Error::encode("no broadcast in progress to stop"))
                 }
+            }
+            Vm::VmCalls::recordLogs(_) => {
+                self.recorded_logs = Some(Vec::new());
+                (InstrStop::Return, Bytes::new())
+            }
+            Vm::VmCalls::getRecordedLogs(_) => (
+                InstrStop::Return,
+                recorded_logs::take(&mut self.recorded_logs).abi_encode().into(),
+            ),
+            Vm::VmCalls::getRecordedLogsJson(_) => {
+                Self::encoded_result(recorded_logs::take_json(&mut self.recorded_logs))
             }
             _ => (
                 InstrStop::Revert,

@@ -72,6 +72,7 @@ impl Inspector<FoundryEvmTypes> for EthereumInspectorStack {
     }
 
     fn log(&mut self, log: &Log, _host: &mut <FoundryEvmTypes as EvmTypesHost>::Host<'_>) {
+        self.cheatcodes.observe_log(log);
         self.logs.push(log.clone());
     }
 

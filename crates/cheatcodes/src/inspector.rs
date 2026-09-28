@@ -2390,7 +2390,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // `recordLogs`
-        record_logs(&mut self.recorded_logs, &log);
+        crate::recorded_logs::record(&mut self.recorded_logs, &log);
     }
 
     fn log_full(
@@ -2404,7 +2404,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // `recordLogs`
-        record_logs(&mut self.recorded_logs, &log);
+        crate::recorded_logs::record(&mut self.recorded_logs, &log);
     }
 
     fn call(
@@ -4083,17 +4083,6 @@ const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
             | crate::Vm::AccountAccessKind::CallCode
             | crate::Vm::AccountAccessKind::DelegateCall
     )
-}
-
-/// Records a log into the recorded logs vector, if it exists.
-fn record_logs(recorded_logs: &mut Option<Vec<Vm::Log>>, log: &Log) {
-    if let Some(storage_recorded_logs) = recorded_logs {
-        storage_recorded_logs.push(Vm::Log {
-            topics: log.data.topics().to_vec(),
-            data: log.data.data.clone(),
-            emitter: log.address,
-        });
-    }
 }
 
 /// Appends an AccountAccess that resumes the recording of the current context.

@@ -3839,6 +3839,60 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_records_logs, |prj, cmd| {
+    prj.add_source(
+        "EthereumRecordedLogs.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmLogs {
+    struct Log { bytes32[] topics; bytes data; address emitter; }
+    function recordLogs() external;
+    function getRecordedLogs() external view returns (Log[] memory);
+    function getRecordedLogsJson() external view returns (string memory);
+}
+
+contract LogEmitter {
+    event Ping(uint256 indexed id, uint256 value);
+    function ping() external { emit Ping(7, 9); }
+}
+
+contract EthereumRecordedLogsTest {
+    VmLogs constant vm = VmLogs(address(uint160(uint256(keccak256("hevm cheat code")))));
+    LogEmitter emitter;
+
+    function setUp() public { emitter = new LogEmitter(); }
+
+    function testRecordedLog() public {
+        vm.recordLogs();
+        emitter.ping();
+        VmLogs.Log[] memory logs = vm.getRecordedLogs();
+        require(logs.length == 1, "log count");
+        require(logs[0].emitter == address(emitter), "emitter");
+        require(logs[0].topics.length == 2, "topic count");
+        require(logs[0].topics[0] == keccak256("Ping(uint256,uint256)"), "topic 0");
+        require(logs[0].topics[1] == bytes32(uint256(7)), "topic 1");
+        require(abi.decode(logs[0].data, (uint256)) == 9, "data");
+        require(vm.getRecordedLogs().length == 0, "recording was not reset");
+        emitter.ping();
+        require(bytes(vm.getRecordedLogsJson()).length > 2, "json log missing");
+        require(vm.getRecordedLogs().length == 0, "json retrieval was not reset");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumRecordedLogsTest$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testRecordedLog() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(ethereum_before_test_setup, |prj, cmd| {
     prj.add_source(
         "EthereumBeforeTest.t.sol",

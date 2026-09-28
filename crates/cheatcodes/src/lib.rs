@@ -66,6 +66,8 @@ mod json;
 
 mod prank;
 
+mod recorded_logs;
+
 #[cfg(feature = "monad")]
 mod monad;
 
