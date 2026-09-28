@@ -84,6 +84,7 @@ mod multi_sequence;
 mod progress;
 mod providers;
 mod receipts;
+mod recovery;
 mod runner;
 mod sequence;
 mod session;
