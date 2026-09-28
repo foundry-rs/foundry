@@ -118,6 +118,14 @@ casttest!(to_base, |_prj, cmd| {
         .stdout_eq(
             "57896044618658097711785492504343953926634992332820282019728792003956564819967\n",
         );
+    cmd.cast_fuse()
+        .args(["to-dec", "--base-in", "10", "garbage"])
+        .assert_failure()
+        .stderr_eq("Error: invalid digit: g\n");
+    cmd.cast_fuse()
+        .args(["to-hex", "0x10000000000000000000000000000000000000000000000000000000000000000"])
+        .assert_failure()
+        .stderr_eq("Error: the value is too large to fit the target type\n");
 });
 
 // tests that `cast --parse-bytes32-address` command is working correctly.

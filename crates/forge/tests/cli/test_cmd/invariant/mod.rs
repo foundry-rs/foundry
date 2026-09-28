@@ -1953,6 +1953,34 @@ contract SkipPredicateReportTest is Test {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("SkipPredicateReportTest invariants"), "{stdout}");
     assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_", "--summary"]).assert_success().stdout_eq(
+        str![[r#"
+...
+╭-------------------------+--------+--------+---------╮
+| Test Suite              | Passed | Failed | Skipped |
++=====================================================+
+| SkipPredicateReportTest | 1      | 0      | 1       |
+╰-------------------------+--------+--------+---------╯
+
+
+"#]],
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_", "--summary", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "results": [
+    {
+      "suite": "SkipPredicateReportTest",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 1
+    }
+  ]
+}
+"#]]);
 });
 
 forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
