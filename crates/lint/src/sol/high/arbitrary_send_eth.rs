@@ -165,7 +165,7 @@ impl<'gcx> Analyzer<'gcx> {
             ExprKind::Ternary(_, t, f) => {
                 self.is_safe_inner(t, depth) && self.is_safe_inner(f, depth)
             }
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 depth > 0
                     && args.exprs().next().is_none()
                     && callee_no_arg_returns(self.gcx, callee, |e| self.is_safe_inner(e, depth - 1))
@@ -373,7 +373,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let _ = self.visit_expr(f);
                 self.state = after_t.meet(&self.state);
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
+            ExprKind::Call(callee, args) if is_require_or_assert(self.gcx, callee) => {
                 // Sinks inside the predicate run before the guard takes effect.
                 let _ = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
@@ -409,8 +409,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
 /// `f{value: v}()`, `IFoo(x).f{value: v}()` and common OpenZeppelin/Solady helpers. Sends to
 /// `address(this)` or of a literal-zero amount are not sinks.
 fn match_sink<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr<'gcx>> {
-    let ExprKind::Call(callee, args, opts) = &expr.kind else { return None };
-    let callee = callee.peel_parens();
+    let (callee, args, opts) = expr.as_call()?;
     if gcx.resolved_builtin(callee) == Some(Builtin::Selfdestruct) {
         return args.exprs().next().filter(|dest| !is_address_self(gcx, dest));
     }
@@ -515,7 +514,7 @@ impl<'gcx> CallerGuards<'gcx> {
     /// `require(guard)` / `assert(guard)`, or a call to an internal helper whose body restricts
     /// the caller and cannot `return` early.
     fn expr_restricts(&mut self, expr: &'gcx Expr<'gcx>) -> bool {
-        let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+        let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
         if is_require_or_assert(self.gcx, callee) {
             return args.exprs().next().is_some_and(|c| self.cond_restricts(c, true));
         }
@@ -589,7 +588,7 @@ impl<'gcx> CallerGuards<'gcx> {
                 self.is_trusted_principal(base, depth)
                     && idx.is_none_or(|i| index_is_static(self.gcx, i))
             }
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 depth > 0
                     && args.exprs().next().is_none()
                     && callee_no_arg_returns(self.gcx, callee, |e| {
@@ -661,7 +660,7 @@ impl<'gcx> CallerGuards<'gcx> {
             return false;
         }
         let children: Vec<&'gcx Expr<'gcx>> = match &peel_casts(self.gcx, expr).kind {
-            ExprKind::Call(_, args, _) => args.exprs().collect(),
+            ExprKind::Call(_, args) => args.exprs().collect(),
             ExprKind::Ternary(_, t, f) => vec![t, f],
             ExprKind::Tuple(elems) => elems.iter().copied().flatten().collect(),
             ExprKind::Array(elems) => elems.iter().collect(),
@@ -683,14 +682,14 @@ impl<'gcx> CallerGuards<'gcx> {
             ExprKind::Ident(_) | ExprKind::Member(..) | ExprKind::Index(..) => {
                 lhs_root_var(self.gcx, expr).is_some_and(|v| self.state_var_aliases_self(v, depth))
             }
-            ExprKind::Call(callee, args, _) if args.exprs().next().is_none() => {
+            ExprKind::Call(callee, args) if args.exprs().next().is_none() => {
                 self.gcx.resolved_function(callee).is_some_and(|fid| {
                     function_no_arg_returns(self.gcx, fid, &mut |e| {
                         self.expr_resolves_to_self(e, depth - 1)
                     })
                 })
             }
-            ExprKind::Call(callee, args, _) => identity_helper_arg(self.gcx, callee, args)
+            ExprKind::Call(callee, args) => identity_helper_arg(self.gcx, callee, args)
                 .is_some_and(|a| self.expr_resolves_to_self(a, depth - 1)),
             ExprKind::Ternary(_, t, f) => {
                 self.expr_resolves_to_self(t, depth - 1) || self.expr_resolves_to_self(f, depth - 1)
@@ -825,7 +824,7 @@ impl<'gcx> Visit<'gcx> for SelfAssignScan<'_, 'gcx> {
         }
         match &expr.peel_parens().kind {
             ExprKind::Assign(lhs, _, rhs) => self.assign(lhs, rhs),
-            ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
+            ExprKind::Call(callee, args) => match &callee.peel_parens().kind {
                 // `target.push(<self>)` on an array / bytes state variable.
                 ExprKind::Member(recv, member) => {
                     if member.name.as_str() == "push"
@@ -880,7 +879,7 @@ fn lhs_root_var(gcx: Gcx<'_>, lhs: &Expr<'_>) -> Option<VariableId> {
         ExprKind::Member(base, _) | ExprKind::Index(base, _) | ExprKind::Payable(base) => {
             lhs_root_var(gcx, base)
         }
-        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
+        ExprKind::Call(callee, args) if is_address_like_cast(gcx, callee) => {
             args.exprs().next().and_then(|expr| lhs_root_var(gcx, expr))
         }
         _ => underlying_var(gcx, lhs),
@@ -942,7 +941,7 @@ fn stmt_contains_return(stmt: &Stmt<'_>) -> bool {
 fn is_msg_sender_like<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
     let expr = peel_casts(gcx, expr);
     is_msg_sender(gcx, expr)
-        || matches!(&expr.kind, ExprKind::Call(callee, args, _)
+        || matches!(&expr.kind, ExprKind::Call(callee, args)
             if depth > 0
                 && args.exprs().next().is_none()
                 && callee_no_arg_returns(gcx, callee, |e| is_msg_sender_like(gcx, e, depth - 1)))
@@ -953,7 +952,7 @@ fn peel_casts<'a>(gcx: Gcx<'_>, expr: &'a Expr<'a>) -> &'a Expr<'a> {
     let expr = expr.peel_parens();
     match &expr.kind {
         ExprKind::Payable(inner) => peel_casts(gcx, inner),
-        ExprKind::Call(callee, args, _)
+        ExprKind::Call(callee, args)
             if is_address_like_cast(gcx, callee) || is_numeric_cast(callee) =>
         {
             args.exprs().next().map_or(expr, |expr| peel_casts(gcx, expr))
