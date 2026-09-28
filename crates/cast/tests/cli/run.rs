@@ -1,6 +1,7 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_signer::SignerSync;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
@@ -502,4 +503,42 @@ Executing previous transactions from the block.
 Warning: the replay does not match the transaction's receipt: it used 61000 gas on-chain but 37000 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
 
 "#]]);
+});
+
+// Forked state reports an account that does not exist as empty, but replay must not refund the
+// EIP-7702 authorization of an authority that did not exist before the transaction.
+casttest!(cast_run_charges_fresh_eip7702_authority, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let authority = PrivateKeySigner::random();
+    let authorization = Authorization {
+        chain_id: U256::from(31337u64),
+        address: address!("0x000000000000000000000000000000000000dEaD"),
+        nonce: 0,
+    };
+    let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let tx = TransactionRequest {
+        authorization_list: Some(vec![authorization.into_signed(signature)]),
+        ..Default::default()
+    }
+    .with_from(from)
+    .with_to(address!("0x0000000000000000000000000000000000001234"))
+    .with_input(hex!("12345678"));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(receipt.gas_used(), 46_064);
+
+    let output = cmd
+        .args([
+            "run",
+            &receipt.transaction_hash().to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--evm-version",
+            "prague",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Gas used: 46064"), "{output}");
 });

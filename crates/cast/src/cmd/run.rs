@@ -1,6 +1,7 @@
 use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc};
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
+    evm_version::probe_evm_version,
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     utils::{
@@ -503,15 +504,17 @@ impl RunArgs {
 
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
-            // fork. Falls back to a blob-gas heuristic for unknown chains.
+            // fork. For unknown chains, probe the node for the features it executes at the block,
+            // falling back to a blob-gas heuristic if the node rejects the probe.
             if evm_version.is_none()
                 && config.hardfork.is_none()
                 && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
                     .is_none()
-                && block.header().excess_blob_gas().is_some()
             {
-                // TODO: add glamsterdam header field checks in the future
-                evm_version = Some(EvmVersion::Cancun);
+                let probed = probe_evm_version(&provider, BlockId::number(tx_block_number)).await;
+                evm_version = probed.or_else(|| {
+                    block.header().excess_blob_gas().is_some().then_some(EvmVersion::Cancun)
+                });
             }
             apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
                 &mut fork.evm_env,
@@ -534,6 +537,10 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+        // The fork is pinned to the parent block, but the replayed transactions execute in the
+        // target's block, which block queries such as Arbitrum's `ArbSys.arbBlockNumber()` must
+        // report.
+        executor.backend_mut().set_fork_block_number_override(tx_block_number);
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 

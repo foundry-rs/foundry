@@ -2355,6 +2355,17 @@ impl TestArgs {
                 junit_xml_report(&results, verbosity).to_string()?
             };
             sh_println!("{rendered}")?;
+
+            let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+            for result in results.values().flat_map(|suite| suite.test_results.values()) {
+                for (group, new_snapshots) in &result.gas_snapshots {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+            if !gas_snapshots.is_empty() {
+                self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
+            }
+
             return Ok(TestOutcome::new(
                 Some(runner.known_contracts),
                 results,
