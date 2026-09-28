@@ -6,7 +6,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256, map::AddressHashMap};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
@@ -281,12 +281,7 @@ impl Cheatcode for eth_getLogsCall {
             bail!("topics array must contain at most 4 elements")
         }
 
-        let fork = ccx
-            .ecx
-            .db()
-            .active_fork_options()
-            .ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
+        let provider = active_fork_provider(ccx)?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, &topic) in topics.iter().enumerate() {
             filter.topics[i] = topic.into();
@@ -320,12 +315,7 @@ impl Cheatcode for eth_getProofCall {
         let block_number = u64::try_from(blockNumber)
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
 
-        let fork = ccx
-            .ecx
-            .db()
-            .active_fork_options()
-            .ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
+        let provider = active_fork_provider(ccx)?;
         let proof = foundry_common::block_on(async move {
             provider.get_proof(*target, slots.clone()).number(block_number).await
         })
@@ -353,8 +343,7 @@ impl Cheatcode for eth_getProofCall {
 impl Cheatcode for getRawBlockHeaderCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber } = self;
-        let fork = ccx.ecx.db().active_fork_options().ok_or_else(|| fmt_err!("no active fork"))?;
-        let provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
+        let provider = active_fork_provider(ccx)?;
         let block_number = u64::try_from(blockNumber)
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
         let block =
@@ -572,6 +561,16 @@ fn transact<FEN: FoundryEvmNetwork>(
 // https://github.com/foundry-rs/foundry/issues/8004
 fn persist_caller<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
     ccx.ecx.db_mut().add_persistent_account(ccx.caller);
+}
+
+/// Returns a provider for the active fork, configured with the RPC options the fork was created
+/// with (e.g. auth headers, retries and timeouts).
+fn active_fork_provider<FEN: FoundryEvmNetwork>(
+    ccx: &CheatsCtxt<'_, '_, FEN>,
+) -> Result<RootProvider<AnyNetwork>> {
+    let fork =
+        ccx.ecx.db().active_fork_options().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+    Ok(fork.evm_opts.fork_provider_with_url(&fork.url)?)
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
