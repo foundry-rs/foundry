@@ -4,6 +4,7 @@ use crate::{
     CheatsConfig, Error, Vm,
     broadcast::{Broadcast, BroadcastableTransaction, BroadcastableTransactions},
     dispatch,
+    expected_call::{self, ExpectedCallKind, ExpectedCallTracker, ExpectedCallType},
     fs::{ConfigCheatcode, get_artifact_code, get_artifact_selectors},
     prank::Prank,
     script::Wallets,
@@ -42,12 +43,24 @@ pub struct EthereumCheatcodes {
     access_mode: CheatcodeAccessMode,
     allowed_callers: AddressHashSet,
     pranks: BTreeMap<usize, Prank>,
+    expected_calls: ExpectedCallTracker,
     broadcast: Option<Broadcast>,
     broadcastable_transactions: BroadcastableTransactions<Ethereum>,
     wallets: Option<Wallets>,
     skip_payloads: Vec<Bytes>,
     expected_revert: Option<ExpectedRevert>,
 }
+
+type ExpectedCallArgs<'a> = (
+    Address,
+    &'a Bytes,
+    Option<U256>,
+    Option<u64>,
+    Option<u64>,
+    Option<ExpectedCallKind>,
+    u64,
+    ExpectedCallType,
+);
 
 /// Caller authorization policy for the active execution database.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +81,7 @@ impl EthereumCheatcodes {
                 .into_iter()
                 .collect(),
             pranks: BTreeMap::new(),
+            expected_calls: Default::default(),
             broadcast: None,
             broadcastable_transactions: Default::default(),
             wallets: None,
@@ -120,6 +134,24 @@ impl EthereumCheatcodes {
         decoded: Vm::VmCalls,
     ) -> (InstrStop, Bytes) {
         let name = dispatch::name(dispatch::metadata(&decoded));
+        if let Some((target, calldata, value, gas, min_gas, kind, count, call_type)) =
+            Self::expected_call_args(&decoded)
+        {
+            return Self::encoded_result(
+                expected_call::expect_call(
+                    &mut self.expected_calls,
+                    target,
+                    calldata.clone(),
+                    value,
+                    gas,
+                    min_gas,
+                    kind,
+                    count,
+                    call_type,
+                )
+                .map(|()| Vec::new()),
+            );
+        }
         match decoded {
             Vm::VmCalls::assume(call) => {
                 if call.condition {
@@ -450,6 +482,102 @@ impl EthereumCheatcodes {
             Vm::VmCalls::deployCode_7(call) => {
                 Some((&call.artifactPath, Some(&call.constructorArgs), call.value, Some(call.salt)))
             }
+            _ => None,
+        }
+    }
+
+    const fn expected_call_args(decoded: &Vm::VmCalls) -> Option<ExpectedCallArgs<'_>> {
+        match decoded {
+            Vm::VmCalls::expectCall_0(call) => Some((
+                call.callee,
+                &call.data,
+                None,
+                None,
+                None,
+                None,
+                1,
+                ExpectedCallType::NonCount,
+            )),
+            Vm::VmCalls::expectCall_1(call) => Some((
+                call.callee,
+                &call.data,
+                None,
+                None,
+                None,
+                None,
+                call.count,
+                ExpectedCallType::Count,
+            )),
+            Vm::VmCalls::expectCall_2(call) => Some((
+                call.callee,
+                &call.data,
+                Some(call.msgValue),
+                None,
+                None,
+                None,
+                1,
+                ExpectedCallType::NonCount,
+            )),
+            Vm::VmCalls::expectCall_3(call) => Some((
+                call.callee,
+                &call.data,
+                Some(call.msgValue),
+                None,
+                None,
+                None,
+                call.count,
+                ExpectedCallType::Count,
+            )),
+            Vm::VmCalls::expectCall_4(call) => Some((
+                call.callee,
+                &call.data,
+                Some(call.msgValue),
+                Some(call.gas),
+                None,
+                None,
+                1,
+                ExpectedCallType::NonCount,
+            )),
+            Vm::VmCalls::expectCall_5(call) => Some((
+                call.callee,
+                &call.data,
+                Some(call.msgValue),
+                Some(call.gas),
+                None,
+                None,
+                call.count,
+                ExpectedCallType::Count,
+            )),
+            Vm::VmCalls::expectCallMinGas_0(call) => Some((
+                call.callee,
+                &call.data,
+                Some(call.msgValue),
+                None,
+                Some(call.minGas),
+                None,
+                1,
+                ExpectedCallType::NonCount,
+            )),
+            Vm::VmCalls::expectCallMinGas_1(call) => Some((
+                call.callee,
+                &call.data,
+                Some(call.msgValue),
+                None,
+                Some(call.minGas),
+                None,
+                call.count,
+                ExpectedCallType::Count,
+            )),
+            Vm::VmCalls::expectDelegateCall(call) => Some((
+                call.callee,
+                &call.data,
+                None,
+                None,
+                None,
+                Some(ExpectedCallKind::DelegateCall),
+                1,
+                ExpectedCallType::NonCount,
+            )),
             _ => None,
         }
     }
@@ -997,6 +1125,22 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> CallAction<FoundryEvmTypes> {
         if message.call_target != CHEATCODE_ADDRESS {
+            let kind = match message.kind {
+                MessageKind::Call => ExpectedCallKind::Call,
+                MessageKind::CallCode => ExpectedCallKind::CallCode,
+                MessageKind::DelegateCall => ExpectedCallKind::DelegateCall,
+                MessageKind::StaticCall => ExpectedCallKind::StaticCall,
+                _ => unreachable!("CREATE messages use the create hook"),
+            };
+            expected_call::observe_call(
+                &mut self.expected_calls,
+                message.code_address,
+                &message.input,
+                matches!(message.kind, MessageKind::Call | MessageKind::CallCode)
+                    .then_some(message.value),
+                message.gas_limit,
+                kind,
+            );
             if let Some((stop, output)) = self.apply_broadcast_call(interp, message) {
                 return CallAction::Override(Self::result(message, stop, output));
             }
@@ -1112,6 +1256,13 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
             }
             self.finish_prank(interp, message);
             self.finish_expected_revert(message, result, false);
+            if message.depth == 0
+                && result.is_success()
+                && let Some(reason) = expected_call::first_unmet_call(&self.expected_calls)
+            {
+                result.stop = InstrStop::Revert;
+                result.output = Error::encode(reason);
+            }
         }
     }
 

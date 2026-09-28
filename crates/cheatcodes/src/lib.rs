@@ -52,6 +52,9 @@ pub use env::{current_execution_context, set_execution_context};
 
 mod evm;
 
+mod expected_call;
+pub use expected_call::ExpectedCallTracker;
+
 mod external_storage;
 
 mod fs;
@@ -74,7 +77,6 @@ mod string;
 mod tempo;
 
 mod test;
-pub use test::expect::ExpectedCallTracker;
 
 mod toml;
 

@@ -8,15 +8,15 @@ use crate::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
     },
+    expected_call::{
+        self, ExpectedCallData, ExpectedCallKind, ExpectedCallTracker, ExpectedCallType,
+    },
     inspector::utils::CommonCreateInput,
     prank::Prank,
     script::Wallets,
     test::{
         assume::AssumeNoRevert,
-        expect::{
-            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedCreate,
-            ExpectedEmitTracker, ExpectedRevert, ExpectedRevertKind,
-        },
+        expect::{self, ExpectedCreate, ExpectedEmitTracker, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
     },
     utils::IgnoredTraces,
@@ -1541,32 +1541,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Handle expected calls
 
         // Grab the different calldatas expected.
-        if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address)
-        {
-            let input = call.input.as_bytes(ecx);
-            let value = call.transfer_value();
-
-            // Match every partial/full calldata
-            for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target
-            {
-                // Increment actual times seen if...
-                // The calldata is at most, as big as this call's input, and
-                if calldata.len() <= input.len() &&
-                    // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
-                    input.get(..calldata.len()) == Some(calldata.as_ref()) &&
-                    // The value matches, if provided
-                    expected.value.is_none_or(|expected_value| Some(expected_value) == value) &&
-                    // The gas matches, if provided
-                    expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
-                    // The minimum gas matches, if provided
-                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit) &&
-                    // The call scheme matches, if provided
-                    expected_scheme.is_none_or(|scheme| scheme == call.scheme)
-                {
-                    *actual_count += 1;
-                }
-            }
-        }
+        expected_call::observe_call(
+            &mut self.expected_calls,
+            call.bytecode_address,
+            &call.input.as_bytes(ecx),
+            call.transfer_value(),
+            call.gas_limit,
+            match call.scheme {
+                CallScheme::Call => ExpectedCallKind::Call,
+                CallScheme::CallCode => ExpectedCallKind::CallCode,
+                CallScheme::DelegateCall => ExpectedCallKind::DelegateCall,
+                CallScheme::StaticCall => ExpectedCallKind::StaticCall,
+            },
+        );
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {

@@ -3,7 +3,11 @@ use std::{
     fmt::{self, Display},
 };
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
+use crate::{
+    Cheatcode, Cheatcodes, CheatsCtxt, Error, Result,
+    Vm::*,
+    expected_call::{self, ExpectedCallKind, ExpectedCallType},
+};
 use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{
@@ -17,52 +21,13 @@ use foundry_evm_traces::DecodedCallLog;
 use revm::{
     context::{ContextTr, JournalTr},
     interpreter::{
-        CallScheme, InstructionResult, Interpreter, InterpreterAction,
-        interpreter_types::LoopControl,
+        InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
     },
 };
 use tempo_contracts::precompiles::ISignatureVerifier;
 use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
 use super::revert_handlers::RevertParameters;
-/// Tracks the expected calls per address.
-///
-/// For each address, we track the expected calls per call data and optional call scheme. We track
-/// it in such manner so that we don't mix together calldatas that only contain selectors and
-/// calldatas that contain selector and arguments (partial and full matches), or unrestricted calls
-/// and calls restricted to a specific scheme.
-///
-/// This then allows us to customize the matching behavior for each call data on the
-/// `ExpectedCallData` struct and track how many times we've actually seen the call on the second
-/// element of the tuple.
-pub type ExpectedCallTracker =
-    HashMap<Address, HashMap<(Bytes, Option<CallScheme>), (ExpectedCallData, u64)>>;
-
-#[derive(Clone, Debug)]
-pub struct ExpectedCallData {
-    /// The expected value sent in the call
-    pub value: Option<U256>,
-    /// The expected gas supplied to the call
-    pub gas: Option<u64>,
-    /// The expected *minimum* gas supplied to the call
-    pub min_gas: Option<u64>,
-    /// The number of times the call is expected to be made.
-    /// If the type of call is `NonCount`, this is the lower bound for the number of calls
-    /// that must be seen.
-    /// If the type of call is `Count`, this is the exact number of calls that must be seen.
-    pub count: u64,
-    /// The type of expected call.
-    pub call_type: ExpectedCallType,
-}
-
-/// The type of expected call.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExpectedCallType {
-    /// The call is expected to be made at least once.
-    NonCount,
-    /// The exact number of calls expected.
-    Count,
-}
 
 /// The type of expected revert.
 #[derive(Clone, Debug)]
@@ -306,7 +271,7 @@ impl Cheatcode for expectDelegateCallCall {
             None,
             None,
             None,
-            Some(CallScheme::DelegateCall),
+            Some(ExpectedCallKind::DelegateCall),
             1,
             ExpectedCallType::NonCount,
         )
@@ -828,64 +793,23 @@ fn expect_call<FEN: FoundryEvmNetwork>(
     target: &Address,
     calldata: &Bytes,
     value: Option<&U256>,
-    mut gas: Option<u64>,
-    mut min_gas: Option<u64>,
-    scheme: Option<CallScheme>,
+    gas: Option<u64>,
+    min_gas: Option<u64>,
+    scheme: Option<ExpectedCallKind>,
     count: u64,
     call_type: ExpectedCallType,
 ) -> Result {
-    let expecteds = state.expected_calls.entry(*target).or_default();
-
-    if let Some(val) = value
-        && *val > U256::ZERO
-    {
-        // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
-        // to ensure that the basic fallback function can be called.
-        let positive_value_cost_stipend = 2300;
-        if let Some(gas) = &mut gas {
-            *gas += positive_value_cost_stipend;
-        }
-        if let Some(min_gas) = &mut min_gas {
-            *min_gas += positive_value_cost_stipend;
-        }
-    }
-
-    match call_type {
-        ExpectedCallType::Count => {
-            // Get the expected calls for this target.
-            // In this case, as we're using counted expectCalls, we should not be able to set them
-            // more than once.
-            let key = (calldata.clone(), scheme);
-            ensure!(!expecteds.contains_key(&key), "counted expected calls can only bet set once");
-            expecteds.insert(
-                key,
-                (ExpectedCallData { value: value.copied(), gas, min_gas, count, call_type }, 0),
-            );
-        }
-        ExpectedCallType::NonCount => {
-            // Check if the expected calldata exists.
-            // If it does, increment the count by one as we expect to see it one more time.
-            match expecteds.entry((calldata.clone(), scheme)) {
-                Entry::Occupied(mut entry) => {
-                    let (expected, _) = entry.get_mut();
-                    // Ensure we're not overwriting a counted expectCall.
-                    ensure!(
-                        expected.call_type == ExpectedCallType::NonCount,
-                        "cannot overwrite a counted expectCall with a non-counted expectCall"
-                    );
-                    expected.count += 1;
-                }
-                // If it does not exist, then create it.
-                Entry::Vacant(entry) => {
-                    entry.insert((
-                        ExpectedCallData { value: value.copied(), gas, min_gas, count, call_type },
-                        0,
-                    ));
-                }
-            }
-        }
-    }
-
+    expected_call::expect_call(
+        &mut state.expected_calls,
+        *target,
+        calldata.clone(),
+        value.copied(),
+        gas,
+        min_gas,
+        scheme,
+        count,
+        call_type,
+    )?;
     Ok(Default::default())
 }
 

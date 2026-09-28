@@ -3742,6 +3742,103 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_expected_calls, |prj, cmd| {
+    prj.add_source(
+        "EthereumExpectedCall.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmExpectCall {
+    function expectCall(address callee, bytes calldata data) external;
+    function expectCall(address callee, bytes calldata data, uint64 count) external;
+    function expectCall(address callee, uint256 msgValue, bytes calldata data) external;
+    function expectDelegateCall(address callee, bytes calldata data) external;
+}
+
+contract ExpectedCallTarget {
+    function ping(uint256 value) external pure returns (uint256) { return value; }
+    function pay() external payable {}
+}
+
+contract ExpectedDelegateCaller {
+    function forward(address target) external {
+        (bool success,) = target.delegatecall(abi.encodeWithSelector(ExpectedCallTarget.ping.selector, uint256(1)));
+        require(success, "delegatecall failed");
+    }
+}
+
+contract EthereumExpectedCallTest {
+    VmExpectCall constant vm = VmExpectCall(address(uint160(uint256(keccak256("hevm cheat code")))));
+    ExpectedCallTarget target;
+
+    function setUp() public { target = new ExpectedCallTarget(); }
+
+    function testPrefix() public {
+        vm.expectCall(address(target), abi.encodeWithSelector(ExpectedCallTarget.ping.selector));
+        target.ping(1);
+    }
+
+    function testCount() public {
+        vm.expectCall(address(target), abi.encodeWithSelector(ExpectedCallTarget.ping.selector), 2);
+        target.ping(1);
+        target.ping(2);
+    }
+
+    function testValue() public {
+        vm.expectCall(address(target), 1 wei, abi.encodeWithSelector(ExpectedCallTarget.pay.selector));
+        target.pay{value: 1 wei}();
+    }
+
+    function testDelegate() public {
+        ExpectedDelegateCaller caller = new ExpectedDelegateCaller();
+        vm.expectDelegateCall(address(target), abi.encodeWithSelector(ExpectedCallTarget.ping.selector));
+        caller.forward(address(target));
+    }
+
+    function testMissing() public {
+        vm.expectCall(address(target), abi.encodeWithSelector(ExpectedCallTarget.ping.selector));
+    }
+
+    function testOvercount() public {
+        vm.expectCall(address(target), abi.encodeWithSelector(ExpectedCallTarget.ping.selector), 1);
+        target.ping(1);
+        target.ping(2);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumExpectedCallTest$",
+            "--mt",
+            "test(Prefix|Count|Value|Delegate)[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testCount() ([GAS])
+[PASS] testDelegate() ([GAS])
+[PASS] testPrefix() ([GAS])
+[PASS] testValue() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "^EthereumExpectedCallTest$", "--mt", "test(Missing|Overcount)[(]"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: expected call to [..] with data [..] to be called 1 time, but was called 0 times] testMissing() ([GAS])
+[FAIL: expected call to [..] with data [..] to be called 1 time, but was called 2 times] testOvercount() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(ethereum_before_test_setup, |prj, cmd| {
     prj.add_source(
         "EthereumBeforeTest.t.sol",
