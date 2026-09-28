@@ -3631,6 +3631,117 @@ contract CounterRevertTest is DSTest {
 "#]]);
 });
 
+forgetest!(ethereum_expected_reverts, |prj, cmd| {
+    prj.add_source(
+        "EthereumExpectedRevert.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmExpect {
+    function expectRevert() external;
+    function expectRevert(bytes4) external;
+    function expectRevert(bytes calldata) external;
+    function expectRevert(address) external;
+    function expectRevert(bytes4, uint64) external;
+    function expectPartialRevert(bytes4) external;
+}
+
+contract ExpectedReverter {
+    error Bare();
+    error WithArg(uint256);
+
+    constructor(bool fail) { if (fail) revert Bare(); }
+    function bare() external pure { revert Bare(); }
+    function withArg() external pure { revert WithArg(7); }
+    function success() external pure returns (uint256) { return 1; }
+}
+
+contract EthereumExpectedRevertTest {
+    VmExpect constant vm = VmExpect(address(uint160(uint256(keccak256("hevm cheat code")))));
+    ExpectedReverter reverter;
+
+    function setUp() public { reverter = new ExpectedReverter(false); }
+
+    function testAny() public { vm.expectRevert(); reverter.bare(); }
+    function testSelector() public { vm.expectRevert(ExpectedReverter.Bare.selector); reverter.bare(); }
+    function testFull() public {
+        vm.expectRevert(abi.encodeWithSelector(ExpectedReverter.WithArg.selector, uint256(7)));
+        reverter.withArg();
+    }
+    function testPartial() public {
+        vm.expectPartialRevert(ExpectedReverter.WithArg.selector);
+        reverter.withArg();
+    }
+    function testCount() public {
+        vm.expectRevert(ExpectedReverter.Bare.selector, 2);
+        reverter.bare();
+        reverter.bare();
+    }
+    function testReverter() public {
+        vm.expectRevert(address(reverter));
+        reverter.bare();
+    }
+    function testCreate() public {
+        vm.expectRevert(ExpectedReverter.Bare.selector);
+        new ExpectedReverter(true);
+    }
+    function testUnexpectedSuccess() public {
+        vm.expectRevert();
+        reverter.success();
+    }
+    function testCountMissing() public {
+        vm.expectRevert(ExpectedReverter.Bare.selector, 2);
+        reverter.bare();
+    }
+    function testWrongData() public {
+        vm.expectRevert(bytes("wrong"));
+        reverter.bare();
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumExpectedRevertTest$",
+            "--mt",
+            "test(Any|Selector|Full|Partial|Count|Create|Reverter)[(]",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testAny() ([GAS])
+[PASS] testCount() ([GAS])
+[PASS] testCreate() ([GAS])
+[PASS] testFull() ([GAS])
+[PASS] testPartial() ([GAS])
+[PASS] testReverter() ([GAS])
+[PASS] testSelector() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "^EthereumExpectedRevertTest$",
+            "--mt",
+            "test(CountMissing|UnexpectedSuccess|WrongData)[(]",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: next call did not revert as expected] testCountMissing() ([GAS])
+[FAIL: next call did not revert as expected] testUnexpectedSuccess() ([GAS])
+[FAIL: Error != expected error: 0x0d6a419a != wrong] testWrongData() ([GAS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(ethereum_skip_authenticity, |prj, cmd| {
     prj.add_source(
         "EthereumSkip.t.sol",

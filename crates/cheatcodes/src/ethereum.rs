@@ -18,6 +18,9 @@ use foundry_evm_core::{
 };
 use std::{collections::BTreeMap, sync::Arc};
 
+mod expect;
+use expect::ExpectedRevert;
+
 /// Cheatcode state retained across accepted evm2 transactions.
 #[derive(Clone, Debug)]
 pub struct EthereumCheatcodes {
@@ -26,6 +29,7 @@ pub struct EthereumCheatcodes {
     allowed_callers: AddressHashSet,
     pranks: BTreeMap<usize, Prank>,
     skip_payloads: Vec<Bytes>,
+    expected_revert: Option<ExpectedRevert>,
 }
 
 /// Caller authorization policy for the active execution database.
@@ -46,6 +50,7 @@ impl EthereumCheatcodes {
             allowed_callers: AddressHashSet::default(),
             pranks: BTreeMap::new(),
             skip_payloads: Vec::new(),
+            expected_revert: None,
         }
     }
 
@@ -136,6 +141,74 @@ impl EthereumCheatcodes {
             }
             Vm::VmCalls::skip_0(call) => self.skip(message, call.skipTest, ""),
             Vm::VmCalls::skip_1(call) => self.skip(message, call.skipTest, &call.reason),
+            Vm::VmCalls::expectRevert_0(_) => self.expect_revert(message, None, false, None, 1),
+            Vm::VmCalls::expectRevert_1(call) => self.expect_revert(
+                message,
+                Some(Bytes::copy_from_slice(call.revertData.as_ref())),
+                false,
+                None,
+                1,
+            ),
+            Vm::VmCalls::expectRevert_2(call) => {
+                self.expect_revert(message, Some(call.revertData), false, None, 1)
+            }
+            Vm::VmCalls::expectRevert_3(call) => {
+                self.expect_revert(message, None, false, Some(call.reverter), 1)
+            }
+            Vm::VmCalls::expectRevert_4(call) => self.expect_revert(
+                message,
+                Some(Bytes::copy_from_slice(call.revertData.as_ref())),
+                false,
+                Some(call.reverter),
+                1,
+            ),
+            Vm::VmCalls::expectRevert_5(call) => {
+                self.expect_revert(message, Some(call.revertData), false, Some(call.reverter), 1)
+            }
+            Vm::VmCalls::expectRevert_6(call) => {
+                self.expect_revert(message, None, false, None, call.count)
+            }
+            Vm::VmCalls::expectRevert_7(call) => self.expect_revert(
+                message,
+                Some(Bytes::copy_from_slice(call.revertData.as_ref())),
+                false,
+                None,
+                call.count,
+            ),
+            Vm::VmCalls::expectRevert_8(call) => {
+                self.expect_revert(message, Some(call.revertData), false, None, call.count)
+            }
+            Vm::VmCalls::expectRevert_9(call) => {
+                self.expect_revert(message, None, false, Some(call.reverter), call.count)
+            }
+            Vm::VmCalls::expectRevert_10(call) => self.expect_revert(
+                message,
+                Some(Bytes::copy_from_slice(call.revertData.as_ref())),
+                false,
+                Some(call.reverter),
+                call.count,
+            ),
+            Vm::VmCalls::expectRevert_11(call) => self.expect_revert(
+                message,
+                Some(call.revertData),
+                false,
+                Some(call.reverter),
+                call.count,
+            ),
+            Vm::VmCalls::expectPartialRevert_0(call) => self.expect_revert(
+                message,
+                Some(Bytes::copy_from_slice(call.revertData.as_ref())),
+                true,
+                None,
+                1,
+            ),
+            Vm::VmCalls::expectPartialRevert_1(call) => self.expect_revert(
+                message,
+                Some(Bytes::copy_from_slice(call.revertData.as_ref())),
+                true,
+                Some(call.reverter),
+                1,
+            ),
             Vm::VmCalls::deal(call) => {
                 let updated = interp
                     .host()
@@ -478,6 +551,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         if message.call_target != CHEATCODE_ADDRESS {
             self.apply_prank(interp, message);
+            self.observe_revert_depth(message);
             return None;
         }
 
@@ -494,10 +568,11 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
         message: &Message<FoundryEvmTypes>,
-        _result: &mut MessageResult<FoundryEvmTypes>,
+        result: &mut MessageResult<FoundryEvmTypes>,
     ) {
         if message.call_target != CHEATCODE_ADDRESS {
             self.finish_prank(interp, message);
+            self.finish_expected_revert(message, result, false);
         }
     }
 
@@ -506,6 +581,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
+        self.observe_revert_depth(message);
         if message.depth == 0 {
             return None;
         }
@@ -564,8 +640,9 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
         message: &Message<FoundryEvmTypes>,
-        _result: &mut MessageResult<FoundryEvmTypes>,
+        result: &mut MessageResult<FoundryEvmTypes>,
     ) {
         self.finish_prank(interp, message);
+        self.finish_expected_revert(message, result, true);
     }
 }
