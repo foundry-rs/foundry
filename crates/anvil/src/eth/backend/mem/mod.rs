@@ -4626,7 +4626,8 @@ impl<N: Network> Backend<N> {
                 )?;
                 let upgrades =
                     ChainUpgrades::new([(BaseUpgrade::Denim, ForkCondition::Timestamp(1))]);
-                BaseTime::ensure_predeploy(upgrades, 1, &mut erased)?;
+                BaseTime::ensure_predeploy(upgrades, 1, &mut erased)
+                    .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!(err))))?;
             }
             if upgrade >= BaseUpgrade::Zenith {
                 // Zenith is genesis-only and is not stored by ChainUpgrades.
