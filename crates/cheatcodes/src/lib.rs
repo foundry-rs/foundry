@@ -60,6 +60,8 @@ pub use inspector::CheatcodeAnalysis;
 
 mod json;
 
+mod prank;
+
 #[cfg(feature = "monad")]
 mod monad;
 

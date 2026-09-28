@@ -1,58 +1,7 @@
-use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
+use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account, prank::Prank};
 use alloy_primitives::Address;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use revm::context::{ContextTr, JournalTr, Transaction};
-
-/// Prank information.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Prank {
-    /// Address of the contract that initiated the prank
-    pub prank_caller: Address,
-    /// Address of `tx.origin` when the prank was initiated
-    pub prank_origin: Address,
-    /// The address to assign to `msg.sender`
-    pub new_caller: Address,
-    /// The address to assign to `tx.origin`
-    pub new_origin: Option<Address>,
-    /// The depth at which the prank was called
-    pub depth: usize,
-    /// Whether the prank stops by itself after the next call
-    pub single_call: bool,
-    /// Whether the prank should be applied to delegate call
-    pub delegate_call: bool,
-    /// Whether the prank has been used yet (false if unused)
-    pub used: bool,
-}
-
-impl Prank {
-    /// Create a new prank.
-    pub const fn new(
-        prank_caller: Address,
-        prank_origin: Address,
-        new_caller: Address,
-        new_origin: Option<Address>,
-        depth: usize,
-        single_call: bool,
-        delegate_call: bool,
-    ) -> Self {
-        Self {
-            prank_caller,
-            prank_origin,
-            new_caller,
-            new_origin,
-            depth,
-            single_call,
-            delegate_call,
-            used: false,
-        }
-    }
-
-    /// Apply the prank by setting `used` to true if it is false
-    /// Only returns self in the case it is updated (first application)
-    pub const fn first_time_applied(&self) -> Option<Self> {
-        if self.used { None } else { Some(Self { used: true, ..*self }) }
-    }
-}
 
 impl Cheatcode for prank_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {

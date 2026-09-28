@@ -6,9 +6,9 @@ use crate::{
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
         mock::{MockCallDataContext, MockCallReturnData},
-        prank::Prank,
     },
     inspector::utils::CommonCreateInput,
+    prank::Prank,
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,

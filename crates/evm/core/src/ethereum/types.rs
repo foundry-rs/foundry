@@ -12,6 +12,8 @@ use evm2_macros::instruction;
 /// Context that Foundry cheatcodes may change during a transaction.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FoundryContext {
+    /// Original sender of the transaction that owns the current execution.
+    pub transaction_origin: Option<Address>,
     /// Overrides the origin reported by the ORIGIN opcode while a prank or broadcast is active.
     pub origin_override: Option<Address>,
     /// Preserves the configured base fee when synthetic transaction accounting uses zero base fee.

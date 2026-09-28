@@ -165,6 +165,7 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
         let mut inspector = self.inspector.clone();
         let result = {
             let mut evm = EthereumFactory.create(env, Db::new(&mut state));
+            evm.ext_mut().transaction_origin = Some(tx.signer());
             if synthetic {
                 evm.ext_mut().basefee_override = Some(self.env.block.basefee);
                 evm.ext_mut().gas_price_override = Some(self.env.gas_price);
@@ -189,6 +190,7 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
         let mut inspector = self.inspector.clone();
         let (outcome, mut block, basefee_override, gas_price_override) = {
             let mut evm = EthereumFactory.create(env, Db::new(&mut self.state));
+            evm.ext_mut().transaction_origin = Some(tx.signer());
             if synthetic {
                 evm.ext_mut().basefee_override = Some(self.env.block.basefee);
                 evm.ext_mut().gas_price_override = Some(self.env.gas_price);
@@ -504,6 +506,201 @@ mod tests {
         let observed = executor.transact_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
         assert_eq!(U256::from_be_slice(&observed.output), U256::from(13));
         assert_eq!(executor.env().gas_price, U256::from(13));
+    }
+
+    #[test]
+    fn prank_changes_one_call_while_start_prank_changes_later_calls() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let target = Address::with_last_byte(0xc);
+        let replacement = Address::with_last_byte(0xd);
+        let origin = Address::with_last_byte(0xe);
+        let target_code = Bytecode::new_legacy(Bytes::from_static(&[
+            0x33, 0x5f, 0x52, 0x32, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0xf3,
+        ]));
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        for (calldata, persistent) in [
+            (Vm::prank_1Call { msgSender: replacement, txOrigin: origin }.abi_encode(), false),
+            (Vm::startPrank_1Call { msgSender: replacement, txOrigin: origin }.abi_encode(), true),
+        ] {
+            let mut state = LocalState::default();
+            state.database_mut().insert_account_info(
+                &contract,
+                AccountInfo { balance: U256::from(1), ..Default::default() }.with_code(
+                    Bytecode::new_legacy(prank_calling_contract_code(&calldata, target).into()),
+                ),
+            );
+            state.database_mut().insert_account_info(
+                &replacement,
+                AccountInfo { balance: U256::from(2), ..Default::default() },
+            );
+            state.database_mut().insert_account_info(
+                &target,
+                AccountInfo::default().with_code(target_code.clone()),
+            );
+            let executor = EthereumExecutor::new_foundry(
+                env,
+                state,
+                Arc::default(),
+                CheatcodeAccessMode::Local,
+            );
+            let result = executor.call_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+            assert!(result.status);
+            assert_eq!(result.output.len(), 128);
+            assert_eq!(&result.output[12..32], replacement.as_slice());
+            assert_eq!(&result.output[44..64], origin.as_slice());
+            let second_caller = if persistent { replacement } else { contract };
+            let second_origin = if persistent { origin } else { caller };
+            assert_eq!(&result.output[76..96], second_caller.as_slice());
+            assert_eq!(&result.output[108..128], second_origin.as_slice());
+        }
+
+        let executor = EthereumExecutor::new_foundry(
+            env,
+            LocalState::default(),
+            Arc::default(),
+            CheatcodeAccessMode::Local,
+        );
+        let result = executor
+            .call_raw(
+                caller,
+                CHEATCODE_ADDRESS,
+                Vm::prank_0Call { msgSender: replacement }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .unwrap();
+        assert!(!result.status);
+        assert_eq!(
+            result.output,
+            Error::encode("top-level prank is unsupported in evm2 execution")
+        );
+    }
+
+    #[test]
+    fn delegate_prank_changes_sender_and_storage_context() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let implementation = Address::with_last_byte(0xc);
+        let proxy = Address::with_last_byte(0xd);
+        let origin = Address::with_last_byte(0xe);
+        let calldata =
+            Vm::prank_3Call { msgSender: proxy, txOrigin: origin, delegateCall: true }.abi_encode();
+        let mut code = cheatcode_calling_contract_code(&calldata);
+        code.truncate(code.len() - calldata.len() - 1);
+        code.extend_from_slice(&[0x50, 0x60, 0x40, 0x5f, 0x5f, 0x5f, 0x73]);
+        code.extend_from_slice(implementation.as_slice());
+        code.extend_from_slice(&[0x61, 0xff, 0xff, 0xf4, 0x50, 0x60, 0x40, 0x5f, 0xf3]);
+        code[3] = code.len() as u8;
+        code.extend_from_slice(&calldata);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(
+            &contract,
+            AccountInfo::default().with_code(Bytecode::new_legacy(code.into())),
+        );
+        state.database_mut().insert_account_info(
+            &implementation,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[
+                0x60, 0x2a, 0x5f, 0x55, 0x33, 0x5f, 0x52, 0x32, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f,
+                0xf3,
+            ]))),
+        );
+        state.database_mut().insert_account_info(
+            &proxy,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[0x00]))),
+        );
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        let mut executor =
+            EthereumExecutor::new_foundry(env, state, Arc::default(), CheatcodeAccessMode::Local);
+        let result = executor.transact_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+        assert!(result.status, "{result:?}");
+        assert_eq!(&result.output[12..32], proxy.as_slice());
+        assert_eq!(&result.output[44..64], origin.as_slice());
+        assert_eq!(
+            Database::get_storage(&mut executor.state().clone(), &proxy, &U256::ZERO).unwrap(),
+            U256::from(42)
+        );
+        assert_eq!(
+            Database::get_storage(&mut executor.state().clone(), &contract, &U256::ZERO).unwrap(),
+            U256::ZERO
+        );
+    }
+
+    #[test]
+    fn prank_changes_create_and_create2_deployer() {
+        let caller = Address::with_last_byte(0xa);
+        let contract = Address::with_last_byte(0xb);
+        let replacement = Address::with_last_byte(0xc);
+        let origin = Address::with_last_byte(0xd);
+        let initcode = [0x32, 0x5f, 0x55, 0x5f, 0x5f, 0xf3];
+        let calldata = Vm::prank_1Call { msgSender: replacement, txOrigin: origin }.abi_encode();
+        let env = EthereumEnv::new(
+            SpecId::CANCUN,
+            BlockEnvExt { gas_limit: U256::from(30_000_000), ..Default::default() },
+        );
+        for create2 in [false, true] {
+            let mut code = cheatcode_calling_contract_code(&calldata);
+            code.truncate(code.len() - calldata.len() - 1);
+            code.push(0x50);
+            if create2 {
+                code.push(0x5f); // CREATE2 salt.
+            }
+            code.extend_from_slice(&[0x60, initcode.len() as u8, 0x60, 0, 0x5f, 0x39]);
+            let initcode_offset = code.len() - 3;
+            code.extend_from_slice(&[0x60, initcode.len() as u8, 0x5f, 0x5f]);
+            code.push(if create2 { 0xf5 } else { 0xf0 });
+            code.extend_from_slice(&[0x5f, 0x52, 0x32, 0x60, 0x20, 0x52, 0x60, 0x40, 0x5f, 0xf3]);
+            code[3] = code.len() as u8;
+            code[initcode_offset] = (code.len() + calldata.len()) as u8;
+            code.extend_from_slice(&calldata);
+            code.extend_from_slice(&initcode);
+
+            let mut state = LocalState::default();
+            state.database_mut().insert_account_info(
+                &contract,
+                AccountInfo::default().with_code(Bytecode::new_legacy(code.into())),
+            );
+            let mut executor = EthereumExecutor::new_foundry(
+                env,
+                state,
+                Arc::default(),
+                CheatcodeAccessMode::Local,
+            );
+            let result = executor.transact_raw(caller, contract, Bytes::new(), U256::ZERO).unwrap();
+            assert!(result.status, "{result:?}");
+            let expected = if create2 {
+                replacement
+                    .create2(alloy_primitives::B256::ZERO, alloy_primitives::keccak256(initcode))
+            } else {
+                replacement.create(0)
+            };
+            assert_eq!(result.output.len(), 64);
+            assert_eq!(&result.output[12..32], expected.as_slice());
+            assert_eq!(
+                U256::from_be_slice(&result.output[32..64]),
+                U256::from_be_slice(caller.as_slice())
+            );
+            assert!(
+                Database::get_account(&mut executor.state().clone(), &expected).unwrap().is_some()
+            );
+            assert_eq!(
+                Database::get_storage(&mut executor.state().clone(), &expected, &U256::ZERO)
+                    .unwrap(),
+                U256::from_be_slice(origin.as_slice())
+            );
+            assert_eq!(
+                Database::get_account(&mut executor.state().clone(), &replacement)
+                    .unwrap()
+                    .unwrap()
+                    .nonce,
+                1
+            );
+        }
     }
 
     #[test]
@@ -877,6 +1074,21 @@ mod tests {
         ];
         code.extend_from_slice(CHEATCODE_ADDRESS.as_slice());
         code.extend_from_slice(&[0x61, 0x27, 0x10, 0xf1, 0x00]);
+        code[3] = code.len() as u8;
+        code.extend_from_slice(calldata);
+        code
+    }
+
+    fn prank_calling_contract_code(calldata: &[u8], target: Address) -> Vec<u8> {
+        let mut code = cheatcode_calling_contract_code(calldata);
+        code.truncate(code.len() - calldata.len() - 1);
+        code.push(0x50);
+        for offset in [0, 64] {
+            code.extend_from_slice(&[0x60, 0x40, 0x60, offset, 0x5f, 0x5f, 0x60, 0x01, 0x73]);
+            code.extend_from_slice(target.as_slice());
+            code.extend_from_slice(&[0x61, 0x27, 0x10, 0xf1, 0x50]);
+        }
+        code.extend_from_slice(&[0x60, 0x80, 0x5f, 0xf3]);
         code[3] = code.len() as u8;
         code.extend_from_slice(calldata);
         code

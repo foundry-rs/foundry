@@ -54,4 +54,30 @@ impl Inspector<FoundryEvmTypes> for EthereumInspectorStack {
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         self.cheatcodes.call(interp, message)
     }
+
+    fn call_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        result: &mut MessageResult<FoundryEvmTypes>,
+    ) {
+        self.cheatcodes.call_end(interp, message, result);
+    }
+
+    fn create(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) -> Option<MessageResult<FoundryEvmTypes>> {
+        self.cheatcodes.create(interp, message)
+    }
+
+    fn create_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        result: &mut MessageResult<FoundryEvmTypes>,
+    ) {
+        self.cheatcodes.create_end(interp, message, result);
+    }
 }

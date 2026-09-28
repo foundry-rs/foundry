@@ -1,19 +1,22 @@
 //! Cheatcode inspection for Ethereum evm2 execution.
 
-use crate::{CheatsConfig, Error, Vm, dispatch};
+use crate::{CheatsConfig, Error, Vm, dispatch, prank::Prank};
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashSet};
 use alloy_sol_types::{SolInterface, SolValue};
 use evm2::{
-    Inspector,
+    EvmFeatures, Inspector,
     bytecode::Bytecode,
     evm::{AccountInfo, Database},
-    interpreter::{GasTracker, InstrStop, Interpreter, Message, MessageResult, MessageResultExt},
+    interpreter::{
+        GasTracker, InstrStop, Interpreter, Message, MessageKind, MessageResult, MessageResultExt,
+        derive_create_destination,
+    },
 };
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, MAGIC_ASSUME},
     ethereum::{FoundryEvmTypes, LocalState},
 };
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 /// Cheatcode state retained across accepted evm2 transactions.
 #[derive(Clone, Debug)]
@@ -21,6 +24,7 @@ pub struct EthereumCheatcodes {
     config: Arc<CheatsConfig>,
     access_mode: CheatcodeAccessMode,
     allowed_callers: AddressHashSet,
+    pranks: BTreeMap<usize, Prank>,
 }
 
 /// Caller authorization policy for the active execution database.
@@ -35,7 +39,12 @@ pub enum CheatcodeAccessMode {
 impl EthereumCheatcodes {
     /// Creates the cheatcode inspector for an execution session.
     pub fn new(config: Arc<CheatsConfig>, access_mode: CheatcodeAccessMode) -> Self {
-        Self { config, access_mode, allowed_callers: AddressHashSet::default() }
+        Self {
+            config,
+            access_mode,
+            allowed_callers: AddressHashSet::default(),
+            pranks: BTreeMap::new(),
+        }
     }
 
     /// Updates caller authorization when the active database changes.
@@ -96,6 +105,15 @@ impl EthereumCheatcodes {
                     | Vm::VmCalls::store(_)
                     | Vm::VmCalls::setNonce(_)
                     | Vm::VmCalls::setNonceUnsafe(_)
+                    | Vm::VmCalls::prank_0(_)
+                    | Vm::VmCalls::prank_1(_)
+                    | Vm::VmCalls::prank_2(_)
+                    | Vm::VmCalls::prank_3(_)
+                    | Vm::VmCalls::startPrank_0(_)
+                    | Vm::VmCalls::startPrank_1(_)
+                    | Vm::VmCalls::startPrank_2(_)
+                    | Vm::VmCalls::startPrank_3(_)
+                    | Vm::VmCalls::stopPrank(_)
             )
         {
             return (InstrStop::StateChangeDuringStaticCall, Bytes::new());
@@ -223,6 +241,44 @@ impl EthereumCheatcodes {
                     }
                 }
             }
+            Vm::VmCalls::prank_0(call) => {
+                self.start_prank(interp, message, call.msgSender, None, true, false)
+            }
+            Vm::VmCalls::prank_1(call) => {
+                self.start_prank(interp, message, call.msgSender, Some(call.txOrigin), true, false)
+            }
+            Vm::VmCalls::prank_2(call) => {
+                self.start_prank(interp, message, call.msgSender, None, true, call.delegateCall)
+            }
+            Vm::VmCalls::prank_3(call) => self.start_prank(
+                interp,
+                message,
+                call.msgSender,
+                Some(call.txOrigin),
+                true,
+                call.delegateCall,
+            ),
+            Vm::VmCalls::startPrank_0(call) => {
+                self.start_prank(interp, message, call.msgSender, None, false, false)
+            }
+            Vm::VmCalls::startPrank_1(call) => {
+                self.start_prank(interp, message, call.msgSender, Some(call.txOrigin), false, false)
+            }
+            Vm::VmCalls::startPrank_2(call) => {
+                self.start_prank(interp, message, call.msgSender, None, false, call.delegateCall)
+            }
+            Vm::VmCalls::startPrank_3(call) => self.start_prank(
+                interp,
+                message,
+                call.msgSender,
+                Some(call.txOrigin),
+                false,
+                call.delegateCall,
+            ),
+            Vm::VmCalls::stopPrank(_) => {
+                self.pranks.remove(&usize::from(message.depth.saturating_sub(1)));
+                (InstrStop::Return, Bytes::new())
+            }
             _ => (
                 InstrStop::Revert,
                 Error::encode(format!("vm.{name}: unsupported in evm2 execution")),
@@ -259,6 +315,133 @@ impl EthereumCheatcodes {
             }
         }
     }
+
+    fn start_prank(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        new_caller: Address,
+        new_origin: Option<Address>,
+        single_call: bool,
+        delegate_call: bool,
+    ) -> (InstrStop, Bytes) {
+        if message.depth == 0 {
+            return (
+                InstrStop::Revert,
+                Error::encode("top-level prank is unsupported in evm2 execution"),
+            );
+        }
+        let depth = usize::from(message.depth.saturating_sub(1));
+        if let Some(prank) = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank) {
+            if !prank.used {
+                return (
+                    InstrStop::Revert,
+                    Error::encode("cannot overwrite a prank until it is applied at least once"),
+                );
+            }
+            if single_call != prank.single_call {
+                return (
+                    InstrStop::Revert,
+                    Error::encode(
+                        "cannot override an ongoing prank with a single vm.prank; use vm.startPrank to override the current prank",
+                    ),
+                );
+            }
+        }
+        let loaded =
+            interp.host().state_mut().account(&new_caller, false).and_then(|mut account| {
+                account.touch();
+                if delegate_call {
+                    account.load_code().map(|code| !code.is_empty())
+                } else {
+                    Ok(true)
+                }
+            });
+        match loaded {
+            Ok(true) => {}
+            Ok(false) => {
+                return (
+                    InstrStop::Revert,
+                    Error::encode("cannot `prank` delegate call from an EOA"),
+                );
+            }
+            Err(error) => {
+                interp.host().set_error_code(error);
+                return (InstrStop::FatalExternalError, Bytes::new());
+            }
+        }
+        let context = interp.host().ext();
+        let origin =
+            context.origin_override.or(context.transaction_origin).unwrap_or(message.caller);
+        self.pranks.insert(
+            depth,
+            Prank::new(
+                message.caller,
+                origin,
+                new_caller,
+                new_origin,
+                depth,
+                single_call,
+                delegate_call,
+            ),
+        );
+        (InstrStop::Return, Bytes::new())
+    }
+
+    fn apply_prank(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) {
+        if message.depth == 0 {
+            return;
+        }
+        let depth = usize::from(message.depth.saturating_sub(1));
+        let Some(prank) = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank) else {
+            return;
+        };
+        let delegate_call = prank.delegate_call
+            && depth == prank.depth
+            && message.kind == MessageKind::DelegateCall;
+        if !delegate_call && message.caller != prank.prank_caller {
+            return;
+        }
+        if delegate_call {
+            message.destination = prank.new_caller;
+            message.caller = prank.new_caller;
+        } else if depth == prank.depth {
+            message.caller = prank.new_caller;
+        }
+        if let Some(origin) = prank.new_origin {
+            interp.host().ext_mut().origin_override = Some(origin);
+        }
+        if (depth == prank.depth || prank.new_origin.is_some())
+            && let Some(applied) = prank.first_time_applied()
+        {
+            self.pranks.insert(prank.depth, applied);
+        }
+    }
+
+    fn finish_prank(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+    ) {
+        if message.depth == 0 {
+            return;
+        }
+        let depth = usize::from(message.depth.saturating_sub(1));
+        let Some(prank) = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank) else {
+            return;
+        };
+        if depth != prank.depth {
+            return;
+        }
+        interp.host().ext_mut().origin_override = Some(prank.prank_origin);
+        if prank.single_call {
+            self.pranks.remove(&depth);
+        }
+    }
 }
 
 impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
@@ -268,6 +451,7 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &mut Message<FoundryEvmTypes>,
     ) -> Option<MessageResult<FoundryEvmTypes>> {
         if message.call_target != CHEATCODE_ADDRESS {
+            self.apply_prank(interp, message);
             return None;
         }
 
@@ -278,5 +462,84 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
             output,
             ..Default::default()
         })
+    }
+
+    fn call_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        _result: &mut MessageResult<FoundryEvmTypes>,
+    ) {
+        if message.call_target != CHEATCODE_ADDRESS {
+            self.finish_prank(interp, message);
+        }
+    }
+
+    fn create(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &mut Message<FoundryEvmTypes>,
+    ) -> Option<MessageResult<FoundryEvmTypes>> {
+        if message.depth == 0 {
+            return None;
+        }
+        let depth = usize::from(message.depth.saturating_sub(1));
+        let prank = self.pranks.range(..=depth).next_back().map(|(_, prank)| *prank)?;
+        if message.caller != prank.prank_caller {
+            return None;
+        }
+        if depth == prank.depth && interp.host().feature(EvmFeatures::EIP8037) {
+            // The parent opcode already charged state gas for the original destination.
+            return Some(MessageResultExt {
+                stop: InstrStop::Revert,
+                gas: GasTracker::new(message.gas_limit),
+                output: Error::encode(
+                    "prank before CREATE with EIP-8037 is unsupported in evm2 execution",
+                ),
+                ..Default::default()
+            });
+        }
+        if depth == prank.depth {
+            let nonce =
+                interp.host().state_mut().account(&prank.new_caller, false).map(|a| a.nonce());
+            let nonce = match nonce {
+                Ok(nonce) => nonce,
+                Err(error) => {
+                    interp.host().set_error_code(error);
+                    return Some(MessageResultExt {
+                        stop: InstrStop::FatalExternalError,
+                        gas: GasTracker::new(message.gas_limit),
+                        ..Default::default()
+                    });
+                }
+            };
+            message.caller = prank.new_caller;
+            message.destination = derive_create_destination(
+                message.kind,
+                &message.caller,
+                &message.salt,
+                &message.input,
+                nonce,
+            );
+            message.call_target = message.destination;
+        }
+        if let Some(origin) = prank.new_origin {
+            interp.host().ext_mut().origin_override = Some(origin);
+        }
+        if (depth == prank.depth || prank.new_origin.is_some())
+            && let Some(applied) = prank.first_time_applied()
+        {
+            self.pranks.insert(prank.depth, applied);
+        }
+        None
+    }
+
+    fn create_end(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        _result: &mut MessageResult<FoundryEvmTypes>,
+    ) {
+        self.finish_prank(interp, message);
     }
 }
