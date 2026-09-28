@@ -1,8 +1,11 @@
 use crate::sequence::SequenceData;
+use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::Network;
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{B256, Bytes, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
+use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -26,15 +29,21 @@ struct RecoveryPlan<N: Network> {
     generation: B256,
     multi: bool,
     batch: bool,
-    deployments: Vec<RecoveryDeployment>,
+    deployments: Vec<RecoveryDeployment<N>>,
     data: SequenceData<N>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct RecoveryDeployment {
+#[serde(bound(
+    serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
+    deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+))]
+struct RecoveryDeployment<N: Network> {
     chain: u64,
     batch_id: Option<u32>,
     operations: Vec<RecoveryOperation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attempts: Vec<SubmissionAttempt<N::TransactionRequest>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -44,10 +53,28 @@ struct RecoveryOperation {
     rpc: String,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct OperationId {
     sequence: u32,
     index: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SignedPayload {
+    pub(crate) payload: Bytes,
+    pub(crate) hash: B256,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SubmissionAttempt<T> {
+    members: Vec<OperationId>,
+    kind: AttemptKind<T>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum AttemptKind<T> {
+    Signed { request: Option<T>, payload: SignedPayload },
 }
 
 /// Owns the authoritative recovery snapshot and its process-lifetime writer lock.
@@ -100,7 +127,11 @@ where
         paths: &(PathBuf, PathBuf),
         batch: bool,
         lock: RecoveryLock,
-    ) -> Result<Option<Self>> {
+    ) -> Result<Option<Self>>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let pending = pending_path(&lock.path);
         let (mut plan, recover_pending) = if pending.exists() {
             (load_plan(&pending)?, true)
@@ -112,6 +143,7 @@ where
         plan.restore_sensitive();
         plan.data.set_paths(paths.clone());
         plan.validate(batch)?;
+        plan.validate_signed_payloads()?;
         if recover_pending {
             commit_pending_plan(&pending, &lock.path)?;
         }
@@ -143,6 +175,72 @@ where
     pub(crate) fn save(&self) -> Result<()> {
         self.plan.validate(self.plan.batch)?;
         write_snapshot(&self.path, &self.plan)
+    }
+
+    pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
+        let deployment = self.plan.deployments.get(sequence)?;
+        let id = deployment.operations.get(index)?.id;
+        deployment.attempts.iter().find_map(|attempt| {
+            if !attempt.members.contains(&id) {
+                return None;
+            }
+            let AttemptKind::Signed { payload, .. } = &attempt.kind;
+            Some(payload)
+        })
+    }
+
+    pub(crate) fn submission_hashes(&self, sequence: usize) -> Vec<B256> {
+        self.plan
+            .deployments
+            .get(sequence)
+            .into_iter()
+            .flat_map(|deployment| &deployment.attempts)
+            .map(|attempt| match &attempt.kind {
+                AttemptKind::Signed { payload, .. } => payload.hash,
+            })
+            .collect()
+    }
+
+    pub(crate) fn persist_signed_payload(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        let deployment = self
+            .plan
+            .deployments
+            .get(sequence)
+            .context("signed payload deployment is not in the recovery snapshot")?;
+        let operation = deployment
+            .operations
+            .get(index)
+            .context("signed payload operation is not in the recovery snapshot")?;
+        let transaction = &self.plan.data.sequences()[sequence].transactions[index];
+        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain)?;
+        if let Some(existing) = self.signed_payload(sequence, index) {
+            if existing != &signed {
+                bail!("refusing to replace an existing signed payload");
+            }
+            return Ok(existing.hash);
+        }
+        let id = operation.id;
+        if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
+            bail!("refusing to replace an existing submission attempt");
+        }
+        self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
+            members: vec![id],
+            kind: AttemptKind::Signed { request: None, payload: signed },
+        });
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.pop();
+            return Err(error);
+        }
+        Ok(self.signed_payload(sequence, index).expect("signed payload was persisted").hash)
     }
 
     pub(crate) fn prepare_relocation(
@@ -225,6 +323,7 @@ where
                 Ok(RecoveryDeployment {
                     chain: deployment.chain,
                     batch_id: batch.then(|| u32::try_from(sequence).expect("too many sequences")),
+                    attempts: Vec::new(),
                     operations: deployment
                         .transactions
                         .iter()
@@ -272,9 +371,47 @@ where
         {
             bail!("recovery snapshot contains inconsistent generations");
         }
+        let mut saved = self.deployments.clone();
+        for deployment in &mut saved {
+            deployment.attempts.clear();
+        }
         let expected = Self::new(self.data.clone(), self.batch, self.generation)?;
-        if serde_json::to_value(&self.deployments)? != serde_json::to_value(expected.deployments)? {
+        if serde_json::to_value(saved)? != serde_json::to_value(expected.deployments)? {
             bail!("recovery snapshot does not match the script operations; refusing to resume");
+        }
+        Ok(())
+    }
+
+    fn validate_signed_payloads(&self) -> Result<()>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        for (sequence, deployment) in self.deployments.iter().enumerate() {
+            for attempt in &deployment.attempts {
+                let [member] = attempt.members.as_slice() else {
+                    bail!("recovery snapshot attempt has invalid operation membership");
+                };
+                if member.sequence as usize != sequence {
+                    bail!("recovery snapshot attempt has invalid operation membership");
+                }
+                deployment
+                    .operations
+                    .get(member.index as usize)
+                    .filter(|operation| operation.id == *member)
+                    .context("recovery snapshot attempt has invalid operation membership")?;
+                let transaction =
+                    &self.data.sequences()[sequence].transactions[member.index as usize];
+                let AttemptKind::Signed { payload, .. } = &attempt.kind;
+                if validate_signed_payload::<N>(
+                    payload.payload.clone(),
+                    transaction,
+                    deployment.chain,
+                )? != *payload
+                {
+                    bail!("recovery snapshot signed payload does not match its hash");
+                }
+            }
         }
         Ok(())
     }
@@ -356,6 +493,41 @@ fn recovery_path_from_sensitive(sensitive_path: &Path) -> Result<PathBuf> {
     Ok(sensitive_path.with_file_name(format!("{}.recovery.json", filename.to_string_lossy())))
 }
 
+fn validate_signed_payload<N: Network>(
+    payload: Bytes,
+    planned: &TransactionWithMetadata<N>,
+    chain: u64,
+) -> Result<SignedPayload>
+where
+    N::TxEnvelope: Decodable2718 + Encodable2718 + SignerRecoverable,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let envelope = N::TxEnvelope::decode_2718_exact(&payload)
+        .wrap_err("recovery snapshot contains an invalid signed payload")?;
+    let signer = envelope
+        .recover_signer()
+        .wrap_err("recovery snapshot signed payload has an invalid signature")?;
+    let transaction = planned.tx();
+    let chain_matches = match transaction {
+        TransactionMaybeSigned::Signed { tx, .. } => {
+            envelope.trie_hash() == tx.trie_hash() && tx.chain_id().is_none_or(|id| id == chain)
+        }
+        TransactionMaybeSigned::Unsigned(_) => envelope.chain_id() == Some(chain),
+    };
+    if transaction.from() != Some(signer)
+        || !chain_matches
+        || transaction.nonce() != Some(envelope.nonce())
+        || transaction.to() != envelope.to()
+        || transaction.value().unwrap_or_default() != envelope.value()
+        || transaction.input().cloned().unwrap_or_default() != *envelope.input()
+        || transaction.authorization_list().as_deref().unwrap_or_default()
+            != envelope.authorization_list().unwrap_or_default()
+    {
+        bail!("signed payload does not match its planned transaction");
+    }
+    Ok(SignedPayload { hash: envelope.trie_hash(), payload })
+}
+
 fn write_snapshot<N: Network>(path: &Path, plan: &RecoveryPlan<N>) -> Result<()>
 where
     N::TransactionRequest: Serialize,
@@ -391,8 +563,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::TxEnvelope;
     use alloy_network::Ethereum;
-    use foundry_common::TransactionMaybeSigned;
+    use alloy_primitives::hex;
+    use alloy_rpc_types::TransactionRequest;
+
+    const SIGNED_TX: &[u8] = &hex!(
+        "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
+    );
+    const OTHER_SIGNED_TX: &[u8] = &hex!(
+        "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
+    );
 
     fn sequence(dir: &Path) -> SequenceData<Ethereum> {
         let mut transaction = TransactionWithMetadata::from_tx_request(
@@ -401,6 +582,23 @@ mod tests {
         transaction.rpc = "http://localhost:8545".to_string();
         let mut sequence = forge_script_sequence::ScriptSequence::default();
         sequence.transactions.push_back(transaction);
+        sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
+        SequenceData::Single(sequence)
+    }
+
+    fn signed_sequence(dir: &Path) -> SequenceData<Ethereum> {
+        let transactions = [SIGNED_TX, OTHER_SIGNED_TX].map(|payload| {
+            let envelope = TxEnvelope::decode_2718_exact(payload).unwrap();
+            let from = envelope.recover_signer().unwrap();
+            let mut request: TransactionRequest = envelope.into();
+            request.from = Some(from);
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request))
+        });
+        let mut sequence = forge_script_sequence::ScriptSequence {
+            chain: 1,
+            transactions: transactions.into(),
+            ..Default::default()
+        };
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
         SequenceData::Single(sequence)
     }
@@ -527,5 +725,32 @@ mod tests {
         assert_eq!(store.path, destination_snapshot);
         assert!(destination_snapshot.exists());
         RecoveryLock::acquire(&source_paths).unwrap();
+    }
+
+    #[test]
+    fn signed_payload_is_immutable_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let expected_hash = {
+            let mut store = RecoveryStore::create(data, false).unwrap();
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            hash
+        };
+
+        let store = load(&paths, false).unwrap();
+        let signed = store.signed_payload(0, 0).unwrap();
+        assert_eq!(signed.payload.as_ref(), SIGNED_TX);
+        assert_eq!(signed.hash, expected_hash);
+    }
+
+    #[test]
+    fn signed_payload_is_bound_to_its_planned_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
+
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
     }
 }

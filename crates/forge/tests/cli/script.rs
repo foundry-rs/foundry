@@ -1252,7 +1252,7 @@ Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
 "#]]);
 });
 
-forgetest_async!(resume_recovers_checkpoint_after_process_interruption, |prj, cmd| {
+forgetest_async!(resume_replays_dropped_signed_checkpoint, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(
         "InterruptedResume.s.sol",
@@ -1341,8 +1341,9 @@ contract InterruptedResume is Script {
     std::fs::remove_file(&path).unwrap();
     std::fs::remove_file(&sensitive_path).unwrap();
 
-    api.mine_one().await.unwrap();
+    api.anvil_drop_transaction(first_hash.as_str().unwrap().parse().unwrap()).await.unwrap();
     api.anvil_set_auto_mine(true).await.unwrap();
+    prj.update_config(|config| config.transaction_timeout = 1);
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "InterruptedResume",
@@ -1360,7 +1361,7 @@ contract InterruptedResume is Script {
     assert!(sequence["transactions"][1]["hash"].is_string());
     assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
     assert!(sequence["pending"].as_array().unwrap().is_empty());
-    assert_eq!(submissions.lock().unwrap().len(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 3);
     let provider = handle.http_provider();
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
     assert!(!provider.get_code_at(first_address).await.unwrap().is_empty());
