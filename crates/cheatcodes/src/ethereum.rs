@@ -1,12 +1,12 @@
 //! Cheatcode inspection for Ethereum evm2 execution.
 
-use crate::{CheatsConfig, Error, Vm, dispatch, prank::Prank};
+use crate::{CheatsConfig, Error, Vm, dispatch, fs::get_artifact_code, prank::Prank};
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressHashSet};
-use alloy_sol_types::{SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use evm2::{
     EvmFeatures, Inspector,
     bytecode::Bytecode,
-    evm::{AccountInfo, Database},
+    evm::{AccountInfo, Database, inspector::CallAction},
     interpreter::{
         GasTracker, InstrStop, Interpreter, Message, MessageKind, MessageResult, MessageResultExt,
         derive_create_destination,
@@ -85,56 +85,9 @@ impl EthereumCheatcodes {
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
         message: &Message<FoundryEvmTypes>,
+        decoded: Vm::VmCalls,
     ) -> (InstrStop, Bytes) {
-        let decoded = match Vm::VmCalls::abi_decode(&message.input) {
-            Ok(decoded) => decoded,
-            Err(error) => return (InstrStop::Revert, Error::encode(error.to_string())),
-        };
-        let cheat = dispatch::metadata(&decoded);
-        let name = dispatch::name(cheat);
-        if self.access_mode == CheatcodeAccessMode::Forked
-            && !self.allowed_callers.contains(&message.caller)
-        {
-            return (
-                InstrStop::Revert,
-                Error::encode(format!("vm.{name}: cheatcode access denied for {}", message.caller)),
-            );
-        }
-        if self.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
-            return (
-                InstrStop::Revert,
-                Error::encode(format!("vm.{name}: disabled during restricted execution")),
-            );
-        }
-        if interp.is_static()
-            && matches!(
-                &decoded,
-                Vm::VmCalls::deal(_)
-                    | Vm::VmCalls::warp(_)
-                    | Vm::VmCalls::coinbase(_)
-                    | Vm::VmCalls::difficulty(_)
-                    | Vm::VmCalls::prevrandao_0(_)
-                    | Vm::VmCalls::prevrandao_1(_)
-                    | Vm::VmCalls::fee(_)
-                    | Vm::VmCalls::txGasPrice(_)
-                    | Vm::VmCalls::allowCheatcodes(_)
-                    | Vm::VmCalls::store(_)
-                    | Vm::VmCalls::setNonce(_)
-                    | Vm::VmCalls::setNonceUnsafe(_)
-                    | Vm::VmCalls::prank_0(_)
-                    | Vm::VmCalls::prank_1(_)
-                    | Vm::VmCalls::prank_2(_)
-                    | Vm::VmCalls::prank_3(_)
-                    | Vm::VmCalls::startPrank_0(_)
-                    | Vm::VmCalls::startPrank_1(_)
-                    | Vm::VmCalls::startPrank_2(_)
-                    | Vm::VmCalls::startPrank_3(_)
-                    | Vm::VmCalls::stopPrank(_)
-            )
-        {
-            return (InstrStop::StateChangeDuringStaticCall, Bytes::new());
-        }
-
+        let name = dispatch::name(dispatch::metadata(&decoded));
         match decoded {
             Vm::VmCalls::assume(call) => {
                 if call.condition {
@@ -398,6 +351,119 @@ impl EthereumCheatcodes {
         }
     }
 
+    fn deployment_args(
+        decoded: &Vm::VmCalls,
+    ) -> Option<(&str, Option<&Bytes>, U256, Option<B256>)> {
+        match decoded {
+            Vm::VmCalls::deployCode_0(call) => Some((&call.artifactPath, None, U256::ZERO, None)),
+            Vm::VmCalls::deployCode_1(call) => {
+                Some((&call.artifactPath, Some(&call.constructorArgs), U256::ZERO, None))
+            }
+            Vm::VmCalls::deployCode_2(call) => Some((&call.artifactPath, None, call.value, None)),
+            Vm::VmCalls::deployCode_3(call) => {
+                Some((&call.artifactPath, Some(&call.constructorArgs), call.value, None))
+            }
+            Vm::VmCalls::deployCode_4(call) => {
+                Some((&call.artifactPath, None, U256::ZERO, Some(call.salt)))
+            }
+            Vm::VmCalls::deployCode_5(call) => {
+                Some((&call.artifactPath, Some(&call.constructorArgs), U256::ZERO, Some(call.salt)))
+            }
+            Vm::VmCalls::deployCode_6(call) => {
+                Some((&call.artifactPath, None, call.value, Some(call.salt)))
+            }
+            Vm::VmCalls::deployCode_7(call) => {
+                Some((&call.artifactPath, Some(&call.constructorArgs), call.value, Some(call.salt)))
+            }
+            _ => None,
+        }
+    }
+
+    fn is_deployment_call(input: &[u8]) -> bool {
+        input.get(..4).is_some_and(|selector| {
+            [
+                Vm::deployCode_0Call::SELECTOR,
+                Vm::deployCode_1Call::SELECTOR,
+                Vm::deployCode_2Call::SELECTOR,
+                Vm::deployCode_3Call::SELECTOR,
+                Vm::deployCode_4Call::SELECTOR,
+                Vm::deployCode_5Call::SELECTOR,
+                Vm::deployCode_6Call::SELECTOR,
+                Vm::deployCode_7Call::SELECTOR,
+            ]
+            .iter()
+            .any(|candidate| candidate.as_slice() == selector)
+        })
+    }
+
+    fn deploy_code(
+        &mut self,
+        interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
+        message: &Message<FoundryEvmTypes>,
+        path: &str,
+        args: Option<&Bytes>,
+        value: U256,
+        salt: Option<B256>,
+    ) -> CallAction<FoundryEvmTypes> {
+        let mut init_code = match get_artifact_code(&self.config, path, false) {
+            Ok(code) => code.to_vec(),
+            Err(error) => {
+                return CallAction::Override(Self::result(
+                    message,
+                    InstrStop::Revert,
+                    Error::encode(error.to_string()),
+                ));
+            }
+        };
+        if let Some(args) = args {
+            init_code.extend_from_slice(args);
+        }
+        let init_code = Bytes::from(init_code);
+        let nonce = match interp.host().state_mut().account_info_untracked(&message.caller) {
+            Ok(account) => account.map_or(0, |account| account.nonce),
+            Err(error) => {
+                interp.host().set_error_code(error);
+                return CallAction::Override(Self::result(
+                    message,
+                    InstrStop::FatalExternalError,
+                    Bytes::new(),
+                ));
+            }
+        };
+        let kind = if salt.is_some() { MessageKind::Create2 } else { MessageKind::Create };
+        let salt = salt.unwrap_or_default();
+        let destination =
+            derive_create_destination(kind, &message.caller, &salt, &init_code, nonce);
+        CallAction::Execute(Box::new(Message::<FoundryEvmTypes> {
+            kind,
+            depth: message.depth,
+            gas_limit: message.gas_limit,
+            reservoir: message.reservoir,
+            destination,
+            call_target: destination,
+            caller: message.caller,
+            input: init_code.clone(),
+            value,
+            code: Bytecode::new_legacy(init_code),
+            code_address: destination,
+            salt,
+            ..Default::default()
+        }))
+    }
+
+    fn result(
+        message: &Message<FoundryEvmTypes>,
+        stop: InstrStop,
+        output: Bytes,
+    ) -> MessageResult<FoundryEvmTypes> {
+        MessageResultExt {
+            stop,
+            gas: GasTracker::new(message.gas_limit),
+            output,
+            ..Default::default()
+        }
+    }
+
     fn skip(
         &mut self,
         message: &Message<FoundryEvmTypes>,
@@ -593,24 +659,87 @@ impl EthereumCheatcodes {
 }
 
 impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
-    fn call(
+    fn call_action(
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
         message: &mut Message<FoundryEvmTypes>,
-    ) -> Option<MessageResult<FoundryEvmTypes>> {
+    ) -> CallAction<FoundryEvmTypes> {
         if message.call_target != CHEATCODE_ADDRESS {
             self.apply_prank(interp, message);
             self.observe_revert_depth(message);
-            return None;
+            return CallAction::Continue;
         }
 
-        let (stop, output) = self.apply(interp, message);
-        Some(MessageResultExt {
-            stop,
-            gas: GasTracker::new(message.gas_limit),
-            output,
-            ..Default::default()
-        })
+        let decoded = match Vm::VmCalls::abi_decode(&message.input) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                return CallAction::Override(Self::result(
+                    message,
+                    InstrStop::Revert,
+                    Error::encode(error.to_string()),
+                ));
+            }
+        };
+        let cheat = dispatch::metadata(&decoded);
+        let name = dispatch::name(cheat);
+        let failure = if self.access_mode == CheatcodeAccessMode::Forked
+            && !self.allowed_callers.contains(&message.caller)
+        {
+            Some((
+                InstrStop::Revert,
+                Error::encode(format!("vm.{name}: cheatcode access denied for {}", message.caller)),
+            ))
+        } else if self.config.blocked_cheatcodes.contains(&cheat.func.selector_bytes) {
+            Some((
+                InstrStop::Revert,
+                Error::encode(format!("vm.{name}: disabled during restricted execution")),
+            ))
+        } else if interp.is_static()
+            && matches!(
+                &decoded,
+                Vm::VmCalls::deal(_)
+                    | Vm::VmCalls::warp(_)
+                    | Vm::VmCalls::coinbase(_)
+                    | Vm::VmCalls::difficulty(_)
+                    | Vm::VmCalls::prevrandao_0(_)
+                    | Vm::VmCalls::prevrandao_1(_)
+                    | Vm::VmCalls::fee(_)
+                    | Vm::VmCalls::txGasPrice(_)
+                    | Vm::VmCalls::allowCheatcodes(_)
+                    | Vm::VmCalls::store(_)
+                    | Vm::VmCalls::setNonce(_)
+                    | Vm::VmCalls::setNonceUnsafe(_)
+                    | Vm::VmCalls::prank_0(_)
+                    | Vm::VmCalls::prank_1(_)
+                    | Vm::VmCalls::prank_2(_)
+                    | Vm::VmCalls::prank_3(_)
+                    | Vm::VmCalls::startPrank_0(_)
+                    | Vm::VmCalls::startPrank_1(_)
+                    | Vm::VmCalls::startPrank_2(_)
+                    | Vm::VmCalls::startPrank_3(_)
+                    | Vm::VmCalls::stopPrank(_)
+                    | Vm::VmCalls::deployCode_0(_)
+                    | Vm::VmCalls::deployCode_1(_)
+                    | Vm::VmCalls::deployCode_2(_)
+                    | Vm::VmCalls::deployCode_3(_)
+                    | Vm::VmCalls::deployCode_4(_)
+                    | Vm::VmCalls::deployCode_5(_)
+                    | Vm::VmCalls::deployCode_6(_)
+                    | Vm::VmCalls::deployCode_7(_)
+            )
+        {
+            Some((InstrStop::StateChangeDuringStaticCall, Bytes::new()))
+        } else {
+            None
+        };
+        if let Some((stop, output)) = failure {
+            return CallAction::Override(Self::result(message, stop, output));
+        }
+        if let Some((path, args, value, salt)) = Self::deployment_args(&decoded) {
+            return self.deploy_code(interp, message, path, args, value, salt);
+        }
+        let (stop, output) = self.apply(interp, message, decoded);
+        CallAction::Override(Self::result(message, stop, output))
     }
 
     fn call_end(
@@ -619,7 +748,15 @@ impl Inspector<FoundryEvmTypes> for EthereumCheatcodes {
         message: &Message<FoundryEvmTypes>,
         result: &mut MessageResult<FoundryEvmTypes>,
     ) {
-        if message.call_target != CHEATCODE_ADDRESS {
+        if message.call_target == CHEATCODE_ADDRESS {
+            if Self::is_deployment_call(&message.input)
+                && let Some(address) = result.created_address.filter(|_| result.is_success())
+            {
+                result.output = address.abi_encode().into();
+                result.created_address = None;
+                result.stop = InstrStop::Return;
+            }
+        } else {
             self.finish_prank(interp, message);
             self.finish_expected_revert(message, result, false);
         }

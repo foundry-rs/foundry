@@ -2,7 +2,8 @@
 
 use super::string::parse;
 use crate::{
-    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, inspector::exec_create,
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsConfig, CheatsCtxt, Result, Vm::*,
+    inspector::exec_create,
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
@@ -380,24 +381,24 @@ impl Cheatcode for getArtifactPathByDeployedCodeCall {
 impl Cheatcode for getCodeCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
-        Ok(get_artifact_code(state, path, false)?.abi_encode())
+        Ok(get_artifact_code(&state.config, path, false)?.abi_encode())
     }
 }
 
 impl Cheatcode for getDeployedCodeCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
-        Ok(get_artifact_code(state, path, true)?.abi_encode())
+        Ok(get_artifact_code(&state.config, path, true)?.abi_encode())
     }
 }
 
 impl Cheatcode for getSelectorsCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
-        let selectors: Vec<FixedBytes<4>> = match get_artifact_source(state, path)? {
+        let selectors: Vec<FixedBytes<4>> = match get_artifact_source(&state.config, path)? {
             ArtifactSource::InMemory(data) => data.abi.functions().map(|f| f.selector()).collect(),
             ArtifactSource::Disk(path) => {
-                let data = read_artifact_file(state, &path)?;
+                let data = read_artifact_file(&state.config, &path)?;
                 // Parse as raw JSON rather than `ContractObject` so we can still read selectors
                 // from artifacts with unlinked bytecode (which `ContractObject` rejects).
                 let json: serde_json::Value = serde_json::from_str(&data)?;
@@ -515,7 +516,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         return Err(crate::Error::from(Bytes::new()));
     }
 
-    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    let mut bytecode = get_artifact_code(&ccx.state.config, path, false)?.to_vec();
 
     // If active broadcast then set flag to deploy from code.
     if let Some(broadcast) = &mut ccx.state.broadcast {
@@ -610,33 +611,28 @@ enum ArtifactSource<'a> {
 /// - `ContractName`
 /// - `ContractName:0.8.23`
 /// - `ContractName:profile`
-fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
-    state: &'a Cheatcodes<FEN>,
-    path: &str,
-) -> Result<ArtifactSource<'a>> {
+fn get_artifact_source<'a>(config: &'a CheatsConfig, path: &str) -> Result<ArtifactSource<'a>> {
     if path.ends_with(".json") {
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let path = config.ensure_path_allowed(path, FsAccessKind::Read)?;
         return Ok(ArtifactSource::Disk(path));
     }
 
-    let artifacts =
-        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref());
+    let artifacts = config.available_artifacts.as_ref().or(config.artifact_lookup.as_ref());
     let resolve_source = |file: PathBuf| {
-        let cwd = state
-            .config
+        let cwd = config
             .running_artifact
             .as_ref()
             .and_then(|artifact| artifact.source.parent())
-            .unwrap_or(&state.config.paths.root);
-        let relative_cwd = cwd.strip_prefix(&state.config.paths.root).unwrap_or(cwd);
-        let has_matching_remapping = state.config.paths.remappings.iter().any(|remapping| {
+            .unwrap_or(&config.paths.root);
+        let relative_cwd = cwd.strip_prefix(&config.paths.root).unwrap_or(cwd);
+        let has_matching_remapping = config.paths.remappings.iter().any(|remapping| {
             remapping.context.as_ref().is_none_or(|context| relative_cwd.starts_with(context))
                 && file.strip_prefix(&remapping.name).is_ok()
         });
 
         if has_matching_remapping {
-            state.config.paths.resolve_library_import(cwd, &file).map_or(file, |resolved| {
-                resolved.strip_prefix(&state.config.paths.root).unwrap_or(&resolved).to_path_buf()
+            config.paths.resolve_library_import(cwd, &file).map_or(file, |resolved| {
+                resolved.strip_prefix(&config.paths.root).unwrap_or(&resolved).to_path_buf()
             })
         } else {
             file
@@ -720,8 +716,7 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
                 let mut filtered = filtered.to_vec();
                 // If we know the current script/test contract solc version, try to filter by it
                 Some(
-                    state
-                        .config
+                    config
                         .running_artifact
                         .as_ref()
                         .and_then(|running| {
@@ -767,19 +762,16 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         _ => bail!("invalid artifact path"),
     };
 
-    let path = state.config.paths.artifacts.join(path_in_artifacts);
-    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+    let path = config.paths.artifacts.join(path_in_artifacts);
+    let path = config.ensure_path_allowed(path, FsAccessKind::Read)?;
     Ok(ArtifactSource::Disk(path))
 }
 
 /// Reads an artifact JSON file, mapping I/O errors to a helpful message when the
 /// lookup fell through the in-memory artifacts list.
-fn read_artifact_file<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
-    path: &Path,
-) -> Result<String> {
+fn read_artifact_file(config: &CheatsConfig, path: &Path) -> Result<String> {
     fs::read_to_string(path).map_err(|e| {
-        if state.config.available_artifacts.is_some() {
+        if config.available_artifacts.is_some() {
             fmt_err!("no matching artifact found")
         } else {
             e.into()
@@ -794,17 +786,17 @@ fn read_artifact_file<FEN: FoundryEvmNetwork>(
 /// This function is safe to use with contracts that have library dependencies.
 /// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
 /// reject artifacts with unlinked library placeholders.
-fn get_artifact_code<FEN: FoundryEvmNetwork>(
-    state: &Cheatcodes<FEN>,
+pub(crate) fn get_artifact_code(
+    config: &CheatsConfig,
     path: &str,
     deployed: bool,
 ) -> Result<Bytes> {
-    let maybe_bytecode = match get_artifact_source(state, path)? {
+    let maybe_bytecode = match get_artifact_source(config, path)? {
         ArtifactSource::InMemory(data) => {
             if deployed { data.deployed_bytecode() } else { data.bytecode() }.cloned()
         }
         ArtifactSource::Disk(path) => {
-            let data = read_artifact_file(state, &path)?;
+            let data = read_artifact_file(config, &path)?;
             let artifact = serde_json::from_str::<ContractObject>(&data)?;
             if deployed { artifact.deployed_bytecode } else { artifact.bytecode }
         }
@@ -1194,7 +1186,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CheatsConfig;
     use alloy_primitives::{address, b256};
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
@@ -1415,7 +1406,8 @@ mod tests {
         let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
 
         let bytecode =
-            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+            super::get_artifact_code(&cheats.config, "src/GetCodeProfile.t.sol:paris", false)
+                .unwrap();
 
         assert_eq!(bytecode, paris_bytecode);
     }
@@ -1454,7 +1446,8 @@ mod tests {
             };
             let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
             let bytecode =
-                super::get_artifact_code(&cheats, "src/Colon:Path.sol:Target", false).unwrap();
+                super::get_artifact_code(&cheats.config, "src/Colon:Path.sol:Target", false)
+                    .unwrap();
             assert_eq!(bytecode, expected);
         }
     }
@@ -1476,7 +1469,8 @@ mod tests {
         let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
 
         let bytecode =
-            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+            super::get_artifact_code(&cheats.config, "src/GetCodeProfile.t.sol:paris", false)
+                .unwrap();
 
         assert_eq!(bytecode, contract_bytecode);
     }
@@ -1503,7 +1497,8 @@ mod tests {
         let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
 
         let resolved =
-            super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
+            super::get_artifact_code(&cheats.config, "@example/Something.sol:Something", false)
+                .unwrap();
 
         assert_eq!(resolved, bytecode);
     }
@@ -1543,7 +1538,8 @@ mod tests {
                 };
                 let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
                 let resolved =
-                    super::get_artifact_code(&cheats, &format!("{source}:Target"), false).unwrap();
+                    super::get_artifact_code(&cheats.config, &format!("{source}:Target"), false)
+                        .unwrap();
                 assert_eq!(resolved, expected, "{source} in {profile} profile");
             }
         }
@@ -1573,7 +1569,8 @@ mod tests {
         };
         let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
 
-        let resolved = super::get_artifact_code(&cheats, "src/Thing.sol:RootThing", false).unwrap();
+        let resolved =
+            super::get_artifact_code(&cheats.config, "src/Thing.sol:RootThing", false).unwrap();
 
         assert_eq!(resolved, root_bytecode);
     }

@@ -3,7 +3,7 @@
 use alloy_primitives::Log;
 use evm2::{
     EvmTypesHost, Inspector,
-    evm::Database,
+    evm::{Database, inspector::CallAction},
     interpreter::{Interpreter, Message, MessageResult},
 };
 use foundry_cheatcodes::{
@@ -75,12 +75,12 @@ impl Inspector<FoundryEvmTypes> for EthereumInspectorStack {
         self.logs.push(log.clone());
     }
 
-    fn call(
+    fn call_action(
         &mut self,
         interp: &mut Interpreter<'_, '_, FoundryEvmTypes>,
         message: &mut Message<FoundryEvmTypes>,
-    ) -> Option<MessageResult<FoundryEvmTypes>> {
-        self.cheatcodes.call(interp, message)
+    ) -> CallAction<FoundryEvmTypes> {
+        self.cheatcodes.call_action(interp, message)
     }
 
     fn call_end(

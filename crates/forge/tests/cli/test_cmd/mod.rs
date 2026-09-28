@@ -4065,6 +4065,126 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(ethereum_deploy_code, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Counter {
+    uint256 public value;
+    constructor(uint256 initial) payable { value = initial; }
+}
+"#,
+    );
+    prj.add_source(
+        "Factory.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+interface VmFactoryDeploy {
+    function deployCode(string calldata path, bytes calldata args) external returns (address);
+}
+
+contract Factory {
+    address public child;
+
+    constructor() {
+        VmFactoryDeploy vm = VmFactoryDeploy(address(uint160(uint256(keccak256("hevm cheat code")))));
+        child = vm.deployCode("src/Counter.sol:Counter", abi.encode(123));
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "EthereumDeployCode.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+import "./Counter.sol";
+import "./Factory.sol";
+
+contract RevertingConstructor {
+    constructor() payable { revert("creation failed"); }
+}
+
+interface VmDeployCode {
+    function deal(address account, uint256 balance) external;
+    function prank(address sender) external;
+    function deployCode(string calldata path, bytes calldata args) external returns (address);
+    function deployCode(string calldata path) external returns (address);
+    function deployCode(string calldata path, bytes calldata args, uint256 value) external returns (address);
+    function deployCode(string calldata path, bytes calldata args, bytes32 salt) external returns (address);
+}
+
+contract EthereumDeployCodeTest {
+    VmDeployCode constant vm = VmDeployCode(address(uint160(uint256(keccak256("hevm cheat code")))));
+    string constant artifact = "src/Counter.sol:Counter";
+
+    function testConstructorArgsAndValue() public {
+        vm.deal(address(this), 1 ether);
+        address deployed = vm.deployCode(artifact, abi.encode(42), 1 ether);
+        require(Counter(deployed).value() == 42);
+        require(deployed.balance == 1 ether);
+    }
+
+    function testCreate2Salt() public {
+        bytes32 salt = bytes32(uint256(7));
+        address deployed = vm.deployCode(artifact, abi.encode(8), salt);
+        bytes32 codeHash = keccak256(abi.encodePacked(type(Counter).creationCode, abi.encode(8)));
+        address expected = address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, codeHash)))));
+        require(deployed == expected);
+        require(Counter(deployed).value() == 8);
+    }
+
+    function testPrankAppliesToSyntheticCreate() public {
+        address sender = address(0x1234);
+        vm.prank(sender);
+        address deployed = vm.deployCode(artifact, abi.encode(9));
+        address expected = address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xd6), bytes1(0x94), sender, bytes1(0x80))))));
+        require(deployed == expected);
+        require(Counter(deployed).value() == 9);
+    }
+
+    function testConstructorCanDeployAgain() public {
+        address deployed = vm.deployCode("src/Factory.sol:Factory");
+        require(Counter(Factory(deployed).child()).value() == 123);
+    }
+
+    function testRevertedConstructorRollsBackValue() public {
+        vm.deal(address(this), 1 ether);
+        (bool ok, bytes memory reason) = address(vm).call(
+            abi.encodeWithSignature(
+                "deployCode(string,bytes,uint256)",
+                "src/EthereumDeployCode.t.sol:RevertingConstructor",
+                bytes(""),
+                1 ether
+            )
+        );
+        require(!ok);
+        require(keccak256(reason) == keccak256(abi.encodeWithSignature("Error(string)", "creation failed")));
+        require(address(this).balance == 1 ether);
+    }
+
+    function testStaticDeploymentFails() public view {
+        (bool ok, bytes memory reason) = address(vm).staticcall(
+            abi.encodeWithSignature("deployCode(string)", artifact)
+        );
+        require(!ok && reason.length == 0);
+    }
+
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "--mc", "^EthereumDeployCodeTest$"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Suite result: ok. 6 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});
+
 forgetest_init!(skip_output, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
