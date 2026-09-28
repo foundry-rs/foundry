@@ -229,7 +229,7 @@ use base_common_consensus::{
 };
 #[cfg(feature = "base")]
 use base_common_evm::{
-    BaseContext, BaseEvmFactory, BaseSpecId, BaseTransaction, DEPOSIT_TRANSACTION_TYPE,
+    BaseContext, BaseEvmFactory, BaseSpecId, BaseTime, BaseTransaction, DEPOSIT_TRANSACTION_TYPE,
     DepositTransactionParts as BaseDepositTransactionParts, EIP8130_TRANSACTION_TYPE,
     Eip8130PhaseStatuses, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
 };
@@ -4607,6 +4607,26 @@ impl<N: Network> Backend<N> {
                 let upgrades =
                     ChainUpgrades::new([(BaseUpgrade::Canyon, ForkCondition::Timestamp(1))]);
                 ensure_create2_deployer(upgrades, 1, &mut erased)?;
+            }
+            if upgrade >= BaseUpgrade::Denim {
+                let mut proxy = erased.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
+                if proxy.code.as_ref().is_none_or(|code| code.is_empty()) {
+                    let code = revm::state::Bytecode::new_raw(BaseTime::proxy_bytecode());
+                    proxy.code_hash = code.hash_slow();
+                    proxy.code = Some(code);
+                    erased.insert_account(Predeploys::BASE_TIME, proxy);
+                }
+
+                erased.set_storage_at(
+                    Predeploys::BASE_TIME,
+                    B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+                    B256::from(
+                        U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()).to_be_bytes::<32>(),
+                    ),
+                )?;
+                let upgrades =
+                    ChainUpgrades::new([(BaseUpgrade::Denim, ForkCondition::Timestamp(1))]);
+                BaseTime::ensure_predeploy(upgrades, 1, &mut erased)?;
             }
             if upgrade >= BaseUpgrade::Zenith {
                 // Zenith is genesis-only and is not stored by ChainUpgrades.
