@@ -151,7 +151,8 @@ with it enabled, use `forge_build_no_cache_dynamic` and
 `forge_build_with_cache_dynamic`. These cases enable it consistently for setup and
 timed commands, preserve repository arguments, and use distinct result IDs so they
 cannot be confused with static-linking results. The cached case measures an
-unchanged warm build, not a source edit.
+unchanged warm build, not a source edit. Both no-cache cases force recompilation
+inside the timed command, so their force-rebuild overhead is directly comparable.
 
 ## Branch vs master PR-body workflow
 

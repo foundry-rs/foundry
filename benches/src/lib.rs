@@ -7,7 +7,6 @@ use crate::{
 use eyre::{Result, WrapErr};
 use foundry_common::{sh_eprintln, sh_println};
 use foundry_compilers::project_util::TempProject;
-use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
 use std::{
     collections::HashSet,
@@ -160,7 +159,13 @@ impl BenchmarkProject {
 
         // Clone the repository
         let repo_url = format!("https://github.com/{}/{}.git", config.org, config.repo);
-        clone_remote(&repo_url, root, true);
+        let status = Command::new("git")
+            .args(["clone", "--no-recurse-submodules", &repo_url, root])
+            .status()
+            .wrap_err("Failed to clone repository")?;
+        if !status.success() {
+            eyre::bail!("Git clone failed for {}", config.name);
+        }
 
         // Checkout specific revision if provided
         if !config.rev.is_empty() && config.rev != "main" && config.rev != "master" {
@@ -175,16 +180,8 @@ impl BenchmarkProject {
             }
         }
 
-        // Checkout can change submodule URLs and pinned revisions after the recursive clone.
-        let status = Command::new("git")
-            .current_dir(root)
-            .args(["submodule", "sync", "--recursive"])
-            .status()
-            .wrap_err("Failed to synchronize submodule URLs")?;
-        if !status.success() {
-            eyre::bail!("Git submodule sync failed for {}", config.name);
-        }
-
+        // Initialize submodules only after selecting the requested superproject revision so nested
+        // submodule URLs and gitlinks all come from that revision.
         let status = Command::new("git")
             .current_dir(root)
             .args(["submodule", "update", "--init", "--recursive", "--checkout", "--force"])
@@ -223,6 +220,14 @@ impl BenchmarkProject {
             Some(extra) => format!("{base} {extra}"),
             None => base.to_string(),
         }
+    }
+
+    /// Builds a static- or dynamic-linking command with matching cold-build semantics.
+    fn forge_build_command(&self, dynamic: bool, cached: bool) -> String {
+        let force = if cached { "" } else { "FOUNDRY_FORCE=true " };
+        self.cmd(&format!(
+            "{force}FOUNDRY_DYNAMIC_TEST_LINKING={dynamic} FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
+        ))
     }
 
     /// Install npm dependencies if package.json exists
@@ -391,15 +396,14 @@ impl BenchmarkProject {
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
+        let command = self.forge_build_command(false, true);
         self.hyperfine(
             "forge_build_with_cache",
             version,
-            &self.cmd(
-                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
-            ),
+            &command,
             runs,
             None,
-            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge build"),
+            Some(&command),
             None,
             verbose,
         )
@@ -412,19 +416,8 @@ impl BenchmarkProject {
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // Clean before each timing run
-        self.hyperfine(
-            "forge_build_no_cache",
-            version,
-            &self.cmd(
-                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build",
-            ),
-            runs,
-            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge clean"),
-            None,
-            Some("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge clean"),
-            verbose,
-        )
+        let command = self.forge_build_command(false, false);
+        self.hyperfine("forge_build_no_cache", version, &command, runs, None, None, None, verbose)
     }
 
     /// Benchmark forge fuzz tests without isolation.
@@ -639,12 +632,7 @@ impl BenchmarkProject {
         cached: bool,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        let base = if cached {
-            "FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
-        } else {
-            "FOUNDRY_FORCE=true FOUNDRY_DYNAMIC_TEST_LINKING=true FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build"
-        };
-        let command = self.cmd(base);
+        let command = self.forge_build_command(true, cached);
         let name =
             if cached { "forge_build_with_cache_dynamic" } else { "forge_build_no_cache_dynamic" };
         self.hyperfine(
@@ -958,6 +946,35 @@ pub fn get_forge_version_details() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_commands_preserve_arguments_and_match_cold_semantics() {
+        let temp_project = TempProject::dapptools().unwrap();
+        let project = BenchmarkProject {
+            name: "test".to_string(),
+            root_path: temp_project.root().to_path_buf(),
+            temp_project,
+            extra_args: Some("--root contracts".to_string()),
+            org: "org".to_string(),
+            repo: "repo".to_string(),
+            revision: "revision".to_string(),
+        };
+
+        for (dynamic, value) in [(false, "false"), (true, "true")] {
+            assert_eq!(
+                project.forge_build_command(dynamic, false),
+                format!(
+                    "FOUNDRY_FORCE=true FOUNDRY_DYNAMIC_TEST_LINKING={value} FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build --root contracts"
+                )
+            );
+            assert_eq!(
+                project.forge_build_command(dynamic, true),
+                format!(
+                    "FOUNDRY_DYNAMIC_TEST_LINKING={value} FOUNDRY_LINT_LINT_ON_BUILD=false FOUNDRY_ISOLATE=false forge build --root contracts"
+                )
+            );
+        }
+    }
 
     #[test]
     fn parses_and_validates_version_specs() {

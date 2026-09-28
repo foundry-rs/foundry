@@ -18,26 +18,12 @@ mod data;
 use data::{collect_preprocessor_data, create_deploy_helpers};
 
 mod deps;
-use deps::{
-    ConstructorContext, PreprocessorDependencies, native_test_link_args,
-    remove_bytecode_dependencies,
-};
-
-/// Keeps native test-link arguments comfortably below Windows' 32 KiB command-line limit while
-/// reserving space for the compiler path, ordinary arguments, and environment expansion.
-const MAX_NATIVE_TEST_LINK_ARGS_BYTES: usize = 16 * 1024;
+use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_dependencies};
 
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
 /// dynamic linkage through (`Vm.create*`).
 ///
 /// This allows for more efficient caching when iterating on tests.
-///
-/// Solar binaries advertising `solar` and `testlink1` in their solc-compatible build metadata
-/// receive the selected original source locations as `--test-link=SOURCE:END` arguments instead.
-/// Solar then lowers the typed constructor calls directly to artifact cheatcodes. Selection and
-/// dependency invalidation are identical in both modes; other compilers retain source rewriting.
-/// `END` is the exclusive UTF-8 byte offset of `new C` or `type(C).creationCode`, not the end of
-/// the enclosing call. Changing this protocol requires a new capability and cache version.
 ///
 /// See <https://github.com/foundry-rs/foundry/pull/10010>.
 #[derive(Debug)]
@@ -45,7 +31,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        7
     }
 
     fn preprocess(
@@ -69,7 +55,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     #[instrument(name = "DynamicTestLinkingPreprocessor::preprocess", skip_all)]
     fn preprocess_with_dependencies(
         &self,
-        solc: &SolcCompiler,
+        _solc: &SolcCompiler,
         input: &mut SolcVersionedInput,
         paths: &ProjectPathsConfig<SolcLanguage>,
         mocks: &mut HashSet<PathBuf>,
@@ -93,20 +79,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 .is_some_and(|version| version >= EvmVersion::Constantinople),
         };
         let original_sources = input.input.sources.clone();
-        let native_test_linking = supports_native_test_linking(solc)
-            && input
-                .input
-                .settings
-                .evm_version
-                .is_none_or(|version| version >= EvmVersion::Byzantium);
-        let compiler_args_bytes = match solc {
-            SolcCompiler::Specific(compiler) => command_line_args_bytes(&compiler.extra_args),
-            #[allow(unreachable_patterns)]
-            _ => 0,
-        };
-        let existing_args_bytes = compiler_args_bytes
-            .saturating_add(command_line_args_bytes(&input.cli_settings.extra_args));
-        let mut native_args = Vec::new();
         let mut parser_paths = paths.clone();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
         let mut compiler =
@@ -154,18 +126,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 mocks,
                 preprocessor_state,
             );
-            if native_test_linking {
-                let args = native_test_link_args(gcx, &deps);
-                if existing_args_bytes.saturating_add(command_line_args_bytes(&args))
-                    <= MAX_NATIVE_TEST_LINK_ARGS_BYTES
-                {
-                    native_args = args;
-                    return Ok(());
-                }
-                debug!(
-                    "native test-link arguments exceed the command-line budget; using source preprocessing"
-                );
-            }
             // Collect data of source contracts referenced in tests and scripts.
             let data = collect_preprocessor_data(
                 gcx,
@@ -192,8 +152,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             }
             input.input.sources = original_sources;
             mark_conservative(paths, &input.input.sources, preprocessor_state);
-        } else {
-            input.cli_settings.extra_args.extend(native_args);
         }
 
         Ok(())
@@ -202,7 +160,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        7
     }
 
     fn preprocess(
@@ -255,20 +213,6 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     }
 }
 
-/// Solar advertises the versioned native-link protocol in its solc-compatible build metadata.
-/// Older Solar binaries and other compilers retain source preprocessing.
-fn supports_native_test_linking(compiler: &SolcCompiler) -> bool {
-    let SolcCompiler::Specific(compiler) = compiler else { return false };
-    let metadata = compiler.version.build.as_str();
-    metadata.split('.').any(|part| part == "solar")
-        && metadata.split('.').any(|part| part == "testlink1")
-}
-
-/// Includes the separator or terminating NUL required for each process argument.
-fn command_line_args_bytes(args: &[String]) -> usize {
-    args.iter().fold(0usize, |total, arg| total.saturating_add(arg.len() + 1))
-}
-
 /// Falls back to native bytecode and invalidates affected files after any project source change.
 fn mark_conservative(
     paths: &ProjectPathsConfig<SolcLanguage>,
@@ -290,11 +234,7 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{
-        CompilerInput,
-        artifacts::Source,
-        solc::{Solc, SolcSettings},
-    };
+    use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
     use semver::Version;
 
     fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
@@ -359,81 +299,6 @@ mod tests {
             &mut mocks,
         )
         .unwrap();
-        assert_preprocessed(&paths, &input, &mocks);
-    }
-
-    #[test]
-    fn native_linking_preserves_sources_and_selects_safe_references() {
-        let (_root, paths, mut input) = input();
-        let original = input.input.sources.clone();
-        let compiler = SolcCompiler::Specific(Solc::new_with_version(
-            "unused-compiler",
-            "0.8.30+commit.1234567.solar.0.2.0.testlink1".parse().unwrap(),
-        ));
-        let mut mocks = HashSet::new();
-        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
-            &compiler,
-            &mut input,
-            &paths,
-            &mut mocks,
-        )
-        .unwrap();
-        assert_eq!(input.input.sources, original);
-        let source = &original[&PathBuf::from("test/Deploy.sol")].content;
-        let code_start = source.find("immutable codeHash").unwrap();
-        let code_end = code_start
-            + source[code_start..].find("type(Dep).creationCode").unwrap()
-            + "type(Dep).creationCode".len();
-        let new_end = source.find("new Dep").unwrap() + "new Dep".len();
-        assert_eq!(
-            input.cli_settings.extra_args,
-            vec![
-                format!("--test-link=test/Deploy.sol:{code_end}"),
-                format!("--test-link=test/Deploy.sol:{new_end}"),
-            ]
-        );
-        assert!(mocks.contains(&paths.root.join("test/Mock.sol")));
-    }
-
-    #[test]
-    fn older_solar_retains_source_preprocessing() {
-        let (_root, paths, mut input) = input();
-        let compiler = SolcCompiler::Specific(Solc::new_with_version(
-            "unused-compiler",
-            "0.8.30+commit.1234567.solar.0.2.0".parse().unwrap(),
-        ));
-        let mut mocks = HashSet::new();
-        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
-            &compiler,
-            &mut input,
-            &paths,
-            &mut mocks,
-        )
-        .unwrap();
-        assert!(input.cli_settings.extra_args.is_empty());
-        assert_preprocessed(&paths, &input, &mocks);
-    }
-
-    #[test]
-    fn native_linking_falls_back_when_arguments_exceed_process_budget() {
-        let (_root, paths, mut input) = input();
-        input.cli_settings.extra_args = vec!["x".repeat(MAX_NATIVE_TEST_LINK_ARGS_BYTES)];
-        let compiler = SolcCompiler::Specific(Solc::new_with_version(
-            "unused-compiler",
-            "0.8.30+commit.1234567.solar.0.2.0.testlink1".parse().unwrap(),
-        ));
-        let mut mocks = HashSet::new();
-        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
-            &DynamicTestLinkingPreprocessor,
-            &compiler,
-            &mut input,
-            &paths,
-            &mut mocks,
-        )
-        .unwrap();
-        assert_eq!(input.cli_settings.extra_args.len(), 1);
         assert_preprocessed(&paths, &input, &mocks);
     }
 

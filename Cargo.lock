@@ -5536,7 +5536,6 @@ dependencies = [
  "eyre",
  "foundry-common",
  "foundry-compilers",
- "foundry-test-utils",
  "libc",
  "once_cell",
  "rayon",
