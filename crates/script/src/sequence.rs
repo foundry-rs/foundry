@@ -1,6 +1,6 @@
 use crate::{
     multi_sequence::MultiChainSequence,
-    recovery::{DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
+    recovery::{AttemptKind, DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
 };
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
@@ -336,38 +336,17 @@ where
     {
         let (sequence, index) =
             self.recovery.resolve_delegated_hash(attempt_id, hash, transaction)?;
-        self.sequences_mut()[sequence].add_pending(index, hash);
+        if !self.recovery.is_batch() {
+            self.sequences_mut()[sequence].add_pending(index, hash);
+        }
         Ok(())
     }
 
-    pub(crate) fn batch_signed_attempt(
+    pub(crate) fn batch_attempt(
         &self,
         sequence: usize,
-    ) -> Option<(&N::TransactionRequest, &SignedPayload)> {
-        self.recovery.batch_signed_attempt(sequence)
-    }
-
-    pub(crate) fn batch_first_operation(&self, sequence: usize) -> Option<usize> {
-        self.recovery.batch_first_operation(sequence)
-    }
-
-    pub(crate) fn has_batch_submission(&self, sequence: usize) -> bool {
-        self.recovery.has_batch_submission(sequence)
-    }
-
-    pub(crate) fn batch_delegated_status(&self, sequence: usize) -> Option<DelegatedStatus> {
-        self.recovery.batch_delegated_status(sequence)
-    }
-
-    pub(crate) fn batch_delegated_request(
-        &self,
-        sequence: usize,
-    ) -> Option<&N::TransactionRequest> {
-        self.recovery.batch_delegated_request(sequence)
-    }
-
-    pub(crate) fn legacy_batch_hash(&self, sequence: usize) -> Option<B256> {
-        self.recovery.legacy_batch_hash(sequence)
+    ) -> Option<(usize, B256, &AttemptKind<N::TransactionRequest>)> {
+        self.recovery.batch_attempt(sequence)
     }
 
     pub(crate) fn persist_batch_signed_payload(
@@ -392,80 +371,6 @@ where
         self.recovery.persist_batch_delegated_request(sequence, first_operation, request)
     }
 
-    pub(crate) fn persist_batch_delegated_status(
-        &mut self,
-        sequence: usize,
-        status: DelegatedStatus,
-    ) -> Result<()> {
-        self.recovery.persist_batch_delegated_status(sequence, status)
-    }
-
-    pub(crate) fn clear_batch_submission(&mut self, sequence: usize) -> Result<()> {
-        self.recovery.clear_batch_submission(sequence)
-    }
-
-    pub(crate) fn restore_batch_delegated_pending(
-        &mut self,
-        attempt_id: Option<B256>,
-        resolved_hash: Option<B256>,
-        retry_unknown: bool,
-    ) -> Result<Option<(B256, B256)>> {
-        let resolution_requested = resolved_hash.is_some() || retry_unknown;
-        if resolution_requested && attempt_id.is_none() {
-            bail!("--resume-attempt is required to resolve an interrupted submission");
-        }
-        let mut status = self.recovery.batch_delegated_status(0);
-        if status == Some(DelegatedStatus::Prepared) {
-            self.recovery.persist_batch_delegated_status(0, DelegatedStatus::OutcomeUnknown)?;
-            status = Some(DelegatedStatus::OutcomeUnknown);
-        }
-
-        let Some(first) = self.recovery.batch_first_operation(0) else {
-            if resolution_requested {
-                bail!("no interrupted delegated submission requires resolution");
-            }
-            return Ok(None);
-        };
-        let expected = self.recovery.delegated_attempt_id(0, first);
-        if let Some(attempt_id) = attempt_id {
-            if expected != Some(attempt_id) || status != Some(DelegatedStatus::OutcomeUnknown) {
-                bail!("delegated submission attempt {attempt_id} does not require resolution");
-            }
-            if retry_unknown {
-                self.recovery.clear_batch_submission(0)?;
-                return Ok(None);
-            }
-            if let Some(hash) = resolved_hash {
-                return Ok(Some((attempt_id, hash)));
-            }
-            bail!("--resume-attempt requires --resume-tx-hash or --resume-retry");
-        }
-        if status == Some(DelegatedStatus::OutcomeUnknown) {
-            let attempt = expected.unwrap();
-            bail!(
-                "submission outcome for delegated Tempo batch attempt {attempt} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted"
-            );
-        }
-        Ok(None)
-    }
-
-    pub(crate) fn resolve_batch_delegated_hash(
-        &mut self,
-        attempt_id: B256,
-        hash: B256,
-    ) -> Result<()> {
-        let first = self
-            .recovery
-            .batch_first_operation(0)
-            .context("batch has no delegated submission attempt")?;
-        if self.recovery.delegated_attempt_id(0, first) != Some(attempt_id)
-            || self.recovery.batch_delegated_status(0) != Some(DelegatedStatus::OutcomeUnknown)
-        {
-            bail!("delegated submission attempt {attempt_id} does not require resolution");
-        }
-        self.recovery.persist_batch_delegated_status(0, DelegatedStatus::Pending { hash })
-    }
-
     pub(crate) fn restore_delegated_pending(
         &mut self,
         attempt_id: Option<B256>,
@@ -477,16 +382,13 @@ where
             bail!("--resume-attempt is required to resolve an interrupted submission");
         }
 
-        for sequence in 0..self.sequences().len() {
-            for index in 0..self.sequences()[sequence].transactions.len() {
-                let status = self.recovery.delegated_status(sequence, index);
-                if status == Some(DelegatedStatus::Prepared) {
-                    self.recovery.persist_delegated_status(
-                        sequence,
-                        index,
-                        DelegatedStatus::OutcomeUnknown,
-                    )?;
-                }
+        for (sequence, index, _, status) in self.recovery.delegated_attempts() {
+            if status == DelegatedStatus::Prepared {
+                self.recovery.persist_delegated_status(
+                    sequence,
+                    index,
+                    DelegatedStatus::OutcomeUnknown,
+                )?;
             }
         }
 
@@ -511,35 +413,26 @@ where
             }
         }
 
-        for sequence in 0..self.sequences().len() {
-            for index in 0..self.sequences()[sequence].transactions.len() {
-                match self.recovery.delegated_status(sequence, index) {
-                    Some(DelegatedStatus::OutcomeUnknown) => {
-                        if pending_resolution.is_some_and(
-                            |(target_sequence, target_index, _, _)| {
-                                target_sequence == sequence && target_index == index
-                            },
-                        ) {
-                            continue;
-                        }
-                        let attempt = self.recovery.delegated_attempt_id(sequence, index).unwrap();
-                        bail!(
-                            "submission outcome for delegated attempt {attempt} on chain {} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted",
-                            self.sequences()[sequence].chain
-                        );
+        let batch = self.recovery.is_batch();
+        for (sequence, index, attempt, status) in self.recovery.delegated_attempts() {
+            match status {
+                DelegatedStatus::OutcomeUnknown => {
+                    if pending_resolution.is_some_and(|(_, _, target, _)| target == attempt) {
+                        continue;
                     }
-                    Some(DelegatedStatus::Pending { hash }) => {
-                        let deployment = &mut self.sequences_mut()[sequence];
-                        if !deployment
-                            .receipts
-                            .iter()
-                            .any(|receipt| receipt.transaction_hash() == hash)
-                        {
-                            deployment.add_pending(index, hash);
-                        }
-                    }
-                    Some(DelegatedStatus::Prepared) | None => {}
+                    bail!(
+                        "submission outcome for delegated attempt {attempt} on chain {} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted",
+                        self.sequences()[sequence].chain
+                    );
                 }
+                DelegatedStatus::Pending { hash } if !batch => {
+                    let deployment = &mut self.sequences_mut()[sequence];
+                    if !deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    {
+                        deployment.add_pending(index, hash);
+                    }
+                }
+                DelegatedStatus::Prepared | DelegatedStatus::Pending { .. } => {}
             }
         }
         Ok(pending_resolution)
@@ -686,7 +579,7 @@ mod tests {
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
         sequence.persist_delegated_request(0, 0, Default::default()).unwrap();
         sequence.persist_delegated_status(0, 0, DelegatedStatus::OutcomeUnknown).unwrap();
-        let attempt = sequence.recovery.delegated_attempt_id(0, 0).unwrap();
+        let attempt = sequence.recovery.delegated_attempts()[0].2;
         (dir, sequence, attempt)
     }
 

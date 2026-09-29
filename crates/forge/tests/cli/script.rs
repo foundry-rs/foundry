@@ -36,6 +36,7 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
+use tokio::sync::Notify;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -103,6 +104,59 @@ impl Drop for KillOnDrop {
             let _ = stderr.join();
         }
     }
+}
+
+async fn spawn_rpc_proxy_blocking_first_submission(
+    endpoint: String,
+    method: &'static str,
+) -> (String, Arc<std::sync::Mutex<Vec<Value>>>, Arc<AtomicBool>, Arc<Notify>) {
+    let client = reqwest::Client::new();
+    let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let blocked = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(Notify::new());
+    let block_first = Arc::new(AtomicBool::new(true));
+    let app = Router::new().fallback({
+        let submissions = submissions.clone();
+        let blocked = blocked.clone();
+        let release = release.clone();
+        move |body: BodyBytes| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let submissions = submissions.clone();
+            let blocked = blocked.clone();
+            let release = release.clone();
+            let block_first = block_first.clone();
+            async move {
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                if request.get("method").and_then(Value::as_str) == Some(method) {
+                    submissions
+                        .lock()
+                        .unwrap()
+                        .push(request.get("params").cloned().unwrap_or(Value::Null));
+                    if block_first.swap(false, Ordering::SeqCst) {
+                        blocked.store(true, Ordering::SeqCst);
+                        release.notified().await;
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                }
+                client
+                    .post(endpoint)
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap()
+                    .into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (rpc, submissions, blocked, release)
 }
 
 // Tests that fork cheat codes can be used in script
@@ -5335,7 +5389,6 @@ forgetest_async!(script_batch_rewrites_creates_to_create2, |prj, cmd| {
 
 forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
-    prj.update_config(|config| config.transaction_timeout = 1);
     let source = MULTI_DEPLOY_SCRIPT.replace(
         "vm.startBroadcast();",
         "vm.envUint(\"BATCH_EXECUTION_REQUIRED\"); vm.startBroadcast();",
@@ -5343,8 +5396,9 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     let script = prj.add_source("MultiDeploy", &source);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
-    let (rpc, submissions) =
-        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc, submissions, blocked, release) =
+        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendRawTransaction")
+            .await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     cmd.env("BATCH_EXECUTION_REQUIRED", "1");
@@ -5361,41 +5415,46 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
         "--network",
         "tempo",
     ]);
-    let stderr = cmd.assert_failure().get_output().stderr.clone();
-    assert!(
-        String::from_utf8_lossy(&stderr).contains("Timeout waiting for batch transaction receipt"),
-        "{}",
-        String::from_utf8_lossy(&stderr)
-    );
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !blocked.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Forge did not reach the blocked batch submission");
 
     let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|path| {
             path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
         })
         .expect("no latest Tempo broadcast artifact");
-    let mut sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let transactions = sequence["transactions"].as_array().unwrap();
-    let pending = sequence["pending"].as_array().unwrap();
     assert_eq!(transactions.len(), 3);
-    assert_eq!(pending.len(), 1);
+    assert!(transactions.iter().all(|tx| tx["hash"].is_null()));
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
     assert!(sequence["receipts"].as_array().unwrap().is_empty());
-    assert_eq!(submissions.lock().unwrap().len(), 1);
-    let hash = pending[0].as_str().unwrap().to_owned();
-    assert!(transactions.iter().all(|tx| tx["hash"] == hash));
     let deployed = transactions
         .iter()
         .map(|tx| tx["contractAddress"].as_str().unwrap().parse::<Address>().unwrap())
         .collect::<Vec<_>>();
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .expect("no authoritative recovery snapshot");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let attempt = &recovery["deployments"][0]["attempts"][0];
+    assert_eq!(attempt["members"].as_array().unwrap().len(), 3);
+    assert_eq!(attempt["kind"]["kind"], "signed");
+    assert!(attempt["kind"]["payload"]["payload"].is_string());
+    assert!(child.is_running(), "Forge exited before it could be interrupted");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success(), "Forge unexpectedly succeeded");
+    #[cfg(unix)]
+    assert_eq!(output.status.signal(), Some(9), "Forge was not terminated by SIGKILL");
+    release.notify_one();
 
-    for transaction in sequence["transactions"].as_array_mut().unwrap() {
-        transaction["hash"] = Value::Null;
-    }
-    sequence["pending"] = Value::Array(Vec::new());
-    foundry_common::fs::write_pretty_json_file(&path, &sequence).unwrap();
-
-    api.anvil_drop_transaction(hash.parse().unwrap()).await.unwrap();
     api.anvil_set_auto_mine(true).await.unwrap();
-    prj.update_config(|config| config.transaction_timeout = 30);
     cmd.forge_fuse();
     cmd.unset_env("BATCH_EXECUTION_REQUIRED");
     cmd.arg("script").arg(&script).args([
@@ -5414,6 +5473,7 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     assert!(sequence["pending"].as_array().unwrap().is_empty());
     let receipts = sequence["receipts"].as_array().unwrap();
     assert_eq!(receipts.len(), 3);
+    let hash = receipts[0]["transactionHash"].as_str().unwrap();
     assert!(receipts.iter().all(|receipt| receipt["transactionHash"] == hash));
     let provider = handle.http_provider();
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
@@ -5432,8 +5492,150 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     assert_eq!(provider.get_storage_at(deployed[2], U256::ZERO).await.unwrap(), U256::from(0x1234));
 });
 
-forgetest_async!(tempo_batch_unlocked_ambiguous_submission_fails_closed, |prj, cmd| {
+forgetest_async!(tempo_batch_unlocked_crash_blocks_resubmission, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, submissions, blocked, release) =
+        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendTransaction")
+            .await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !blocked.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Forge did not reach the blocked delegated batch submission");
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest Tempo broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["transactions"].as_array().unwrap().iter().all(|tx| tx["hash"].is_null()));
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .expect("no authoritative recovery snapshot");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let attempt = &recovery["deployments"][0]["attempts"][0];
+    assert_eq!(attempt["members"].as_array().unwrap().len(), 3);
+    assert_eq!(attempt["kind"]["kind"], "delegated");
+    assert_eq!(attempt["kind"]["status"]["status"], "prepared");
+    let attempt_id = attempt["id"].as_str().unwrap().to_owned();
+
+    assert!(child.is_running(), "Forge exited before it could be interrupted");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success(), "Forge unexpectedly succeeded");
+    #[cfg(unix)]
+    assert_eq!(output.status.signal(), Some(9), "Forge was not terminated by SIGKILL");
+    release.notify_one();
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
+    assert!(stderr.contains(&format!("delegated attempt {attempt_id}")), "{stderr}");
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+});
+
+forgetest_async!(tempo_batch_reconciles_accepted_signed_submission_error, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded_submissions = submissions.clone();
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let upstream = upstream.clone();
+        let client = client.clone();
+        let submissions = recorded_submissions.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            let is_submission =
+                request.get("method").and_then(Value::as_str) == Some("eth_sendRawTransaction");
+            if is_submission {
+                submissions
+                    .lock()
+                    .unwrap()
+                    .push(request.get("params").cloned().unwrap_or(Value::Null));
+            }
+            let response = client
+                .post(upstream)
+                .header("content-type", "application/json")
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            if is_submission {
+                (StatusCode::SERVICE_UNAVAILABLE, response).into_response()
+            } else {
+                response.into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+    let submissions = submissions.lock().unwrap();
+    assert!(!submissions.is_empty());
+    assert!(submissions.iter().all(|submission| submission == &submissions[0]));
+
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest Tempo broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 3);
+});
+
+forgetest_async!(tempo_batch_unlocked_ambiguous_submission_resolves_hash, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| config.transaction_timeout = 1);
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -5491,14 +5693,16 @@ forgetest_async!(tempo_batch_unlocked_ambiguous_submission_fails_closed, |prj, c
         "--network",
         "tempo",
     ]);
-    let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
-    assert!(stderr.contains("HTTP error 503"), "{stderr}");
+    let initial_stderr =
+        String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
+    assert!(initial_stderr.contains("HTTP error 503"), "{initial_stderr}");
     assert_eq!(submissions.load(Ordering::Relaxed), 1);
     let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
         .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
         .unwrap();
     let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
     let attempt = recovery["deployments"][0]["attempts"][0]["id"].as_str().unwrap().to_owned();
+    assert!(initial_stderr.contains(&attempt), "{initial_stderr}");
 
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
@@ -5514,29 +5718,41 @@ forgetest_async!(tempo_batch_unlocked_ambiguous_submission_fails_closed, |prj, c
         "tempo",
     ]);
     let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
-    assert!(stderr.contains(&format!("Tempo batch attempt {attempt} is unknown")), "{stderr}");
+    assert!(stderr.contains(&format!("delegated attempt {attempt}")), "{stderr}");
     assert_eq!(submissions.load(Ordering::Relaxed), 1);
 
     let accepted_hash = accepted_hash.lock().unwrap().unwrap();
-    api.anvil_drop_transaction(accepted_hash).await.unwrap();
-    api.anvil_set_auto_mine(true).await.unwrap();
-
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "MultiDeploy",
         "--rpc-url",
         &rpc,
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--resume",
         "--resume-attempt",
         &attempt,
-        "--resume-retry",
+        "--resume-tx-hash",
+        &accepted_hash.to_string(),
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let stderr = String::from_utf8_lossy(&cmd.assert_failure().get_output().stderr).into_owned();
+    assert!(stderr.contains("Timeout waiting for batch transaction receipt"), "{stderr}");
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
+
+    api.mine_one().await.unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--resume",
         "--batch",
         "--network",
         "tempo",
     ]);
     cmd.assert_success();
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
 });
 
 forgetest_async!(tempo_batch_resume_waits_for_pending_hash, |prj, cmd| {
