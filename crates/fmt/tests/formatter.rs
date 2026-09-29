@@ -912,3 +912,24 @@ fn size_estimate_ignores_literal_contents() {
         assert_eq!(format(&source, Path::new("test.sol"), config), expected);
     }
 }
+
+#[test]
+fn brace_spacing_size_estimate_handles_tabs() {
+    let config =
+        Arc::new(FormatterConfig { line_length: 120, bracket_spacing: true, ..Default::default() });
+    let source = r#"contract C {
+    function f() external {
+        executions = factory({	a: assetAddress, b: receiver, c: amountToSend, d: currentNonce, e: expiryTime, f: requiredFee	});
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        executions =
+            factory({ a: assetAddress, b: receiver, c: amountToSend, d: currentNonce, e: expiryTime, f: requiredFee });
+    }
+}
+"#;
+
+    assert_eq!(format(source, Path::new("test.sol"), config), expected);
+}

@@ -505,7 +505,8 @@ impl<'sess> State<'sess, '_> {
                     if let Some(&inner) = inner
                         && !matches!(inner, b'{' | b'}')
                     {
-                        delta += match (inner == b' ', self.config.bracket_spacing) {
+                        delta += match (matches!(inner, b' ' | b'\t'), self.config.bracket_spacing)
+                        {
                             (true, false) => -1,
                             (false, true) => 1,
                             _ => 0,
