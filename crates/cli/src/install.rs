@@ -672,7 +672,10 @@ impl Installer<'_> {
         if let Err(mut e) = res {
             // remove dependency on failed checkout
             fs::remove_dir_all(path)?;
-            if e.to_string().contains("did not match any file(s) known to git") {
+            let error = e.to_string();
+            if error.contains("did not match any file(s) known to git")
+                || error.contains("fatal: invalid reference:")
+            {
                 e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
             }
             return Err(e);

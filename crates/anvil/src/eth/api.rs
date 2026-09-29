@@ -25,7 +25,7 @@ use crate::{
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
-            Pool,
+            Pool, PoolSnapshot,
             transactions::{
                 PoolTransaction, TransactionOrder, TransactionPriority, TxMarker, to_marker,
             },
@@ -107,7 +107,7 @@ use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use revm::{
     context::BlockEnv,
     context_interface::{
@@ -152,6 +152,8 @@ struct TransactionFeeDefaults {
 pub struct EthApi<N: Network> {
     /// The transaction pool
     pool: Arc<Pool<N::TxEnvelope>>,
+    /// Transaction pool state captured by `evm_snapshot`.
+    pool_snapshots: Arc<Mutex<HashMap<U256, PoolSnapshot<N::TxEnvelope>>>>,
     /// Holds all blockchain related data
     /// In-Memory only for now
     pub backend: Arc<backend::mem::Backend<N>>,
@@ -188,6 +190,7 @@ impl<N: Network> Clone for EthApi<N> {
     fn clone(&self) -> Self {
         Self {
             pool: self.pool.clone(),
+            pool_snapshots: self.pool_snapshots.clone(),
             backend: self.backend.clone(),
             is_mining: self.is_mining,
             signers: self.signers.clone(),
@@ -223,6 +226,7 @@ impl<N: Network> EthApi<N> {
     ) -> Self {
         Self {
             pool,
+            pool_snapshots: Arc::new(Mutex::new(HashMap::default())),
             backend,
             is_mining: true,
             signers,
@@ -567,7 +571,10 @@ impl<N: Network> EthApi<N> {
         node_info!("evm_snapshot");
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
-        Ok(self.backend.create_state_snapshot().await)
+        let pool = self.pool.snapshot();
+        let id = self.backend.create_state_snapshot().await;
+        self.pool_snapshots.lock().insert(id, pool);
+        Ok(id)
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
@@ -814,6 +821,7 @@ impl<N: Network> EthApi<N> {
             self.backend.commit_fork_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
+            self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
         } else {
             let _lifecycle = self.lifecycle_lock.write().await;
@@ -824,6 +832,7 @@ impl<N: Network> EthApi<N> {
             self.backend.commit_memory_reset(staged).await?;
             self.reset_instance_id();
             self.pool.clear();
+            self.pool_snapshots.lock().clear();
             self.fee_history_cache.lock().clear();
         }
         Ok(())
@@ -841,9 +850,16 @@ impl<N: Network> EthApi<N> {
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
         let reverted = self.backend.revert_state_snapshot(id).await?;
-        #[cfg(feature = "base")]
         if reverted {
-            self.invalidate_base_eip8130_pool();
+            let pool = {
+                let mut snapshots = self.pool_snapshots.lock();
+                let pool = snapshots.remove(&id);
+                snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+                pool
+            };
+            if let Some(pool) = pool {
+                self.pool.restore(pool);
+            }
         }
         Ok(reverted)
     }
@@ -1500,17 +1516,13 @@ impl<N: Network> EthApi<N> {
     pub async fn trace_call(
         &self,
         request: WithOtherFields<TransactionRequest>,
-        mut trace_types: HashSet<TraceType>,
+        trace_types: HashSet<TraceType>,
         block_id: Option<BlockId>,
     ) -> Result<TraceResults>
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
         node_info!("trace_call");
-        if trace_types.is_empty() {
-            trace_types.insert(TraceType::Trace);
-        }
-
         let block_id = block_id.unwrap_or_default();
         let block_request = match &block_id {
             BlockId::Number(BlockNumber::Pending) => {
@@ -1537,7 +1549,10 @@ impl<N: Network> EthApi<N> {
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
     /// Handler for RPC call: `trace_transaction`
-    pub async fn trace_transaction(&self, tx_hash: B256) -> Result<Vec<LocalizedTransactionTrace>> {
+    pub async fn trace_transaction(
+        &self,
+        tx_hash: B256,
+    ) -> Result<Option<Vec<LocalizedTransactionTrace>>> {
         node_info!("trace_transaction");
         self.backend.trace_transaction(tx_hash).await
     }
@@ -1885,6 +1900,7 @@ impl EthApi<FoundryNetwork> {
             &request,
             FoundryTransactionRequest::Tempo(request) if request.key_id.is_some()
         );
+        let disable_fee_charge = is_tempo_keychain || inner.from.is_none();
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // Check transfer value before any fast path, and cap gas limit by sender balance when the
@@ -1925,6 +1941,7 @@ impl EthApi<FoundryNetwork> {
             if maybe_transfer
                 && highest_gas_limit >= MIN_TRANSACTION_GAS
                 && let Some(to) = to
+                && !self.backend.is_precompile(to, &block_env)
                 && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
                 && target_code.as_ref().is_empty()
             {
@@ -1940,7 +1957,7 @@ impl EthApi<FoundryNetwork> {
             block_env.clone(),
             GasEstimateCallOptions::new(
                 highest_gas_limit as u64,
-                is_tempo_keychain,
+                disable_fee_charge,
                 monad_context.clone(),
             ),
         );
@@ -1980,7 +1997,7 @@ impl EthApi<FoundryNetwork> {
                 block_env.clone(),
                 GasEstimateCallOptions::new(
                     mid_gas_limit as u64,
-                    is_tempo_keychain,
+                    disable_fee_charge,
                     monad_context.clone(),
                 ),
             );
@@ -3871,12 +3888,18 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
         node_info!("eth_newFilter");
-        // all logs that are already available that match the filter if the filter's block range is
-        // in the past
-        let historic = if filter.block_option.get_from_block().is_some() {
-            self.backend.logs(filter.clone()).await?
-        } else {
-            vec![]
+        // Valid future ranges have no historic logs to seed yet.
+        let historic = match filter.block_option.get_from_block() {
+            Some(BlockNumber::Number(from))
+                if *from > self.backend.best_number()
+                    && filter.block_option.get_to_block().is_none_or(|to| {
+                        to.is_latest() || to.as_number().is_some_and(|to| to >= *from)
+                    }) =>
+            {
+                vec![]
+            }
+            Some(_) => self.backend.logs(filter.clone()).await?,
+            None => vec![],
         };
         let filter = EthFilter::Logs(Box::new(LogsFilter {
             blocks: self.new_block_notifications(),
@@ -4145,8 +4168,7 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<Vec<TraceResults>> {
         node_info!("trace_callMany");
-        let block_number = block_number.unwrap_or(BlockId::Number(BlockNumber::Pending));
-        let block_request = self.block_request(Some(block_number)).await?;
+        let block_request = self.block_request(block_number).await?;
 
         self.backend.trace_call_many(calls, Some(block_request)).await
     }
@@ -4955,8 +4977,9 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
+        let _mining = self.backend.lock_mining().await;
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block(transactions).await?;
+        let outcome = self.backend.mine_block_locked(transactions).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         self.pool.on_mined_block(outcome);

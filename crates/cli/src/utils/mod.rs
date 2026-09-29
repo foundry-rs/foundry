@@ -421,10 +421,13 @@ impl<'a> Git<'a> {
     }
 
     pub fn checkout(self, recursive: bool, tag: impl AsRef<OsStr>) -> Result<()> {
+        let tag = tag.as_ref();
+        validate_checkout_ref(tag)?;
         self.cmd()
             .arg("checkout")
             .args(recursive.then_some("--recurse-submodules"))
             .arg(tag)
+            .arg("--")
             .exec()
             .map(drop)
     }
@@ -435,7 +438,9 @@ impl<'a> Git<'a> {
     }
 
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
-        self.cmd_at(at).arg("checkout").arg(tag).exec().map(drop)
+        let tag = tag.as_ref();
+        validate_checkout_ref(tag)?;
+        self.cmd_at(at).arg("checkout").arg(tag).arg("--").exec().map(drop)
     }
 
     pub fn init(self) -> Result<()> {
@@ -670,9 +675,14 @@ ignore them in the `.gitignore` file."
 
     /// Returns true if all submodules matching `paths` have initialized worktrees.
     fn submodules_initialized(self, paths: &[OsString]) -> Result<bool> {
-        let Some(root) = self.root.ancestors().find(|root| root.join(".git").exists()) else {
+        // Let Git resolve relative roots.
+        if !self.root.is_absolute() {
             return Ok(false);
+        }
+        let Some(root) = find_git_root(self.root)? else {
+            return Ok(true);
         };
+        let root = root.as_path();
         if paths.iter().any(|path| {
             Path::new(path)
                 .components()
@@ -683,6 +693,8 @@ ignore them in the `.gitignore` file."
         let relative_root = self.root.strip_prefix(root).unwrap_or_else(|_| Path::new(""));
         let gitmodules = root.join(".gitmodules");
         if !gitmodules.is_file() {
+            // Removing .gitmodules does not remove gitlinks from the index. Let Git handle
+            // any remaining submodules, including those without a .gitmodules mapping.
             return Ok(false);
         }
 
@@ -757,6 +769,7 @@ ignore them in the `.gitignore` file."
         S: AsRef<OsStr>,
     {
         self.cmd()
+            .arg("--literal-pathspecs")
             .stderr(self.stderr())
             .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
@@ -764,6 +777,7 @@ ignore them in the `.gitignore` file."
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
             .args(recursive.then_some("--recursive"))
+            .arg("--")
             .args(paths)
             .exec()
             .map(drop)
@@ -1051,7 +1065,7 @@ ignore them in the `.gitignore` file."
 
     /// Fetches a branch from origin and checks out a local tracking branch at the given path.
     pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
-        self.cmd_at(at).args(["fetch", "origin", branch]).exec().map_err(|e| {
+        self.cmd_at(at).args(["fetch", "--", "origin", branch]).exec().map_err(|e| {
             eyre::eyre!(
                 "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
                 at.display()
@@ -1091,6 +1105,13 @@ ignore them in the `.gitignore` file."
     fn stderr(self) -> Stdio {
         if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
+}
+
+fn validate_checkout_ref(reference: &OsStr) -> Result<()> {
+    if reference.is_empty() || reference.as_encoded_bytes().starts_with(b"-") {
+        eyre::bail!("Git checkout reference must not be empty or start with `-`");
+    }
+    Ok(())
 }
 
 /// Deserialized `git submodule status lib/dep` output.
@@ -1206,6 +1227,9 @@ mod tests {
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn applies_gas_estimate_multiplier() {
         assert_eq!(apply_gas_estimate_multiplier(21_000, None).unwrap(), 21_000);
@@ -1215,6 +1239,49 @@ mod tests {
             210_000_000_000_000_000
         );
         assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101)).is_err());
+    }
+
+    #[test]
+    fn checkout_does_not_parse_revision_as_option() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("file"), "clean\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("initial").unwrap();
+        fs::write(tmp.path().join("file"), "dirty\n").unwrap();
+
+        assert!(git.checkout_at("-f", tmp.path()).is_err());
+        assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "dirty\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_does_not_parse_branch_as_option() {
+        let remote = tempdir().unwrap();
+        let remote_git = Git::new(remote.path());
+        remote_git.init().unwrap();
+        fs::write(remote.path().join("file"), "content\n").unwrap();
+        remote_git.add(["file"]).unwrap();
+        remote_git.commit("initial").unwrap();
+
+        let tmp = tempdir().unwrap();
+        Git::clone(false, remote.path(), Some(tmp.path())).unwrap();
+
+        let marker = tmp.path().join("upload-pack-ran");
+        let upload_pack = tmp.path().join("upload-pack");
+        fs::write(
+            &upload_pack,
+            format!("#!/bin/sh\ntouch '{}'\nexec git-upload-pack \"$@\"\n", marker.display()),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&upload_pack).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&upload_pack, permissions).unwrap();
+
+        let branch = format!("--upload-pack={}", upload_pack.display());
+        assert!(Git::new(tmp.path()).fetch_and_checkout_branch(tmp.path(), &branch).is_err());
+        assert!(!marker.exists());
     }
 
     #[test]
@@ -1437,5 +1504,97 @@ mod tests {
             paths.get(Path::new("lib/openzeppelin-contracts")).unwrap(),
             "v4.8.0-791-g8829465a"
         );
+    }
+
+    #[test]
+    fn skips_submodule_status_outside_repository() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("nested/project");
+        fs::create_dir_all(&root).unwrap();
+        let git = Git::new(&root);
+        assert!(git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(!git.has_missing_dependencies(["lib"]).unwrap());
+    }
+
+    #[test]
+    fn keeps_submodule_status_without_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("tracked"), "tracked file").unwrap();
+        git.add(["tracked"]).unwrap();
+
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+
+        let nested = tmp.path().join("packages/contracts");
+        fs::create_dir_all(&nested).unwrap();
+        let git = git.root(&nested);
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn detects_missing_dependencies_with_deleted_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        let gitmodules = tmp.path().join(".gitmodules");
+        fs::write(&gitmodules, "[submodule \"lib/dep\"]\n\tpath = lib/dep\n\turl = ../dep\n")
+            .unwrap();
+        git.add([".gitmodules"]).unwrap();
+        git.cmd()
+            .args([
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "160000,1111111111111111111111111111111111111111,lib/dep",
+            ])
+            .exec()
+            .unwrap();
+        assert!(git.has_missing_dependencies(["lib"]).unwrap());
+
+        fs::remove_file(gitmodules).unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).unwrap());
+
+        let nested = tmp.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        assert!(!git.root(&nested).submodules_initialized(&[]).unwrap());
+        assert!(git.root(&nested).submodules_uninitialized().unwrap());
+
+        git.cmd().args(["rm", "--cached", ".gitmodules"]).exec().unwrap();
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
+    }
+
+    #[test]
+    fn keeps_submodule_status_in_worktree_without_gitmodules() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("main");
+        fs::create_dir(&root).unwrap();
+        let git = Git::new(&root);
+        git.init().unwrap();
+        git.cmd()
+            .args([
+                "-c",
+                "user.name=Foundry",
+                "-c",
+                "user.email=foundry@example.com",
+                "commit",
+                "--no-gpg-sign",
+                "--allow-empty",
+                "-m",
+                "test: initialize worktree fixture",
+            ])
+            .exec()
+            .unwrap();
+        let worktree = tmp.path().join("worktree");
+        git.cmd().args(["worktree", "add", "--detach"]).arg(&worktree).exec().unwrap();
+
+        assert!(worktree.join(".git").is_file());
+        let git = git.root(&worktree);
+        assert!(!git.submodules_initialized(&["lib".into()]).unwrap());
+        assert!(git.has_missing_dependencies(["lib"]).is_err());
     }
 }

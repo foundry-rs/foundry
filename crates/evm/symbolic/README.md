@@ -414,7 +414,8 @@ contract RiddleTest is Test {
 In this style:
 
 - `require(...)` prunes paths when the condition is false.
-- `vm.assume(...)` also prunes paths.
+- `vm.assume(...)` also prunes paths. If assumptions reject every path, Forge
+  reports an incomplete result instead of a proof.
 - `assert`, forge-std assertions, and DSTest failure signals are treated as
   properties to disprove.
 - User reverts terminate the current path. If every path reverts, Forge reports
@@ -490,6 +491,12 @@ senders. The symbolic executor chooses a bounded sequence from that discovered
 set, generates symbolic arguments with the same ABI model used for stateless
 tests, preserves symbolic world state between calls, and replays a concrete
 sequence before reporting a counterexample.
+
+Within an invariant predicate or `afterInvariant`, including nested calls,
+`vm.assume` is supported only when the current path constraints imply its
+condition. If the assumption could reject a reachable state, symbolic execution
+reports incomplete instead of restricting the property to the accepted states.
+Assumptions in target handler calls continue to discard inputs normally.
 
 Some invariant harnesses deploy dependency contracts in `setUp`, then rely on
 those dependencies having satisfiable environment state during the campaign. For

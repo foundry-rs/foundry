@@ -658,7 +658,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                 let _ = self.visit_expr(rhs);
                 self.state = skipped.meet(&self.state);
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
+            ExprKind::Call(callee, args) if is_require_or_assert(self.gcx, callee) => {
                 // Sinks inside the predicate run before the guard takes effect.
                 let _ = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
@@ -722,7 +722,7 @@ fn origin_matches(
     let expr = expr.peel_parens();
     match &expr.kind {
         ExprKind::Payable(inner) => return origin_matches(gcx, inner, depth, vars, base),
-        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
+        ExprKind::Call(callee, args) if is_address_like_cast(gcx, callee) => {
             return args.exprs().next().is_some_and(|e| origin_matches(gcx, e, depth, vars, base));
         }
         _ => {}
@@ -734,7 +734,7 @@ fn origin_matches(
                 origin_matches(gcx, t, depth, vars, base)
                     && origin_matches(gcx, f, depth, vars, base)
             }
-            ExprKind::Call(callee, args, _) if depth > 0 && args.exprs().next().is_none() => gcx
+            ExprKind::Call(callee, args) if depth > 0 && args.exprs().next().is_none() => gcx
                 .resolved_function(callee)
                 .filter(|_| matches!(callee.peel_parens().kind, ExprKind::Ident(_)))
                 .is_some_and(|fid| {
@@ -777,7 +777,7 @@ fn canonical_args<'gcx>(
     expr: &Expr<'gcx>,
     arity: usize,
 ) -> Option<Vec<&'gcx Expr<'gcx>>> {
-    let ExprKind::Call(_, args, _) = &expr.kind else { return None };
+    let ExprKind::Call(_, args) = &expr.kind else { return None };
     if args.len() != arity {
         return None;
     }
@@ -976,7 +976,7 @@ impl<'gcx> Visit<'gcx> for CallsiteCollector<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
-        if let ExprKind::Call(callee, args, _) = &expr.kind
+        if let ExprKind::Call(callee, args) = &expr.kind
             && matches!(callee.peel_parens().kind, ExprKind::Ident(_))
             && let Some(fid) = self.gcx.resolved_function(callee)
         {

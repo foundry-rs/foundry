@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::call_frame_to_arena,
+    rpc_trace::{call_frame_to_arena, call_tracer_config},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
@@ -24,7 +24,7 @@ use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag,
     trace::geth::{
-        CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
+        GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions,
     },
 };
@@ -87,11 +87,11 @@ use foundry_evm::core::evm::OpEvmNetwork;
 ///
 /// ```bash
 /// cast call 0x... "transfer(address,uint256)" 0x... 100 \
-///   --override-balance 0x123:0x1234 \
-///   --override-nonce 0x123:1 \
-///   --override-code 0x123:0x1234 \
-///   --override-state 0x123:0x1:0x1234
-///   --override-state-diff 0x123:0x1:0x1234
+///   --override-balance 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-nonce 0x0000000000000000000000000000000000000001:1 \
+///   --override-code 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-state 0x0000000000000000000000000000000000000001:0x1:0x1234 \
+///   --override-state-diff 0x0000000000000000000000000000000000000001:0x1:0x1234
 /// ```
 ///
 /// `--delegate` builds on the same mechanism: it overrides the code of the `--from` address with
@@ -232,7 +232,7 @@ fn call_tracer_options() -> GethDebugTracingCallOptions {
     GethDebugTracingCallOptions::default().with_tracing_options(
         GethDebugTracingOptions::default()
             .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-            .with_call_config(CallConfig::default().with_log()),
+            .with_call_config(call_tracer_config()),
     )
 }
 

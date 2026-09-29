@@ -177,6 +177,15 @@ impl<T> Default for PendingTransactions<T> {
 }
 
 impl<T> PendingTransactions<T> {
+    /// Returns an independent snapshot of the pending transactions.
+    pub(super) fn snapshot(&self) -> Self {
+        Self {
+            required_markers: self.required_markers.clone(),
+            waiting_markers: self.waiting_markers.clone(),
+            waiting_queue: self.waiting_queue.clone(),
+        }
+    }
+
     /// Returns the number of transactions that are currently waiting
     pub fn len(&self) -> usize {
         self.waiting_queue.len()
@@ -344,13 +353,22 @@ impl<T: Transaction> PendingTransactions<T> {
 }
 
 /// A transaction in the pool
-#[derive(Clone)]
 pub struct PendingPoolTransaction<T> {
     pub transaction: Arc<PoolTransaction<T>>,
     /// markers required and have not been satisfied yet by other transactions in the pool
     pub missing_markers: HashSet<TxMarker>,
     /// timestamp when the tx was added
     pub added_at: Instant,
+}
+
+impl<T> Clone for PendingPoolTransaction<T> {
+    fn clone(&self) -> Self {
+        Self {
+            transaction: Arc::clone(&self.transaction),
+            missing_markers: self.missing_markers.clone(),
+            added_at: self.added_at,
+        }
+    }
 }
 
 impl<T> PendingPoolTransaction<T> {
@@ -476,6 +494,16 @@ impl<T> Default for ReadyTransactions<T> {
 }
 
 impl<T> ReadyTransactions<T> {
+    /// Returns an independent snapshot of the ready transactions.
+    pub(super) fn snapshot(&self) -> Self {
+        Self {
+            id: self.id,
+            provided_markers: self.provided_markers.clone(),
+            ready_tx: Arc::new(RwLock::new(self.ready_tx.read().clone())),
+            independent_transactions: self.independent_transactions.clone(),
+        }
+    }
+
     /// Returns an iterator over all transactions
     pub fn get_transactions(&self) -> TransactionsIterator<T> {
         TransactionsIterator {

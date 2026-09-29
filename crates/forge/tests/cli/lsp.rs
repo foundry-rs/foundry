@@ -3,11 +3,12 @@ use async_lsp::{
     LanguageServer,
     lsp_types::{
         ClientCapabilities, DiagnosticSeverity, DidChangeTextDocumentParams,
-        DidChangeWatchedFilesParams, DidOpenTextDocumentParams, DocumentFormattingParams,
-        FileChangeType, FileEvent, FormattingOptions, GotoDefinitionParams, GotoDefinitionResponse,
-        InitializeParams, InitializedParams, Location, OneOf, Position, Range,
+        DidChangeWatchedFilesParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DocumentFormattingParams, FileChangeType, FileEvent, FormattingOptions,
+        GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializedParams,
+        Location, OneOf, Position, Range, ReferenceContext, ReferenceParams, RenameParams,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-        TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier,
+        TextDocumentPositionParams, TextEdit, Url, VersionedTextDocumentIdentifier, WorkspaceEdit,
         WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
     },
 };
@@ -326,6 +327,177 @@ fn wait_for_workspace_symbols(client: &mut LspClient, expected: &str, unexpected
         "expected workspace symbol `{expected}` without `{unexpected}`; observed: {last_names:?}"
     );
 }
+
+forgetest!(lsp_indexes_closed_tests_and_scripts, |prj, _cmd| {
+    // Test both default directories and directories resolved from the selected profile.
+    for (profile, sources, tests, scripts) in
+        [("default", "src", "test", "script"), ("custom", "contracts", "checks", "deployments")]
+    {
+        prj.create_file(
+            "foundry.toml",
+            "[profile.default]\n[profile.custom]\nsrc = \"contracts\"\ntest = \"checks\"\nscript = \"deployments\"\n",
+        );
+        let files = [
+            (
+                format!("{sources}/Counter.sol"),
+                "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\ncontract CoverageCounter {\n    function increment() public {}\n}\n".to_owned(),
+            ),
+            (
+                format!("{tests}/Counter.t.sol"),
+                format!("// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\nimport {{CoverageCounter}} from \"../{sources}/Counter.sol\";\ncontract CoverageTest {{\n    function check(CoverageCounter counter) public {{ counter.increment(); }}\n}}\n"),
+            ),
+            (
+                format!("{scripts}/Counter.s.sol"),
+                format!("// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\nimport {{CoverageCounter}} from \"../{sources}/Counter.sol\";\ncontract CoverageScript {{\n    function run(CoverageCounter counter) public {{ counter.increment(); }}\n}}\n"),
+            ),
+        ];
+        for (path, source) in &files {
+            prj.create_file(path, source);
+        }
+        let root = dunce::canonicalize(prj.root()).unwrap();
+        let locations: Vec<_> = files
+            .iter()
+            .map(|(path, source)| {
+                let (line, column) = source
+                    .lines()
+                    .enumerate()
+                    .find_map(|(line, text)| text.find("increment").map(|column| (line, column)))
+                    .unwrap();
+                Location {
+                    uri: Url::from_file_path(root.join(path)).unwrap(),
+                    range: Range::new(
+                        Position::new(line as u32, column as u32),
+                        Position::new(line as u32, (column + "increment".len()) as u32),
+                    ),
+                }
+            })
+            .collect();
+        let empty_path = tempfile::tempdir().unwrap();
+        let mut client =
+            LspClient::spawn(&root, empty_path.path(), &["lsp", "--stdio", "--profile", profile]);
+        request(
+            &client.runtime,
+            client.server.initialize(InitializeParams {
+                capabilities: ClientCapabilities::default(),
+                workspace_folders: Some(vec![WorkspaceFolder {
+                    uri: Url::from_directory_path(&root).unwrap(),
+                    name: "fixture".into(),
+                }]),
+                ..InitializeParams::default()
+            }),
+        );
+        client.server.initialized(InitializedParams {}).unwrap();
+        client.wait_for_log_message();
+        client
+            .server
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: locations[0].uri.clone(),
+                    language_id: "solidity".into(),
+                    version: 1,
+                    text: files[0].1.clone(),
+                },
+            })
+            .unwrap();
+
+        for state in ["never opened", "opened", "closed again"] {
+            for (location, (_, source)) in locations[1..].iter().zip(&files[1..]) {
+                match state {
+                    "opened" => client
+                        .server
+                        .did_open(DidOpenTextDocumentParams {
+                            text_document: TextDocumentItem {
+                                uri: location.uri.clone(),
+                                language_id: "solidity".into(),
+                                version: 1,
+                                text: source.clone(),
+                            },
+                        })
+                        .unwrap(),
+                    "closed again" => client
+                        .server
+                        .did_close(DidCloseTextDocumentParams {
+                            text_document: TextDocumentIdentifier { uri: location.uri.clone() },
+                        })
+                        .unwrap(),
+                    _ => {}
+                }
+            }
+            let position = TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: locations[0].uri.clone() },
+                position: locations[0].range.start,
+            };
+            // References and rename wait for the latest analysis, including didClose.
+            let mut references = request(
+                &client.runtime,
+                client.server.references(ReferenceParams {
+                    text_document_position: position.clone(),
+                    context: ReferenceContext { include_declaration: true },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                }),
+            )
+            .unwrap();
+            let mut expected = locations.clone();
+            references.sort_by(|a, b| a.uri.cmp(&b.uri));
+            expected.sort_by(|a, b| a.uri.cmp(&b.uri));
+            assert_eq!(references, expected, "{profile}: {state}");
+
+            let edits = request(
+                &client.runtime,
+                client.server.rename(RenameParams {
+                    text_document_position: position,
+                    new_name: "increase".into(),
+                    work_done_progress_params: Default::default(),
+                }),
+            )
+            .unwrap();
+            assert_eq!(
+                edits,
+                WorkspaceEdit {
+                    changes: Some(
+                        locations
+                            .iter()
+                            .map(|location| (
+                                location.uri.clone(),
+                                vec![TextEdit {
+                                    range: location.range,
+                                    new_text: "increase".into()
+                                }],
+                            ))
+                            .collect()
+                    ),
+                    ..WorkspaceEdit::default()
+                },
+                "{profile}: {state}"
+            );
+
+            let symbols = request(
+                &client.runtime,
+                client.server.symbol(WorkspaceSymbolParams {
+                    query: "Coverage".into(),
+                    ..WorkspaceSymbolParams::default()
+                }),
+            )
+            .unwrap();
+            let mut names: Vec<_> = match symbols {
+                WorkspaceSymbolResponse::Flat(symbols) => {
+                    symbols.into_iter().map(|symbol| symbol.name).collect()
+                }
+                WorkspaceSymbolResponse::Nested(symbols) => {
+                    symbols.into_iter().map(|symbol| symbol.name).collect()
+                }
+            };
+            names.sort();
+            assert_eq!(
+                names,
+                ["CoverageCounter", "CoverageScript", "CoverageTest"],
+                "{profile}: {state}"
+            );
+        }
+        client.shutdown();
+    }
+});
 
 #[test]
 fn lsp_profile_selects_workspace_sources() {

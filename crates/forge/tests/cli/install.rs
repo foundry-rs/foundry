@@ -692,6 +692,227 @@ forgetest!(can_update_and_retain_tag_revs, |prj, cmd| {
     assert_eq!(solady_init, solady_update);
 });
 
+forgetest!(update_rejects_lockfile_paths_outside_submodules, |prj, cmd| {
+    cmd.git_init();
+    let parent_git = Git::new(prj.root());
+    let state = prj.root().join("parent-state.txt");
+    fs::write(&state, "old\n").unwrap();
+    parent_git.add(["parent-state.txt"]).unwrap();
+    parent_git.commit("old").unwrap();
+    fs::write(&state, "new\n").unwrap();
+    parent_git.add(["parent-state.txt"]).unwrap();
+    parent_git.commit("new").unwrap();
+    let parent_head = parent_git.head().unwrap();
+
+    let project = prj.root().join("project");
+    fs::create_dir(&project).unwrap();
+    let project_git = Git::new(&project);
+    project_git.init().unwrap();
+    fs::write(project.join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(project.join("foundry.lock"), r#"{"..":{"rev":"HEAD^"}}"#).unwrap();
+
+    let dependency = tempfile::tempdir().unwrap();
+    let dependency_git = Git::new(dependency.path());
+    dependency_git.init().unwrap();
+    fs::write(dependency.path().join("file"), "content\n").unwrap();
+    dependency_git.add(["file"]).unwrap();
+    dependency_git.commit("initial").unwrap();
+    let dependency_rev = dependency_git.head().unwrap();
+    let submodule_path = "lib/decoy\n0123456789012345678901234567890123456789 ..";
+    fs::write(
+        project.join(".gitmodules"),
+        format!(
+            "[submodule \"decoy\"]\n\tpath = \"lib/decoy\\n0123456789012345678901234567890123456789 ..\"\n\turl = {}\n",
+            dependency.path().display()
+        ),
+    )
+    .unwrap();
+    project_git.add([".gitmodules"]).unwrap();
+    let output = Command::new("git")
+        .current_dir(&project)
+        .args(["update-index", "--add", "--cacheinfo"])
+        .arg(format!("160000,{dependency_rev},{submodule_path}"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    cmd.forge_fuse()
+        .arg("update")
+        .arg("--root")
+        .arg(&project)
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: foundry.lock entry `..` does not match an installed Git submodule
+
+"#]]);
+
+    assert_eq!(parent_git.head().unwrap(), parent_head);
+    assert_eq!(fs::read_to_string(state).unwrap(), "new\n");
+});
+
+forgetest!(update_rejects_uninitialized_submodule_worktrees, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+
+    let dependency = tempfile::tempdir().unwrap();
+    let dependency_git = Git::new(dependency.path());
+    dependency_git.init().unwrap();
+    fs::write(dependency.path().join("file"), "content\n").unwrap();
+    dependency_git.add(["file"]).unwrap();
+    dependency_git.commit("initial").unwrap();
+    let dependency_rev = dependency_git.head().unwrap();
+
+    fs::write(
+        prj.root().join(".gitmodules"),
+        format!(
+            "[submodule \"lib/skipped\"]\n\tpath = lib/skipped\n\turl = {}\n\tupdate = none\n",
+            dependency.path().display()
+        ),
+    )
+    .unwrap();
+    fs::write(prj.root().join("parent-state.txt"), "old\n").unwrap();
+    git.add([".gitmodules", "parent-state.txt"]).unwrap();
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["update-index", "--add", "--cacheinfo"])
+        .arg(format!("160000,{dependency_rev},lib/skipped"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    git.commit("old").unwrap();
+    fs::write(prj.root().join("parent-state.txt"), "new\n").unwrap();
+    git.add(["parent-state.txt"]).unwrap();
+    git.commit("new").unwrap();
+    let parent_head = git.head().unwrap();
+
+    fs::create_dir_all(prj.root().join("lib/skipped")).unwrap();
+    fs::write(prj.root().join("foundry.lock"), r#"{"lib/skipped":{"rev":"HEAD^"}}"#).unwrap();
+
+    cmd.forge_fuse().arg("update").assert_failure().stdout_eq(str![""]).stderr_eq(str![[r#"
+Submodule 'lib/skipped' ([..]) registered for path 'lib/skipped'
+Skipping submodule 'lib/skipped'
+Error: Dependency at `lib/skipped` is not an initialized Git submodule worktree
+
+"#]]);
+
+    assert_eq!(git.head().unwrap(), parent_head);
+    assert_eq!(fs::read_to_string(prj.root().join("parent-state.txt")).unwrap(), "new\n");
+});
+
+forgetest!(update_initializes_uninitialized_submodule_worktrees, |prj, cmd| {
+    cmd.git_init();
+    let dependency = tempfile::tempdir().unwrap();
+    let dependency_git = Git::new(dependency.path());
+    dependency_git.init().unwrap();
+    fs::write(dependency.path().join("file"), "content\n").unwrap();
+    dependency_git.add(["file"]).unwrap();
+    dependency_git.commit("initial").unwrap();
+    let dependency_rev = dependency_git.head().unwrap();
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(dependency.path())
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mut lock = Lockfile::new(prj.root());
+    lock.insert(
+        PathBuf::from("lib/dep"),
+        DepIdentifier::Rev { rev: dependency_rev.clone(), r#override: false },
+    );
+    lock.write().unwrap();
+    cmd.git_add();
+    cmd.git_commit("add dependency");
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["submodule", "deinit", "--force", "--", "lib/dep"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.arg("update").assert_success();
+    let dependency_path = prj.root().join("lib/dep");
+    let dependency_git = Git::new(&dependency_path);
+    assert!(dependency_git.is_repo_root().unwrap());
+    assert_eq!(dependency_git.head().unwrap(), dependency_rev);
+});
+
+forgetest!(can_update_only_selected_dependencies, |prj, cmd| {
+    cmd.git_init();
+
+    let source = tempfile::tempdir().unwrap();
+    let source_git = Git::new(source.path());
+    source_git.init().unwrap();
+    fs::write(source.path().join("source.txt"), "first revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("first revision").unwrap();
+    let (first, branch) = source_git.current_rev_branch(source.path()).unwrap();
+    fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("second revision").unwrap();
+    let second = source_git.head().unwrap();
+
+    let mut lock = Lockfile::new(prj.root());
+    for name in ["dep-a", "dep-b", "dep-c", "dep-pin"] {
+        let path = PathBuf::from(format!("lib/{name}"));
+        let output = Command::new("git")
+            .current_dir(prj.root())
+            .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+            .arg(source.path())
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        Git::new(&prj.root().join(&path)).checkout(false, &first).unwrap();
+        let dep = if name == "dep-pin" {
+            DepIdentifier::Rev { rev: first.clone(), r#override: false }
+        } else {
+            Git::new(prj.root()).set_submodule_branch(&path, &branch).unwrap();
+            DepIdentifier::Branch { name: branch.clone(), rev: first.clone(), r#override: false }
+        };
+        lock.insert(path, dep);
+    }
+    lock.write().unwrap();
+    cmd.git_add();
+    cmd.git_commit("pin dependency fixtures");
+
+    let assert_revisions = |expected: [&str; 4]| {
+        for (name, rev) in ["dep-a", "dep-b", "dep-c", "dep-pin"].into_iter().zip(expected) {
+            let path = PathBuf::from(format!("lib/{name}"));
+            assert_eq!(Git::new(&prj.root().join(&path)).head().unwrap(), rev, "{name}");
+            assert_eq!(lockfile_get(prj.root(), &path).unwrap().rev(), rev, "{name}");
+        }
+    };
+
+    // A pinned selection must not become Git's empty-path update of every dependency.
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep-pin"]).assert_success();
+    assert_revisions([&first, &first, &first, &first]);
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep-a"]).assert_success();
+    assert_revisions([&second, &first, &first, &first]);
+
+    // Unqualified branches must still update when another selection has an explicit ref.
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(["update", "dep-b", &format!("fixture/dep-pin@{second}")]).assert_success();
+    assert_revisions([&second, &second, &first, &second]);
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.arg("update").assert_success();
+    assert_revisions([&second, &second, &second, &second]);
+});
+
 forgetest!(can_override_tag_in_update, |prj, cmd| {
     cmd.git_init();
 
@@ -732,6 +953,7 @@ forgetest!(can_override_tag_in_update, |prj, cmd| {
 
     assert_ne!(oz_init_lock, oz_update_lock);
     assert_eq!(oz_update_lock.name(), "v5.1.0");
+    assert_eq!(submodules_update.0[0].rev(), oz_update_lock.rev());
     assert_eq!(solady_init_lock, solady_update_lock);
 });
 

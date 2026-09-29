@@ -14,7 +14,6 @@ use tokio::task::JoinHandle;
 
 const COUNTER: Address = address!("000000000000000000000000000000000000ba10");
 const BAL_METHOD: &str = "eth_getBlockAccessList";
-const LEGACY_BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
 
 async fn rpc(endpoint: &str, method: &str, params: Value) -> Value {
     let response = reqwest::Client::new()
@@ -86,7 +85,6 @@ impl Fixture {
 #[derive(Clone, Copy, Debug)]
 enum Response {
     Native,
-    Legacy,
     Unsupported,
     InvalidCode,
     Timeout,
@@ -119,10 +117,8 @@ impl Proxy {
                 async move {
                     let after_bal = {
                         let mut requests = recorded.lock();
-                        let after_bal = requests.iter().any(|request| {
-                            request["method"] == BAL_METHOD
-                                || request["method"] == LEGACY_BAL_METHOD
-                        });
+                        let after_bal =
+                            requests.iter().any(|request| request["method"] == BAL_METHOD);
                         requests.push(request.clone());
                         after_bal
                     };
@@ -137,11 +133,8 @@ impl Proxy {
                                 "error": {"code": -32601, "message": "method not found"}}));
                         }
                     }
-                    let bal_method = method == BAL_METHOD || method == LEGACY_BAL_METHOD;
-                    if bal_method
-                        && (matches!(mode, Response::Unsupported)
-                            || (matches!(mode, Response::Legacy) && method == BAL_METHOD))
-                    {
+                    let bal_method = method == BAL_METHOD;
+                    if bal_method && matches!(mode, Response::Unsupported) {
                         return Json(json!({"jsonrpc": "2.0", "id": request["id"],
                             "error": {"code": -32601, "message": "method not found"}}));
                     }
@@ -232,12 +225,8 @@ impl Proxy {
 
     fn assert_parent_bal(&self, fixture: &Fixture) {
         let requests = self.requests.lock();
-        let calls = requests
-            .iter()
-            .filter(|request| {
-                request["method"] == BAL_METHOD || request["method"] == LEGACY_BAL_METHOD
-            })
-            .collect::<Vec<_>>();
+        let calls =
+            requests.iter().filter(|request| request["method"] == BAL_METHOD).collect::<Vec<_>>();
         assert!(!calls.is_empty(), "parent BAL was never requested");
         for request in calls {
             assert_eq!(request["params"], json!([fixture.parent["hash"]]));
@@ -439,7 +428,6 @@ forgetest_async!(fork_bal_parent_cache_preserves_prefix_boundaries, |prj, cmd| {
             block_reads.push(proxy.count("eth_getBlockByHash"));
             if disabled {
                 assert_eq!(proxy.count(BAL_METHOD), 0);
-                assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
                 proxy.assert_parent_bal(&fixture);
@@ -476,7 +464,6 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
         probes.push(proxy.count("anvil_nodeInfo"));
         if disabled {
             assert_eq!(proxy.count(BAL_METHOD), 0);
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
         } else {
             proxy.assert_parent_bal(&fixture);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
@@ -506,7 +493,6 @@ forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj,
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
         } else {
             assert_eq!(proxy.count(BAL_METHOD), 0);
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             assert!(proxy.slot_reads(U256::ZERO) > 0);
         }
     }
@@ -521,7 +507,6 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
     let gas_used = assert_test(&mut cmd, "testForkBal");
     let block_reads = baseline.count("eth_getBlockByHash");
     assert_eq!(baseline.count(BAL_METHOD), 0);
-    assert_eq!(baseline.count(LEGACY_BAL_METHOD), 0);
     assert!(baseline.slot_reads(U256::ZERO) > 0);
     // Core BAL tests cover the remaining validation and source-eligibility combinations.
     for mode in [
@@ -539,11 +524,6 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
             "optional BAL request delayed the fork: {mode:?}"
         );
         proxy.assert_parent_bal(&fixture);
-        assert_eq!(
-            proxy.count(LEGACY_BAL_METHOD),
-            usize::from(matches!(mode, Response::Unsupported)),
-            "only method-not-found may use the legacy BAL method: {mode:?}"
-        );
         assert!(proxy.slot_reads(U256::ZERO) > 0, "invalid BAL was used: {mode:?}");
         assert_eq!(proxy.count("eth_getBlockByHash"), block_reads, "extra block read: {mode:?}");
     }
@@ -572,19 +552,6 @@ forgetest_async!(fork_bal_skips_ineligible_ordinary_and_pending_forks, |prj, cmd
     command(&mut cmd, &fixture, &proxy, fixture.pending, 10, 1, r"^testForkBal\(\)$");
     assert_test(&mut cmd, "testForkBal");
     assert_eq!(proxy.count(BAL_METHOD), 0);
-});
-
-forgetest_async!(fork_bal_supports_legacy_method, |prj, cmd| {
-    let fixture = Fixture::new().await;
-    let proxy = Proxy::new(&fixture, Response::Legacy).await;
-    prj.add_test("ForkBal.t.sol", TEST);
-    command(&mut cmd, &fixture, &proxy, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$");
-    assert_test(&mut cmd, "testForkBal");
-    proxy.assert_parent_bal(&fixture);
-    assert_eq!(proxy.count(BAL_METHOD), 1);
-    assert_eq!(proxy.count(LEGACY_BAL_METHOD), 1);
-    assert_eq!(proxy.slot_reads(U256::ZERO), 0);
-    assert!(proxy.slot_reads(U256::ONE) > 0);
 });
 
 forgetest_async!(fork_bal_preserves_prefix_transaction_validation, |prj, cmd| {
@@ -693,7 +660,6 @@ forgetest_async!(fork_bal_inline_config_controls_runtime_requests, |prj, cmd| {
                 usize::from(!disabled),
                 "config={config_disabled}, contract={contract_override:?}, function={function_override:?}, mode={mode}"
             );
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             if disabled {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
@@ -760,7 +726,6 @@ forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
                 usize::from(!disabled),
                 "disabled={disabled}, mode={mode}"
             );
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             if disabled {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {

@@ -44,7 +44,7 @@ enum ExternalCall {
 /// Classifies calls by their checked function kind, including function pointers and library
 /// delegate calls. Internal `using for` bindings and `super` dispatch stay internal.
 fn classify<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> Option<ExternalCall> {
-    let callee = callee.peel_parens();
+    let (callee, _) = callee.split_call_options();
     if matches!(
         gcx.resolved_builtin(callee),
         Some(Builtin::AddressPayableSend | Builtin::AddressPayableTransfer)

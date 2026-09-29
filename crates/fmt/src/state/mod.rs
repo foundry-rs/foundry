@@ -497,9 +497,13 @@ impl<'sess> State<'sess, '_> {
                 // - ends with a bracket and fmt config forces bracket spacing.
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
+                // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
                     Some('[' | '(' | '{') => self.config.bracket_spacing,
                     Some(',' | ';') => true,
+                    Some(
+                        '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',
+                    ) => !line.ends_with("*/"),
                     _ => false,
                 };
             }
@@ -521,7 +525,12 @@ impl<'sess> State<'sess, '_> {
     fn handle_comment(&mut self, cmnt: Comment, skip_break: bool) -> Option<Comment> {
         if self.cursor.enabled {
             if self.inline_config.is_disabled(cmnt.span) {
-                if cmnt.style.is_trailing() && !self.last_token_is_space() {
+                // The comment is copied verbatim below, which appends it to whatever was printed
+                // last. An isolated comment had a line of its own in the source, so give it that
+                // line back rather than gluing it to the previous statement.
+                if cmnt.style.is_isolated() {
+                    self.hardbreak_if_not_bol();
+                } else if cmnt.style.is_trailing() && !self.last_token_is_space() {
                     self.nbsp();
                 }
                 self.print_span_cold(cmnt.span);

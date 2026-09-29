@@ -16,7 +16,7 @@ use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
     ContractsByArtifact, ContractsByArtifactBuilder, EmptyTestFilter, LIBRARY_DEPLOYER,
-    TestFunctionKind, get_contract_name,
+    TestFunctionKind, external_compiler::external_artifact_is_test_eligible, get_contract_name,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
@@ -761,10 +761,22 @@ impl MultiContractRunnerBuilder {
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
         let root = &self.config.root;
-        let contracts = output
-            .artifact_ids()
-            .map(|(id, v)| (id.with_stripped_file_prefixes(root), v))
-            .collect();
+        let coverage_artifacts = self
+            .line_coverage
+            .then(|| self.config.coverage_cache_path())
+            .flatten()
+            .map(|path| path.join("artifacts"));
+        let artifact_id = |mut id: ArtifactId| {
+            // Artifact-path cheatcodes retain the logical output paths even when coverage
+            // compilation stores its unoptimized artifacts in a separate cache.
+            if let Some(coverage_artifacts) = &coverage_artifacts
+                && let Ok(path) = id.path.strip_prefix(coverage_artifacts)
+            {
+                id.path = self.config.out.join(path);
+            }
+            id.with_stripped_file_prefixes(root).with_slashed_paths()
+        };
+        let contracts = output.artifact_ids().map(|(id, v)| (artifact_id(id), v)).collect();
         let linker = Linker::new(root, contracts);
 
         // Build revert decoder from ABIs of all artifacts.
@@ -854,8 +866,11 @@ impl MultiContractRunnerBuilder {
         }
 
         // Create known contracts from linked contracts and storage layout information (if any).
-        let known_contracts =
-            ContractsByArtifactBuilder::new(linked_contracts).with_output(output, root).build();
+        let known_contracts = ContractsByArtifactBuilder::new(linked_contracts)
+            .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
+                artifact.storage_layout.as_ref().map(|layout| (artifact_id(id), layout.clone()))
+            }))
+            .build();
 
         // Initialize and configure the solar compiler.
         let mut analysis = solar::sema::Compiler::new(
@@ -876,7 +891,7 @@ impl MultiContractRunnerBuilder {
                 &mut pcx,
                 &self.config,
                 output,
-                (!files.is_empty()).then_some(&files),
+                (!self.line_coverage && !files.is_empty()).then_some(&files),
             )?;
             pcx.parse();
             let _ = compiler.lower_asts();
@@ -1073,7 +1088,8 @@ impl<'a> TestFunctionMatcher<'a> {
         id: &ArtifactId,
         abi: &JsonAbi,
     ) -> bool {
-        filter.matches_path(&id.source)
+        external_artifact_is_test_eligible(&id.build_id)
+            && filter.matches_path(&id.source)
             && filter.matches_contract(&id.name)
             && self.matching_test_functions(filter, id, abi).next().is_some()
     }

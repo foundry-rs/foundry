@@ -49,7 +49,7 @@ impl<'gcx> Visit<'gcx> for WeakPrngChecker<'_, '_, 'gcx> {
                     && (contains_predictable_source(self.gcx, lhs)
                         || contains_predictable_source(self.gcx, rhs))
             }
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 self.gcx.resolved_builtin(callee) == Some(Builtin::Keccak256)
                     && args.exprs().any(|arg| contains_predictable_source(self.gcx, arg))
             }

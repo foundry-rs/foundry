@@ -1916,6 +1916,84 @@ contract SymbolicAssume is Test {
     );
 });
 
+forgetest_init!(symbolic_requires_successful_path, |prj, cmd| {
+    crate::skip_unless_z3!("symbolic_requires_successful_path");
+
+    prj.add_test(
+        "SymbolicEmptyDomain.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEmptyDomain is Test {
+    function checkConstantAssumption() public {
+        vm.assume(false);
+    }
+
+    function checkContradictoryAssumptions(uint256 x) public {
+        vm.assume(x > 10);
+        vm.assume(x < 5);
+    }
+
+    function checkRejectedAndReverted(bool reject) public {
+        if (reject) vm.assume(false);
+        revert();
+    }
+
+    function checkSomeAccepted(bool accept) public {
+        vm.assume(accept);
+        assert(accept);
+    }
+
+    function checkSkipped() public {
+        vm.skip(true);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEmptyDomain"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkSkipped() ([METRICS])
+[PASS] checkSomeAccepted(bool) ([METRICS])
+...
+"#]]);
+});
+
+forgetest_init!(symbolic_implicit_stop_is_successful, |prj, cmd| {
+    crate::skip_unless_z3!("symbolic_implicit_stop_is_successful");
+
+    prj.add_test(
+        "SymbolicImplicitStop.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicImplicitStop is Test {
+    function setUp() public {
+        // A single JUMPDEST falls off the end of the code without an explicit STOP.
+        vm.etch(address(this), hex"5b");
+    }
+
+    function checkImplicitStop() public {}
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkImplicitStop"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicImplicitStop.t.sol:SymbolicImplicitStop
+[PASS] checkImplicitStop() ([METRICS])
+...
+"#]]);
+});
+
 forgetest_init!(symbolic_finds_bytes_counterexample_with_native_inline_config, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

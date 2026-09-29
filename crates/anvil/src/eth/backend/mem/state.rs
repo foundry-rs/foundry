@@ -15,7 +15,7 @@ use revm::{
 };
 use std::{array, mem};
 
-/// Incrementally maintains the state trie used for mined block headers.
+/// Incrementally maintains the state trie used for block headers.
 ///
 /// The old state-root path rebuilt and sorted every account and storage trie after each block.
 /// That made EIP-2935's block-hash storage contract turn mining into linear work as its ring was
@@ -59,6 +59,43 @@ impl StateRootCache {
         self.dirty.entry(address).or_default().storage.insert(slot);
     }
 
+    /// Records a cumulative overlay relative to the overlay used for the previous root.
+    /// Returns false and invalidates the cache if entries disappeared or storage no longer
+    /// replaces the base. The caller must then supply full, merged state to `root`.
+    /// The base must not contain storage-bearing `NotExisting` accounts: their storage is
+    /// omitted from the trie but can reappear when a full database merge touches them.
+    pub fn record_overlay(
+        &mut self,
+        accounts: &AddressMap<DbAccount>,
+        previous: &AddressMap<DbAccount>,
+    ) -> bool {
+        let incremental = previous.iter().all(|(address, previous)| {
+            accounts.get(address).is_some_and(|account| {
+                matches!(
+                    account.account_state,
+                    AccountState::StorageCleared | AccountState::NotExisting
+                ) || (!matches!(
+                    previous.account_state,
+                    AccountState::StorageCleared | AccountState::NotExisting
+                ) && previous.storage.keys().all(|slot| account.storage.contains_key(slot)))
+            })
+        });
+        if !incremental {
+            self.invalidate();
+            return false;
+        }
+
+        for (address, account) in accounts {
+            let dirty = self.dirty.entry(*address).or_default();
+            if account.account_state == AccountState::StorageCleared {
+                dirty.reset_storage = true;
+            } else {
+                dirty.storage.extend(account.storage.keys().copied());
+            }
+        }
+        true
+    }
+
     /// Invalidates the trie after wholesale database replacement or clearing.
     pub fn invalidate(&mut self) {
         self.trie = None;
@@ -66,6 +103,8 @@ impl StateRootCache {
     }
 
     /// Returns the current root, applying only changes recorded since the previous call.
+    /// After initialization from full state, `accounts` may be a partial overlay containing
+    /// every dirty address; uncached accounts and storage slots retain their previous values.
     pub fn root(&mut self, accounts: &AddressMap<DbAccount>) -> B256 {
         let Self { trie, dirty, rlp_buf } = self;
         if trie.is_none() {
@@ -507,6 +546,114 @@ mod tests {
         );
         assert_eq!(state_root(&accounts), EMPTY_ROOT_HASH);
         assert_eq!(StateRootCache::default().root(&accounts), EMPTY_ROOT_HASH);
+    }
+
+    #[test]
+    fn incremental_roots_preserve_uncached_state_and_replace_cleared_storage() {
+        let address = alloy_primitives::Address::with_last_byte(1);
+        let untouched = alloy_primitives::Address::with_last_byte(2);
+        let [one, two, three, four] = [1u64, 2, 3, 4].map(U256::from);
+        let original = DbAccount {
+            info: AccountInfo { balance: U256::from(100), ..Default::default() },
+            account_state: AccountState::None,
+            storage: [(one, U256::from(11)), (two, U256::from(22))].into_iter().collect(),
+        };
+        let mut full = AddressMap::from_iter([(address, original.clone()), (untouched, original)]);
+        let mut cache = StateRootCache::default();
+        assert_eq!(cache.root(&full), state_root(&full));
+        let mut previous = AddressMap::default();
+        let mut check = |overlay: &AddressMap<DbAccount>, full: &AddressMap<DbAccount>| {
+            assert!(cache.record_overlay(overlay, &previous));
+            assert_eq!(cache.root(overlay), state_root(full));
+            previous.clone_from(overlay);
+        };
+
+        // An ordinary write must retain storage and accounts absent from the overlay.
+        let mut overlay = AddressMap::from_iter([(
+            address,
+            DbAccount {
+                info: full[&address].info.clone(),
+                account_state: AccountState::Touched,
+                storage: [(one, U256::from(33))].into_iter().collect(),
+            },
+        )]);
+        full.get_mut(&address).unwrap().storage.insert(one, U256::from(33));
+        check(&overlay, &full);
+
+        // Zero removes a leaf originally present only in the base; a new slot adds one.
+        overlay.get_mut(&address).unwrap().storage.extend([(two, U256::ZERO), (three, four)]);
+        full.get_mut(&address).unwrap().storage.remove(&two);
+        full.get_mut(&address).unwrap().storage.insert(three, four);
+        check(&overlay, &full);
+
+        // A balance-only override must not clear unread storage.
+        overlay.get_mut(&address).unwrap().info.balance = U256::from(101);
+        full.get_mut(&address).unwrap().info.balance = U256::from(101);
+        check(&overlay, &full);
+
+        // A deleted account must lose both its account leaf and its storage trie.
+        overlay.insert(
+            address,
+            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
+        );
+        full.remove(&address);
+        check(&overlay, &full);
+
+        // Recreate, then replace storage again without changing StorageCleared. Each replacement
+        // must discard the previous slot set, including slots introduced by earlier blocks.
+        for slot in [three, four] {
+            let account = DbAccount {
+                info: AccountInfo { balance: U256::from(102), ..Default::default() },
+                account_state: AccountState::StorageCleared,
+                storage: [(slot, U256::from(55))].into_iter().collect(),
+            };
+            overlay.insert(address, account.clone());
+            full.insert(address, account);
+            check(&overlay, &full);
+        }
+    }
+
+    #[test]
+    fn overlay_roots_rebuild_when_base_storage_is_exposed_again() {
+        let address = alloy_primitives::Address::with_last_byte(1);
+        let [one, two] = [1u64, 2].map(U256::from);
+        let base = DbAccount {
+            info: AccountInfo { balance: U256::from(100), ..Default::default() },
+            storage: [(one, U256::from(11)), (two, U256::from(22))].into_iter().collect(),
+            ..Default::default()
+        };
+        for account_state in
+            [AccountState::Touched, AccountState::StorageCleared, AccountState::NotExisting]
+        {
+            let storage = if account_state == AccountState::NotExisting {
+                U256Map::default()
+            } else {
+                [(one, U256::from(33))].into_iter().collect()
+            };
+            let previous = AddressMap::from_iter([(
+                address,
+                DbAccount { account_state: account_state.clone(), storage, ..base.clone() },
+            )]);
+            // Retain every overlay key when losing StorageCleared: the newly exposed base slot
+            // still requires a rebuild. NotExisting likewise has no keys to lose.
+            let storage = if account_state == AccountState::StorageCleared {
+                previous[&address].storage.clone()
+            } else {
+                U256Map::default()
+            };
+            let mut merged = base.clone();
+            merged.storage.extend(storage.clone());
+            let overlay = AddressMap::from_iter([(
+                address,
+                DbAccount { account_state: AccountState::Touched, storage, ..base.clone() },
+            )]);
+            let mut cache = StateRootCache::default();
+            cache.root(&previous);
+            assert!(!cache.record_overlay(&overlay, &previous));
+            let full = AddressMap::from_iter([(address, merged)]);
+            assert_eq!(cache.root(&full), state_root(&full));
+            assert!(!cache.record_overlay(&AddressMap::default(), &overlay));
+        }
     }
 
     fn rebuilt_root(values: &B256Map<Vec<u8>>) -> B256 {
