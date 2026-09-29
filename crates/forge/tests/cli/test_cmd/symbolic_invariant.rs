@@ -546,18 +546,26 @@ contract HandlerStore {
     uint256 public value;
 }
 
+contract NestedHandlerAssertion {
+    function boom() external pure {
+        assert(false);
+    }
+}
+
 contract SymbolicInvariantHandlerFailureTarget {
     HandlerStore store;
+    NestedHandlerAssertion nested;
     uint256 sink;
 
     constructor(HandlerStore store_) {
         store = store_;
+        nested = new NestedHandlerAssertion();
     }
 
     function boom(uint8 x) external {
         sink = x;
         if (x == 7 && store.value() == 42) {
-            assert(false);
+            nested.boom();
         }
     }
 }
@@ -669,6 +677,37 @@ contract SymbolicInvariantHandlerFailure is Test {
         replay_result["invariant_handler_failures"].as_array().expect("replay handler failures");
     assert_eq!(replay_handler_failures.len(), 1);
     assert_eq!(replay_handler_failures[0]["kind"], "handler");
+
+    // Artifacts produced before handler identities were canonicalized stored the innermost
+    // reverter. They remain replayable when that exact legacy reverter is observed again.
+    let mut legacy_artifact = artifact;
+    let outer: alloy_primitives::Address = legacy_artifact["calls"][0]["target"]
+        .as_str()
+        .expect("outer handler target")
+        .parse()
+        .unwrap();
+    legacy_artifact["invariant_failure"]["reverter"] =
+        serde_json::Value::String(outer.create(1).to_string());
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&legacy_artifact).unwrap()).unwrap();
+
+    let legacy_replay_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let legacy_replay_result = json_test_result(&legacy_replay_output, "invariant_ok()");
+    let legacy_handler_failures = legacy_replay_result["invariant_handler_failures"]
+        .as_array()
+        .expect("legacy handler failures");
+    assert_eq!(legacy_handler_failures.len(), 1);
+    assert!(
+        legacy_handler_failures[0]["name"]
+            .as_str()
+            .expect("legacy handler name")
+            .ends_with("SymbolicInvariantHandlerFailureTarget::boom")
+    );
 });
 
 forgetest_init!(symbolic_invariant_omits_unchecked_predicate_pass_rows, |prj, cmd| {

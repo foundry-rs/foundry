@@ -567,6 +567,7 @@ mod tests {
             reverts: 0,
             failure_site: Some(site),
             sequence_assertion_failure: true,
+            sequence_reverter: None,
         };
         let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
             target: Address::with_last_byte(target),
@@ -2102,6 +2103,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         };
         let config = &self.config.invariant;
+        let mut replayed_canonical_files = std::collections::HashSet::<PathBuf>::new();
+        let mut legacy_files = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -2157,13 +2160,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
                     );
                     if let Some((target, selector, fingerprint)) = expected_site {
+                        let canonical_handler = target == outcome.handler_target;
+                        let legacy_handler = target == outcome.reverter;
                         let different_handler =
-                            target != outcome.reverter || selector != outcome.selector;
+                            (!canonical_handler && !legacy_handler) || selector != outcome.selector;
                         let verified_fingerprint_mismatch = fingerprint_provenance.is_some()
                             && fingerprint != outcome.anchor_fingerprint;
                         if different_handler || verified_fingerprint_mismatch {
                             let _ = std::fs::remove_file(&path);
                             continue;
+                        }
+                        if canonical_handler {
+                            replayed_canonical_files.insert(path.clone());
+                        } else {
+                            legacy_files.push((
+                                path.clone(),
+                                handler_failure_file(
+                                    handlers_dir,
+                                    outcome.handler_target,
+                                    outcome.selector,
+                                ),
+                            ));
                         }
                     }
                     // Legacy edge fingerprints have no reproducible provenance. Retain their
@@ -2176,7 +2193,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     };
                     let failure = HandlerAssertionFailure::from_replayed_sequence(
                         txes,
-                        outcome.reverter,
+                        outcome.handler_target,
                         outcome.selector,
                         fingerprint,
                         outcome.revert_reason.unwrap_or_default(),
@@ -2208,6 +2225,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 Err(err) => {
                     error!(%err, "Failed to replay handler-side assertion bug");
                 }
+            }
+        }
+        // A legacy symbolic handler identity is removed only after its canonical replacement has
+        // itself replayed successfully. This keeps migration safe across interrupted/failed writes
+        // and independent of directory iteration order.
+        for (legacy, canonical) in legacy_files {
+            if replayed_canonical_files.contains(&canonical) {
+                let _ = std::fs::remove_file(legacy);
             }
         }
         (replayed, replayed_storage)
@@ -3272,12 +3297,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         selector,
                         fingerprint,
                     }) => {
-                        let expected_site = CheckSequenceFailureSite::SequenceCall {
-                            target: *reverter,
-                            selector: *selector,
-                            fingerprint: *fingerprint,
+                        let Some(CheckSequenceFailureSite::SequenceCall {
+                            target: actual_target,
+                            selector: actual_selector,
+                            fingerprint: actual_fingerprint,
+                        }) = outcome.failure_site
+                        else {
+                            return Err(format!(
+                                "sequence symbolic artifact replayed a non-handler failure site: \
+                                 {:?}",
+                                outcome.failure_site
+                            ));
                         };
-                        if outcome.failure_site != Some(expected_site) {
+                        let canonical_handler = *reverter == actual_target
+                            && *selector == actual_selector
+                            && *fingerprint == actual_fingerprint;
+                        let legacy_handler = outcome.sequence_reverter == Some(*reverter)
+                            && *reverter != actual_target
+                            && *selector == actual_selector
+                            && (*fingerprint == actual_fingerprint
+                                || *fingerprint
+                                    == handler_edge_fingerprint(None, *reverter, *selector));
+                        if !canonical_handler && !legacy_handler {
                             return Err(format!(
                                 "sequence symbolic artifact replayed a different handler \
                                  failure site than the stored artifact: expected \
@@ -3285,16 +3326,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 outcome.failure_site
                             ));
                         }
-                        let handler_name = name.clone().unwrap_or_else(|| {
-                            invariant_handler_failure_name(&setup_contracts, *reverter, *selector)
-                        });
+                        let handler_name = if legacy_handler {
+                            invariant_handler_failure_name(
+                                &setup_contracts,
+                                actual_target,
+                                actual_selector,
+                            )
+                        } else {
+                            name.clone().unwrap_or_else(|| {
+                                invariant_handler_failure_name(
+                                    &setup_contracts,
+                                    actual_target,
+                                    actual_selector,
+                                )
+                            })
+                        };
                         self.result.invariant_result(
                             invariant_kind(1, outcome.calls_count, outcome.reverts),
                             InvariantOutcome {
                                 handler_failures: vec![InvariantFailure::Handler {
                                     name: handler_name,
-                                    reverter: *reverter,
-                                    selector: *selector,
+                                    reverter: actual_target,
+                                    selector: actual_selector,
                                     reason: outcome
                                         .reason
                                         .or_else(|| artifact.replay.reason.clone())
@@ -5941,10 +5994,8 @@ fn record_handler_failure(
     storage: &[SymbolicStorageAssignment],
     fingerprint_provenance: Option<PersistedFingerprintProvenance>,
 ) {
-    let mut buf = [0u8; 24];
-    buf[..20].copy_from_slice(reverter.as_slice());
-    buf[20..].copy_from_slice(selector.as_slice());
-    let file = failure_dir.join("handlers").join(format!("{:x}.json", keccak256(buf)));
+    let handlers_dir = failure_dir.join("handlers");
+    let file = handler_failure_file(&handlers_dir, reverter, selector);
     record_invariant_failure(
         &file,
         call_sequence,
@@ -5958,6 +6009,13 @@ fn record_handler_failure(
         }),
         fingerprint_provenance,
     );
+}
+
+fn handler_failure_file(handlers_dir: &Path, reverter: Address, selector: Selector) -> PathBuf {
+    let mut buf = [0u8; 24];
+    buf[..20].copy_from_slice(reverter.as_slice());
+    buf[20..].copy_from_slice(selector.as_slice());
+    handlers_dir.join(format!("{:x}.json", keccak256(buf)))
 }
 
 fn invariant_handler_failure_name(
