@@ -266,19 +266,31 @@ pub async fn fetch_abi_from_etherscan(
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
         .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-    let mut source = client.contract_source_code(address).await?;
+    let source = client.contract_source_code(address).await?;
     let implementation =
         source.items.first().filter(|item| item.proxy != 0).and_then(|item| item.implementation);
+    let mut abis = source
+        .items
+        .into_iter()
+        .map(|item| Ok((item.abi()?, item.contract_name)))
+        .collect::<Result<Vec<_>>>()?;
     if let Some(implementation) = implementation {
         sh_status!(
             "Contract at {address} is a proxy, fetching implementation at {implementation}..."
         )?;
-        match client.contract_source_code(implementation).await {
-            Ok(implementation) => source.items.extend(implementation.items),
+        let implementation = client.contract_source_code(implementation).await.and_then(|source| {
+            source
+                .items
+                .into_iter()
+                .map(|item| Ok((item.abi()?, item.contract_name)))
+                .collect::<Result<Vec<_>, _>>()
+        });
+        match implementation {
+            Ok(implementation) => abis.extend(implementation),
             Err(err) => sh_warn!("Could not fetch implementation ABI: {err}")?,
         }
     }
-    source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
+    Ok(abis)
 }
 
 /// Useful extensions to [`std::process::Command`].

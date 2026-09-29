@@ -2,6 +2,8 @@
 
 use super::*;
 use axum::{Json, Router, extract::Query, routing::get};
+use foundry_config::Config;
+use foundry_test_utils::TestCommand;
 use std::collections::HashMap;
 
 // tests that `cast interface` excludes the constructor
@@ -365,6 +367,10 @@ casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
     let implementation = Address::random();
     let orphan_proxy = Address::random();
     let unverified = Address::random();
+    let malformed_proxy = Address::random();
+    let malformed = Address::random();
+    let collision_proxy = Address::random();
+    let collision_impl = Address::random();
 
     let metadata = |name: &str, abi: &serde_json::Value, implementation: Option<Address>| {
         json!({
@@ -386,10 +392,31 @@ casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
         {"type": "function", "name": "totalSupply", "inputs": [], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view"},
         {"type": "function", "name": "transfer", "inputs": [{"name": "to", "type": "address"}, {"name": "amount", "type": "uint256"}], "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable"}
     ]);
+    let mut malformed_metadata = metadata("Malformed", &json!([]), None);
+    malformed_metadata["result"][0]["ABI"] = json!("invalid JSON");
+    let shared = json!({
+        "name": "value", "type": "tuple", "internalType": "struct Shared.Data",
+        "components": [{"name": "amount", "type": "uint256", "internalType": "uint256"}]
+    });
+    let nested = json!({
+        "name": "result", "type": "tuple", "internalType": "struct Token.State",
+        "components": [shared.clone()]
+    });
+    let mut event_param = shared.clone();
+    event_param["indexed"] = json!(false);
+    let collision_abi = json!([
+        {"type": "function", "name": "consume", "inputs": [shared.clone()], "outputs": [nested], "stateMutability": "view"},
+        {"type": "event", "name": "Changed", "inputs": [event_param], "anonymous": false},
+        {"type": "error", "name": "Invalid", "inputs": [shared]}
+    ]);
     let responses = HashMap::from([
         (proxy, metadata("Proxy", &proxy_abi, Some(implementation))),
         (implementation, metadata("Token", &implementation_abi, None)),
         (orphan_proxy, metadata("OrphanProxy", &proxy_abi, Some(unverified))),
+        (malformed_proxy, metadata("MalformedProxy", &proxy_abi, Some(malformed))),
+        (malformed, malformed_metadata),
+        (collision_proxy, metadata("Token", &collision_abi, Some(collision_impl))),
+        (collision_impl, metadata("Token", &collision_abi, None)),
     ]);
     let not_verified =
         json!({"status": "0", "message": "NOTOK", "result": "Contract source code not verified"});
@@ -447,6 +474,15 @@ interface Token {
             format!("{}{token_interface}", proxy_interface.replace("{name}", "Proxy")),
             following(proxy, implementation),
         ),
+        // An invalid implementation ABI only costs its own interface.
+        (
+            malformed_proxy,
+            proxy_interface.replace("{name}", "MalformedProxy"),
+            format!(
+                "{}Warning: Could not fetch implementation ABI: Failed to deserialize content: expected value at line 1 column 1\ninvalid JSON\n",
+                following(malformed_proxy, malformed)
+            ),
+        ),
         // An unverified implementation only costs its own interface.
         (
             orphan_proxy,
@@ -457,15 +493,141 @@ interface Token {
             ),
         ),
     ];
-    for (target, stdout, stderr) in scenarios {
+    let prepare = |cmd: &mut TestCommand| {
         cmd.cast_fuse().current_dir(prj.root());
         for var in ["CHAIN", "ETHERSCAN_API_KEY", "FOUNDRY_CONFIG", "FOUNDRY_ETHERSCAN_API_KEY"] {
             cmd.unset_env(var);
         }
+    };
+    for (target, stdout, stderr) in scenarios {
+        prepare(&mut cmd);
         cmd.args(["interface", &target.to_string()])
             .assert_success()
             .stdout_eq(stdout)
             .stderr_eq(stderr);
     }
+    prepare(&mut cmd);
+    let output = cmd
+        .args(["interface", &collision_proxy.to_string()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+library Shared {
+    struct Data {
+        uint256 amount;
+    }
+}
+
+interface Token {
+    struct State {
+        Shared.Data value;
+    }
+
+    error Invalid(Shared.Data value);
+
+    event Changed(Shared.Data value);
+
+    function consume(Shared.Data memory value) external view returns (State memory result);
+}
+
+library Shared_1 {
+    struct Data {
+        uint256 amount;
+    }
+}
+
+interface Token_1 {
+    struct State {
+        Shared_1.Data value;
+    }
+
+    error Invalid(Shared_1.Data value);
+
+    event Changed(Shared_1.Data value);
+
+    function consume(Shared_1.Data memory value) external view returns (State memory result);
+}
+
+"#]])
+        .get_output()
+        .stdout_lossy();
+    prj.add_source("Generated.sol", &output);
+    let compiled = Config::load_with_root(prj.root())
+        .unwrap()
+        .sanitized()
+        .project()
+        .unwrap()
+        .compile()
+        .unwrap();
+    assert!(!compiled.has_compiler_errors(), "{compiled}");
+    assert!(compiled.find_first("Token_1").is_some());
+
+    prepare(&mut cmd);
+    let output = cmd
+        .args(["interface", &collision_proxy.to_string(), "--flatten"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface Token {
+    // Types from `Shared`
+    struct Data {
+        uint256 amount;
+    }
+
+    struct State {
+        Data value;
+    }
+
+    error Invalid(Data value);
+
+    event Changed(Data value);
+
+    function consume(Data memory value) external view returns (State memory result);
+}
+
+interface Token_1 {
+    // Types from `Shared`
+    struct Data {
+        uint256 amount;
+    }
+
+    struct State {
+        Data value;
+    }
+
+    error Invalid(Data value);
+
+    event Changed(Data value);
+
+    function consume(Data memory value) external view returns (State memory result);
+}
+
+"#]])
+        .get_output()
+        .stdout_lossy();
+    prj.add_source("Generated.sol", &output);
+    let compiled = Config::load_with_root(prj.root())
+        .unwrap()
+        .sanitized()
+        .project()
+        .unwrap()
+        .compile()
+        .unwrap();
+    assert!(!compiled.has_compiler_errors(), "{compiled}");
+    assert!(compiled.find_first("Token_1").is_some());
+
+    // Solidity-only renaming must preserve the explorer's original JSON ABI.
+    prepare(&mut cmd);
+    cmd.args(["interface", &collision_proxy.to_string(), "--json"]).assert_json_stdout(
+        json!({
+            "schema_version": 1, "success": true,
+            "data": [collision_abi.clone(), collision_abi], "errors": [], "warnings": []
+        })
+        .to_string(),
+    );
     server.abort();
 });
