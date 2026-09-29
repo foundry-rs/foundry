@@ -235,6 +235,12 @@ fn plan_symbolic_regression(
     writeln!(contents, "    function prank(address msgSender) external;")?;
     writeln!(contents, "    function roll(uint256 newHeight) external;")?;
     writeln!(contents, "    function warp(uint256 newTimestamp) external;")?;
+    if !artifact.storage.is_empty() {
+        writeln!(
+            contents,
+            "    function store(address target, bytes32 slot, bytes32 value) external;"
+        )?;
+    }
     writeln!(contents, "}}")?;
     writeln!(contents)?;
     writeln!(contents, "contract {generated_contract} is {contract} {{")?;
@@ -251,6 +257,15 @@ fn plan_symbolic_regression(
     writeln!(contents, "    }}")?;
     writeln!(contents)?;
     writeln!(contents, "    function {generated_test}() public payable {{")?;
+    for assignment in &artifact.storage {
+        writeln!(
+            contents,
+            "        __foundrySymbolicVm.store({}, bytes32(uint256({})), bytes32(uint256({})));",
+            assignment.address,
+            u256_literal(assignment.slot),
+            u256_literal(assignment.value)
+        )?;
+    }
     match artifact.kind {
         SymbolicCounterexampleArtifactKind::SingleCall => {
             let call = artifact.calls.first().expect("single-call artifact has at least one call");
