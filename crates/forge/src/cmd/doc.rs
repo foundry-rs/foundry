@@ -9,7 +9,6 @@ use foundry_cli::{
     utils::Git,
 };
 use foundry_common::{compile::ProjectCompiler, shell};
-use foundry_compilers::artifacts::output_selection::OutputSelection;
 use foundry_config::{Config, load_config_with_root};
 use solar::{interface::Session, sema::Compiler};
 use std::{path::PathBuf, time::Instant};
@@ -64,7 +63,7 @@ impl DocArgs {
         install::install_missing_dependencies(&mut config, || self.config())?;
 
         let root = &config.root;
-        let mut project = config.parsing_project()?;
+        let project = config.parsing_project()?;
         let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
         let source_status = compiler.enter_mut(|compiler| -> Result<_> {
             let mut pcx = compiler.parse();
@@ -76,7 +75,7 @@ impl DocArgs {
         })?;
 
         // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old and
-        // mixed-version projects by using the compiler-backed parser with auto-detected Solc.
+        // mixed-version projects by compiling Solidity sources with the configured compiler.
         let mut output = if source_status.is_fully_supported() {
             None
         } else {
@@ -91,11 +90,9 @@ impl DocArgs {
             if files.is_empty() {
                 None
             } else {
-                project.offline = config.offline;
-                project.update_output_selection(|selection| {
-                    *selection = OutputSelection::common_output_selection(["abi".into()]);
-                });
-                Some(ProjectCompiler::new().files(files).compile(&project)?)
+                let mut compile_project = config.solar_project()?;
+                compile_project.no_artifacts = true;
+                Some(ProjectCompiler::new().files(files).compile(&compile_project)?)
             }
         };
 

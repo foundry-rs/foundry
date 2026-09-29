@@ -356,8 +356,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
-        evm_version_configured: false,
-        evm_version_normalized: false,
         hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
@@ -899,6 +897,90 @@ forgetest!(nested_config_does_not_run_solc, |prj, cmd| {
 
     cmd.args(["config", "--json"]).assert_success();
     assert!(!solc.with_extension("invoked").exists(), "the dependency compiler was invoked");
+});
+
+#[cfg(unix)]
+forgetest!(non_compiling_commands_do_not_run_solc, |prj, cmd| {
+    prj.add_source("Foo", "contract Foo {}");
+    let solc = prj.root().join("project-solc");
+    write_recording_solc(&solc);
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(solc.clone())));
+
+    for args in
+        [&["config", "--json"][..], &["remappings"], &["tree"], &["fmt"], &["lint"], &["clean"]]
+    {
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!solc.with_extension("invoked").exists(), "`forge {args:?}` invoked solc");
+    }
+});
+
+// The default EVM version follows the version of a configured local compiler at runtime, while an
+// explicit EVM version is preserved.
+forgetest!(local_solc_derives_runtime_evm_version, |prj, cmd| {
+    let add_contracts = |evm_version: &str| {
+        let assertion = format!(
+            r#"
+pragma solidity ^0.8.0;
+
+interface Vm {{
+    function getEvmVersion() external pure returns (string memory evm);
+}}
+
+library EvmVersionAssert {{
+    function check() internal pure {{
+        string memory evm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).getEvmVersion();
+        require(keccak256(bytes(evm)) == keccak256("{evm_version}"), evm);
+    }}
+}}
+"#
+        );
+        prj.add_test(
+            "EvmVersion.t.sol",
+            &format!(
+                "{assertion}\ncontract EvmVersionTest {{ function test_evm_version() public pure {{ EvmVersionAssert.check(); }} }}"
+            ),
+        );
+        prj.add_script(
+            "EvmVersion.s.sol",
+            &format!(
+                "{assertion}\ncontract EvmVersionScript {{ function run() public pure {{ EvmVersionAssert.check(); }} }}"
+            ),
+        );
+    };
+
+    let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(solc.solc.clone())));
+    add_contracts("cancun");
+    cmd.args(["test"]).assert_success();
+    cmd.forge_fuse().args(["coverage"]).assert_success();
+    cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).assert_success();
+
+    prj.update_config(|config| config.solc = None);
+    add_contracts("osaka");
+    let explicit = ["--use", OTHER_SOLC_VERSION, "--evm-version", "osaka"];
+    cmd.forge_fuse().arg("test").args(explicit).assert_success();
+    cmd.forge_fuse().arg("coverage").args(explicit).assert_success();
+    cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).args(explicit).assert_success();
+});
+
+// EVM version restrictions match the default EVM version of a configured local compiler.
+forgetest!(local_solc_matches_evm_version_restrictions, |prj, cmd| {
+    prj.add_raw_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!(
+            r#"[profile.default]
+solc = '{}'
+compilation_restrictions = [{{ paths = "src/**", evm_version = "cancun" }}]
+"#,
+            solc.solc.display()
+        ),
+    )
+    .unwrap();
+
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
 });
 
 // test to ensure yul optimizer can be set as intended

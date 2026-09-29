@@ -36,8 +36,7 @@ impl FlattenArgs {
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build = BuildOpts { project_paths, ..Default::default() };
         let config = build.load_config_with_dependencies()?;
-        let mut project = config.parsing_project()?;
-        project.offline = config.offline;
+        let project = config.ephemeral_project()?;
 
         let target_path = dunce::canonicalize(target_path)?;
         let flattened = flatten(project, &target_path)?;

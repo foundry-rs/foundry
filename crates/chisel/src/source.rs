@@ -344,12 +344,14 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
             let version = Solc::ensure_installed(&"*".parse().unwrap())?;
             self.foundry_config.solc = Some(SolcReq::Version(version));
         }
-        if !self.no_vm
-            && let Some(version) = self.foundry_config.solc_version()
-            && version < MIN_VM_VERSION
-        {
-            info!(%version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
-            self.no_vm = true;
+        if let Some(version) = self.foundry_config.solc_version() {
+            if let Some(evm_version) = self.foundry_config.local_solc_evm_version(&version) {
+                self.foundry_config.evm_version = evm_version;
+            }
+            if !self.no_vm && version < MIN_VM_VERSION {
+                info!(%version, minimum=%MIN_VM_VERSION, "Disabling VM injection");
+                self.no_vm = true;
+            }
         }
         Ok(())
     }
