@@ -10,7 +10,9 @@ use foundry_cli::{
     utils::{FoundryPathExt, LoadConfig, cache_local_signatures, cache_signatures_from_abis},
 };
 use foundry_common::{
-    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
+    compile::{
+        PathOrContractInfo, ProjectCompiler, compile_abi_project, compile_abi_project_cached,
+    },
     external_compiler::is_external_artifact,
     selectors::{SelectorImportData, import_selectors},
     shell,
@@ -179,6 +181,26 @@ impl SelectorsSubcommands {
                     .external_compilers(&config)
                     .external_artifacts(false)
                     .quiet(true);
+                if project.no_artifacts
+                    && project.cached
+                    && !config.force
+                    && project.artifacts.additional_files == Default::default()
+                    // Cached artifacts do not retain compiler diagnostics.
+                    && !config.deny.warnings()
+                    // Preserve first-match selection for ambiguous unqualified names.
+                    && [&first_contract, &second_contract].into_iter().all(|contract| {
+                        contract.path.is_some()
+                            || (config.external_compilers.is_empty()
+                                && project.find_contract_path(&contract.name).is_ok())
+                    })
+                {
+                    project.no_artifacts = false;
+                    project.update_output_selection(|selection| {
+                        *selection =
+                            std::mem::take(selection).with_output("*", "*", ["abi".to_string()]);
+                    });
+                    compiler = compiler.cache_abi();
+                }
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;
@@ -375,7 +397,7 @@ impl SelectorsSubcommands {
                 sh_status!("Searching for selector {selector:?} in the project...")?;
 
                 let (mut project, compiler) = project_from_paths(project_paths)?;
-                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
+                let outcome = compile_abi_project_cached(&mut project, compiler.quiet(true))?;
                 let artifacts = selector_artifacts(outcome, &project.paths.sources);
 
                 let mut table = Table::new();

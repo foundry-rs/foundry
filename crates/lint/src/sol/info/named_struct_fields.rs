@@ -20,8 +20,7 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
-        let ExprKind::Call(callee, CallArgs { kind: CallArgsKind::Unnamed(args), .. }, _) =
-            &expr.kind
+        let ExprKind::Call(callee, CallArgs { kind: CallArgsKind::Unnamed(args), .. }) = &expr.kind
         else {
             return;
         };

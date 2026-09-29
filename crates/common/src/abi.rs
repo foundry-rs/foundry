@@ -165,7 +165,11 @@ pub async fn get_func_etherscan(
     etherscan_api_url: Option<&str>,
 ) -> Result<Function> {
     let client = if let Some(api_url) = etherscan_api_url {
-        Client::builder().with_api_key(etherscan_api_key).with_api_url(api_url)?.build()?
+        Client::builder()
+            .with_api_key(etherscan_api_key)
+            .with_api_url(api_url)?
+            .with_url(api_url)?
+            .build()?
     } else {
         Client::new(chain, etherscan_api_key)?
     };

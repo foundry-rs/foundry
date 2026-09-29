@@ -7,6 +7,7 @@ use alloy_primitives::{U256, hex};
 use eyre::{Result, bail};
 use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs, sh_warn};
 use foundry_config::Config;
+use foundry_evm::constants::CALLER;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
@@ -266,12 +267,14 @@ fn plan_symbolic_regression(
                     Some(index),
                 )?;
             }
+            writeln!(contents, "        __foundrySymbolicVm.prank({CALLER});")?;
             writeln!(
                 contents,
                 "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
                 hex::encode(selector_from_signature(&artifact.test.test))
             )?;
             if call_after_invariant {
+                writeln!(contents, "        __foundrySymbolicVm.prank({CALLER});")?;
                 writeln!(
                     contents,
                     "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",

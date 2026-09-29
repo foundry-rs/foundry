@@ -9,7 +9,7 @@ use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
-use axum::{Router, body::Bytes as BodyBytes};
+use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::constants::CALLER;
@@ -1211,19 +1211,28 @@ forgetest_async!(can_deploy_unlocked, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast);
 });
 
-forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
+forgetest_async!(delegated_transport_error_is_not_retried, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let upstream = handle.http_endpoint();
     let client = reqwest::Client::new();
+    let submissions = std::sync::Arc::new(AtomicUsize::new(0));
+    let submitted_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let recorded_submissions = submissions.clone();
+    let recorded_request = submitted_request.clone();
     let app = Router::new().fallback(move |body: BodyBytes| {
         let upstream = upstream.clone();
         let client = client.clone();
+        let submissions = recorded_submissions.clone();
+        let submitted_request = recorded_request.clone();
         async move {
             let request: Value = serde_json::from_slice(&body).unwrap();
-            if request.get("method").and_then(Value::as_str) == Some("eth_sendTransaction") {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let is_submission =
+                request.get("method").and_then(Value::as_str) == Some("eth_sendTransaction");
+            if is_submission {
+                submissions.fetch_add(1, Ordering::Relaxed);
+                *submitted_request.lock().unwrap() = Some(request["params"][0].clone());
             }
-            client
+            let response = client
                 .post(upstream)
                 .header("content-type", "application/json")
                 .body(body)
@@ -1232,7 +1241,12 @@ forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
                 .unwrap()
                 .bytes()
                 .await
-                .unwrap()
+                .unwrap();
+            if is_submission {
+                (StatusCode::SERVICE_UNAVAILABLE, response).into_response()
+            } else {
+                response.into_response()
+            }
         }
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1243,16 +1257,36 @@ forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
     tester
         .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
         .unlocked()
-        .args(&["--rpc-timeout", "1"])
         .add_sig("BroadcastTest", "deployOther()")
         .arg("--broadcast");
     tester.cmd.assert_failure().stderr_eq(str![[r#"
-Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
+Error: submission outcome for delegated operation 0 is unknown; refusing to risk a duplicate transaction
 
 "#]]);
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .unwrap();
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_eq!(
+        recovery["deployments"][0]["attempts"][0]["kind"]["request"],
+        submitted_request.lock().unwrap().clone().unwrap()
+    );
+    let attempt = recovery["deployments"][0]["attempts"][0]["id"].as_str().unwrap();
+
+    tester.clear();
+    tester
+        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .unlocked()
+        .add_sig("BroadcastTest", "deployOther()")
+        .arg("--resume");
+    tester.cmd.assert_failure().stderr_eq(format!(
+        "Error: submission outcome for delegated attempt {attempt} on chain 31337 is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted\n"
+    ));
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
 });
 
-forgetest_async!(resume_recovers_checkpoint_after_process_interruption, |prj, cmd| {
+forgetest_async!(resume_replays_dropped_signed_checkpoint, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(
         "InterruptedResume.s.sol",
@@ -1280,6 +1314,9 @@ contract InterruptedResume is Script {
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+    let sensitive_path = prj.root().join("cache/InterruptedResume.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/InterruptedResume.s.sol/31337/run-latest.json.recovery.json");
 
     cmd.arg("script").arg(&script).args([
         "--tc",
@@ -1334,9 +1371,13 @@ contract InterruptedResume is Script {
     assert!(!output.status.success(), "forge unexpectedly succeeded");
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
+    assert!(recovery_path.exists(), "authoritative recovery snapshot was not checkpointed");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&sensitive_path).unwrap();
 
-    api.mine_one().await.unwrap();
+    api.anvil_drop_transaction(first_hash.as_str().unwrap().parse().unwrap()).await.unwrap();
     api.anvil_set_auto_mine(true).await.unwrap();
+    prj.update_config(|config| config.transaction_timeout = 1);
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "InterruptedResume",
@@ -1354,7 +1395,7 @@ contract InterruptedResume is Script {
     assert!(sequence["transactions"][1]["hash"].is_string());
     assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
     assert!(sequence["pending"].as_array().unwrap().is_empty());
-    assert_eq!(submissions.lock().unwrap().len(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 3);
     let provider = handle.http_provider();
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
     assert!(!provider.get_code_at(first_address).await.unwrap().is_empty());
@@ -1844,8 +1885,8 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     // );
 
     // Check sensitive logs
-    // Ignore port number since it can change in between runs
-    let re = Regex::new(r":[0-9]+").unwrap();
+    // Ignore port number and recovery generation since they can change in between runs.
+    let re = Regex::new(r#":[0-9]+|0x[0-9a-f]{64}"#).unwrap();
 
     let fixtures_log = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1861,7 +1902,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let fixtures_log = fixtures_log.replace("\r\n", "\n");
     let run_log = run_log.replace("\r\n", "\n");
 
-    similar_asserts::assert_eq!(fixtures_log, run_log);
+    similar_asserts::assert_eq!(fixtures_log.trim_end(), run_log.trim_end());
 });
 
 forgetest_async!(test_default_sender_balance, |prj, cmd| {

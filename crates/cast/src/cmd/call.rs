@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::call_frame_to_arena,
+    rpc_trace::{call_frame_to_arena, call_tracer_config},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
@@ -24,7 +24,7 @@ use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag,
     trace::geth::{
-        CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
+        GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions,
     },
 };
@@ -232,7 +232,7 @@ fn call_tracer_options() -> GethDebugTracingCallOptions {
     GethDebugTracingCallOptions::default().with_tracing_options(
         GethDebugTracingOptions::default()
             .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-            .with_call_config(CallConfig::default().with_log()),
+            .with_call_config(call_tracer_config()),
     )
 }
 
@@ -250,6 +250,11 @@ impl CallArgs {
 
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.trace {
+                eyre::bail!(
+                    "--trace cannot be combined with --curl; use --debug-trace-call --curl instead"
+                );
+            }
             if self.browser.browser {
                 eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
             }

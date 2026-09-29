@@ -1953,6 +1953,34 @@ contract SkipPredicateReportTest is Test {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("SkipPredicateReportTest invariants"), "{stdout}");
     assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_", "--summary"]).assert_success().stdout_eq(
+        str![[r#"
+...
+╭-------------------------+--------+--------+---------╮
+| Test Suite              | Passed | Failed | Skipped |
++=====================================================+
+| SkipPredicateReportTest | 1      | 0      | 1       |
+╰-------------------------+--------+--------+---------╯
+
+
+"#]],
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_", "--summary", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "results": [
+    {
+      "suite": "SkipPredicateReportTest",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 1
+    }
+  ]
+}
+"#]]);
 });
 
 forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
@@ -3117,6 +3145,9 @@ contract PersistedSecondaryShrinkTest is Test {
     let arm = calls.iter().find(|call| call["func_name"] == "arm").unwrap().clone();
     let trigger = calls.iter().find(|call| call["func_name"] == "trigger").unwrap().clone();
     persisted_json["call_sequence"] = serde_json::json!([arm, trigger]);
+    // Legacy persisted entries did not identify their failure site. Their confirmed replay must
+    // still bypass generic shrinking so the predicate reason, trace, and sequence stay aligned.
+    persisted_json.as_object_mut().unwrap().remove("failure_site");
     std::fs::write(&persisted, serde_json::to_vec_pretty(&persisted_json).unwrap()).unwrap();
     let _ = std::fs::remove_file(persisted.with_file_name("invariant_anchor"));
     let _ = std::fs::remove_dir_all(failure_root.join("handlers"));

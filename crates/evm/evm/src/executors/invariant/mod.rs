@@ -887,6 +887,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.config.clone()
     }
 
+    /// Retains corpus replay and result aggregation without starting fresh invariant runs.
+    pub const fn skip_fresh_runs(&mut self) {
+        self.config.runs = 0;
+        self.config.timeout = None;
+    }
+
     /// Refs for tracking contracts deployed mid-sequence during corpus replay.
     pub const fn dynamic_target_ctx(&self) -> DynamicTargetCtx<'_> {
         DynamicTargetCtx {

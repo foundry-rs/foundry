@@ -102,11 +102,28 @@ impl InspectArgs {
                 "linearization inspection is only supported for Solidity contracts (.sol targets)"
             );
         }
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .external_compilers(&config)
             .external_artifacts(false)
             .target_files([target_path.clone()])
             .quiet(true);
+        if project.no_artifacts
+            && project.cached
+            && !config.force
+            && is_solidity_source(&target_path)
+            && project.artifacts.additional_files == Default::default()
+            // Cached artifacts do not retain compiler diagnostics.
+            && !config.deny.warnings()
+        {
+            project.no_artifacts = false;
+            if field != ContractOutputSelection::Abi {
+                project.update_output_selection(|selection| {
+                    *selection =
+                        std::mem::take(selection).with_output("*", "*", ["abi".to_string()]);
+                });
+            }
+            compiler = compiler.cache_abi();
+        }
         let mut output = compiler.compile(&project)?;
 
         // Find the artifact
@@ -165,7 +182,8 @@ impl InspectArgs {
                 print_json(&artifact.userdoc)?;
             }
             ContractArtifactField::Ewasm => {
-                print_json_str(&artifact.ewasm, None)?;
+                let ewasm = artifact.ewasm.as_ref().ok_or_else(|| missing_error("EWASM output"))?;
+                print_json_str(ewasm, None)?;
             }
             ContractArtifactField::Errors => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);

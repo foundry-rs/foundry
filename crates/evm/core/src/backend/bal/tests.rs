@@ -73,9 +73,9 @@ fn bal_reads_use_index_and_fall_back_to_parent_state() {
     assert_eq!(backend.basic(address).unwrap().unwrap().balance, U256::from(30));
     assert_eq!(backend.storage(address, slot).unwrap(), U256::from(30));
     // State the list does not mention was untouched by the block and comes from the parent
-    // database, which reports every unknown account as an existing empty account.
+    // database. Execution sees an account the parent does not hold as absent.
     assert_eq!(backend.storage(address, U256::from(100)).unwrap(), U256::ZERO);
-    assert_eq!(backend.basic(Address::with_last_byte(2)).unwrap(), Some(AccountInfo::default()));
+    assert_eq!(backend.basic(Address::with_last_byte(2)).unwrap(), None);
 
     // Committing removes the list again.
     backend.commit(Default::default());
