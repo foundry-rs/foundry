@@ -694,6 +694,7 @@ fmt_tests! {
     EnumVariants,
     ErrorDefinition,
     EventDefinition,
+    FnAttributeComment,
     ForStatement,
     FunctionCall,
     FunctionCallArgsStatement,
@@ -704,6 +705,8 @@ fmt_tests! {
     IfStatement,
     IfStatement2,
     IfStatement3,
+    IfStatementLongCondition,
+    IfStatementMultilineCall,
     ImportDirective,
     InlineDisable,
     IntTypes,
@@ -743,6 +746,7 @@ fmt_tests! {
     VariableDefinition,
     WhileStatement,
     Yul,
+    YulInlineBlock,
     YulStrings,
 }
 
@@ -890,4 +894,31 @@ struct AfterInitializer {
         let formatted = format(source, path, fmt_config.clone());
         assert_eq!(formatted, expected, "{case}");
     }
+}
+
+#[test]
+fn concatenated_string_trailing_comment_stays_after_last_literal() {
+    let source = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return bytes.concat(
+            "abc"
+            "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+        );
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return
+            bytes.concat(
+                "abc" "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+            );
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("concatenated-string.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
 }

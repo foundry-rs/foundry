@@ -179,6 +179,26 @@ impl SelectorsSubcommands {
                     .external_compilers(&config)
                     .external_artifacts(false)
                     .quiet(true);
+                if project.no_artifacts
+                    && project.cached
+                    && !config.force
+                    && project.artifacts.additional_files == Default::default()
+                    // Cached artifacts do not retain compiler diagnostics.
+                    && !config.deny.warnings()
+                    // Preserve first-match selection for ambiguous unqualified names.
+                    && [&first_contract, &second_contract].into_iter().all(|contract| {
+                        contract.path.is_some()
+                            || (config.external_compilers.is_empty()
+                                && project.find_contract_path(&contract.name).is_ok())
+                    })
+                {
+                    project.no_artifacts = false;
+                    project.update_output_selection(|selection| {
+                        *selection =
+                            std::mem::take(selection).with_output("*", "*", ["abi".to_string()]);
+                    });
+                    compiler = compiler.cache_abi();
+                }
 
                 if let Some(contract_path) = &mut first_contract.path {
                     let target_path = canonicalize(&*contract_path)?;

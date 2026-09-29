@@ -3888,12 +3888,18 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_newFilter`
     pub async fn new_filter(&self, filter: Filter) -> Result<String> {
         node_info!("eth_newFilter");
-        // all logs that are already available that match the filter if the filter's block range is
-        // in the past
-        let historic = if filter.block_option.get_from_block().is_some() {
-            self.backend.logs(filter.clone()).await?
-        } else {
-            vec![]
+        // Valid future ranges have no historic logs to seed yet.
+        let historic = match filter.block_option.get_from_block() {
+            Some(BlockNumber::Number(from))
+                if *from > self.backend.best_number()
+                    && filter.block_option.get_to_block().is_none_or(|to| {
+                        to.is_latest() || to.as_number().is_some_and(|to| to >= *from)
+                    }) =>
+            {
+                vec![]
+            }
+            Some(_) => self.backend.logs(filter.clone()).await?,
+            None => vec![],
         };
         let filter = EthFilter::Logs(Box::new(LogsFilter {
             blocks: self.new_block_notifications(),

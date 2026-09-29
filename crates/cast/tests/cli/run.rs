@@ -1,6 +1,7 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_signer::SignerSync;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 casttest!(run_succeeds, |_prj, cmd| {
@@ -439,4 +440,159 @@ casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
         sd_output.contains("Gas used: 177241"),
         "expected Spurious Dragon gas (177241), got: {sd_output}"
     );
+});
+
+// Anvil can use an Elastic chain ID while still executing EVM bytecode.
+casttest!(cast_run_replays_elastic_chain_id_on_anvil, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
+        str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+
+"#]],
+    );
+});
+
+// Without Anvil metadata, retain the chain-ID-based rejection for Elastic chains.
+casttest!(cast_run_rejects_elastic_chains, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(324u64))).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let endpoint = spawn_rpc_proxy_method_not_found_before(
+        handle.http_endpoint(),
+        "anvil_nodeInfo",
+        usize::MAX,
+    )
+    .await;
+
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debug-trace-transaction` renders the node's own trace instead
+
+"#]]);
+});
+
+// A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
+// overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
+// transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
+casttest!(cast_run_warns_on_receipt_mismatch, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    // MCOPY(0, 0, 0) STOP
+    api.anvil_set_code(
+        address!("0x00000000000000000000000000000000000000aa"),
+        hex!("0x6000600060005e00").into(),
+    )
+    .await
+    .unwrap();
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let mut tx_hashes = Vec::new();
+    for (to, input) in [
+        (address!("0x00000000000000000000000000000000000000aa"), Bytes::new()),
+        (address!("0x00000000000000000000000000000000000000cc"), vec![1u8; 1000].into()),
+    ] {
+        let receipt = provider
+            .send_transaction(
+                TransactionRequest::default().with_from(from).with_to(to).with_input(input).into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push(receipt.transaction_hash().to_string());
+    }
+    let [mcopy_tx, floor_tx] = &tx_hashes[..] else { unreachable!() };
+
+    for tx_hash in [mcopy_tx, floor_tx] {
+        cmd.cast_fuse()
+            .args(["run", tx_hash, "--rpc-url", &endpoint, "--evm-version", "prague"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
+"#]]);
+    }
+
+    cmd.cast_fuse()
+        .args(["run", mcopy_tx, "--rpc-url", &endpoint, "--evm-version", "shanghai"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+Warning: the replay does not match the transaction's receipt: it succeeded on-chain but reverted in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["run", floor_tx, "--rpc-url", &endpoint, "--evm-version", "cancun"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Warning: the replay does not match the transaction's receipt: it used 61000 gas on-chain but 37000 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
+});
+
+// Forked state reports an account that does not exist as empty, but replay must not refund the
+// EIP-7702 authorization of an authority that did not exist before the transaction.
+casttest!(cast_run_charges_fresh_eip7702_authority, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let authority = PrivateKeySigner::random();
+    let authorization = Authorization {
+        chain_id: U256::from(31337u64),
+        address: address!("0x000000000000000000000000000000000000dEaD"),
+        nonce: 0,
+    };
+    let signature = authority.sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let tx = TransactionRequest {
+        authorization_list: Some(vec![authorization.into_signed(signature)]),
+        ..Default::default()
+    }
+    .with_from(from)
+    .with_to(address!("0x0000000000000000000000000000000000001234"))
+    .with_input(hex!("12345678"));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    assert_eq!(receipt.gas_used(), 46_064);
+
+    let output = cmd
+        .args([
+            "run",
+            &receipt.transaction_hash().to_string(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--evm-version",
+            "prague",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("Gas used: 46064"), "{output}");
 });

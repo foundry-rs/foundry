@@ -143,14 +143,21 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
-        let InspectResult { control_flow, formatted_output, last_result, replay_input } =
-            source.inspect(input).await?;
+        let InspectResult {
+            control_flow,
+            formatted_output,
+            last_result,
+            clear_last_result,
+            replay_input,
+        } = source.inspect(input).await?;
         let (new_source, do_execute) = if let Some(input) = replay_input {
             source.clone_with_new_line(input)?
         } else {
             (new_source, do_execute)
         };
-        if let Some(last_result) = last_result {
+        if clear_last_result {
+            self.last_result = None;
+        } else if let Some(last_result) = last_result {
             self.last_result = Some(last_result);
         }
         if let Some(res) = &formatted_output {

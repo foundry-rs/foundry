@@ -1955,3 +1955,232 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest_init!(symbolic_predicate_assumptions_report_incomplete, |prj, cmd| {
+    skip_unless_z3!("symbolic_predicate_assumptions_report_incomplete");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicPredicateAssumptions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AssumptionTarget {
+    bool public value;
+
+    function set(bool next) external {
+        value = next;
+    }
+}
+
+abstract contract PredicateAssumptionBase is Test {
+    AssumptionTarget internal target;
+
+    function setUp() public {
+        target = new AssumptionTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+}
+
+contract ConstantPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public {
+        vm.assume(false);
+    }
+}
+
+contract MixedPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public {
+        vm.assume(!target.value());
+    }
+}
+
+contract BranchedPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public {
+        if (target.value()) vm.assume(false);
+    }
+}
+
+contract CaughtPredicateAssumption is PredicateAssumptionBase {
+    function reject() external {
+        vm.assume(false);
+    }
+
+    function invariant_condition() public {
+        try this.reject() {} catch {}
+    }
+}
+
+contract AfterPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public pure {}
+
+    function afterInvariant() public {
+        vm.assume(!target.value());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-test", "invariant_condition"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicPredicateAssumptions.t.sol:ConstantPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:MixedPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:BranchedPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:CaughtPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:AfterPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+});
+
+forgetest_init!(symbolic_predicate_assumptions_preserve_handler_filtering, |prj, cmd| {
+    skip_unless_z3!("symbolic_predicate_assumptions_preserve_handler_filtering");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 2;
+    });
+
+    prj.add_test(
+        "SymbolicHandlerAssumptions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FilteredAssumptionTarget is Test {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        vm.assume(next < 10);
+        value = next;
+    }
+}
+
+contract SymbolicHandlerAssumptions is Test {
+    FilteredAssumptionTarget internal target;
+
+    function setUp() public {
+        target = new FilteredAssumptionTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function acceptBound() external {
+        vm.assume(target.value() < 10);
+    }
+
+    function invariant_condition() public {
+        this.acceptBound();
+    }
+
+    function afterInvariant() public {
+        this.acceptBound();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-test", "invariant_condition"])
+        .assert_json_stdout(str![[r#"
+{
+  "test/SymbolicHandlerAssumptions.t.sol:SymbolicHandlerAssumptions": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "incomplete": null,
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]]);
+});

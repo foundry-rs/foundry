@@ -262,8 +262,12 @@ impl SourcifyVerificationProvider {
     fn get_base_url(verifier_url: Option<&str>) -> Url {
         // note(onbjerg): a little ugly but makes this infallible as we guarantee `SOURCIFY_URL` to
         // be well formatted
-        Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
-            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap())
+        let mut url = Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
+            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap());
+        if !url.path().ends_with('/') {
+            url.set_path(&format!("{}/", url.path()));
+        }
+        url
     }
 
     fn get_verify_url(
@@ -499,7 +503,7 @@ mod tests {
         })
         .to_string();
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_url = format!("http://{}/", server.local_addr().unwrap());
+        let server_url = format!("http://{}/server", server.local_addr().unwrap());
         let server_thread = thread::spawn(move || {
             let (mut socket, _) = server.accept().unwrap();
             let mut request = [0; 4096];
@@ -507,7 +511,7 @@ mod tests {
             assert!(
                 std::str::from_utf8(&request[..bytes_read])
                     .unwrap()
-                    .starts_with("GET /v2/verify/job-id ")
+                    .starts_with("GET /server/v2/verify/job-id ")
             );
             socket
                 .write_all(
