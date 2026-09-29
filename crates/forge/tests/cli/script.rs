@@ -9,7 +9,7 @@ use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, address, hex};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
-use axum::{Router, body::Bytes as BodyBytes};
+use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::constants::CALLER;
@@ -1211,19 +1211,28 @@ forgetest_async!(can_deploy_unlocked, |prj, cmd| {
         .broadcast(ScriptOutcome::OkBroadcast);
 });
 
-forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
+forgetest_async!(delegated_transport_error_is_not_retried, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let upstream = handle.http_endpoint();
     let client = reqwest::Client::new();
+    let submissions = std::sync::Arc::new(AtomicUsize::new(0));
+    let submitted_request = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let recorded_submissions = submissions.clone();
+    let recorded_request = submitted_request.clone();
     let app = Router::new().fallback(move |body: BodyBytes| {
         let upstream = upstream.clone();
         let client = client.clone();
+        let submissions = recorded_submissions.clone();
+        let submitted_request = recorded_request.clone();
         async move {
             let request: Value = serde_json::from_slice(&body).unwrap();
-            if request.get("method").and_then(Value::as_str) == Some("eth_sendTransaction") {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let is_submission =
+                request.get("method").and_then(Value::as_str) == Some("eth_sendTransaction");
+            if is_submission {
+                submissions.fetch_add(1, Ordering::Relaxed);
+                *submitted_request.lock().unwrap() = Some(request["params"][0].clone());
             }
-            client
+            let response = client
                 .post(upstream)
                 .header("content-type", "application/json")
                 .body(body)
@@ -1232,7 +1241,12 @@ forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
                 .unwrap()
                 .bytes()
                 .await
-                .unwrap()
+                .unwrap();
+            if is_submission {
+                (StatusCode::SERVICE_UNAVAILABLE, response).into_response()
+            } else {
+                response.into_response()
+            }
         }
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1243,13 +1257,33 @@ forgetest_async!(broadcast_honors_rpc_timeout, |prj, cmd| {
     tester
         .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
         .unlocked()
-        .args(&["--rpc-timeout", "1"])
         .add_sig("BroadcastTest", "deployOther()")
         .arg("--broadcast");
     tester.cmd.assert_failure().stderr_eq(str![[r#"
-Error: Failed to send transaction after 4 attempts Err([..]operation timed out)
+Error: submission outcome for delegated operation 0 is unknown; refusing to risk a duplicate transaction
 
 "#]]);
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .unwrap();
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    assert_eq!(
+        recovery["deployments"][0]["attempts"][0]["kind"]["request"],
+        submitted_request.lock().unwrap().clone().unwrap()
+    );
+    let attempt = recovery["deployments"][0]["attempts"][0]["id"].as_str().unwrap();
+
+    tester.clear();
+    tester
+        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .unlocked()
+        .add_sig("BroadcastTest", "deployOther()")
+        .arg("--resume");
+    tester.cmd.assert_failure().stderr_eq(format!(
+        "Error: submission outcome for delegated attempt {attempt} on chain 31337 is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted\n"
+    ));
+    assert_eq!(submissions.load(Ordering::Relaxed), 1);
 });
 
 forgetest_async!(resume_replays_dropped_signed_checkpoint, |prj, cmd| {
