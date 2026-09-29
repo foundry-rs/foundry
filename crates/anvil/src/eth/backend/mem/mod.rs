@@ -8016,6 +8016,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        // Keep account state and head metadata coherent across mining and state replacement.
         let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
