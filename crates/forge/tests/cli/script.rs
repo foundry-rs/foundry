@@ -6123,3 +6123,18 @@ contract SetStorageViaRpc {
         .args(["SetStorageViaRpc", "--rpc-url", &handle.http_endpoint()])
         .assert_success();
 });
+
+// tests that `--unlocked` cannot be combined with any remote signer
+forgetest!(script_unlocked_conflicts_with_remote_signers, |_prj, cmd| {
+    for signer in ["--aws", "--gcp", "--turnkey"] {
+        cmd.forge_fuse()
+            .args(["script", "Foo", "--unlocked", "--sender"])
+            .args(["0x0000000000000000000000000000000000000001", signer])
+            .assert_failure()
+            .stderr_eq(format!(
+                "error: the argument '--unlocked' cannot be used with '{signer}'\n\n\
+                 Usage: forge script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
+                 For more information, try '--help'.\n"
+            ));
+    }
+});
