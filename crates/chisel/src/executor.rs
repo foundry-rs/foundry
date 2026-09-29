@@ -39,13 +39,21 @@ pub struct InspectResult {
     pub formatted_output: Option<String>,
     /// An expression that recreates the inspected value, if any.
     pub last_result: Option<String>,
+    /// Whether the previous reusable result should be cleared.
+    pub clear_last_result: bool,
     /// Input to execute and persist after inspection, if it differs from the original input.
     pub replay_input: Option<String>,
 }
 
 impl InspectResult {
     const fn empty(control_flow: ControlFlow<()>) -> Self {
-        Self { control_flow, formatted_output: None, last_result: None, replay_input: None }
+        Self {
+            control_flow,
+            formatted_output: None,
+            last_result: None,
+            clear_last_result: false,
+            replay_input: None,
+        }
     }
 }
 
@@ -197,6 +205,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     control_flow: ControlFlow::Break(()),
                     formatted_output: Some(formatted_event?),
                     last_result: None,
+                    clear_last_result: false,
                     replay_input: None,
                 });
             }
@@ -267,7 +276,9 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         let Some(data) = data else {
             eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
         };
-        let last_result = format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data));
+        let clear_last_result = dyn_ty_contains_function(&ty);
+        let last_result = (!clear_last_result)
+            .then(|| format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data)));
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if cont || replay_input.is_some() {
             ControlFlow::Continue(())
@@ -277,7 +288,8 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         Ok(InspectResult {
             control_flow: c,
             formatted_output: Some(format_token(token)),
-            last_result: Some(last_result),
+            last_result,
+            clear_last_result,
             replay_input,
         })
     }
@@ -360,6 +372,15 @@ fn format_token(token: DynSolValue) -> String {
     match token {
         DynSolValue::Address(a) => {
             format!("Type: {}\n└ Data: {}", "address".red(), a.cyan())
+        }
+        DynSolValue::Function(f) => {
+            let (address, selector) = f.as_address_and_selector();
+            format!(
+                "Type: {}\n├ Address: {}\n└ Selector: {}",
+                "function".red(),
+                address.cyan(),
+                selector.cyan()
+            )
         }
         DynSolValue::FixedBytes(b, byte_len) => {
             format!(
@@ -552,6 +573,17 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
     })
 }
 
+fn dyn_ty_contains_function(ty: &DynSolType) -> bool {
+    match ty {
+        DynSolType::Function => true,
+        DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
+            dyn_ty_contains_function(inner)
+        }
+        DynSolType::Tuple(types) => types.iter().any(dyn_ty_contains_function),
+        _ => false,
+    }
+}
+
 /// Maps a solar [`Ty`] to a [`DynSolType`].
 fn solar_expr_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, expr: &Expr<'_>) -> Option<DynSolType> {
     // `expr` is the inspected expression inside Chisel's generated `abi.encode(...)` call. Solar
@@ -590,17 +622,8 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         TyKind::Enum(_) => Some(DynSolType::Uint(8)),
         TyKind::Udvt(inner, _) => solar_ty_to_dyn(gcx, inner),
         TyKind::Contract(_) => Some(DynSolType::Address),
-        // For a function-pointer type we return the ABI type of what the call *produces*, not a
-        // representation of the pointer itself. This is intentional: chisel inspects values, so
-        // the interesting type is the returned value.  A zero-return function pointer has no
-        // inspectable value, so we return `None`.
-        TyKind::Fn(f) => match f.returns.len() {
-            0 => None,
-            1 => solar_ty_to_dyn(gcx, f.returns[0]),
-            _ => Some(DynSolType::Tuple(
-                f.returns.iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect(),
-            )),
-        },
+        TyKind::Fn(f) if f.is_external() => Some(DynSolType::Function),
+        TyKind::Fn(_) => None,
         TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::IntLiteral(neg, size, _) => {
