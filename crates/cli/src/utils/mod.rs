@@ -254,6 +254,9 @@ pub fn install_crypto_provider() {
 }
 
 /// Fetches the ABI of a contract from Etherscan.
+///
+/// If Etherscan reports the contract as a proxy, the ABI of its implementation is appended after
+/// the proxy's own. Failing to fetch the implementation only produces a warning.
 pub async fn fetch_abi_from_etherscan(
     address: Address,
     config: &foundry_config::Config,
@@ -263,7 +266,18 @@ pub async fn fetch_abi_from_etherscan(
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
         .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-    let source = client.contract_source_code(address).await?;
+    let mut source = client.contract_source_code(address).await?;
+    let implementation =
+        source.items.first().filter(|item| item.proxy != 0).and_then(|item| item.implementation);
+    if let Some(implementation) = implementation {
+        sh_status!(
+            "Contract at {address} is a proxy, fetching implementation at {implementation}..."
+        )?;
+        match client.contract_source_code(implementation).await {
+            Ok(implementation) => source.items.extend(implementation.items),
+            Err(err) => sh_warn!("Could not fetch implementation ABI: {err}")?,
+        }
+    }
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
 

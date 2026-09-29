@@ -1,7 +1,8 @@
 //! CLI tests for source commands.
 
 use super::*;
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, extract::Query, routing::get};
+use std::collections::HashMap;
 
 // tests that `cast interface` excludes the constructor
 // <https://github.com/alloy-rs/core/issues/555>
@@ -355,5 +356,116 @@ casttest!(source_plain_and_directory, async |prj, cmd| {
     let directory = prj.root().join("sources");
     cmd.cast_fuse().args(args).arg("-d").arg(&directory).assert_empty_stdout();
     assert_eq!(fs::read_to_string(directory.join("Example/Contract.sol")).unwrap(), source);
+    server.abort();
+});
+
+// tests that `cast interface` also pulls the ABI of the implementation behind a proxy
+casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
+    let proxy = Address::random();
+    let implementation = Address::random();
+    let orphan_proxy = Address::random();
+    let unverified = Address::random();
+
+    let metadata = |name: &str, abi: &serde_json::Value, implementation: Option<Address>| {
+        json!({
+            "status": "1", "message": "OK", "result": [{
+                "SourceCode": "", "ABI": abi.to_string(), "ContractName": name,
+                "CompilerVersion": "v0.8.30+commit.73712a01", "OptimizationUsed": "0",
+                "Runs": "200", "EVMVersion": "Default",
+                "Proxy": if implementation.is_some() { "1" } else { "0" },
+                "Implementation": implementation.map(|address| address.to_string()).unwrap_or_default(),
+            }]
+        })
+    };
+    let proxy_abi = json!([
+        {"type": "function", "name": "implementation", "inputs": [], "outputs": [{"name": "", "type": "address"}], "stateMutability": "view"},
+        {"type": "event", "name": "Upgraded", "inputs": [{"name": "implementation", "type": "address", "indexed": true}], "anonymous": false},
+        {"type": "fallback", "stateMutability": "payable"}
+    ]);
+    let implementation_abi = json!([
+        {"type": "function", "name": "totalSupply", "inputs": [], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view"},
+        {"type": "function", "name": "transfer", "inputs": [{"name": "to", "type": "address"}, {"name": "amount", "type": "uint256"}], "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable"}
+    ]);
+    let responses = HashMap::from([
+        (proxy, metadata("Proxy", &proxy_abi, Some(implementation))),
+        (implementation, metadata("Token", &implementation_abi, None)),
+        (orphan_proxy, metadata("OrphanProxy", &proxy_abi, Some(unverified))),
+    ]);
+    let not_verified =
+        json!({"status": "0", "message": "NOTOK", "result": "Contract source code not verified"});
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().route(
+        "/api",
+        get(move |Query(query): Query<HashMap<String, String>>| {
+            let address = query["address"].parse::<Address>().unwrap();
+            let response = responses.get(&address).cloned().unwrap_or_else(|| not_verified.clone());
+            async move { Json(response) }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        format!(
+            r#"[profile.default]
+etherscan_api_key = "local"
+eth_rpc_no_proxy = true
+
+[etherscan]
+local = {{ key = "test", url = "{url}/api" }}
+"#
+        ),
+    )
+    .unwrap();
+
+    let proxy_interface = r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface {name} {
+    event Upgraded(address indexed implementation);
+
+    fallback() external payable;
+
+    function implementation() external view returns (address);
+}
+"#;
+    let token_interface = r#"
+interface Token {
+    function totalSupply() external view returns (uint256);
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+"#;
+    let following = |proxy: Address, implementation: Address| {
+        format!("Contract at {proxy} is a proxy, fetching implementation at {implementation}...\n")
+    };
+    let scenarios = [
+        // The implementation's interface follows the proxy's own.
+        (
+            proxy,
+            format!("{}{token_interface}", proxy_interface.replace("{name}", "Proxy")),
+            following(proxy, implementation),
+        ),
+        // An unverified implementation only costs its own interface.
+        (
+            orphan_proxy,
+            proxy_interface.replace("{name}", "OrphanProxy"),
+            format!(
+                "{}Warning: Could not fetch implementation ABI: Contract source code not verified: {unverified}\n",
+                following(orphan_proxy, unverified)
+            ),
+        ),
+    ];
+    for (target, stdout, stderr) in scenarios {
+        cmd.cast_fuse().current_dir(prj.root());
+        for var in ["CHAIN", "ETHERSCAN_API_KEY", "FOUNDRY_CONFIG", "FOUNDRY_ETHERSCAN_API_KEY"] {
+            cmd.unset_env(var);
+        }
+        cmd.args(["interface", &target.to_string()])
+            .assert_success()
+            .stdout_eq(stdout)
+            .stderr_eq(stderr);
+    }
     server.abort();
 });

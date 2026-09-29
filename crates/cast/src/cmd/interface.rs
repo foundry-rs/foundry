@@ -24,7 +24,8 @@ pub struct InterfaceArgs {
     /// The target contract, which can be one of:
     /// - A file path to an ABI JSON file.
     /// - A contract identifier in the form `<path>:<contractname>` or just `<contractname>`.
-    /// - An Ethereum address, for which the ABI will be fetched from Etherscan.
+    /// - An Ethereum address, for which the ABI will be fetched from Etherscan. If Etherscan
+    ///   reports the contract as a proxy, the ABI of its implementation is included as well.
     contract: String,
 
     /// The name to use for the generated interface.
