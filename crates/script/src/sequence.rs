@@ -2,6 +2,7 @@ use crate::{
     multi_sequence::MultiChainSequence,
     recovery::{DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
 };
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{B256, Bytes};
 use eyre::{ContextCompat, Result, bail};
@@ -22,8 +23,8 @@ use std::{
     content = "sequence",
     rename_all = "camelCase",
     bound(
-        serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
-        deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+        serialize = "N::TxEnvelope: Serialize",
+        deserialize = "N::TxEnvelope: for<'de2> Deserialize<'de2>"
     )
 )]
 pub(crate) enum SequenceData<N: Network> {
@@ -33,8 +34,7 @@ pub(crate) enum SequenceData<N: Network> {
 
 impl<N: Network> SequenceData<N>
 where
-    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
+    N::TxEnvelope: Serialize,
 {
     fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         match self {
@@ -119,7 +119,6 @@ where
 pub struct ScriptSequenceKind<N: Network>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     recovery: RecoveryStore<N>,
 }
@@ -127,7 +126,6 @@ where
 impl<N: Network> ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     pub fn new_single(sequence: ScriptSequence<N>, batch: bool) -> Result<Self> {
         Self::create(SequenceData::Single(sequence), batch)
@@ -146,7 +144,7 @@ where
         batch: bool,
     ) -> Result<Self>
     where
-        N::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+        N::TxEnvelope: SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
@@ -175,7 +173,7 @@ where
         batch: bool,
     ) -> Result<Self>
     where
-        N::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+        N::TxEnvelope: SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let paths = MultiChainSequence::<N>::get_paths(config, sig, target, dry_run)?;
@@ -251,7 +249,7 @@ where
         payload: Bytes,
     ) -> Result<B256>
     where
-        N::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
+        N::TxEnvelope: SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         self.recovery.persist_signed_payload(sequence, index, payload)
@@ -294,7 +292,7 @@ where
         transaction: &N::TransactionResponse,
     ) -> Result<()>
     where
-        N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TransactionResponse>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let (sequence, index) =
             self.recovery.resolve_delegated_hash(attempt_id, hash, transaction)?;
@@ -452,7 +450,6 @@ where
 impl<N: Network> Drop for ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     fn drop(&mut self) {
         if let Err(err) = self.save(false, true) {
