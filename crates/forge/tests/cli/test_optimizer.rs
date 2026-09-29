@@ -2,6 +2,7 @@
 
 use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
+use foundry_test_utils::util::OTHER_SOLC_VERSION;
 
 #[cfg(unix)]
 use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
@@ -3611,7 +3612,6 @@ contract TargetTest is Test {
 forgetest_init!(preprocess_custom_layout_contract, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
     });
 
     prj.add_source(
@@ -4554,7 +4554,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 forgetest!(preprocess_constructor_evm_version_validation, |prj, cmd| {
     // The compilation target controls CREATE2 validation, independently of runtime settings.
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 28)));
+        config.solc = Some(OTHER_SOLC_VERSION.into());
     });
     prj.add_source("Target.sol", "pragma solidity ^0.8.0; contract Target {}");
     for (evm_version, salt, valid) in [

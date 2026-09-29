@@ -126,6 +126,16 @@ jobs:
         if: runner.os == 'Linux'
         run: pip install z3-solver==5.1.0.0 && z3 --version
 
+      - name: Set up solc cache directory
+        shell: bash
+        run: mkdir -p "$HOME/.svm"
+      - name: Solc cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.svm
+          key: solc-${{ runner.os }}-${{ runner.arch }}-${{ matrix.svm_target_platform }}-${{ matrix.name }}-${{ github.run_id }}
+          restore-keys: |
+            solc-${{ runner.os }}-${{ runner.arch }}-${{ matrix.svm_target_platform }}-${{ matrix.name }}-
       - name: Foundry test cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -168,3 +178,13 @@ jobs:
           fi
           args+=(--no-fail-fast)
           cargo nextest run --locked --features base,monad "${args[@]}"
+
+      - name: Report installed solc versions
+        if: always()
+        shell: bash
+        run: |
+          for compiler in "$HOME"/.svm/*/solc-*; do
+            if [[ -f "$compiler" ]]; then
+              printf '%s\n' "${compiler##*/}"
+            fi
+          done
