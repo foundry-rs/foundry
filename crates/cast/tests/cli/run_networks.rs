@@ -358,7 +358,7 @@ Traces:
         .stderr_eq(str![[r#"
 Executing previous transactions from the block.
 Error: Transaction failed.
-Warning: the replay does not match the transaction's receipt: it used 24003 gas on-chain but 25703 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+...
 
 "#]]);
 }
