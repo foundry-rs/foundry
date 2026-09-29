@@ -2171,10 +2171,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             continue;
                         }
                         if canonical_handler {
-                            replayed_canonical_files.insert(path.clone());
+                            replayed_canonical_files.insert(path);
                         } else {
                             legacy_files.push((
-                                path.clone(),
+                                path,
                                 handler_failure_file(
                                     handlers_dir,
                                     outcome.handler_target,
