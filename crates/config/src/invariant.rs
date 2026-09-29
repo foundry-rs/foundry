@@ -118,7 +118,33 @@ impl FromStr for InvariantDepthMode {
     }
 }
 
-/// Contains for invariant testing
+/// Selection policy for fresh invariant transactions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvariantTxGenerator {
+    /// Use the local seeded generator without making network requests.
+    #[default]
+    Rng,
+    /// Use Jev Choices to select ABI productions during transaction generation.
+    ///
+    /// This explicitly opts in to sending eligible function signatures and aggregate execution
+    /// feedback to OpenRouter. Concrete calldata, addresses and storage values are not sent.
+    Jev,
+}
+
+impl FromStr for InvariantTxGenerator {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "rng" => Ok(Self::Rng),
+            "jev" => Ok(Self::Jev),
+            _ => Err("expected `rng` or `jev`".into()),
+        }
+    }
+}
+
+/// Contains configuration for invariant testing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
@@ -129,6 +155,9 @@ pub struct InvariantConfig {
     pub min_depth: u32,
     /// How to choose the effective depth for each invariant run.
     pub depth_mode: InvariantDepthMode,
+    /// Select the generator for fresh transactions; corpus mutation and replay remain local.
+    #[serde(default)]
+    pub tx_generator: InvariantTxGenerator,
     /// Worker selection mode used to shard invariant runs.
     ///
     /// Defaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer
@@ -189,6 +218,7 @@ impl Default for InvariantConfig {
             depth: 500,
             min_depth: 1,
             depth_mode: InvariantDepthMode::default(),
+            tx_generator: InvariantTxGenerator::default(),
             workers: InvariantWorkers::default(),
             fail_on_revert: false,
             call_override: false,

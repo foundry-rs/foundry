@@ -13,6 +13,51 @@ mod handler;
 mod storage;
 mod target;
 
+forgetest_init!(jev_missing_key_falls_back_to_rng, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 3;
+    });
+    prj.add_test(
+        "JevFallback.t.sol",
+        r#"
+contract JevHandler {
+    uint256 public count;
+    function increment(uint8 amount) external { count += amount; }
+}
+contract JevFallbackTest {
+    JevHandler handler;
+    function setUp() public { handler = new JevHandler(); }
+    function invariant_bounded() public view { require(handler.count() <= 765); }
+}
+"#,
+    );
+    cmd.cmd().env_remove("OPENROUTER_API_KEY");
+    assert_invariant(cmd.args(["test", "--mc", "JevFallbackTest", "--invariant-workers", "1", "--invariant-tx-generator", "jev"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+[PASS] invariant_bounded() ([RUNS])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Jev guidance disabled (missing credential, transport failure, or invalid response); using RNG for fresh transactions
+
+"#]]);
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "JevFallbackTest",
+            "--invariant-workers",
+            "1",
+            "--invariant-tx-generator",
+            "rng",
+        ])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
 fn assert_invariant(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
         ("[RUNS]", r"runs: \d+, calls: \d+, reverts: \d+"),

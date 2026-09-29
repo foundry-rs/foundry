@@ -11,7 +11,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256, map::HashSet};
 use alloy_sol_types::SolCall;
 use foundry_common::ContractsByAddress;
-use foundry_config::InvariantConfig;
+use foundry_config::{InvariantConfig, InvariantTxGenerator};
 use foundry_evm_core::{
     FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
 };
@@ -190,6 +190,8 @@ pub struct CheckSequenceOptions<'a> {
     pub accumulate_warp_roll: bool,
     pub fail_on_revert: bool,
     pub expect_assertion_failure: bool,
+    /// Treat a successful ABI boolean false result as a broken invariant.
+    pub bool_return_is_failure: bool,
     pub call_after_invariant: bool,
     pub rd: Option<&'a RevertDecoder>,
 }
@@ -524,9 +526,19 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
 
     let target_address = invariant_contract.address;
     let calldata: Bytes = target_invariant.selector().to_vec().into();
+    let bool_return_is_failure = config.tx_generator == InvariantTxGenerator::Jev
+        && target_invariant.outputs.len() == 1
+        && target_invariant.outputs[0].ty == "bool";
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
+    let (initial_result, mut success) =
+        call_invariant_function(executor, target_address, calldata.clone())?;
+    if bool_return_is_failure
+        && initial_result.result.len() >= 32
+        && initial_result.result[..32].iter().all(|byte| *byte == 0)
+    {
+        success = false;
+    }
     if !success {
         return Ok(ShrunkSequence { calls: vec![], result: None });
     }
@@ -557,6 +569,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
                     accumulate_warp_roll,
                     fail_on_revert: config.fail_on_revert,
                     expect_assertion_failure,
+                    bool_return_is_failure,
                     call_after_invariant: invariant_contract.call_after_invariant,
                     rd,
                 },
@@ -591,6 +604,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
                 accumulate_warp_roll: false,
                 fail_on_revert: config.fail_on_revert,
                 expect_assertion_failure,
+                bool_return_is_failure,
                 call_after_invariant: invariant_contract.call_after_invariant,
                 rd,
             },
@@ -782,6 +796,19 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
 
     let (invariant_result, mut success) =
         call_invariant_function(executor, test_address, calldata.clone())?;
+    if success
+        && options.bool_return_is_failure
+        && invariant_result.result.len() >= 32
+        && invariant_result.result[..32].iter().all(|byte| *byte == 0)
+    {
+        let site = terminal_failure_site(
+            TerminalFailureSite::Invariant,
+            test_address,
+            &calldata,
+            &invariant_result,
+        );
+        return Ok((false, true, Some("invariant returned false".to_string()), Some(site)));
+    }
     if !success {
         return Ok(handle_terminal_failure(invariant_result, TerminalFailureSite::Invariant));
     }

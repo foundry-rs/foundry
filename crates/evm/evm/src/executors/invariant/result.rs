@@ -8,7 +8,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, I256, Selector};
 use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
 use eyre::Result;
-use foundry_config::InvariantConfig;
+use foundry_config::{InvariantConfig, InvariantTxGenerator};
 use foundry_evm_core::{
     abi::Vm,
     constants::CHEATCODE_ADDRESS,
@@ -211,11 +211,19 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
             continue;
         }
 
-        let (call_result, success) = call_invariant_function(
+        let (call_result, mut success) = call_invariant_function(
             executor,
             invariant_contract.address,
             invariant_contract.invariant_calldata(idx),
         )?;
+        if invariant_config.tx_generator == InvariantTxGenerator::Jev
+            && invariant.outputs.len() == 1
+            && invariant.outputs[0].ty == "bool"
+            && call_result.result.len() >= 32
+            && call_result.result[..32].iter().all(|byte| *byte == 0)
+        {
+            success = false;
+        }
         if call_result.execution_cancelled {
             return Ok((first_broken, true));
         }

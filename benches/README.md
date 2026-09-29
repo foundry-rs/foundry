@@ -240,6 +240,9 @@ or inconclusive.
 
 ## Running scfuzzbench Campaigns
 
+For the opt-in Rust transaction-generation mode, see [native Jev guidance](jev/README.md).
+Its implementation does not itself establish an improvement on the scfuzzbench workloads below.
+
 `foundry-scfuzzbench` runs a local scfuzzbench Foundry campaign, invokes the scfuzzbench
 analysis/reporting pipeline, and copies stable artifacts into `<output-dir>/artifacts` for review by
 humans or LLMs.
