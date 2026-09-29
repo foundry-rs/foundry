@@ -109,32 +109,31 @@ impl Drop for KillOnDrop {
 async fn spawn_rpc_proxy_blocking_first_submission(
     endpoint: String,
     method: &'static str,
-) -> (String, Arc<std::sync::Mutex<Vec<Value>>>, Arc<AtomicBool>, Arc<Notify>) {
+) -> (String, Arc<std::sync::Mutex<Vec<Value>>>, Arc<Notify>, Arc<Notify>) {
     let client = reqwest::Client::new();
     let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let blocked = Arc::new(AtomicBool::new(false));
+    let reached = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let block_first = Arc::new(AtomicBool::new(true));
     let app = Router::new().fallback({
         let submissions = submissions.clone();
-        let blocked = blocked.clone();
+        let reached = reached.clone();
         let release = release.clone();
         move |body: BodyBytes| {
             let client = client.clone();
             let endpoint = endpoint.clone();
             let submissions = submissions.clone();
-            let blocked = blocked.clone();
+            let reached = reached.clone();
             let release = release.clone();
-            let block_first = block_first.clone();
             async move {
                 let request: Value = serde_json::from_slice(&body).unwrap();
                 if request.get("method").and_then(Value::as_str) == Some(method) {
-                    submissions
-                        .lock()
-                        .unwrap()
-                        .push(request.get("params").cloned().unwrap_or(Value::Null));
-                    if block_first.swap(false, Ordering::SeqCst) {
-                        blocked.store(true, Ordering::SeqCst);
+                    let first = {
+                        let mut submissions = submissions.lock().unwrap();
+                        submissions.push(request.get("params").cloned().unwrap_or(Value::Null));
+                        submissions.len() == 1
+                    };
+                    if first {
+                        reached.notify_one();
                         release.notified().await;
                         return StatusCode::SERVICE_UNAVAILABLE.into_response();
                     }
@@ -156,7 +155,7 @@ async fn spawn_rpc_proxy_blocking_first_submission(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let rpc = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (rpc, submissions, blocked, release)
+    (rpc, submissions, reached, release)
 }
 
 // Tests that fork cheat codes can be used in script
@@ -5396,7 +5395,7 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     let script = prj.add_source("MultiDeploy", &source);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
-    let (rpc, submissions, blocked, release) =
+    let (rpc, submissions, reached, release) =
         spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendRawTransaction")
             .await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -5416,13 +5415,9 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
         "tempo",
     ]);
     let mut child = KillOnDrop::spawn(cmd.cmd());
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while !blocked.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("Forge did not reach the blocked batch submission");
+    tokio::time::timeout(Duration::from_secs(30), reached.notified())
+        .await
+        .expect("Forge did not reach the blocked batch submission");
 
     let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|path| {
@@ -5496,7 +5491,7 @@ forgetest_async!(tempo_batch_unlocked_crash_blocks_resubmission, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let (rpc, submissions, blocked, release) =
+    let (rpc, submissions, reached, release) =
         spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendTransaction")
             .await;
     let sender = handle.dev_accounts().next().unwrap();
@@ -5515,13 +5510,9 @@ forgetest_async!(tempo_batch_unlocked_crash_blocks_resubmission, |prj, cmd| {
         "tempo",
     ]);
     let mut child = KillOnDrop::spawn(cmd.cmd());
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while !blocked.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("Forge did not reach the blocked delegated batch submission");
+    tokio::time::timeout(Duration::from_secs(30), reached.notified())
+        .await
+        .expect("Forge did not reach the blocked delegated batch submission");
 
     let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
         .find(|path| {

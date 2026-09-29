@@ -1260,15 +1260,10 @@ impl BundledState<TempoEvmNetwork> {
                 .await?
                 .context("resolved transaction is not available from the recovery endpoint")?;
             self.sequence.resolve_delegated_hash(attempt_id, hash, &transaction)?;
-            let Some((_, recovered_attempt, AttemptKind::Delegated { status, .. })) =
-                &mut recovered_batch
-            else {
-                bail!("resolved batch has no persisted delegated request");
-            };
-            if *recovered_attempt != attempt_id {
-                bail!("resolved batch does not match its delegated submission attempt");
-            }
-            *status = DelegatedStatus::Pending { hash };
+            recovered_batch = self
+                .sequence
+                .batch_attempt(0)
+                .map(|(first, attempt, kind)| (first, attempt, kind.clone()));
         }
 
         let recovered_hash = recovered_batch.as_ref().and_then(|(_, _, kind)| match kind {
@@ -1311,14 +1306,6 @@ impl BundledState<TempoEvmNetwork> {
             )?
             .build()?,
         );
-        let unlocked_submission_provider = Arc::new(
-            ProviderBuilder::<TempoNetwork>::from_config_with_url(
-                &self.script_config.config,
-                sequence.rpc_url(),
-            )?
-            .max_retry(0)
-            .build()?,
-        );
 
         if let Some((_, _, AttemptKind::Legacy { hash })) = &recovered_batch {
             let transaction = provider
@@ -1340,7 +1327,6 @@ impl BundledState<TempoEvmNetwork> {
         {
             bail!("batch progress exists without a durable submission attempt");
         }
-        let pending_batch_hash = recovered_hash;
 
         if let Some(hash) = recovered_hash {
             let mut changed = false;
@@ -1368,7 +1354,7 @@ impl BundledState<TempoEvmNetwork> {
             send_tempo_batch_payload(provider.as_ref(), &payload.payload, payload.hash).await?;
         }
 
-        if let Some(tx_hash) = pending_batch_hash {
+        if let Some(tx_hash) = recovered_hash {
             sh_println!(
                 "Resuming batch: tx {tx_hash:#x} already submitted, waiting for receipt..."
             )?;
@@ -1382,14 +1368,7 @@ impl BundledState<TempoEvmNetwork> {
 
             match receipt_result {
                 Ok(Ok(Some(receipt))) => {
-                    Self::finish_batch(
-                        &mut self.sequence,
-                        receipt,
-                        tx_hash,
-                        batch_start,
-                        calls.len(),
-                        true,
-                    )?;
+                    Self::finish_batch(&mut self.sequence, receipt, tx_hash, batch_start, true)?;
                     return Ok(BroadcastedState {
                         args: self.args,
                         script_config: self.script_config,
@@ -1565,9 +1544,15 @@ impl BundledState<TempoEvmNetwork> {
             send_tempo_batch_payload(provider.as_ref(), &payload, expected).await?;
             expected
         } else {
+            let provider = ProviderBuilder::<TempoNetwork>::from_config_with_url(
+                &self.script_config.config,
+                &rpc_url,
+            )?
+            .max_retry(0)
+            .build()?;
             self.sequence.persist_batch_delegated_request(0, batch_start, batch_tx.clone())?;
             let (_, attempt_id, _) = self.sequence.batch_attempt(0).unwrap();
-            let pending = match unlocked_submission_provider.send_transaction(batch_tx).await {
+            let pending = match provider.send_transaction(batch_tx).await {
                 Ok(pending) => pending,
                 Err(error) => {
                     let error = eyre::Report::from(error);
@@ -1618,7 +1603,7 @@ impl BundledState<TempoEvmNetwork> {
         .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??
         .ok_or_else(|| eyre::eyre!("Batch transaction {tx_hash:#x} was dropped from the mempool. Run with --resume to retry."))?;
 
-        Self::finish_batch(&mut self.sequence, receipt, tx_hash, batch_start, calls.len(), false)?;
+        Self::finish_batch(&mut self.sequence, receipt, tx_hash, batch_start, false)?;
         Ok(BroadcastedState {
             args: self.args,
             script_config: self.script_config,
@@ -1632,7 +1617,6 @@ impl BundledState<TempoEvmNetwork> {
         receipt: TempoTransactionReceipt,
         tx_hash: TxHash,
         batch_start: usize,
-        calls: usize,
         resumed: bool,
     ) -> Result<()> {
         if receipt.status() {
@@ -1649,14 +1633,6 @@ impl BundledState<TempoEvmNetwork> {
 
         // Receipts are pushed 1:1 with the remaining (not-yet-receipted) transactions.
         let remaining_len = sequence.transactions.len() - batch_start;
-        if calls != remaining_len {
-            bail!(
-                "batch call count ({}) does not match remaining transactions ({}); \
-                 refusing to push misaligned receipts",
-                calls,
-                remaining_len
-            );
-        }
         // Only carry through contract_address for actual deployments; plain calls also
         // store the callee in `contract_address`, which would otherwise be copied into
         // the receipt and treated as a fresh deployment by downstream consumers
@@ -1734,11 +1710,13 @@ async fn send_tempo_batch_payload(
             bail!("RPC returned hash {} for signed batch payload {expected}", pending.tx_hash())
         }
         Err(error) => {
-            let receipt_visible =
-                provider.get_transaction_receipt(expected).await.ok().flatten().is_some();
-            let transaction_visible =
-                provider.get_transaction_by_hash(expected).await.ok().flatten().is_some();
-            if receipt_visible || transaction_visible { Ok(()) } else { Err(error.into()) }
+            if provider.get_transaction_receipt(expected).await.ok().flatten().is_some()
+                || provider.get_transaction_by_hash(expected).await.ok().flatten().is_some()
+            {
+                Ok(())
+            } else {
+                Err(error.into())
+            }
         }
     }
 }

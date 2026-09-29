@@ -80,23 +80,6 @@ pub(crate) enum AttemptKind<T> {
     Legacy { hash: B256 },
 }
 
-fn batch_members<N: Network>(
-    deployment: &RecoveryDeployment<N>,
-    first_operation: usize,
-) -> Result<Vec<OperationId>> {
-    let members = deployment
-        .operations
-        .get(first_operation..)
-        .context("batch operation is not in the recovery snapshot")?
-        .iter()
-        .map(|operation| operation.id)
-        .collect::<Vec<_>>();
-    if members.is_empty() {
-        bail!("batch submission has no operations");
-    }
-    Ok(members)
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub(crate) enum DelegatedStatus {
@@ -488,24 +471,11 @@ where
         N::TxEnvelope: Decodable2718 + Encodable2718,
     {
         let signed = SignedPayload { hash: signed_payload_hash::<N>(&payload)?, payload };
-        let members = batch_members(
-            self.plan
-                .deployments
-                .get(sequence)
-                .context("batch deployment is not in the recovery snapshot")?,
-            first_operation,
-        )?;
-        if self.batch_attempt(sequence).is_some() {
-            bail!("refusing to replace an existing batch submission attempt");
-        }
         let hash = signed.hash;
-        self.persist_attempt(
+        self.persist_batch_attempt(
             sequence,
-            SubmissionAttempt {
-                id: B256::random(),
-                members,
-                kind: AttemptKind::Signed { request: Some(request), payload: signed },
-            },
+            first_operation,
+            AttemptKind::Signed { request: Some(request), payload: signed },
         )?;
         Ok(hash)
     }
@@ -516,24 +486,37 @@ where
         first_operation: usize,
         request: N::TransactionRequest,
     ) -> Result<()> {
-        let members = batch_members(
-            self.plan
-                .deployments
-                .get(sequence)
-                .context("batch deployment is not in the recovery snapshot")?,
+        self.persist_batch_attempt(
+            sequence,
             first_operation,
-        )?;
+            AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
+        )
+    }
+
+    fn persist_batch_attempt(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        kind: AttemptKind<N::TransactionRequest>,
+    ) -> Result<()> {
         if self.batch_attempt(sequence).is_some() {
             bail!("refusing to replace an existing batch submission attempt");
         }
-        self.persist_attempt(
-            sequence,
-            SubmissionAttempt {
-                id: B256::random(),
-                members,
-                kind: AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
-            },
-        )
+        let members = self
+            .plan
+            .deployments
+            .get(sequence)
+            .context("batch deployment is not in the recovery snapshot")?
+            .operations
+            .get(first_operation..)
+            .context("batch operation is not in the recovery snapshot")?
+            .iter()
+            .map(|operation| operation.id)
+            .collect::<Vec<_>>();
+        if members.is_empty() {
+            bail!("batch submission has no operations");
+        }
+        self.persist_attempt(sequence, SubmissionAttempt { id: B256::random(), members, kind })
     }
 
     fn persist_attempt(
