@@ -2,7 +2,7 @@
 
 use crate::utils::http_provider_with_signer;
 use alloy_consensus::{Sealed, Typed2718};
-use alloy_eips::Encodable2718;
+use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, keccak256};
 use alloy_provider::{
@@ -22,7 +22,8 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
 use anvil::{NodeConfig, spawn};
 use base_common_consensus::{
-    Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Predeploys, TxEip8130,
+    BaseTimeDepositSource, Call, DepositSourceDomain, Eip8130Constants, Eip8130Contracts,
+    Eip8130Signed, Predeploys, SystemAddresses, TxEip8130,
 };
 use base_common_precompiles::NonceManagerStorage;
 use foundry_config::Config;
@@ -454,6 +455,45 @@ async fn base_standalone_denim_mines_base_time_updates() {
             expected_millis_part
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_standalone_denim_system_transactions_are_valid() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await.unwrap();
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let hashes = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(hashes.len(), 2, "Denim blocks contain the L1-info and BaseTime deposits");
+
+    let l1_info = FoundryTxEnvelope::decode_2718(
+        &mut api.raw_transaction(hashes[0]).await.unwrap().unwrap().as_ref(),
+    )
+    .unwrap();
+    let FoundryTxEnvelope::Deposit(l1_info) = l1_info else {
+        panic!("tx[0] must be the L1-info deposit");
+    };
+    assert_eq!(l1_info.from, SystemAddresses::DEPOSITOR_ACCOUNT);
+    assert_eq!(l1_info.to, TxKind::Call(Predeploys::L1_BLOCK_INFO));
+    assert!(!l1_info.is_system_transaction);
+
+    let base_time = FoundryTxEnvelope::decode_2718(
+        &mut api.raw_transaction(hashes[1]).await.unwrap().unwrap().as_ref(),
+    )
+    .unwrap();
+    let FoundryTxEnvelope::Deposit(base_time) = base_time else {
+        panic!("tx[1] must be the BaseTime deposit");
+    };
+    assert_eq!(base_time.from, SystemAddresses::DEPOSITOR_ACCOUNT);
+    assert_eq!(base_time.to, TxKind::Call(Predeploys::BASE_TIME));
+    assert_eq!(
+        base_time.source_hash,
+        DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number: block.header.number })
+            .source_hash()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
