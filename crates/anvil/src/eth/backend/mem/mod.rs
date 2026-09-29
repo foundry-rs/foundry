@@ -1557,6 +1557,25 @@ impl<N: Network> Backend<N> {
         Some(Arc::new(PoolTransaction::new(pending)))
     }
 
+    /// Returns the timestamp for the next block after applying Base's 200 ms cadence.
+    ///
+    /// Base headers retain second precision. A new second begins after every fifth Base block;
+    /// the sub-second component is carried by the BaseTime deposit. Deriving from the parent
+    /// header rather than local genesis also keeps a fork continuation from moving backwards.
+    #[cfg(feature = "base")]
+    fn next_block_timestamp(
+        &self,
+        block_number: u64,
+        parent_timestamp: u64,
+        default_timestamp: u64,
+    ) -> u64 {
+        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+            parent_timestamp.saturating_add(u64::from(block_number.is_multiple_of(5)))
+        } else {
+            default_timestamp
+        }
+    }
+
     /// Returns the head timestamp snapshot used for EIP-8130 pool admission.
     #[cfg(feature = "base")]
     pub fn eip8130_pool_timestamp(&self) -> u64 {
@@ -1953,7 +1972,14 @@ impl<N: Network> Backend<N> {
         evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
-        evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
+        let default_timestamp = self.time.current_call_timestamp();
+        #[cfg(feature = "base")]
+        let default_timestamp = self.next_block_timestamp(
+            self.best_number().saturating_add(1),
+            evm_env.block_env.timestamp.saturating_to(),
+            default_timestamp,
+        );
+        evm_env.block_env.timestamp = U256::from(default_timestamp);
         evm_env
     }
 
@@ -6096,13 +6122,14 @@ where
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
                 let pending_timestamp = self.time.prepare_next_timestamp();
-                evm_env.block_env.timestamp = U256::from(pending_timestamp.timestamp);
+                let block_timestamp = pending_timestamp.timestamp;
                 #[cfg(feature = "base")]
-                if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
-                    evm_env.block_env.timestamp = U256::from(
-                        self.genesis.timestamp.saturating_add(block_number.saturating_div(5)),
-                    );
-                }
+                let block_timestamp = self.next_block_timestamp(
+                    block_number,
+                    evm_env.block_env.timestamp.saturating_to(),
+                    block_timestamp,
+                );
+                evm_env.block_env.timestamp = U256::from(block_timestamp);
 
                 #[cfg(feature = "base")]
                 let protocol_transactions = self
@@ -6177,7 +6204,7 @@ where
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
-                self.time.commit_next_timestamp(pending_timestamp);
+                self.time.commit_next_timestamp_at(pending_timestamp, block_timestamp);
                 if let Some(pending) = next_prevrandao {
                     self.cheats.consume_next_block_prevrandao(pending);
                 }

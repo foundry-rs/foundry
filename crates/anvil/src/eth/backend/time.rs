@@ -243,6 +243,24 @@ impl TimeManager {
         state.last_timestamp = pending.timestamp;
     }
 
+    /// Commits a candidate timestamp after the caller applied a chain-specific schedule.
+    ///
+    /// The candidate still owns any one-shot override prepared for the block. Updating its
+    /// offset before committing keeps subsequent pending calls and mined blocks on the same
+    /// clock instead of reverting to the pre-schedule wall-clock decision.
+    pub(crate) fn commit_next_timestamp_at(
+        &self,
+        mut pending: PendingBlockTimestamp,
+        timestamp: u64,
+    ) {
+        if pending.timestamp != timestamp {
+            pending.timestamp = timestamp;
+            pending.next_offset =
+                Some(timestamp as i128 - duration_since_unix_epoch().as_secs() as i128);
+        }
+        self.commit_next_timestamp(pending);
+    }
+
     /// Returns the current timestamp and updates the underlying offset and interval accordingly
     pub fn next_timestamp(&self) -> u64 {
         let pending = self.prepare_next_timestamp();
