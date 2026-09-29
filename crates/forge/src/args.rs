@@ -146,6 +146,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Lsp(cmd) => global.block_on(crate::cmd::lsp::run(cmd)),
+        ForgeSubcommand::Optimize(cmd) => cmd.run(),
     }
 }
 

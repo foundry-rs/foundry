@@ -66,6 +66,7 @@ alloy-signer.workspace = true
 alloy-transport.workspace = true
 
 tempo-alloy.workspace = true
+mpp.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
@@ -85,6 +86,7 @@ serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
 solar = { workspace = true, features = ["clap"] }
 solar-lsp.workspace = true
+solar-cli = { workspace = true, features = ["llm-transport"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "signal", "process"] }
 toml_edit.workspace = true
