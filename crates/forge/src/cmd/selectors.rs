@@ -26,7 +26,7 @@ use foundry_compilers::{
     info::ContractInfo,
     multi::MultiCompiler,
 };
-use std::{collections::BTreeMap, fs::canonicalize, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -203,12 +203,12 @@ impl SelectorsSubcommands {
                 }
 
                 if let Some(contract_path) = &mut first_contract.path {
-                    let target_path = canonicalize(&*contract_path)?;
+                    let target_path = dunce::canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
                     compiler = compiler.target_files([target_path]);
                 }
                 if let Some(contract_path) = &mut second_contract.path {
-                    let target_path = canonicalize(&*contract_path)?;
+                    let target_path = dunce::canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
                     compiler = compiler.target_files([target_path]);
                 }
