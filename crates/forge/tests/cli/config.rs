@@ -356,7 +356,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
-        evm_version_configured: true,
+        evm_version_configured: false,
         evm_version_normalized: false,
         hardfork: None,
         gas_reports: vec!["Contract".to_string()],
