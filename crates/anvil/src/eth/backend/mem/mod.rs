@@ -8016,6 +8016,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
         let mut monad_block_participants = BTreeMap::new();
@@ -10646,6 +10647,9 @@ mod tests {
         let mut pending_block = Box::pin(api.backend.pending_block(Vec::new()));
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
 
+        let mut state = Box::pin(api.serialized_state(false));
+        assert!(futures::poll!(state.as_mut()).is_pending());
+
         // Pause mining after the database commit but before canonical publication without locking
         // storage, so an incorrectly unblocked pending reader can observe the old parent.
         let hook =
@@ -10659,12 +10663,18 @@ mod tests {
         // neither a live call nor a pending block can observe the partially published snapshot.
         assert!(futures::poll!(call.as_mut()).is_pending());
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
+        assert!(futures::poll!(state.as_mut()).is_pending());
 
         hook.resume.notify_one();
         mining.await.unwrap().unwrap();
 
         let (exit, output, _, _) = call.await.unwrap();
         let pending_block = pending_block.await.unwrap();
+        let state = state.await.unwrap();
+
+        assert_eq!(state.accounts[&recipient].balance, U256::from(1));
+        assert_eq!(state.block.unwrap().number, U256::from(1));
+        assert_eq!(state.best_block_number, Some(1));
 
         assert_eq!(exit, InstructionResult::Return);
         let Some(Output::Call(output)) = output else { panic!("call did not return data") };
