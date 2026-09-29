@@ -1,10 +1,10 @@
 //! CLI tests for source commands.
 
 use super::*;
+use alloy_primitives::map::HashMap;
 use axum::{Json, Router, extract::Query, routing::get};
 use foundry_config::Config;
 use foundry_test_utils::TestCommand;
-use std::collections::HashMap;
 
 // tests that `cast interface` excludes the constructor
 // <https://github.com/alloy-rs/core/issues/555>
@@ -361,10 +361,8 @@ casttest!(source_plain_and_directory, async |prj, cmd| {
     server.abort();
 });
 
-// tests that `cast interface` also pulls the ABI of the implementation behind a proxy
+// Tests that proxy interfaces include the implementation and remain valid Solidity.
 casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
-    let proxy = Address::random();
-    let implementation = Address::random();
     let orphan_proxy = Address::random();
     let unverified = Address::random();
     let malformed_proxy = Address::random();
@@ -388,10 +386,6 @@ casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
         {"type": "event", "name": "Upgraded", "inputs": [{"name": "implementation", "type": "address", "indexed": true}], "anonymous": false},
         {"type": "fallback", "stateMutability": "payable"}
     ]);
-    let implementation_abi = json!([
-        {"type": "function", "name": "totalSupply", "inputs": [], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view"},
-        {"type": "function", "name": "transfer", "inputs": [{"name": "to", "type": "address"}, {"name": "amount", "type": "uint256"}], "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable"}
-    ]);
     let mut malformed_metadata = metadata("Malformed", &json!([]), None);
     malformed_metadata["result"][0]["ABI"] = json!("invalid JSON");
     let shared = json!({
@@ -411,14 +405,17 @@ casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
         {"type": "error", "name": "Invalid", "inputs": [shared.clone()]},
         {"type": "error", "name": "Invalid", "inputs": [shared]}
     ]);
+    let mut implementation_abi = collision_abi.clone();
+    implementation_abi.as_array_mut().unwrap().push(json!({
+        "type": "function", "name": "totalSupply", "inputs": [],
+        "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view"
+    }));
     let responses = HashMap::from([
-        (proxy, metadata("Proxy", &proxy_abi, Some(implementation))),
-        (implementation, metadata("Token", &implementation_abi, None)),
         (orphan_proxy, metadata("OrphanProxy", &proxy_abi, Some(unverified))),
         (malformed_proxy, metadata("MalformedProxy", &proxy_abi, Some(malformed))),
         (malformed, malformed_metadata),
         (collision_proxy, metadata("Token", &collision_abi, Some(collision_impl))),
-        (collision_impl, metadata("Token", &collision_abi, None)),
+        (collision_impl, metadata("Token", &implementation_abi, None)),
     ]);
     let not_verified =
         json!({"status": "0", "message": "NOTOK", "result": "Contract source code not verified"});
@@ -460,22 +457,10 @@ interface {name} {
     function implementation() external view returns (address);
 }
 "#;
-    let token_interface = r#"
-interface Token {
-    function totalSupply() external view returns (uint256);
-    function transfer(address to, uint256 amount) external returns (bool);
-}
-"#;
     let following = |proxy: Address, implementation: Address| {
         format!("Contract at {proxy} is a proxy, fetching implementation at {implementation}...\n")
     };
     let scenarios = [
-        // The implementation's interface follows the proxy's own.
-        (
-            proxy,
-            format!("{}{token_interface}", proxy_interface.replace("{name}", "Proxy")),
-            following(proxy, implementation),
-        ),
         // An invalid implementation ABI only costs its own interface.
         (
             malformed_proxy,
@@ -505,7 +490,6 @@ interface Token {
             .compile()
             .unwrap();
         assert!(!compiled.has_compiler_errors(), "{compiled}");
-        assert!(compiled.find_first("Token_2").is_some());
     };
     let prepare = |cmd: &mut TestCommand| {
         cmd.cast_fuse().current_dir(prj.root());
@@ -524,6 +508,7 @@ interface Token {
     let output = cmd
         .args(["interface", &collision_proxy.to_string()])
         .assert_success()
+        .stderr_eq(following(collision_proxy, collision_impl))
         .stdout_eq(str![[r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
@@ -564,6 +549,7 @@ interface Token_2 {
 
     function Token_1() external;
     function consume(Shared_1.Data memory value) external view returns (State memory result);
+    function totalSupply() external view returns (uint256);
 }
 
 "#]])
@@ -575,6 +561,7 @@ interface Token_2 {
     let output = cmd
         .args(["interface", &collision_proxy.to_string(), "--flatten"])
         .assert_success()
+        .stderr_eq(following(collision_proxy, collision_impl))
         .stdout_eq(str![[r#"
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
@@ -613,6 +600,7 @@ interface Token_2 {
 
     function Token_1() external;
     function consume(Data memory value) external view returns (State memory result);
+    function totalSupply() external view returns (uint256);
 }
 
 "#]])
@@ -625,7 +613,7 @@ interface Token_2 {
     cmd.args(["interface", &collision_proxy.to_string(), "--json"]).assert_json_stdout(
         json!({
             "schema_version": 1, "success": true,
-            "data": [collision_abi.clone(), collision_abi], "errors": [], "warnings": []
+            "data": [collision_abi, implementation_abi], "errors": [], "warnings": []
         })
         .to_string(),
     );
