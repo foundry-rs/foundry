@@ -24,7 +24,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, eth::pool::transactions::TransactionOrder, spawn};
 use anvil_core::eth::block::Block;
 use foundry_common::FoundryTransactionBuilder;
 use foundry_evm::core::tempo::{
@@ -4046,6 +4046,144 @@ async fn test_tempo_nonzero_lane_pending_tx_does_not_advance_scalar_nonce() {
     let pending_nonce =
         provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
     assert_eq!(pending_nonce, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_txpool_orders_same_nonce_lane() {
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_no_mining(true)
+            .with_transaction_order(TransactionOrder::Fifo),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let recipient = accounts[1];
+    let signer = dev_key(0);
+    let token = IERC20::new(PATH_USD, &provider);
+    let initial_balance = token.balanceOf(recipient).call().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let current_time = provider
+        .get_block(BlockNumberOrTag::Latest.into())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp;
+    let valid_after = current_time + 5;
+    let nonce_key = U256::from(42);
+    let mut tx_hashes = Vec::new();
+
+    for (nonce, amount) in [(1, 60_000), (0, 50_000)] {
+        let calldata: Bytes = token.transfer(recipient, U256::from(amount)).calldata().clone();
+        let tempo_tx = TempoTransaction {
+            chain_id,
+            fee_token: Some(ALPHA_USD),
+            max_priority_fee_per_gas: base_fee / 10,
+            max_fee_per_gas: base_fee * 2,
+            gas_limit: TIP20_TRANSFER_GAS,
+            calls: vec![Call { to: TxKind::Call(PATH_USD), value: U256::ZERO, input: calldata }],
+            nonce_key,
+            nonce,
+            valid_after: if nonce == 0 { NonZeroU64::new(valid_after) } else { None },
+            ..Default::default()
+        };
+        let signature = signer.sign_hash(&tempo_tx.signature_hash()).await.unwrap();
+        let signed_tx = AASigned::new_unhashed(
+            tempo_tx,
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+        );
+        let mut encoded = Vec::new();
+        TempoTxEnvelope::AA(signed_tx).encode_2718(&mut encoded);
+        let pending = provider.send_raw_transaction(&encoded).await.unwrap();
+        tx_hashes.push(*pending.tx_hash());
+
+        let status = provider.txpool_status().await.unwrap();
+        if nonce == 1 {
+            assert_eq!((status.pending, status.queued), (0, 1));
+        } else {
+            assert_eq!((status.pending, status.queued), (2, 0));
+        }
+    }
+
+    api.mine_one().await.unwrap();
+
+    for hash in &tx_hashes {
+        assert!(provider.get_transaction_receipt(*hash).await.unwrap().is_none());
+    }
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), initial_balance);
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (2, 0));
+
+    api.evm_set_next_block_timestamp(valid_after + 1).unwrap();
+    api.mine_one().await.unwrap();
+
+    let later = provider.get_transaction_receipt(tx_hashes[0]).await.unwrap().unwrap();
+    let predecessor = provider.get_transaction_receipt(tx_hashes[1]).await.unwrap().unwrap();
+    assert!(later.status());
+    assert!(predecessor.status());
+    assert_eq!(predecessor.transaction_index(), Some(0));
+    assert_eq!(later.transaction_index(), Some(1));
+    assert_eq!(
+        token.balanceOf(recipient).call().await.unwrap(),
+        initial_balance + U256::from(110_000)
+    );
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_txpool_mines_successor_after_lane_nonce_fast_forward() {
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let sender = dev_key(0);
+    let recipient = handle.dev_accounts().nth(1).unwrap();
+    let token = IERC20::new(PATH_USD, &provider);
+    let initial_balance = token.balanceOf(recipient).call().await.unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let nonce_key = U256::from(42);
+    let mut hashes = Vec::new();
+
+    for nonce in 0..=1 {
+        let calldata = token.transfer(recipient, U256::from(50_000)).calldata().clone();
+        let tx = TempoTransaction {
+            chain_id,
+            fee_token: Some(ALPHA_USD),
+            max_priority_fee_per_gas: base_fee / 10,
+            max_fee_per_gas: base_fee * 2,
+            gas_limit: TIP20_TRANSFER_GAS + u64::from(nonce == 0),
+            calls: vec![Call { to: TxKind::Call(PATH_USD), value: U256::ZERO, input: calldata }],
+            nonce_key,
+            nonce,
+            ..Default::default()
+        };
+        let signature = sender.sign_hash(&tx.signature_hash()).await.unwrap();
+        let signed = AASigned::new_unhashed(
+            tx,
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+        );
+        let mut encoded = Vec::new();
+        TempoTxEnvelope::AA(signed).encode_2718(&mut encoded);
+        hashes.push(*provider.send_raw_transaction(&encoded).await.unwrap().tx_hash());
+    }
+
+    let slot = NonceManager::new().nonces[sender.address()][nonce_key].slot();
+    api.anvil_set_storage_at(NONCE_PRECOMPILE_ADDRESS, slot, B256::from(U256::ONE)).await.unwrap();
+    api.evm_set_block_gas_limit(U256::from(TIP20_TRANSFER_GAS)).unwrap();
+    api.mine_one().await.unwrap();
+
+    assert!(provider.get_transaction_receipt(hashes[0]).await.unwrap().is_none());
+    let receipt = provider.get_transaction_receipt(hashes[1]).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(
+        token.balanceOf(recipient).call().await.unwrap(),
+        initial_balance + U256::from(50_000)
+    );
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!((status.pending, status.queued), (0, 0));
 }
 
 #[tokio::test(flavor = "multi_thread")]
