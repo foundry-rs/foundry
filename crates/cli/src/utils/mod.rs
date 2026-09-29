@@ -421,10 +421,13 @@ impl<'a> Git<'a> {
     }
 
     pub fn checkout(self, recursive: bool, tag: impl AsRef<OsStr>) -> Result<()> {
+        let tag = tag.as_ref();
+        validate_checkout_ref(tag)?;
         self.cmd()
             .arg("checkout")
             .args(recursive.then_some("--recurse-submodules"))
             .arg(tag)
+            .arg("--")
             .exec()
             .map(drop)
     }
@@ -435,7 +438,9 @@ impl<'a> Git<'a> {
     }
 
     pub fn checkout_at(self, tag: impl AsRef<OsStr>, at: &Path) -> Result<()> {
-        self.cmd_at(at).arg("checkout").arg(tag).exec().map(drop)
+        let tag = tag.as_ref();
+        validate_checkout_ref(tag)?;
+        self.cmd_at(at).arg("checkout").arg(tag).arg("--").exec().map(drop)
     }
 
     pub fn init(self) -> Result<()> {
@@ -764,6 +769,7 @@ ignore them in the `.gitignore` file."
         S: AsRef<OsStr>,
     {
         self.cmd()
+            .arg("--literal-pathspecs")
             .stderr(self.stderr())
             .args(["submodule", "update", "--progress", "--init"])
             .args(self.shallow.then_some("--depth=1"))
@@ -771,6 +777,7 @@ ignore them in the `.gitignore` file."
             .args(remote.then_some("--remote"))
             .args(no_fetch.then_some("--no-fetch"))
             .args(recursive.then_some("--recursive"))
+            .arg("--")
             .args(paths)
             .exec()
             .map(drop)
@@ -1058,7 +1065,7 @@ ignore them in the `.gitignore` file."
 
     /// Fetches a branch from origin and checks out a local tracking branch at the given path.
     pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
-        self.cmd_at(at).args(["fetch", "origin", branch]).exec().map_err(|e| {
+        self.cmd_at(at).args(["fetch", "--", "origin", branch]).exec().map_err(|e| {
             eyre::eyre!(
                 "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
                 at.display()
@@ -1098,6 +1105,13 @@ ignore them in the `.gitignore` file."
     fn stderr(self) -> Stdio {
         if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
+}
+
+fn validate_checkout_ref(reference: &OsStr) -> Result<()> {
+    if reference.is_empty() || reference.as_encoded_bytes().starts_with(b"-") {
+        eyre::bail!("Git checkout reference must not be empty or start with `-`");
+    }
+    Ok(())
 }
 
 /// Deserialized `git submodule status lib/dep` output.
@@ -1213,6 +1227,9 @@ mod tests {
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn applies_gas_estimate_multiplier() {
         assert_eq!(apply_gas_estimate_multiplier(21_000, None).unwrap(), 21_000);
@@ -1222,6 +1239,49 @@ mod tests {
             210_000_000_000_000_000
         );
         assert!(apply_gas_estimate_multiplier(u64::MAX, Some(101)).is_err());
+    }
+
+    #[test]
+    fn checkout_does_not_parse_revision_as_option() {
+        let tmp = tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.init().unwrap();
+        fs::write(tmp.path().join("file"), "clean\n").unwrap();
+        git.add(["file"]).unwrap();
+        git.commit("initial").unwrap();
+        fs::write(tmp.path().join("file"), "dirty\n").unwrap();
+
+        assert!(git.checkout_at("-f", tmp.path()).is_err());
+        assert_eq!(fs::read_to_string(tmp.path().join("file")).unwrap(), "dirty\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_does_not_parse_branch_as_option() {
+        let remote = tempdir().unwrap();
+        let remote_git = Git::new(remote.path());
+        remote_git.init().unwrap();
+        fs::write(remote.path().join("file"), "content\n").unwrap();
+        remote_git.add(["file"]).unwrap();
+        remote_git.commit("initial").unwrap();
+
+        let tmp = tempdir().unwrap();
+        Git::clone(false, remote.path(), Some(tmp.path())).unwrap();
+
+        let marker = tmp.path().join("upload-pack-ran");
+        let upload_pack = tmp.path().join("upload-pack");
+        fs::write(
+            &upload_pack,
+            format!("#!/bin/sh\ntouch '{}'\nexec git-upload-pack \"$@\"\n", marker.display()),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&upload_pack).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&upload_pack, permissions).unwrap();
+
+        let branch = format!("--upload-pack={}", upload_pack.display());
+        assert!(Git::new(tmp.path()).fetch_and_checkout_branch(tmp.path(), &branch).is_err());
+        assert!(!marker.exists());
     }
 
     #[test]
