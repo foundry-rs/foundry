@@ -403,25 +403,20 @@ async fn base_standalone_denim_initializes_base_time() {
         .unwrap();
     assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(), 0);
 
-    let depositor = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
-    api.anvil_set_balance(depositor, U256::from(1_000_000_000_000_000_000u64)).await.unwrap();
-    api.anvil_impersonate_account(depositor).await.unwrap();
-    provider
-        .send_transaction(
+    // Mine through the protocol path. The BaseTime deposit is sent by the canonical depositor,
+    // whose nonce must not be reused by a test transaction.
+    api.mine_one().await.unwrap();
+
+    let millis_part = provider
+        .call(
             TransactionRequest::default()
-                .with_from(depositor)
                 .with_to(Predeploys::BASE_TIME)
-                .with_input(
-                    IBaseTime::setTimestampMillisPartCall { timestampMillisPart: 600 }.abi_encode(),
-                )
-                .with_gas_limit(100_000)
+                .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode())
                 .into(),
         )
         .await
-        .unwrap()
-        .get_receipt()
-        .await
         .unwrap();
+    assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(), 200);
 
     let timestamp_ms = provider
         .call(
@@ -434,7 +429,7 @@ async fn base_standalone_denim_initializes_base_time() {
         .unwrap();
     let timestamp_ms = IBaseTime::timestampMsCall::abi_decode_returns(&timestamp_ms).unwrap();
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-    assert_eq!(timestamp_ms, block.header.timestamp * 1_000 + 600);
+    assert_eq!(timestamp_ms, block.header.timestamp * 1_000 + 200);
 }
 
 #[tokio::test(flavor = "multi_thread")]
