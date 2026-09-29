@@ -46,7 +46,10 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
 use alloy_sol_types::SolCall;
 use eyre::{Result, eyre};
-use foundry_cheatcodes::Vm::{rollCall, warpCall};
+use foundry_cheatcodes::Vm::{
+    revertToAndDeleteCall, revertToCall, revertToStateAndDeleteCall, revertToStateCall, rollCall,
+    warpCall,
+};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
@@ -1749,16 +1752,26 @@ fn sequence_from_test_trace(
 
     for call in observed {
         if call.target == CHEATCODE_ADDRESS {
-            if call.calldata.starts_with(&warpCall::SELECTOR) {
-                if call.depth != 1 {
-                    return None;
+            match <[u8; 4]>::try_from(call.calldata.get(..4)?).ok()? {
+                warpCall::SELECTOR => {
+                    if call.depth != 1 {
+                        return None;
+                    }
+                    next_timestamp = warpCall::abi_decode(&call.calldata).ok()?.newTimestamp;
                 }
-                next_timestamp = warpCall::abi_decode(&call.calldata).ok()?.newTimestamp;
-            } else if call.calldata.starts_with(&rollCall::SELECTOR) {
-                if call.depth != 1 {
-                    return None;
+                rollCall::SELECTOR => {
+                    if call.depth != 1 {
+                        return None;
+                    }
+                    next_block_number = rollCall::abi_decode(&call.calldata).ok()?.newHeight;
                 }
-                next_block_number = rollCall::abi_decode(&call.calldata).ok()?.newHeight;
+                // Snapshot restoration can undo target calls and environment changes, but the
+                // observed trace does not retain enough snapshot state to reproduce that exactly.
+                revertToCall::SELECTOR
+                | revertToStateCall::SELECTOR
+                | revertToAndDeleteCall::SELECTOR
+                | revertToStateAndDeleteCall::SELECTOR => return None,
+                _ => {}
             }
             continue;
         }
@@ -2970,7 +2983,7 @@ mod tests {
     }
 
     #[test]
-    fn sequence_from_test_trace_preserves_forward_warp_and_roll() {
+    fn sequence_from_test_trace_preserves_forward_environment_and_rejects_restores() {
         let target = Address::from([0x42; 20]);
         let sender = Address::from([0xaa; 20]);
         let foo = Function::parse("foo()").unwrap();
@@ -2985,29 +2998,18 @@ mod tests {
             calldata: Bytes::from(foo_selector.to_vec()),
             value: Some(U256::from(7)),
         };
+        let cheatcode_call = |calldata| ObservedCall {
+            depth: 1,
+            caller: sender,
+            target: CHEATCODE_ADDRESS,
+            calldata: Bytes::from(calldata),
+            value: None,
+        };
         let observed = vec![
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: CHEATCODE_ADDRESS,
-                calldata: Bytes::from(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
-                value: None,
-            },
+            cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
             target_call(),
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: CHEATCODE_ADDRESS,
-                calldata: Bytes::from(rollCall { newHeight: U256::from(12) }.abi_encode()),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: CHEATCODE_ADDRESS,
-                calldata: Bytes::from(warpCall { newTimestamp: U256::from(110) }.abi_encode()),
-                value: None,
-            },
+            cheatcode_call(rollCall { newHeight: U256::from(12) }.abi_encode()),
+            cheatcode_call(warpCall { newTimestamp: U256::from(110) }.abi_encode()),
             target_call(),
         ];
 
@@ -3025,20 +3027,30 @@ mod tests {
                 && tx.call_details.value == Some(U256::from(7))
         }));
 
-        let backwards = [
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: CHEATCODE_ADDRESS,
-                calldata: Bytes::from(warpCall { newTimestamp: U256::from(99) }.abi_encode()),
-                value: None,
-            },
-            target_call(),
-        ];
+        let backwards =
+            [cheatcode_call(warpCall { newTimestamp: U256::from(99) }.abi_encode()), target_call()];
         assert!(
             sequence_from_test_trace(&backwards, &targets, U256::from(100), U256::from(10))
                 .is_none()
         );
+
+        for calldata in [
+            revertToCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToStateCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToStateAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+        ] {
+            let restored = [
+                cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+                cheatcode_call(rollCall { newHeight: U256::from(12) }.abi_encode()),
+                cheatcode_call(calldata),
+                target_call(),
+            ];
+            assert!(
+                sequence_from_test_trace(&restored, &targets, U256::from(100), U256::from(10))
+                    .is_none()
+            );
+        }
     }
 
     #[test]
