@@ -101,4 +101,16 @@ contract LoadAllocsTest is Test {
         assertEq(ALLOCD_B.code, hex"FF");
         assertEq(ALLOCD_B.balance, 0);
     }
+
+    function testLoadAllocsRespectsFsPermissions() public {
+        vm._expectCheatcodeRevert("the path /etc/hosts is not allowed to be accessed for read operations");
+        vm.loadAllocs("/etc/hosts");
+    }
+
+    function testLoadAllocsMissingFileRespectsFsPermissions() public {
+        vm._expectCheatcodeRevert(
+            "the path /etc/foundry-load-allocs-does-not-exist.json is not allowed to be accessed for read operations"
+        );
+        vm.loadAllocs("/etc/foundry-load-allocs-does-not-exist.json");
+    }
 }

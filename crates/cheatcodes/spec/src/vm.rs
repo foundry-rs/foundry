@@ -424,6 +424,7 @@ interface Vm {
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
     /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
+    /// `pathToAllocsJson` is relative to the project root and requires read access via `fs_permissions`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
 

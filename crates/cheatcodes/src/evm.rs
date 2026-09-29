@@ -50,7 +50,6 @@ use revm::{
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
-    path::Path,
     str::FromStr,
 };
 
@@ -340,15 +339,15 @@ impl Cheatcode for loadAllocsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToAllocsJson } = self;
 
-        let path = Path::new(pathToAllocsJson);
+        let path = ccx.state.config.ensure_path_allowed(pathToAllocsJson, FsAccessKind::Read)?;
         ensure!(path.exists(), "allocs file does not exist: {pathToAllocsJson}");
 
         // Let's first assume we're reading a file with only the allocs.
-        let allocs: BTreeMap<Address, GenesisAccount> = match read_json_file(path) {
+        let allocs: BTreeMap<Address, GenesisAccount> = match read_json_file(&path) {
             Ok(allocs) => allocs,
             Err(_) => {
                 // Let's try and read from a genesis file, and extract allocs.
-                let genesis = read_json_file::<Genesis>(path)?;
+                let genesis = read_json_file::<Genesis>(&path)?;
                 genesis.alloc
             }
         };

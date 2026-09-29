@@ -7438,7 +7438,7 @@
     {
       "func": {
         "id": "loadAllocs",
-        "description": "Load a genesis JSON file's `allocs` into the in-memory EVM state.",
+        "description": "Load a genesis JSON file's `allocs` into the in-memory EVM state.\n`pathToAllocsJson` is relative to the project root and requires read access via `fs_permissions`.",
         "declaration": "function loadAllocs(string calldata pathToAllocsJson) external;",
         "visibility": "external",
         "mutability": "",
