@@ -87,7 +87,7 @@ impl InterfaceArgs {
             abi.dedup();
             if multiple {
                 let mut names = HashMap::<_, _>::default();
-                let unique = unique_declaration_name(&name, &mut declarations);
+                let unique = unique_declaration_name(&name, &mut declarations, Some(&abi));
                 names.insert(name, unique.clone());
                 name = unique;
                 visit_abi_types(&mut abi, &mut |ty| {
@@ -101,7 +101,7 @@ impl InterfaceArgs {
                                 if flatten {
                                     contract.clone()
                                 } else {
-                                    unique_declaration_name(contract, &mut declarations)
+                                    unique_declaration_name(contract, &mut declarations, None)
                                 }
                             })
                             .clone();
@@ -144,13 +144,21 @@ impl InterfaceArgs {
 }
 
 /// Reserves a declaration name across all generated interfaces and libraries.
-fn unique_declaration_name(name: &str, declarations: &mut HashSet<String>) -> String {
-    if declarations.insert(name.to_owned()) {
+fn unique_declaration_name(
+    name: &str,
+    declarations: &mut HashSet<String>,
+    abi: Option<&JsonAbi>,
+) -> String {
+    let mut available = |candidate: &str| {
+        !abi.is_some_and(|abi| abi.functions.contains_key(candidate))
+            && declarations.insert(candidate.to_owned())
+    };
+    if available(name) {
         return name.to_owned();
     }
     for suffix in 1.. {
         let candidate = format!("{name}_{suffix}");
-        if declarations.insert(candidate.clone()) {
+        if available(&candidate) {
             return candidate;
         }
     }

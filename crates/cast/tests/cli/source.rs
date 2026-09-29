@@ -406,6 +406,7 @@ casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
     event_param["indexed"] = json!(false);
     let collision_abi = json!([
         {"type": "function", "name": "consume", "inputs": [shared.clone()], "outputs": [nested], "stateMutability": "view"},
+        {"type": "function", "name": "Token_1", "inputs": [], "outputs": [], "stateMutability": "nonpayable"},
         {"type": "event", "name": "Changed", "inputs": [event_param], "anonymous": false},
         {"type": "error", "name": "Invalid", "inputs": [shared.clone()]},
         {"type": "error", "name": "Invalid", "inputs": [shared]}
@@ -504,7 +505,7 @@ interface Token {
             .compile()
             .unwrap();
         assert!(!compiled.has_compiler_errors(), "{compiled}");
-        assert!(compiled.find_first("Token_1").is_some());
+        assert!(compiled.find_first("Token_2").is_some());
     };
     let prepare = |cmd: &mut TestCommand| {
         cmd.cast_fuse().current_dir(prj.root());
@@ -542,6 +543,7 @@ interface Token {
 
     event Changed(Shared.Data value);
 
+    function Token_1() external;
     function consume(Shared.Data memory value) external view returns (State memory result);
 }
 
@@ -551,7 +553,7 @@ library Shared_1 {
     }
 }
 
-interface Token_1 {
+interface Token_2 {
     struct State {
         Shared_1.Data value;
     }
@@ -560,6 +562,7 @@ interface Token_1 {
 
     event Changed(Shared_1.Data value);
 
+    function Token_1() external;
     function consume(Shared_1.Data memory value) external view returns (State memory result);
 }
 
@@ -590,10 +593,11 @@ interface Token {
 
     event Changed(Data value);
 
+    function Token_1() external;
     function consume(Data memory value) external view returns (State memory result);
 }
 
-interface Token_1 {
+interface Token_2 {
     // Types from `Shared`
     struct Data {
         uint256 amount;
@@ -607,6 +611,7 @@ interface Token_1 {
 
     event Changed(Data value);
 
+    function Token_1() external;
     function consume(Data memory value) external view returns (State memory result);
 }
 
