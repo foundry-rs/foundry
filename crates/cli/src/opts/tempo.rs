@@ -93,7 +93,7 @@ pub struct TempoOpts {
     /// Sign Tempo sponsor digests in-band with the given signer URI.
     ///
     /// Supported forms include `env://VAR`, `keystore://PATH`, `account://NAME`,
-    /// `ledger://`, `trezor://`, `aws://`, `gcp://`, `turnkey://`, and
+    /// `ledger://`, `trezor://`, `aws://`, `gcp://`, `turnkey://`, `azure://`, and
     /// `private-key://KEY`.
     #[arg(
         long = "tempo.sponsor-signer",

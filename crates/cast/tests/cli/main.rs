@@ -137,6 +137,7 @@ mod source;
 mod storage;
 mod transaction;
 mod vaddr;
+mod wallet_azure;
 mod wallet_keys;
 mod wallet_keystore;
 mod wallet_signing;

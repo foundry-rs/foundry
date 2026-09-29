@@ -112,6 +112,9 @@ allow-git = [
     # Temporary: alloy-chains until HyperliquidTestnet is released.
     "https://github.com/alloy-rs/chains",
     "https://github.com/foundry-rs/foundry-core",
+    # Temporary: Azure Key Vault signer until released upstream.
+    "https://github.com/aelmanaa/alloy",
+    "https://github.com/aelmanaa/foundry-core",
     "https://github.com/paradigmxyz/solar",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",

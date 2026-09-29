@@ -237,6 +237,7 @@ pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
         "aws" => WalletOpts { aws: true, ..Default::default() }.signer().await,
         "gcp" => WalletOpts { gcp: true, ..Default::default() }.signer().await,
         "turnkey" => WalletOpts { turnkey: true, ..Default::default() }.signer().await,
+        "azure" => WalletOpts { azure: true, ..Default::default() }.signer().await,
         "browser" => {
             eyre::bail!(
                 "browser:// sponsor signing is not supported by the current browser wallet API; use --tempo.sponsor-sig or another sponsor signer"
@@ -244,7 +245,7 @@ pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
         }
         _ => {
             eyre::bail!(
-                "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
+                "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, azure://, or private-key://KEY"
             );
         }
     }
