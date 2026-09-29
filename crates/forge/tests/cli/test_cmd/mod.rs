@@ -20,6 +20,7 @@ use std::fs;
 #[cfg(feature = "base")]
 mod base;
 mod brutalize;
+mod campaign;
 mod core;
 mod exact_fork;
 mod fork_bal;

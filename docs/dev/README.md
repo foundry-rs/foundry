@@ -49,6 +49,10 @@ use forking must contain `fork` in their name. Forge and Cast CLI tests live und
 - [Scripting](./scripting.md) documents the internal script execution and broadcast pipeline.
 - [Showmap corpus replay](./showmap.md) documents the persisted-corpus coverage workflow and file
   format.
+- [evm2 campaign migration](./evm2-campaigns.md) records the shared execution requirements and
+  parity fixtures for Forge fuzz and invariant campaigns; the
+  [boundary proposal](./evm2-campaign-boundary.md) specifies campaign-driven ownership and
+  operation requirements for the shared session.
 
 ## Updating documentation
 
