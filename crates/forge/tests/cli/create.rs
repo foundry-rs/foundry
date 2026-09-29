@@ -292,6 +292,62 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 "#]]);
 });
 
+forgetest_async!(create_rejects_from_signer_mismatch, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let mut wallets = handle.dev_wallets();
+    let from = wallets.next().unwrap();
+    let from_pk = hex::encode(from.credential().to_bytes());
+    let signer = wallets.next().unwrap();
+    let signer_pk = hex::encode(signer.credential().to_bytes());
+    let from = from.address().to_string();
+    let contract = format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}");
+    let args = ["create", contract.as_str(), "--rpc-url", rpc.as_str(), "--broadcast"];
+
+    // A signer that does not match `--from` is rejected before anything is sent.
+    cmd.forge_fuse()
+        .args(args)
+        .args(["--from", &from, "--private-key", &signer_pk])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: the sender specified via `--from`/`ETH_FROM` (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266) does not match the signer address (0x70997970C51812dc3A010C7d01b50e0d17dc79C8)
+
+"#]]);
+    assert!(api.transaction_count(signer.address(), None).await.unwrap().is_zero());
+
+    // A signer that matches `--from` deploys as usual.
+    cmd.forge_fuse()
+        .args(args)
+        .args(["--from", &from, "--private-key", &from_pk])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
+
+    // Unlocked deployments are sent from `--from` and ignore the resolved signer.
+    cmd.forge_fuse()
+        .args(args)
+        .args(["--unlocked", "--from", &from, "--private-key", &signer_pk])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+[TX_HASH]
+
+"#]]);
+    assert!(api.transaction_count(signer.address(), None).await.unwrap().is_zero());
+});
+
 forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
