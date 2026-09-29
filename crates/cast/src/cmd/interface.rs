@@ -84,6 +84,7 @@ impl InterfaceArgs {
         let mut declarations = HashSet::default();
         for (mut abi, mut name) in abis {
             json_abis.push(serde_json::to_value(&abi)?);
+            abi.dedup();
             if multiple {
                 let mut names = HashMap::<_, _>::default();
                 let unique = unique_declaration_name(&name, &mut declarations);
@@ -94,13 +95,16 @@ impl InterfaceArgs {
                     | InternalType::Enum { contract: Some(contract), .. }
                     | InternalType::Other { contract: Some(contract), .. } = ty
                     {
-                        if let Some(renamed) = names.get(contract) {
-                            *contract = renamed.clone();
-                        } else if !flatten {
-                            let renamed = unique_declaration_name(contract, &mut declarations);
-                            names.insert(contract.clone(), renamed.clone());
-                            *contract = renamed;
-                        }
+                        *contract = names
+                            .entry(contract.clone())
+                            .or_insert_with(|| {
+                                if flatten {
+                                    contract.clone()
+                                } else {
+                                    unique_declaration_name(contract, &mut declarations)
+                                }
+                            })
+                            .clone();
                     }
                 });
             }

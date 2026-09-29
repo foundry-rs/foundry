@@ -266,27 +266,27 @@ pub async fn fetch_abi_from_etherscan(
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
         .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-    let source = client.contract_source_code(address).await?;
-    let implementation =
-        source.items.first().filter(|item| item.proxy != 0).and_then(|item| item.implementation);
-    let mut abis = source
-        .items
-        .into_iter()
-        .map(|item| Ok((item.abi()?, item.contract_name)))
-        .collect::<Result<Vec<_>>>()?;
+    let fetch_abis = async |address| -> Result<_> {
+        let source = client.contract_source_code(address).await?;
+        let implementation = source
+            .items
+            .first()
+            .filter(|item| item.proxy != 0)
+            .and_then(|item| item.implementation);
+        let abis = source
+            .abis()?
+            .into_iter()
+            .zip(source.items.into_iter().map(|item| item.contract_name))
+            .collect::<Vec<_>>();
+        Ok((abis, implementation))
+    };
+    let (mut abis, implementation) = fetch_abis(address).await?;
     if let Some(implementation) = implementation {
         sh_status!(
             "Contract at {address} is a proxy, fetching implementation at {implementation}..."
         )?;
-        let implementation = client.contract_source_code(implementation).await.and_then(|source| {
-            source
-                .items
-                .into_iter()
-                .map(|item| Ok((item.abi()?, item.contract_name)))
-                .collect::<Result<Vec<_>, _>>()
-        });
-        match implementation {
-            Ok(implementation) => abis.extend(implementation),
+        match fetch_abis(implementation).await {
+            Ok((implementation, _)) => abis.extend(implementation),
             Err(err) => sh_warn!("Could not fetch implementation ABI: {err}")?,
         }
     }

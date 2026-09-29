@@ -407,6 +407,7 @@ casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
     let collision_abi = json!([
         {"type": "function", "name": "consume", "inputs": [shared.clone()], "outputs": [nested], "stateMutability": "view"},
         {"type": "event", "name": "Changed", "inputs": [event_param], "anonymous": false},
+        {"type": "error", "name": "Invalid", "inputs": [shared.clone()]},
         {"type": "error", "name": "Invalid", "inputs": [shared]}
     ]);
     let responses = HashMap::from([
@@ -493,6 +494,18 @@ interface Token {
             ),
         ),
     ];
+    let compile = |source: &str| {
+        prj.add_source("Generated.sol", source);
+        let compiled = Config::load_with_root(prj.root())
+            .unwrap()
+            .sanitized()
+            .project()
+            .unwrap()
+            .compile()
+            .unwrap();
+        assert!(!compiled.has_compiler_errors(), "{compiled}");
+        assert!(compiled.find_first("Token_1").is_some());
+    };
     let prepare = |cmd: &mut TestCommand| {
         cmd.cast_fuse().current_dir(prj.root());
         for var in ["CHAIN", "ETHERSCAN_API_KEY", "FOUNDRY_CONFIG", "FOUNDRY_ETHERSCAN_API_KEY"] {
@@ -553,16 +566,7 @@ interface Token_1 {
 "#]])
         .get_output()
         .stdout_lossy();
-    prj.add_source("Generated.sol", &output);
-    let compiled = Config::load_with_root(prj.root())
-        .unwrap()
-        .sanitized()
-        .project()
-        .unwrap()
-        .compile()
-        .unwrap();
-    assert!(!compiled.has_compiler_errors(), "{compiled}");
-    assert!(compiled.find_first("Token_1").is_some());
+    compile(&output);
 
     prepare(&mut cmd);
     let output = cmd
@@ -609,16 +613,7 @@ interface Token_1 {
 "#]])
         .get_output()
         .stdout_lossy();
-    prj.add_source("Generated.sol", &output);
-    let compiled = Config::load_with_root(prj.root())
-        .unwrap()
-        .sanitized()
-        .project()
-        .unwrap()
-        .compile()
-        .unwrap();
-    assert!(!compiled.has_compiler_errors(), "{compiled}");
-    assert!(compiled.find_first("Token_1").is_some());
+    compile(&output);
 
     // Solidity-only renaming must preserve the explorer's original JSON ABI.
     prepare(&mut cmd);
