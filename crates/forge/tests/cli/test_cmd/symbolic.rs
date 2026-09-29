@@ -2837,6 +2837,146 @@ contract SymbolicRegressionAfterInvariant is Test {
         );
 });
 
+forgetest_init!(symbolic_emits_regression_with_setup_storage, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_with_setup_storage because z3 is not available"
+        );
+        return;
+    }
+    prj.update_config(|config| config.invariant.runs = 0);
+
+    prj.add_test(
+        "StorageRegression.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageVm {
+    function setArbitraryStorage(address target) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function copyStorage(address from, address to) external;
+}
+
+contract RegressionStore {
+    uint256 public value;
+    uint256 public zero;
+
+    constructor(uint256 initial) {
+        value = initial;
+        zero = initial;
+    }
+}
+
+contract StorageRegressionTarget {
+    RegressionStore source;
+    RegressionStore store;
+    bool public hit;
+
+    constructor(RegressionStore source_, RegressionStore store_) {
+        source = source_;
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42 && store.zero() == 0);
+        require(source.value() == 42 && source.zero() == 0);
+        hit = true;
+    }
+}
+
+abstract contract StorageRegressionBase is Test {
+    StorageRegressionTarget target;
+
+    function initTarget(RegressionStore source, RegressionStore store) internal {
+        target = new StorageRegressionTarget(source, store);
+        targetContract(address(target));
+    }
+
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+
+contract DirectStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore store = new RegressionStore(0);
+        StorageVm(address(vm)).setArbitraryStorage(address(store));
+        initTarget(store, store);
+    }
+}
+
+contract CopiedStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore source = new RegressionStore(0);
+        RegressionStore copy = new RegressionStore(0);
+        StorageVm(address(vm)).setArbitraryStorage(address(source));
+        StorageVm(address(vm)).copyStorage(address(source), address(copy));
+        initTarget(source, copy);
+    }
+}
+
+contract OverwriteStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore store = new RegressionStore(1);
+        StorageVm(address(vm)).setArbitraryStorage(address(store), true);
+        initTarget(store, store);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--emit-regression",
+        "--match-test",
+        "invariant_notHit",
+        "--symbolic-invariant-depth",
+        "1",
+    ])
+    .assert_failure();
+
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_notHit_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/DirectStorageRegression_invariant_notHit_SymbolicRegression.t.sol:DirectStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/regressions/CopiedStorageRegression_invariant_notHit_SymbolicRegression.t.sol:CopiedStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/regressions/OverwriteStorageRegression_invariant_notHit_SymbolicRegression.t.sol:OverwriteStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+});
+
 forgetest_init!(symbolic_emits_handler_assertion_regression, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
