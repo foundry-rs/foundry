@@ -17,7 +17,8 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Severity, Source, output_selection::OutputSelection,
+        remappings::Remapping,
     },
     compilers::{
         Compiler,
@@ -791,7 +792,9 @@ where
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
-    compiler.abi_cache |= project.no_artifacts;
+    // Cached ABI artifacts do not retain compiler diagnostics.
+    compiler.abi_cache = (compiler.abi_cache || project.no_artifacts)
+        && project.compiler_severity_filter == Severity::Error;
     compiler.compile(project)
 }
 
@@ -808,6 +811,7 @@ where
     if !project.cached
         || project.build_info
         || project.artifacts.additional_files != Default::default()
+        || project.compiler_severity_filter != Severity::Error
     {
         return compile_abi_project(project, compiler);
     }
