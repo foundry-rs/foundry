@@ -2702,6 +2702,7 @@ contract SymbolicRegressionSequence is Test {
     }
 
     function invariant_counterNeverEleven() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected invariant sender");
         assert(target.value() != 11);
     }
 }
@@ -2727,14 +2728,25 @@ contract SymbolicRegressionSequence is Test {
     );
     assert!(regression.exists(), "missing regression {}", regression.display());
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(["test", "--match-test", "test_regression_invariant_counterNeverEleven_symbolic"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(stdout.contains("test_regression_invariant_counterNeverEleven_symbolic()"), "{stdout}");
-    assert!(stdout.contains("assertion failed"), "{stdout}");
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_counterNeverEleven_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression.t.sol:SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_counterNeverEleven_symbolic()": {
+        "status": "Failure",
+        "reason": "panic: assertion failed (0x01)",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
 });
 
 forgetest_init!(symbolic_emits_stateful_regression_with_after_invariant, |prj, cmd| {
@@ -2768,9 +2780,12 @@ contract SymbolicRegressionAfterInvariant is Test {
         targetContract(address(target));
     }
 
-    function invariant_ok() public pure {}
+    function invariant_ok() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected invariant sender");
+    }
 
     function afterInvariant() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected afterInvariant sender");
         require(target.value() != 1, "afterInvariant failure");
     }
 }
@@ -2801,14 +2816,25 @@ contract SymbolicRegressionAfterInvariant is Test {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
     assert!(generated.contains(r#"hex"93969ddf""#), "{generated}");
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(["test", "--match-test", "test_regression_invariant_ok_symbolic"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(stdout.contains("test_regression_invariant_ok_symbolic()"), "{stdout}");
-    assert!(stdout.contains("afterInvariant failure"), "{stdout}");
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression.t.sol:SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_ok_symbolic()": {
+        "status": "Failure",
+        "reason": "afterInvariant failure",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
 });
 
 forgetest_init!(symbolic_emits_handler_assertion_regression, |prj, cmd| {
