@@ -1126,6 +1126,8 @@ impl CallTraceDecoder {
                 }
             };
 
+            let contract_functions = self.select_contract_function(functions, trace);
+
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
             // non-fallback contract + no receive
             if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
@@ -1148,7 +1150,7 @@ impl CallTraceDecoder {
                     }
                 };
 
-                return if let Some(func) = functions.first() {
+                return if let Some(func) = contract_functions.first() {
                     DecodedCallTrace {
                         label,
                         call_data: Some(self.decode_function_input(trace, func)),
@@ -1163,7 +1165,6 @@ impl CallTraceDecoder {
                 };
             }
 
-            let contract_functions = self.select_contract_function(functions, trace);
             let [func, ..] = contract_functions else {
                 return DecodedCallTrace {
                     label,
@@ -2277,7 +2278,8 @@ mod tests {
         ])
         .unwrap();
         let identifier = SignaturesIdentifier::new_offline_with_abis([&abi]).unwrap();
-        let decoder = CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
+        let mut decoder =
+            CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
         let tag = hex!("756e6978000001a0ee8a61e9800089610000006d0100");
         let trace = |data: &[&[u8]]| CallTrace {
             address: Address::repeat_byte(0x12),
@@ -2305,12 +2307,14 @@ mod tests {
         let decoded = decoder.decode_function(&trace(&[&data, &tag, &erc8021])).await;
         assert_eq!(decoded.call_data.unwrap().args, call_data.args);
 
-        // Packed arguments are not decoded as a function with fewer inputs.
+        // Packed arguments are not decoded as a function with fewer inputs, including on a known
+        // contract without a fallback that lacks the selector.
         let charge_fee = abi.function("chargeFee").unwrap().first().unwrap();
         let word = Address::repeat_byte(0x11).into_word();
-        let decoded =
-            decoder.decode_function(&trace(&[&charge_fee.selector()[..], &word[..], &tag])).await;
-        assert!(decoded.call_data.is_none());
+        let packed = trace(&[&charge_fee.selector()[..], &word[..], &tag]);
+        assert!(decoder.decode_function(&packed).await.call_data.is_none());
+        decoder.non_fallback_contracts.insert(packed.address, HashSet::default());
+        assert!(decoder.decode_function(&packed).await.call_data.is_none());
     }
 
     #[cfg(feature = "base")]
