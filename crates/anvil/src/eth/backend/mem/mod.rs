@@ -226,7 +226,7 @@ use base_common_chains::{ChainConfig, ChainUpgrades};
 #[cfg(feature = "base")]
 use base_common_consensus::{
     BaseTimeDepositSource, BaseTransactionInfo, BaseTxEnvelope, DepositSourceDomain,
-    EIP8130_REJECTION_MSG, Eip8130Constants, Predeploys, SystemAddresses,
+    EIP8130_REJECTION_MSG, Eip8130Constants, L1InfoDepositSource, Predeploys, SystemAddresses,
 };
 #[cfg(feature = "base")]
 use base_common_evm::{
@@ -1544,6 +1544,57 @@ impl<N: Network> Backend<N> {
             source_hash,
             from: SystemAddresses::DEPOSITOR_ACCOUNT,
             to: TxKind::Call(Predeploys::BASE_TIME),
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 1_000_000,
+            is_system_transaction: false,
+            input: input.into(),
+        }));
+        let pending = anvil_core::eth::transaction::PendingTransaction::with_impersonated(
+            transaction,
+            SystemAddresses::DEPOSITOR_ACCOUNT,
+        );
+        Some(Arc::new(PoolTransaction::new(pending)))
+    }
+
+    /// Builds a deterministic L1-info deposit for a local Denim block.
+    ///
+    /// Standalone Anvil has no L1 derivation pipeline, so it uses the parent L2 hash and the L2
+    /// block number as a stable synthetic L1 origin. The packed Ecotone payload keeps the L1 fee
+    /// parameters aligned with the standalone genesis state. Replace this hand-encoding with the
+    /// canonical encoder once it moves out of the broader `base-protocol` crate.
+    #[cfg(feature = "base")]
+    fn l1_info_update_transaction(
+        &self,
+        block_number: u64,
+        timestamp: u64,
+        l1_block_hash: B256,
+    ) -> Option<Arc<PoolTransaction<FoundryTxEnvelope>>> {
+        if !self.is_base() || self.base_upgrade() < BaseUpgrade::Denim {
+            return None;
+        }
+
+        let mut input = Vec::with_capacity(164);
+        input.extend([0x44, 0x0a, 0x5e, 0x20]); // setL1BlockValuesEcotone()
+        input.extend(DEFAULT_BASE_L1_FEE_SCALAR.to_be_bytes());
+        input.extend(0u32.to_be_bytes());
+        input.extend(block_number.to_be_bytes());
+        input.extend(timestamp.to_be_bytes());
+        input.extend(block_number.to_be_bytes());
+        input.extend(U256::from(DEFAULT_BASE_L1_BASE_FEE).to_be_bytes::<32>());
+        input.extend(U256::ONE.to_be_bytes::<32>());
+        input.extend(l1_block_hash.as_slice());
+        input.extend(B256::ZERO.as_slice());
+
+        let source_hash = DepositSourceDomain::L1Info(L1InfoDepositSource {
+            l1_block_hash,
+            seq_number: block_number,
+        })
+        .source_hash();
+        let transaction = FoundryTxEnvelope::Deposit(alloy_consensus::Sealed::new(TxDeposit {
+            source_hash,
+            from: SystemAddresses::DEPOSITOR_ACCOUNT,
+            to: TxKind::Call(Predeploys::L1_BLOCK_INFO),
             mint: 0,
             value: U256::ZERO,
             gas_limit: 1_000_000,
@@ -6136,8 +6187,9 @@ where
 
                 #[cfg(feature = "base")]
                 let protocol_transactions = self
-                    .base_time_update_transaction(block_number)
+                    .l1_info_update_transaction(block_number, block_timestamp, best_hash)
                     .into_iter()
+                    .chain(self.base_time_update_transaction(block_number))
                     .chain(pool_transactions.iter().cloned())
                     .collect::<Vec<_>>();
                 #[cfg(not(feature = "base"))]
