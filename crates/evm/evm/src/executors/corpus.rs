@@ -1205,7 +1205,12 @@ impl WorkerCorpus {
 
             let Some(seq) = ({
                 let targets = targeted_contracts.targets();
-                let block = &executor.evm_env().block_env;
+                let block = executor
+                    .inspector()
+                    .cheatcodes
+                    .as_ref()
+                    .and_then(|cheatcodes| cheatcodes.block.as_ref())
+                    .unwrap_or(&executor.evm_env().block_env);
                 sequence_from_test_trace(&observed, &targets, block.timestamp(), block.number())
             }) else {
                 continue;

@@ -3091,6 +3091,7 @@ contract InvariantStorageHooks is Test {
 
 forgetest_init!(invariant_test_trace_seed_preserves_time_advances, |prj, cmd| {
     prj.update_config(|config| {
+        config.isolate = true;
         config.invariant.runs = 1;
         config.invariant.depth = 2;
         config.invariant.shrink_run_limit = 0;
@@ -3114,15 +3115,25 @@ forgetest_init!(invariant_test_trace_seed_preserves_time_advances, |prj, cmd| {
 import "forge-std/Test.sol";
 
 contract TimedHandler {
-    uint256 openedAt;
+    uint256 immutable expectedOpenTime;
+    uint256 immutable expectedOpenBlock;
+    bool opened;
     bool public finished;
 
+    constructor(uint256 expectedOpenTime_, uint256 expectedOpenBlock_) {
+        expectedOpenTime = expectedOpenTime_;
+        expectedOpenBlock = expectedOpenBlock_;
+    }
+
     function open() external {
-        openedAt = block.timestamp;
+        opened = block.timestamp == expectedOpenTime && block.number == expectedOpenBlock;
     }
 
     function finish() external {
-        if (block.timestamp >= openedAt + 1 days) finished = true;
+        if (
+            opened && block.timestamp == expectedOpenTime + 1 days
+                && block.number == expectedOpenBlock + 5
+        ) finished = true;
     }
 }
 
@@ -3130,13 +3141,16 @@ contract TimedTraceSeedTest is Test {
     TimedHandler handler;
 
     function setUp() public {
-        handler = new TimedHandler();
+        vm.warp(block.timestamp + 30 days);
+        vm.roll(block.number + 100);
+        handler = new TimedHandler(block.timestamp, block.number);
         targetContract(address(handler));
     }
 
     function test_seedTimedLifecycle() public {
         handler.open();
         vm.warp(block.timestamp + 1 days);
+        vm.roll(block.number + 5);
         handler.finish();
     }
 
