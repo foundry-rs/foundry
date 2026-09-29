@@ -7,7 +7,7 @@ use foundry_cli::{
     utils::{Git, LoadConfig},
 };
 use foundry_config::{Config, impl_figment_convert_basic};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use yansi::Paint;
 
 /// CLI arguments for `forge update`.
@@ -44,6 +44,18 @@ impl UpdateArgs {
 
         let mut foundry_lock = Lockfile::new(&config.root).with_git(&git);
         let out_of_sync_deps = foundry_lock.sync(config.install_lib_dir())?;
+        let submodules = git.submodules_in(Path::new(""))?;
+        if let Some(path) = foundry_lock
+            .iter()
+            .map(|(path, _)| path)
+            .filter(|path| !submodules.iter().any(|submodule| submodule.path() == *path))
+            .min()
+        {
+            eyre::bail!(
+                "foundry.lock entry `{}` does not match an installed Git submodule",
+                path.display()
+            );
+        }
 
         // Update selected branches without an explicit ref override.
         for (path, dep_id) in foundry_lock.iter_mut() {
@@ -102,6 +114,27 @@ impl UpdateArgs {
 
         if !self.recursive && initialize_nested && paths.is_empty() {
             git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
+        }
+
+        let canonical_root = dunce::canonicalize(&root)?;
+        let mut checkout_paths = foundry_lock
+            .iter()
+            .map(|(path, _)| path)
+            .filter(|path| paths.is_empty() || paths.contains(path))
+            .collect::<Vec<_>>();
+        checkout_paths.sort();
+        for path in checkout_paths {
+            let target = root.join(path);
+            let initialized = dunce::canonicalize(&target).is_ok_and(|target| {
+                target.starts_with(&canonical_root)
+                    && Git::new(&target).is_repo_root().unwrap_or(false)
+            });
+            if !initialized {
+                eyre::bail!(
+                    "Dependency at `{}` is not an initialized Git submodule worktree",
+                    path.display()
+                );
+            }
         }
 
         // Update branches to their latest commit from origin
