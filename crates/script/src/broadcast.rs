@@ -327,7 +327,6 @@ pub(crate) fn remaining_unsigned_transactions_for_recovery<N: Network>(
 ) -> Vec<RemainingScriptTransaction>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-    N::TransactionRequest: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
     sequence
         .sequences()
@@ -354,7 +353,6 @@ fn remaining_operation_indices<N: Network>(
 ) -> Vec<usize>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-    N::TransactionRequest: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
     let deployment = &sequence.sequences()[sequence_index];
     deployment
@@ -385,7 +383,6 @@ where
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
-    N::TransactionRequest: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
     sequence
         .sequences()
@@ -520,10 +517,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     }
 
     /// Broadcasts transactions from all sequences.
-    pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>>
-    where
-        <FEN::Network as Network>::TxEnvelope: alloy_consensus::transaction::SignerRecoverable,
-    {
+    pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
         let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
         let ordering_addresses = remaining_sender_addresses(&self.sequence);
         let has_unprepared_transactions =
