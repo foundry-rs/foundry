@@ -879,3 +879,24 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     assert_eq!(decrypted_private_key, test_private_key);
 });
+
+// tests that `cast wallet list --turnkey` does not also list local keystore accounts
+casttest!(wallet_list_turnkey_skips_local_accounts, |prj, cmd| {
+    let keystores = prj.root().join(".foundry").join("keystores");
+    fs::create_dir_all(&keystores).unwrap();
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "new", keystores.to_str().unwrap(), "local-account"])
+        .args(["--unsafe-password", "test"])
+        .assert_success();
+
+    cmd.cast_fuse();
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "list"]).assert_success().stdout_eq(str![[r#"
+local-account (Local)
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "list", "--turnkey"]).assert_success().stdout_eq(str![""]);
+});
