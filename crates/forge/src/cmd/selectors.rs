@@ -10,7 +10,9 @@ use foundry_cli::{
     utils::{FoundryPathExt, LoadConfig, cache_local_signatures, cache_signatures_from_abis},
 };
 use foundry_common::{
-    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
+    compile::{
+        PathOrContractInfo, ProjectCompiler, compile_abi_project, compile_abi_project_cached,
+    },
     external_compiler::is_external_artifact,
     selectors::{SelectorImportData, import_selectors},
     shell,
@@ -395,7 +397,7 @@ impl SelectorsSubcommands {
                 sh_status!("Searching for selector {selector:?} in the project...")?;
 
                 let (mut project, compiler) = project_from_paths(project_paths)?;
-                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
+                let outcome = compile_abi_project_cached(&mut project, compiler.quiet(true))?;
                 let artifacts = selector_artifacts(outcome, &project.paths.sources);
 
                 let mut table = Table::new();
