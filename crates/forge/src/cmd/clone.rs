@@ -31,7 +31,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::read_dir,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 use tracing::trace;
@@ -530,7 +530,13 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     let lib_dir = &path_config.libraries[0];
     // Optional dir, if found in src
     let node_modules_dir = &root.join("node_modules");
-    let contract_name = &meta.contract_name;
+    let contract_name = Path::new(&meta.contract_name);
+    let mut components = contract_name.components();
+    eyre::ensure!(
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none(),
+        "invalid contract name: {:?}",
+        meta.contract_name
+    );
     let source_tree = meta.source_tree();
 
     // then we move the sources to the correct directories
@@ -540,6 +546,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
 
     // first we dump the sources to a temporary directory
     let tmp_dump_dir = root.join("raw_sources");
+    let contract_dir = tmp_dump_dir.join(contract_name);
     source_tree
         .write_to(&tmp_dump_dir)
         .map_err(|e| eyre::eyre!("failed to dump sources: {}", e))?;
@@ -553,7 +560,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     //   `forge-std`,
     // or not started with `@`, we should not re-organize.
     let to_reorg = !no_reorg
-        && std::fs::read_dir(tmp_dump_dir.join(contract_name))?.all(|e| {
+        && std::fs::read_dir(&contract_dir)?.all(|e| {
             let Ok(e) = e else { return false };
             let folder_name = e.file_name();
             folder_name == "src"
@@ -570,7 +577,7 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
     eyre::ensure!(Path::exists(&root.join(lib_dir)), "`lib` directory must exists");
 
     // move source files
-    for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
+    for entry in std::fs::read_dir(contract_dir)? {
         let entry = entry?;
         let folder_name = entry.file_name();
         // special handling when we need to re-organize the directories: we flatten them.
@@ -1188,6 +1195,47 @@ mod tests {
                 swarm_source: String::new(),
             }],
         }
+    }
+
+    #[test]
+    fn test_dump_sources_rejects_contract_name_paths() {
+        for absolute in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let victim = temp.path().join("victim");
+            std::fs::create_dir_all(root.join("src")).unwrap();
+            std::fs::create_dir_all(root.join("lib")).unwrap();
+            std::fs::create_dir_all(&victim).unwrap();
+            let victim_file = victim.join("outside.sol");
+            std::fs::write(&victim_file, "contract Outside {}").unwrap();
+            let contract_name = if absolute {
+                victim.to_string_lossy().into_owned()
+            } else {
+                "../../victim".to_string()
+            };
+            let meta = contract_metadata(&contract_name, false, None).items.remove(0);
+
+            let err = dump_sources(&meta, &root, false).unwrap_err();
+
+            assert_eq!(err.to_string(), format!("invalid contract name: {contract_name:?}"));
+            assert!(victim_file.exists());
+            assert!(!root.join("raw_sources").exists());
+            assert!(!root.join("src/outside.sol").exists());
+        }
+    }
+
+    #[test]
+    fn test_dump_sources_accepts_contract_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::create_dir(root.join("lib")).unwrap();
+        let meta = contract_metadata("Contract_2", false, None).items.remove(0);
+
+        dump_sources(&meta, &root, false).unwrap();
+
+        assert!(root.join("src/Contract.sol").exists());
+        assert!(!root.join("raw_sources").exists());
     }
 
     #[tokio::test]
