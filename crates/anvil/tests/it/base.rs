@@ -858,8 +858,9 @@ async fn base_eip8130_txpool_orders_channel_heads_by_fee() {
     api.mine_one().await.unwrap();
     let high = high.get_receipt().await.unwrap();
     let low = low.get_receipt().await.unwrap();
-    assert_eq!(high.transaction_index, Some(0));
-    assert_eq!(low.transaction_index, Some(1));
+    // System deposits occupy the prefix of a Denim block; assert the channel ordering without
+    // assuming that the first user transaction is at block index zero.
+    assert_eq!(low.transaction_index, high.transaction_index.map(|index| index + 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
