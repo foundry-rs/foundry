@@ -383,25 +383,32 @@ contract AlwaysAssertTest is Test {
 forgetest_init!(nested_handler_assertion_replays_from_disk, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
-        config.invariant.depth = 1;
+        config.invariant.depth = 30;
         config.invariant.fail_on_revert = false;
     });
     prj.add_source(
         "NestedAssertion.sol",
         r#"
+pragma solidity ^0.8.20;
+
 contract NestedAssertion {
     function boom() external pure { assert(false); }
 }
 
 contract OuterHandler {
+    bool primed;
     NestedAssertion nested = new NestedAssertion();
-    function step() external { nested.boom(); }
+    function prime() external { primed = true; }
+    function noop() external {}
+    function step() external { if (primed) nested.boom(); }
 }
    "#,
     );
     prj.add_test(
         "NestedAssertionTest.t.sol",
         r#"
+pragma solidity ^0.8.20;
+
 import {Test} from "forge-std/Test.sol";
 import {OuterHandler} from "../src/NestedAssertion.sol";
 
@@ -413,7 +420,22 @@ contract NestedAssertionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+    let output = cmd
+        .args(["test", "--mt", "invariant_ok", "--fuzz-seed", "2"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let original = stdout
+        .split_once("[Sequence] (original: ")
+        .unwrap_or_else(|| panic!("{stdout}\n{}", String::from_utf8_lossy(&output.stderr)))
+        .1
+        .split_once(',')
+        .unwrap()
+        .0
+        .parse::<usize>()
+        .unwrap();
+    assert!(original > 2, "expected a removable call: {stdout}");
 
     let handlers_dir = prj
         .root()
@@ -427,6 +449,9 @@ contract NestedAssertionTest is Test {
         .filter_map(|entry| entry.ok())
         .find(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
         .expect("persisted nested handler failure");
+    let persisted: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
+    assert_eq!(persisted["call_sequence"].as_array().unwrap().len(), 2);
 
     prj.update_config(|config| {
         config.invariant.runs = 0;

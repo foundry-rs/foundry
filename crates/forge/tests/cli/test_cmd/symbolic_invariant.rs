@@ -536,6 +536,8 @@ forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
     prj.add_test(
         "SymbolicInvariantHandlerFailure.t.sol",
         r#"
+pragma solidity ^0.8.20;
+
 import "forge-std/Test.sol";
 
 interface ArbitraryStorageVm {
@@ -686,8 +688,16 @@ contract SymbolicInvariantHandlerFailure is Test {
         .expect("outer handler target")
         .parse()
         .unwrap();
+    let selector: alloy_primitives::Selector =
+        legacy_artifact["invariant_failure"]["selector"].as_str().unwrap().parse().unwrap();
+    let legacy_reverter = outer.create(1);
+    let mut identity = [0u8; 24];
+    identity[..20].copy_from_slice(legacy_reverter.as_slice());
+    identity[20..].copy_from_slice(selector.as_slice());
     legacy_artifact["invariant_failure"]["reverter"] =
-        serde_json::Value::String(outer.create(1).to_string());
+        serde_json::Value::String(legacy_reverter.to_string());
+    legacy_artifact["invariant_failure"]["fingerprint"] =
+        serde_json::Value::String(format!("{:#x}", alloy_primitives::keccak256(identity)));
     std::fs::write(&artifact_path, serde_json::to_vec_pretty(&legacy_artifact).unwrap()).unwrap();
 
     let legacy_replay_output = cmd
@@ -707,6 +717,26 @@ contract SymbolicInvariantHandlerFailure is Test {
             .as_str()
             .expect("legacy handler name")
             .ends_with("SymbolicInvariantHandlerFailureTarget::boom")
+    );
+
+    let unrelated_reverter = outer.create(2);
+    identity[..20].copy_from_slice(unrelated_reverter.as_slice());
+    legacy_artifact["invariant_failure"]["reverter"] =
+        serde_json::Value::String(unrelated_reverter.to_string());
+    legacy_artifact["invariant_failure"]["fingerprint"] =
+        serde_json::Value::String(format!("{:#x}", alloy_primitives::keccak256(identity)));
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&legacy_artifact).unwrap()).unwrap();
+    let unrelated_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let unrelated_result = json_test_result(&unrelated_output, "invariant_ok()");
+    assert!(
+        unrelated_result["reason"].as_str().unwrap().contains("different handler failure site"),
+        "{unrelated_result}"
     );
 });
 
