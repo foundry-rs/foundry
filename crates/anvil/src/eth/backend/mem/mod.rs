@@ -1570,7 +1570,10 @@ impl<N: Network> Backend<N> {
         default_timestamp: u64,
     ) -> u64 {
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
-            parent_timestamp.saturating_add(u64::from(block_number.is_multiple_of(5)))
+            // Explicit timestamp controls may advance farther than the cadence; retain that
+            // caller decision while preventing the scheduled path from moving behind a parent.
+            default_timestamp
+                .max(parent_timestamp.saturating_add(u64::from(block_number.is_multiple_of(5))))
         } else {
             default_timestamp
         }
