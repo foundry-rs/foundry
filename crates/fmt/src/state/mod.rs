@@ -8,7 +8,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::{DocCommentStyle, IndentStyle};
+use foundry_config::fmt::{DocCommentStyle, IndentStyle, IntTypes};
 use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, source_map::SourceFile},
@@ -455,6 +455,52 @@ impl<'sess> State<'sess, '_> {
         self.print_word(")");
     }
 
+    /// How many characters the printed form of `line` differs from the source by, counting only
+    /// the spacing just inside a brace pair. The printer normalizes that spacing to the
+    /// configured style, so a source written the other way makes a source-derived estimate
+    /// describe something the printer will never produce.
+    fn bracket_spacing_delta(&self, line: &str) -> isize {
+        let b = line.as_bytes();
+        let mut delta = 0isize;
+        for (i, &c) in b.iter().enumerate() {
+            let inner = match c {
+                b'{' => b.get(i + 1).copied(),
+                b'}' => i.checked_sub(1).and_then(|j| b.get(j).copied()),
+                _ => continue,
+            };
+            let Some(inner) = inner else { continue };
+            // An empty pair such as `{}` keeps no space either way.
+            if matches!(inner, b'{' | b'}') {
+                continue;
+            }
+            match (inner == b' ', self.config.bracket_spacing) {
+                (true, false) => delta -= 1,
+                (false, true) => delta += 1,
+                _ => {}
+            }
+        }
+        delta
+    }
+
+    /// How many characters the printed form of `line` differs from the source by, counting the
+    /// integer types the printer respells. `uint` is written as `uint256` under the default
+    /// `int_types = "long"` and the other way round under `"short"`, so a source using the other
+    /// spelling is measured as something the printer will not produce.
+    fn int_type_delta(&self, line: &str) -> isize {
+        let expand = match self.config.int_types {
+            IntTypes::Long => true,
+            IntTypes::Short => false,
+            IntTypes::Preserve => return 0,
+        };
+        line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map(|word| match (expand, word) {
+                (true, "uint" | "int") => 3,
+                (false, "uint256" | "int256") => -3,
+                _ => 0,
+            })
+            .sum()
+    }
+
     fn estimate_size(&self, span: Span) -> usize {
         if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
@@ -472,7 +518,7 @@ impl<'sess> State<'sess, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
+                        '}' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
                 }
@@ -492,6 +538,8 @@ impl<'sess> State<'sess, '_> {
                         break;
                     }
                 }
+                size = size.saturating_add_signed(self.bracket_spacing_delta(line));
+                size = size.saturating_add_signed(self.int_type_delta(line));
 
                 // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
@@ -499,7 +547,7 @@ impl<'sess> State<'sess, '_> {
                 // - ends with ';' a line break is required.
                 // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some('{') => self.config.bracket_spacing,
                     Some(',' | ';') => true,
                     Some(
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',
