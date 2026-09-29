@@ -1,7 +1,8 @@
 use crate::{
     eth::{
-        backend::cheats::CheatsManager, error::InvalidTransactionError,
-        pool::transactions::PoolTransaction,
+        backend::cheats::CheatsManager,
+        error::InvalidTransactionError,
+        pool::transactions::{PoolTransaction, TxMarker},
     },
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
@@ -29,7 +30,7 @@ use alloy_evm::{
     },
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_primitives::{Address, B256, Bytes, Log, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, U256, map::HashSet};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -630,11 +631,18 @@ where
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
     let mut transactions = Vec::new();
     let mut blob_gas_used = 0u64;
+    let mut unavailable_markers = HashSet::<TxMarker>::default();
 
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
         let sender = *pending.sender();
         let block_timestamp = executor.evm().block().timestamp();
+
+        if pool_tx.requires.iter().any(|marker| unavailable_markers.contains(marker)) {
+            trace!(target: "backend", "[{:?}] dependency was not included, skipping transaction", pool_tx.hash());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
+            continue;
+        }
 
         if let FoundryTxEnvelope::Tempo(aa_tx) = pending.transaction.as_ref()
             && let Some(valid_after) = aa_tx.tx().valid_after
@@ -642,6 +650,7 @@ where
         {
             trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
             not_yet_valid.push(pool_tx.clone());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -650,6 +659,7 @@ where
             Ok(acc) => acc,
             Err(err) => {
                 trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                unavailable_markers.extend(pool_tx.provides.iter().cloned());
                 continue;
             }
         };
@@ -663,6 +673,7 @@ where
         let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
         if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "block gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -671,6 +682,7 @@ where
             && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -679,6 +691,7 @@ where
         let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
         if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
             trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -757,6 +770,7 @@ where
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());
                 } else {
+                    unavailable_markers.extend(pool_tx.provides.iter().cloned());
                     trace!(target: "backend", ?err, "tx execution error, skipping {:?}", pool_tx.hash());
                 }
             }
