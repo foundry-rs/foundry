@@ -14,6 +14,7 @@ use std::{
     process::Command,
     str::FromStr,
 };
+use url::Url;
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -1372,3 +1373,185 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
 forgetest_init!(can_install_with_no_commit, |_prj, cmd| {
     cmd.args(["install", "--no-commit"]).assert_success();
 });
+
+forgetest!(install_no_git_cleans_failed_recursive_clone_and_retries, |prj, cmd| {
+    let repositories = tempfile::tempdir().unwrap();
+    let parent = repositories.path().join("parent");
+    let child = repositories.path().join("child");
+    for path in [&parent, &child] {
+        init_local_install_source(path);
+    }
+    let output = Command::new("git")
+        .current_dir(&parent)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(&child)
+        .arg("lib/child")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    Git::new(&parent).commit("add child").unwrap();
+
+    let unavailable_child = repositories.path().join("unavailable-child");
+    fs::rename(&child, &unavailable_child).unwrap();
+    let sibling = prj.root().join("lib/existing/source.txt");
+    fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+    fs::write(&sibling, "existing dependency\n").unwrap();
+
+    configure_local_install(&mut cmd, &parent);
+    cmd.args(["install", "--no-git", "fixture/parent"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Installing parent in [..] (url: https://github.com/fixture/parent, tag: None)
+Cloning into '[..]'...
+...
+Failed to clone 'lib/child' a second time, aborting
+Error: git clone exited with code 1
+
+"#]]);
+
+    let installed = prj.root().join("lib/parent");
+    assert!(!installed.exists(), "failed installation must remove the partial dependency");
+    assert_eq!(fs::read_to_string(&sibling).unwrap(), "existing dependency\n");
+
+    fs::rename(&unavailable_child, &child).unwrap();
+    cmd.assert_success();
+
+    for path in [&installed, &installed.join("lib/child")] {
+        assert_eq!(
+            fs::read_to_string(path.join("source.txt")).unwrap().replace("\r\n", "\n"),
+            "dependency source\n"
+        );
+        assert!(!path.join(".git").exists(), "successful installation must remove Git artifacts");
+    }
+    assert_eq!(fs::read_to_string(sibling).unwrap(), "existing dependency\n");
+});
+
+forgetest!(install_no_git_preserves_existing_targets, |prj, cmd| {
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let lib = prj.root().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+    fs::create_dir(lib.join("empty")).unwrap();
+    fs::create_dir(lib.join("nonempty")).unwrap();
+    fs::write(lib.join("nonempty/source.txt"), "existing dependency\n").unwrap();
+    fs::write(lib.join("file"), "existing file\n").unwrap();
+
+    for name in ["empty", "nonempty", "file"] {
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", "--no-git", &format!("{name}=fixture/parent")])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Installing parent in [..] (url: https://github.com/fixture/parent, tag: None)
+Error: failed to create dir "[..]": [..]
+
+"#]]);
+    }
+
+    assert_eq!(fs::read_dir(lib.join("empty")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(lib.join("nonempty")).unwrap().count(), 1);
+    assert_eq!(
+        fs::read_to_string(lib.join("nonempty/source.txt")).unwrap(),
+        "existing dependency\n"
+    );
+    assert_eq!(fs::read_to_string(lib.join("file")).unwrap(), "existing file\n");
+});
+
+#[cfg(unix)]
+forgetest!(install_no_git_preserves_existing_symlinks, |prj, cmd| {
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    let targets = tempfile::tempdir().unwrap();
+    fs::create_dir(targets.path().join("empty")).unwrap();
+    fs::create_dir(targets.path().join("nonempty")).unwrap();
+    fs::write(targets.path().join("nonempty/source.txt"), "existing dependency\n").unwrap();
+    let lib = prj.root().join("lib");
+    fs::create_dir_all(&lib).unwrap();
+
+    for name in ["empty", "nonempty", "dangling"] {
+        let target = targets.path().join(name);
+        let link = lib.join(name);
+        symlink(&target, &link).unwrap();
+        configure_local_install(&mut cmd, source.path());
+        cmd.args(["install", "--no-git", &format!("{name}=fixture/parent")])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Installing parent in [..] (url: https://github.com/fixture/parent, tag: None)
+Error: failed to create dir "[..]": [..]
+
+"#]]);
+        assert_eq!(fs::read_link(link).unwrap(), target);
+    }
+
+    assert_eq!(fs::read_dir(targets.path().join("empty")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(targets.path().join("nonempty")).unwrap().count(), 1);
+    assert_eq!(
+        fs::read_to_string(targets.path().join("nonempty/source.txt")).unwrap(),
+        "existing dependency\n"
+    );
+    assert!(!targets.path().join("dangling").exists());
+});
+
+forgetest!(install_no_git_cleans_failed_checkout_with_nested_alias, |prj, cmd| {
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "--no-git", "nested/parent=fixture/parent@missing-tag"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Installing parent in [..] (url: https://github.com/fixture/parent, tag: missing-tag)
+...
+Error: Tag: "missing-tag" not found for repo "https://github.com/fixture/parent"!
+
+"#]]);
+
+    let installed = prj.root().join("lib/nested/parent");
+    assert!(!installed.exists(), "failed checkout must remove the dependency");
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "--no-git", "nested/parent=fixture/parent"]).assert_success();
+    assert_eq!(
+        fs::read_to_string(installed.join("source.txt")).unwrap().replace("\r\n", "\n"),
+        "dependency source\n"
+    );
+    assert!(!installed.join(".git").exists());
+});
+
+forgetest!(install_no_git_cleans_failed_initial_clone, |prj, cmd| {
+    let source = tempfile::tempdir().unwrap();
+    configure_local_install(&mut cmd, &source.path().join("missing"));
+    cmd.args(["install", "--no-git", "fixture/parent"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Installing parent in [..] (url: https://github.com/fixture/parent, tag: None)
+Cloning into '[..]'...
+...
+Error: git clone exited with code 128
+
+"#]]);
+
+    assert!(!prj.root().join("lib/parent").exists());
+});
+
+fn init_local_install_source(path: &Path) {
+    fs::create_dir_all(path).unwrap();
+    let git = Git::new(path);
+    git.init().unwrap();
+    fs::write(path.join("source.txt"), "dependency source\n").unwrap();
+    git.add(["source.txt"]).unwrap();
+    git.commit("initial").unwrap();
+}
+
+fn configure_local_install(cmd: &mut TestCommand, source: &Path) {
+    cmd.forge_fuse();
+    cmd.env("LC_ALL", "C");
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.env("GIT_CONFIG_COUNT", "1");
+    let source_url = Url::from_directory_path(source).unwrap();
+    cmd.env("GIT_CONFIG_KEY_0", format!("url.{source_url}.insteadOf"));
+    cmd.env("GIT_CONFIG_VALUE_0", "https://github.com/fixture/parent");
+}
