@@ -8,7 +8,7 @@ use alloy_dyn_abi::{
 };
 use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
-    Address, B256, LogData, Selector, U256,
+    Address, B256, LogData, Selector, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
@@ -1842,8 +1842,10 @@ impl CallTraceDecoder {
 
 /// Returns `true` if the given function calldata (including function selector) is ABI-encoded.
 ///
-/// This is a simple heuristic to avoid fetching non ABI-encoded selectors.
+/// This is a simple heuristic to avoid fetching non ABI-encoded selectors. A trailing ERC-8021
+/// attribution suffix is ignored.
 fn is_abi_call_data(data: &[u8]) -> bool {
+    let data = without_erc8021_suffix(data);
     match data.len().cmp(&SELECTOR_LEN) {
         std::cmp::Ordering::Less => false,
         std::cmp::Ordering::Equal => true,
@@ -1866,15 +1868,40 @@ fn is_abi_data(data: &[u8]) -> bool {
 }
 
 /// Returns the word-aligned arguments of the given function calldata if they are followed by a
-/// non-zero suffix shorter than a word, such as tracking or attribution bytes appended by routers
-/// and wallets.
+/// non-zero suffix shorter than a word, such as tracking bytes appended by routers. A trailing
+/// ERC-8021 attribution suffix is removed first.
 ///
 /// The first argument word must be left-padded like an address, integer, boolean or offset, which
 /// packed calldata rarely is.
 fn suffixed_abi_args(data: &[u8]) -> Option<&[u8]> {
-    let args = data.get(SELECTOR_LEN..)?;
+    let args = without_erc8021_suffix(data).get(SELECTOR_LEN..)?;
     let (args, suffix) = args.split_at(args.len() - args.len() % 32);
     (args.starts_with(&[0; 12]) && suffix.iter().any(|byte| *byte != 0)).then_some(args)
+}
+
+/// Marker that ends an ERC-8021 transaction attribution suffix.
+const ERC8021_MARKER: [u8; 16] = hex!("80218021802180218021802180218021");
+
+/// Returns the given calldata without a trailing
+/// [ERC-8021](https://github.com/ethereum/ERCs/pull/1209) transaction attribution suffix.
+///
+/// The suffix is `schemaData || schemaId (1 byte) || marker (16 bytes)`, and the length of
+/// `schemaData` is read backwards according to `schemaId`.
+fn without_erc8021_suffix(data: &[u8]) -> &[u8] {
+    let Some(rest) = data.strip_suffix(&ERC8021_MARKER) else { return data };
+    let Some((&schema_id, rest)) = rest.split_last() else { return data };
+    let schema_data_len = match schema_id {
+        // `codes || codesLength (1)`
+        0 => rest.last().map(|&codes_len| 1 + codes_len as usize),
+        // `codeRegistryAddress (20) || chainId || chainIdLength (1) || codes || codesLength (1)`
+        1 => rest.last().and_then(|&codes_len| {
+            let chain_id_len = rest.get(rest.len().checked_sub(2 + codes_len as usize)?)?;
+            Some(22 + codes_len as usize + *chain_id_len as usize)
+        }),
+        // `schemaData || schemaDataLength (2)`
+        _ => rest.last_chunk().map(|&len| 2 + u16::from_be_bytes(len) as usize),
+    };
+    schema_data_len.and_then(|len| rest.len().checked_sub(len)).map_or(data, |end| &rest[..end])
 }
 
 /// Returns `true` if `args` is exactly the ABI encoding of the function inputs.
@@ -1937,7 +1964,7 @@ fn constructor_signature(constructor: &Constructor) -> String {
 mod tests {
     use super::*;
     use crate::CallKind;
-    use alloy_primitives::{address, aliases::U96, hex};
+    use alloy_primitives::{address, aliases::U96};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
     use std::borrow::Cow;
@@ -2211,6 +2238,35 @@ mod tests {
         // Packed arguments and suffixes without a whole ABI-encoded word.
         assert!(!is_abi_call_data(&call_data(&[&address[..], &word[..]])));
         assert!(!is_abi_call_data(&call_data(&[&suffix])));
+        // ERC-8021 attribution suffixes are removed exactly, whatever the first word.
+        let erc8021 = hex!("a161776a6364705f666163696c31000e0280218021802180218021802180218021");
+        assert!(is_abi_call_data(&call_data(&[&B256::repeat_byte(0x11)[..], &erc8021])));
+    }
+
+    #[test]
+    fn test_without_erc8021_suffix() {
+        // Test vectors from ERC-8021 for schemas 0, 1 and 2.
+        assert_eq!(
+            without_erc8021_suffix(&hex!(
+                "dddddddd62617365617070070080218021802180218021802180218021"
+            )),
+            hex!("dddddddd")
+        );
+        assert_eq!(
+            without_erc8021_suffix(&hex!(
+                "ddddddddcccccccccccccccccccccccccccccccccccccccc210502626173656170702C6D6F7270686F0E0180218021802180218021802180218021"
+            )),
+            hex!("dddddddd")
+        );
+        assert_eq!(
+            without_erc8021_suffix(&hex!(
+                "dddddddda161616762617365617070000b0280218021802180218021802180218021"
+            )),
+            hex!("dddddddd")
+        );
+        // Suffixes longer than the calldata are kept.
+        let data = hex!("dddddddd62617365617070ff0080218021802180218021802180218021");
+        assert_eq!(without_erc8021_suffix(&data), data);
     }
 
     #[tokio::test]
@@ -2222,10 +2278,10 @@ mod tests {
         .unwrap();
         let identifier = SignaturesIdentifier::new_offline_with_abis([&abi]).unwrap();
         let decoder = CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
-        let suffix = hex!("756e6978000001a0ee8a61e9800089610000006d0100");
-        let trace = |data: Vec<u8>| CallTrace {
+        let tag = hex!("756e6978000001a0ee8a61e9800089610000006d0100");
+        let trace = |data: &[&[u8]]| CallTrace {
             address: Address::repeat_byte(0x12),
-            data: [data, suffix.to_vec()].concat().into(),
+            data: data.concat().into(),
             success: true,
             ..Default::default()
         };
@@ -2238,15 +2294,23 @@ mod tests {
                 DynSolValue::Uint(U256::from(1), 256),
             ])
             .unwrap();
-        let call_data = decoder.decode_function(&trace(data)).await.call_data.unwrap();
+        let call_data = decoder.decode_function(&trace(&[&data, &tag])).await.call_data.unwrap();
         assert_eq!(call_data.signature, "execute(bytes,bytes[],uint256)");
         assert_eq!(call_data.args, ["0x0b", "[0x010101]", "1"]);
 
+        // A trailing ERC-8021 attribution suffix of any length is removed before the tag.
+        let erc8021 = hex!(
+            "72616e67655f7661756c742c63656c6f5f6533386364643332313061361d0080218021802180218021802180218021"
+        );
+        let decoded = decoder.decode_function(&trace(&[&data, &tag, &erc8021])).await;
+        assert_eq!(decoded.call_data.unwrap().args, call_data.args);
+
         // Packed arguments are not decoded as a function with fewer inputs.
         let charge_fee = abi.function("chargeFee").unwrap().first().unwrap();
-        let data =
-            [&charge_fee.selector()[..], &Address::repeat_byte(0x11).into_word()[..]].concat();
-        assert!(decoder.decode_function(&trace(data)).await.call_data.is_none());
+        let word = Address::repeat_byte(0x11).into_word();
+        let decoded =
+            decoder.decode_function(&trace(&[&charge_fee.selector()[..], &word[..], &tag])).await;
+        assert!(decoded.call_data.is_none());
     }
 
     #[cfg(feature = "base")]
