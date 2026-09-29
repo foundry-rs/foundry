@@ -358,6 +358,7 @@ Traces:
         .stderr_eq(str![[r#"
 Executing previous transactions from the block.
 Error: Transaction failed.
+...
 
 "#]]);
 }
