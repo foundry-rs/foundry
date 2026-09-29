@@ -6026,6 +6026,7 @@ where
                 db_guard,
                 block_info,
                 included,
+                stale,
                 invalid,
                 not_yet_valid,
                 block_hash,
@@ -6081,6 +6082,7 @@ where
                 let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
+                let stale = pool_result.stale;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
@@ -6128,6 +6130,7 @@ where
                     db,
                     block_info,
                     included,
+                    stale,
                     invalid,
                     not_yet_valid,
                     block_hash,
@@ -6257,7 +6260,8 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome = MinedBlockOutcome { block_number, included, invalid, not_yet_valid };
+            let outcome =
+                MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid };
 
             (outcome, header, block_hash)
         };

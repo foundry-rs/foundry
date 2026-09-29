@@ -45,6 +45,7 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
+use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
 
 #[cfg(feature = "base")]
 use base_common_consensus::Eip8130Receipt;
@@ -554,6 +555,8 @@ where
 pub struct ExecutedPoolTransactions<T> {
     /// Successfully included transactions.
     pub included: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions whose nonce was already consumed by the current state.
+    pub stale: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions that failed validation.
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
@@ -626,6 +629,7 @@ where
     let gas_limit = executor.evm().block().gas_limit();
 
     let mut included = Vec::new();
+    let mut stale = Vec::new();
     let mut invalid = Vec::new();
     let mut not_yet_valid = Vec::new();
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
@@ -636,20 +640,8 @@ where
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
         let sender = *pending.sender();
-        let block_timestamp = executor.evm().block().timestamp();
-
         if pool_tx.requires.iter().any(|marker| unavailable_markers.contains(marker)) {
             trace!(target: "backend", "[{:?}] dependency was not included, skipping transaction", pool_tx.hash());
-            unavailable_markers.extend(pool_tx.provides.iter().cloned());
-            continue;
-        }
-
-        if let FoundryTxEnvelope::Tempo(aa_tx) = pending.transaction.as_ref()
-            && let Some(valid_after) = aa_tx.tx().valid_after
-            && U256::from(valid_after.get()) > block_timestamp
-        {
-            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
-            not_yet_valid.push(pool_tx.clone());
             unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
@@ -663,6 +655,44 @@ where
                 continue;
             }
         };
+
+        let transaction = pending.transaction.as_ref();
+        let state_nonce = match transaction {
+            FoundryTxEnvelope::Tempo(tx) if tx.tx().nonce_key == U256::MAX => None,
+            FoundryTxEnvelope::Tempo(tx) if !tx.tx().nonce_key.is_zero() => {
+                let slot = NonceManager::new().nonces[sender][tx.tx().nonce_key].slot();
+                match executor.evm_mut().db_mut().storage(NONCE_PRECOMPILE_ADDRESS, slot) {
+                    Ok(nonce) => Some(nonce.saturating_to::<u64>()),
+                    Err(err) => {
+                        trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                        unavailable_markers.extend(pool_tx.provides.iter().cloned());
+                        continue;
+                    }
+                }
+            }
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => None,
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            FoundryTxEnvelope::Deposit(_) => None,
+            #[cfg(feature = "optimism")]
+            FoundryTxEnvelope::PostExec(_) => None,
+            _ => Some(account.nonce),
+        };
+        if state_nonce.is_some_and(|nonce| transaction.nonce() < nonce) {
+            warn!(target: "backend", "Skipping stale tx [{:?}]", pool_tx.hash());
+            stale.push(pool_tx.clone());
+            continue;
+        }
+
+        if let FoundryTxEnvelope::Tempo(aa_tx) = transaction
+            && let Some(valid_after) = aa_tx.tx().valid_after
+            && U256::from(valid_after.get()) > executor.evm().block().timestamp()
+        {
+            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
+            not_yet_valid.push(pool_tx.clone());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
+            continue;
+        }
 
         let tx_env =
             build_tx_env_for_pending::<B::Transaction, <B::Evm as Evm>::Tx>(pending, cheats);
@@ -777,7 +807,7 @@ where
         }
     }
 
-    ExecutedPoolTransactions { included, invalid, not_yet_valid, tx_info, txs: transactions }
+    ExecutedPoolTransactions { included, stale, invalid, not_yet_valid, tx_info, txs: transactions }
 }
 
 /// Builds the EVM transaction env from a pending pool transaction.
