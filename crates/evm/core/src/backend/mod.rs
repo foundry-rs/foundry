@@ -1993,6 +1993,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             match db {
                 BackendDatabaseSnapshot::InMemory(mem_db) => {
                     self.mem_db = mem_db;
+                    self.active_fork_ids = None;
                 }
                 BackendDatabaseSnapshot::Forked(id, fork_id, idx, mut fork) => {
                     // there might be the case where the snapshot was created during `setUp` with
