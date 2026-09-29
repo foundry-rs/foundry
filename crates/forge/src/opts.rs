@@ -2,8 +2,9 @@ use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
-    lint::LintArgs, lsp::LspArgs, reinit::ReinitArgs, remappings::RemappingArgs,
-    remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
+    lint::LintArgs, lsp::LspArgs, optimize::OptimizeArgs, reinit::ReinitArgs,
+    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
+    soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -237,6 +238,14 @@ pub enum ForgeSubcommand {
 
     /// Generate bindings for serialization/deserialization of project structs via JSON cheatcodes.
     BindJson(bind_json::BindJsonArgs),
+
+    /// Rewrite the project's functions with a model through Solar, paying from your Tempo account
+    ///
+    /// Examples:
+    /// - forge optimize --model anthropic/MODEL --endpoint https://gateway.example/anthropic/v1
+    /// - forge optimize --replay (rebuild with the kept rewrites, without a model)
+    #[command(verbatim_doc_comment)]
+    Optimize(OptimizeArgs),
 }
 
 #[cfg(test)]

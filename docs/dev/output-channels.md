@@ -157,6 +157,7 @@ Each row's status is one of:
 | `forge compiler`       | Compiler info                                        | JSON                                       | migrated |
 | `forge verify-contract`| `<guid-or-job-id>\t<url>` on submission; empty if already verified | n/a                              | migrated |
 | `forge verify-bytecode`| `<type> code matched with status <kind>` lines       | JSON array of `{ bytecode_type, match_type, message }` | migrated |
+| `forge optimize`       | Path of Solar's `combined.json`                      | n/a                                        | migrated |
 
 ### `anvil`, `chisel`, `script`
 
