@@ -1,8 +1,9 @@
 use crate::{
     multi_sequence::MultiChainSequence,
-    recovery::{DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
+    recovery::{AttemptKind, DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
 };
 use alloy_consensus::transaction::SignerRecoverable;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{B256, Bytes};
 use eyre::{ContextCompat, Result, bail};
@@ -13,9 +14,46 @@ use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fmt::{Error, Write},
     path::{Path, PathBuf},
 };
+
+pub(crate) fn completed_transaction_prefix<N: Network>(
+    sequence: &ScriptSequence<N>,
+) -> Result<usize> {
+    let mut receipts = HashMap::<_, usize>::new();
+    for receipt in &sequence.receipts {
+        *receipts.entry(receipt.transaction_hash()).or_default() += 1;
+    }
+
+    let mut prefix = 0;
+    let mut incomplete = false;
+    for transaction in &sequence.transactions {
+        let complete = transaction.hash.is_some_and(|hash| {
+            receipts.get_mut(&hash).is_some_and(|count| {
+                if *count == 0 {
+                    false
+                } else {
+                    *count -= 1;
+                    true
+                }
+            })
+        });
+        if complete {
+            if incomplete {
+                bail!("script progress contains a receipt after an incomplete operation");
+            }
+            prefix += 1;
+        } else {
+            incomplete = true;
+        }
+    }
+    if receipts.values().any(|count| *count != 0) {
+        bail!("script progress contains a receipt without a matching operation");
+    }
+    Ok(prefix)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(
@@ -296,8 +334,39 @@ where
     {
         let (sequence, index) =
             self.recovery.resolve_delegated_hash(attempt_id, hash, transaction)?;
-        self.sequences_mut()[sequence].add_pending(index, hash);
+        if !self.recovery.is_batch() {
+            self.sequences_mut()[sequence].add_pending(index, hash);
+        }
         Ok(())
+    }
+
+    pub(crate) fn batch_attempt(
+        &self,
+        sequence: usize,
+    ) -> Option<(usize, B256, &AttemptKind<N::TransactionRequest>)> {
+        self.recovery.batch_attempt(sequence)
+    }
+
+    pub(crate) fn persist_batch_signed_payload(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: Decodable2718 + Encodable2718,
+    {
+        self.recovery.persist_batch_signed_payload(sequence, first_operation, request, payload)
+    }
+
+    pub(crate) fn persist_batch_delegated_request(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        self.recovery.persist_batch_delegated_request(sequence, first_operation, request)
     }
 
     pub(crate) fn restore_delegated_pending(
@@ -311,16 +380,13 @@ where
             bail!("--resume-attempt is required to resolve an interrupted submission");
         }
 
-        for sequence in 0..self.sequences().len() {
-            for index in 0..self.sequences()[sequence].transactions.len() {
-                let status = self.recovery.delegated_status(sequence, index);
-                if status == Some(DelegatedStatus::Prepared) {
-                    self.recovery.persist_delegated_status(
-                        sequence,
-                        index,
-                        DelegatedStatus::OutcomeUnknown,
-                    )?;
-                }
+        for (sequence, index, _, status) in self.recovery.delegated_attempts() {
+            if status == DelegatedStatus::Prepared {
+                self.recovery.persist_delegated_status(
+                    sequence,
+                    index,
+                    DelegatedStatus::OutcomeUnknown,
+                )?;
             }
         }
 
@@ -345,35 +411,26 @@ where
             }
         }
 
-        for sequence in 0..self.sequences().len() {
-            for index in 0..self.sequences()[sequence].transactions.len() {
-                match self.recovery.delegated_status(sequence, index) {
-                    Some(DelegatedStatus::OutcomeUnknown) => {
-                        if pending_resolution.is_some_and(
-                            |(target_sequence, target_index, _, _)| {
-                                target_sequence == sequence && target_index == index
-                            },
-                        ) {
-                            continue;
-                        }
-                        let attempt = self.recovery.delegated_attempt_id(sequence, index).unwrap();
-                        bail!(
-                            "submission outcome for delegated attempt {attempt} on chain {} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted",
-                            self.sequences()[sequence].chain
-                        );
+        let batch = self.recovery.is_batch();
+        for (sequence, index, attempt, status) in self.recovery.delegated_attempts() {
+            match status {
+                DelegatedStatus::OutcomeUnknown => {
+                    if pending_resolution.is_some_and(|(_, _, target, _)| target == attempt) {
+                        continue;
                     }
-                    Some(DelegatedStatus::Pending { hash }) => {
-                        let deployment = &mut self.sequences_mut()[sequence];
-                        if !deployment
-                            .receipts
-                            .iter()
-                            .any(|receipt| receipt.transaction_hash() == hash)
-                        {
-                            deployment.add_pending(index, hash);
-                        }
-                    }
-                    Some(DelegatedStatus::Prepared) | None => {}
+                    bail!(
+                        "submission outcome for delegated attempt {attempt} on chain {} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted",
+                        self.sequences()[sequence].chain
+                    );
                 }
+                DelegatedStatus::Pending { hash } if !batch => {
+                    let deployment = &mut self.sequences_mut()[sequence];
+                    if !deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    {
+                        deployment.add_pending(index, hash);
+                    }
+                }
+                DelegatedStatus::Prepared | DelegatedStatus::Pending { .. } => {}
             }
         }
         Ok(pending_resolution)
@@ -519,7 +576,7 @@ mod tests {
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
         sequence.persist_delegated_request(0, 0, Default::default()).unwrap();
         sequence.persist_delegated_status(0, 0, DelegatedStatus::OutcomeUnknown).unwrap();
-        let attempt = sequence.recovery.delegated_attempt_id(0, 0).unwrap();
+        let attempt = sequence.recovery.delegated_attempts()[0].2;
         (dir, sequence, attempt)
     }
 
