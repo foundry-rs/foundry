@@ -21,8 +21,8 @@ const RECOVERY_VERSION: u32 = 1;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(
-    serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
-    deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+    serialize = "N::TxEnvelope: Serialize",
+    deserialize = "N::TxEnvelope: for<'de2> Deserialize<'de2>"
 ))]
 struct RecoveryPlan<N: Network> {
     version: u32,
@@ -34,10 +34,7 @@ struct RecoveryPlan<N: Network> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
-    deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
-))]
+#[serde(bound = "")]
 struct RecoveryDeployment<N: Network> {
     chain: u64,
     batch_id: Option<u32>,
@@ -106,7 +103,6 @@ pub(crate) struct RecoveryRelocation {
 
 impl<N: Network> RecoveryStore<N>
 where
-    N::TransactionRequest: for<'de> Deserialize<'de> + Serialize,
     N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
 {
     pub(crate) const fn data(&self) -> &SequenceData<N> {
@@ -444,7 +440,7 @@ where
         transaction: &N::TransactionResponse,
     ) -> Result<(usize, usize)>
     where
-        N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TransactionResponse>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         let (sequence, index) = self
             .delegated_attempt_location(attempt_id)
@@ -605,7 +601,6 @@ impl RecoveryLock {
 
 impl<N: Network> RecoveryPlan<N>
 where
-    N::TransactionRequest: for<'de> Deserialize<'de> + Serialize,
     N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
 {
     fn new(data: SequenceData<N>, batch: bool, generation: B256) -> Result<Self> {
@@ -846,7 +841,6 @@ where
 
 fn operation_fingerprint<N: Network>(transaction: &TransactionWithMetadata<N>) -> Result<B256>
 where
-    N::TransactionRequest: for<'de> Deserialize<'de> + Serialize,
     N::TxEnvelope: for<'de> Deserialize<'de> + Serialize,
 {
     let mut transaction = transaction.clone();
@@ -875,7 +869,6 @@ fn canonicalize(value: serde_json::Value) -> serde_json::Value {
 
 fn load_plan<N: Network>(path: &Path) -> Result<RecoveryPlan<N>>
 where
-    N::TransactionRequest: for<'de> Deserialize<'de>,
     N::TxEnvelope: for<'de> Deserialize<'de>,
 {
     foundry_common::fs::read_json_file(path)
@@ -924,7 +917,7 @@ fn validate_signed_payload<N: Network>(
     chain: u64,
 ) -> Result<SignedPayload>
 where
-    N::TxEnvelope: Decodable2718 + Encodable2718 + SignerRecoverable,
+    N::TxEnvelope: SignerRecoverable,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
     let envelope = N::TxEnvelope::decode_2718_exact(&payload)
@@ -960,7 +953,7 @@ fn validate_delegated_transaction<N: Network>(
     hash: B256,
 ) -> Result<()>
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N> + From<N::TransactionResponse>,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
     // Preserve network-specific execution fields while allowing the signer to choose gas and fees.
     let resolved =
@@ -1012,10 +1005,7 @@ where
 fn canonical_tempo_calls<N: Network>(
     request: &N::TransactionRequest,
     fields: &serde_json::Value,
-) -> Result<Vec<serde_json::Value>>
-where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
+) -> Result<Vec<serde_json::Value>> {
     let mut calls =
         fields.get("calls").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
     if let Some(to) = request.kind() {
@@ -1048,7 +1038,6 @@ where
 
 fn write_snapshot<N: Network>(path: &Path, plan: &RecoveryPlan<N>) -> Result<()>
 where
-    N::TransactionRequest: Serialize,
     N::TxEnvelope: Serialize,
 {
     let pending = pending_path(path);
@@ -1058,7 +1047,6 @@ where
 
 fn write_plan<N: Network>(path: &Path, plan: &RecoveryPlan<N>) -> Result<()>
 where
-    N::TransactionRequest: Serialize,
     N::TxEnvelope: Serialize,
 {
     let parent = path.parent().context("recovery plan has no parent directory")?;

@@ -10,7 +10,9 @@ use foundry_cli::{
     utils::{FoundryPathExt, LoadConfig, cache_local_signatures, cache_signatures_from_abis},
 };
 use foundry_common::{
-    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
+    compile::{
+        PathOrContractInfo, ProjectCompiler, compile_abi_project, compile_abi_project_cached,
+    },
     external_compiler::is_external_artifact,
     selectors::{SelectorImportData, import_selectors},
     shell,
@@ -24,7 +26,7 @@ use foundry_compilers::{
     info::ContractInfo,
     multi::MultiCompiler,
 };
-use std::{collections::BTreeMap, fs::canonicalize, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 /// CLI arguments for `forge selectors`.
 #[derive(Clone, Debug, Parser)]
@@ -201,12 +203,12 @@ impl SelectorsSubcommands {
                 }
 
                 if let Some(contract_path) = &mut first_contract.path {
-                    let target_path = canonicalize(&*contract_path)?;
+                    let target_path = dunce::canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
                     compiler = compiler.target_files([target_path]);
                 }
                 if let Some(contract_path) = &mut second_contract.path {
-                    let target_path = canonicalize(&*contract_path)?;
+                    let target_path = dunce::canonicalize(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
                     compiler = compiler.target_files([target_path]);
                 }
@@ -395,7 +397,7 @@ impl SelectorsSubcommands {
                 sh_status!("Searching for selector {selector:?} in the project...")?;
 
                 let (mut project, compiler) = project_from_paths(project_paths)?;
-                let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
+                let outcome = compile_abi_project_cached(&mut project, compiler.quiet(true))?;
                 let artifacts = selector_artifacts(outcome, &project.paths.sources);
 
                 let mut table = Table::new();

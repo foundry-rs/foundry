@@ -425,8 +425,11 @@ async fn convert_block_number<P: Provider<N>, N: Network>(
     match block {
         Some(BlockId::Number(number)) => Ok(Some(number)),
         Some(BlockId::Hash(hash)) => {
-            let block = provider.get_block_by_hash(hash.block_hash).await?;
-            Ok(block.map(|block| block.header().number().into()))
+            let block = provider
+                .get_block_by_hash(hash.block_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("block {} not found", hash.block_hash))?;
+            Ok(Some(block.header().number().into()))
         }
         None => Ok(None),
     }
