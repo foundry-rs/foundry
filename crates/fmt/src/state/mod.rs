@@ -455,55 +455,119 @@ impl<'sess> State<'sess, '_> {
         self.print_word(")");
     }
 
-    /// How many characters the printed form of `line` differs from the source by, counting only
-    /// the spacing just inside a brace pair. The printer normalizes that spacing to the
-    /// configured style, so a source written the other way makes a source-derived estimate
-    /// describe something the printer will never produce.
-    fn bracket_spacing_delta(&self, line: &str) -> isize {
-        let b = line.as_bytes();
-        let mut delta = 0isize;
-        for (i, &c) in b.iter().enumerate() {
-            let inner = match c {
-                b'{' => b.get(i + 1).copied(),
-                b'}' => i.checked_sub(1).and_then(|j| b.get(j).copied()),
-                _ => continue,
-            };
-            let Some(inner) = inner else { continue };
-            // An empty pair such as `{}` keeps no space either way.
-            if matches!(inner, b'{' | b'}') {
+    /// Account for brace spacing, ignoring literal and comment text.
+    fn brace_spacing_delta(
+        &self,
+        line: &str,
+        in_block_comment: &mut bool,
+        quote: &mut Option<u8>,
+    ) -> isize {
+        let bytes = line.as_bytes();
+        let mut delta = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            if let Some(delimiter) = *quote {
+                match bytes[i] {
+                    b'\\' => i = (i + 2).min(bytes.len()),
+                    c if c == delimiter => {
+                        *quote = None;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
                 continue;
             }
-            match (inner == b' ', self.config.bracket_spacing) {
-                (true, false) => delta -= 1,
-                (false, true) => delta += 1,
-                _ => {}
+            if *in_block_comment {
+                if bytes.get(i..i + 2) == Some(b"*/") {
+                    *in_block_comment = false;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            match bytes[i] {
+                b'/' if bytes.get(i + 1) == Some(&b'/') => break,
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    *in_block_comment = true;
+                    i += 2;
+                }
+                delimiter @ (b'\'' | b'"') => {
+                    *quote = Some(delimiter);
+                    i += 1;
+                }
+                b'{' | b'}' => {
+                    let inner = if bytes[i] == b'{' {
+                        bytes.get(i + 1)
+                    } else {
+                        i.checked_sub(1).and_then(|j| bytes.get(j))
+                    };
+                    if let Some(&inner) = inner
+                        && !matches!(inner, b'{' | b'}')
+                    {
+                        delta += match (inner == b' ', self.config.bracket_spacing) {
+                            (true, false) => -1,
+                            (false, true) => 1,
+                            _ => 0,
+                        };
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
             }
         }
         delta
     }
 
-    /// How many characters the printed form of `line` differs from the source by, counting the
-    /// integer types the printer respells. `uint` is written as `uint256` under the default
-    /// `int_types = "long"` and the other way round under `"short"`, so a source using the other
-    /// spelling is measured as something the printer will not produce.
-    fn int_type_delta(&self, line: &str) -> isize {
-        let expand = match self.config.int_types {
-            IntTypes::Long => true,
-            IntTypes::Short => false,
-            IntTypes::Preserve => return 0,
-        };
-        line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .map(|word| match (expand, word) {
-                (true, "uint" | "int") => 3,
-                (false, "uint256" | "int256") => -3,
+    /// Measure integer type spelling from parsed types so identifiers and literal text do not
+    /// affect the estimate.
+    fn int_type_delta(&self, ty: &ast::Type<'_>) -> isize {
+        match &ty.kind {
+            ast::TypeKind::Elementary(
+                ast::ElementaryType::Int(size) | ast::ElementaryType::UInt(size),
+            ) => match (self.config.int_types, size.bits_raw()) {
+                (IntTypes::Long, 0) => 3,
+                (IntTypes::Short, 256) => -3,
                 _ => 0,
-            })
-            .sum()
+            },
+            ast::TypeKind::Array(array) => self.int_type_delta(&array.element),
+            ast::TypeKind::Mapping(mapping) => {
+                self.int_type_delta(&mapping.key) + self.int_type_delta(&mapping.value)
+            }
+            ast::TypeKind::Function(function) => {
+                let params: isize = function
+                    .parameters
+                    .vars
+                    .iter()
+                    .map(|param| self.int_type_delta(&param.ty))
+                    .sum();
+                let returns: isize = function.returns.as_ref().map_or(0, |returns| {
+                    returns.vars.iter().map(|ret| self.int_type_delta(&ret.ty)).sum()
+                });
+                params + returns
+            }
+            _ => 0,
+        }
+    }
+
+    fn estimate_type_size(&self, ty: &ast::Type<'_>) -> usize {
+        self.estimate_size(ty.span).saturating_add_signed(self.int_type_delta(ty))
     }
 
     fn estimate_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, false)
+    }
+
+    /// Call argument layout needs printed delimiter widths. Keep other layout decisions on their
+    /// existing estimate so already stable source does not change formatting.
+    fn estimate_call_args_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, true)
+    }
+
+    fn estimate_size_inner(&self, span: Span, normalize_delimiters: bool) -> usize {
         if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
+            let (mut in_block_comment, mut quote) = (false, None);
 
             for line in snip.lines() {
                 let line = line.trim();
@@ -518,6 +582,9 @@ impl<'sess> State<'sess, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
+                        '}' | ')' | ']' if self.config.bracket_spacing && !normalize_delimiters => {
+                            size += 1
+                        }
                         '}' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
@@ -538,8 +605,8 @@ impl<'sess> State<'sess, '_> {
                         break;
                     }
                 }
-                size = size.saturating_add_signed(self.bracket_spacing_delta(line));
-                size = size.saturating_add_signed(self.int_type_delta(line));
+                let brace_delta = self.brace_spacing_delta(line, &mut in_block_comment, &mut quote);
+                size = size.saturating_add_signed(brace_delta);
 
                 // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
@@ -547,7 +614,8 @@ impl<'sess> State<'sess, '_> {
                 // - ends with ';' a line break is required.
                 // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('{') => self.config.bracket_spacing,
+                    Some('[' | '(') if normalize_delimiters => false,
+                    Some('[' | '(' | '{') => self.config.bracket_spacing,
                     Some(',' | ';') => true,
                     Some(
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',

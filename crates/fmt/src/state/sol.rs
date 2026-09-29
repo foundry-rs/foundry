@@ -1262,9 +1262,9 @@ impl<'ast> State<'_, 'ast> {
                 // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
                 // To be more conservative, we use 18 to decide whether to force a break or not.
                 else if 18
-                    + self.estimate_size(key.span)
+                    + self.estimate_type_size(key)
                     + key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0)
-                    + self.estimate_size(value.span)
+                    + self.estimate_type_size(value)
                     + value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0)
                     >= self.space_left()
                 {
@@ -1433,7 +1433,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
-                        self.estimate_size(call_args.span),
+                        self.estimate_call_args_size(call_args.span),
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {

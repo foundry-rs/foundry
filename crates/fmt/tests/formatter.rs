@@ -894,3 +894,21 @@ struct AfterInitializer {
         assert_eq!(formatted, expected, "{case}");
     }
 }
+
+#[test]
+fn size_estimate_ignores_literal_contents() {
+    for (line_length, bracket_spacing, literal, control) in [
+        (55, true, "{a}{b}{c}{d}", "abcdefghijkl"),
+        (59, false, "uint uint uint uint", "word word word word"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = format!(
+            "contract C {{ function f(uint a) external pure returns (bytes memory) {{ bytes memory encoded = abi.encode(\"{literal}\", a, a, a); return encoded; }} }}\n"
+        );
+        let control_source = source.replace(literal, control);
+        let expected = format(&control_source, Path::new("test.sol"), config.clone())
+            .replace(control, literal);
+        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
