@@ -516,6 +516,57 @@ Did you mean `test1`?
 "#]]);
 });
 
+// Tests that ABI discovery preserves diagnostics for excluded test contracts.
+forgetest!(warn_when_filtered_tests_are_not_compiled, |prj, cmd| {
+    prj.add_source("Dummy.sol", "contract Dummy {}");
+    prj.add_test("Filtered.t.sol", "contract Filtered { function testFoo(uint256) public {} }");
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        cmd.forge_fuse().args(["test", "--mt", "testFoo$"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-test: `testFoo$`
+
+Did you mean `testFoo`?
+
+"#]]);
+        cmd.forge_fuse().args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-contract: `Missing`
+
+
+"#]]);
+    }
+});
+
+forgetest!(do_not_count_non_runnable_tests, |prj, cmd| {
+    prj.add_source("Dummy.sol", "contract Dummy {}");
+    prj.add_test(
+        "NotRunnable.t.sol",
+        r#"
+interface TestInterface { function testInterface() external; }
+abstract contract AbstractTest { function testAbstract() public {} }
+contract ConstructorTest {
+    constructor(uint256) {}
+    function testConstructor() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
+
+"#]]);
+
+    prj.add_test("Library.t.sol", "library LibraryTest { function testLibrary() public pure {} }");
+    cmd.forge_fuse().args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-contract: `Missing`
+
+
+"#]]);
+});
+
 // tests that direct import paths are handled correctly
 forgetest!(can_fuzz_array_params, |prj, cmd| {
     prj.insert_ds_test();

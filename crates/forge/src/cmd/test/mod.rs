@@ -40,6 +40,7 @@ use foundry_cli::{
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
+    external_compiler::is_external_artifact,
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
@@ -83,6 +84,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
+use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -302,6 +304,7 @@ pub(crate) struct TestExecutionOptions {
     pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     pub(crate) inline_config: Arc<InlineConfig>,
     pub(crate) selected_sources: BTreeSet<PathBuf>,
+    unmatched_tests: Arc<UnmatchedTests>,
 }
 
 impl TestExecutionOptions {
@@ -314,6 +317,7 @@ impl TestExecutionOptions {
             replay_symbolic_artifact: None,
             inline_config,
             selected_sources: BTreeSet::new(),
+            unmatched_tests: Arc::default(),
         }
     }
 
@@ -361,8 +365,23 @@ struct CompiledTestProject {
     inline_config: Arc<InlineConfig>,
     replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     selected_sources: BTreeSet<PathBuf>,
+    unmatched_tests: Arc<UnmatchedTests>,
     /// Keeps the brutalized copy of the project alive while its tests run.
     _brutalized_workspace: Option<TempDir>,
+}
+
+/// Test discovery retained for diagnostics after filtered compilation.
+#[derive(Clone, Debug, Default)]
+struct UnmatchedTests {
+    has_tests: bool,
+    candidates: Vec<String>,
+}
+
+/// Sources and ABI discovery metadata for a test compilation.
+struct TestCompilationSources {
+    files: BTreeSet<PathBuf>,
+    inline_config: Option<Arc<InlineConfig>>,
+    unmatched_tests: Arc<UnmatchedTests>,
 }
 
 /// Shared campaign arguments for `forge fuzz run`.
@@ -1477,7 +1496,7 @@ impl TestArgs {
 
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter, and the inline config parsed from the ABI-only compilation when one was
-    /// needed.
+    /// needed, including test candidates for unmatched-filter diagnostics.
     ///
     /// For filtered runs, this includes all configured source roots, non-test fixture roots, and
     /// runnable tests that match the filter. Imported dependencies remain attached to those roots
@@ -1488,17 +1507,22 @@ impl TestArgs {
         config: &Config,
         test_filter: &ProjectPathsAwareFilter,
         symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
-    ) -> Result<(BTreeSet<PathBuf>, Option<Arc<InlineConfig>>)> {
+    ) -> Result<TestCompilationSources> {
         let src_files = || source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS);
         let test_files = || source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS);
 
         // An empty filter doesn't filter out anything.
         // We can still optimize slightly by excluding scripts.
         if test_filter.is_empty() {
-            return Ok((src_files().chain(test_files()).collect(), None));
+            return Ok(TestCompilationSources {
+                files: src_files().chain(test_files()).collect(),
+                inline_config: None,
+                unmatched_tests: Arc::default(),
+            });
         }
 
         let mut project = config.create_project(config.cache, true)?;
+        let mut unmatched_tests = UnmatchedTests::default();
         let sources = src_files()
             .chain(
                 // Preserve path-filter behavior for conventional test files while still
@@ -1525,6 +1549,29 @@ impl TestArgs {
             TestFunctionMatcher::new(config, &inline_config, symbolic_artifact_replay);
         let paths = config.project_paths::<MultiCompilerLanguage>();
         let empty_filter = EmptyTestFilter::default();
+        for (id, artifact) in output.artifact_ids() {
+            let Some(abi) = &artifact.abi else { continue };
+            let id = id.with_stripped_file_prefixes(&config.root);
+            if !is_runnable_test_contract(
+                &output,
+                config,
+                &id,
+                artifact,
+                abi,
+                &test_matcher,
+                &empty_filter,
+            ) {
+                continue;
+            }
+            for function in
+                test_matcher.test_functions(id.identifier(), abi, |_, _, kind| kind.is_any_test())
+            {
+                unmatched_tests.has_tests = true;
+                if test_filter.matches_path(&id.source) && test_filter.matches_contract(&id.name) {
+                    unmatched_tests.candidates.push(function.name.clone());
+                }
+            }
+        }
         let filter_args = test_filter.args();
         let has_contract_or_test_filter = filter_args.test_pattern.is_some()
             || filter_args.test_pattern_inverse.is_some()
@@ -1565,7 +1612,11 @@ impl TestArgs {
             })
             .map(|(id, _)| id.source)
             .collect();
-        Ok((files, Some(inline_config)))
+        Ok(TestCompilationSources {
+            files,
+            inline_config: Some(inline_config),
+            unmatched_tests: Arc::new(unmatched_tests),
+        })
     }
 
     /// Executes all the tests in the project.
@@ -1586,6 +1637,7 @@ impl TestArgs {
             TestExecutionOptions {
                 replay_symbolic_artifact: compiled.replay_symbolic_artifact,
                 selected_sources: compiled.selected_sources,
+                unmatched_tests: compiled.unmatched_tests,
                 ..TestExecutionOptions::default_run(compiled.inline_config)
             },
         )
@@ -1662,7 +1714,7 @@ impl TestArgs {
             .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
-        let (output, selected_sources, inline_config) = if self.list {
+        let (output, selected_sources, inline_config, unmatched_tests) = if self.list {
             let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
@@ -1679,9 +1731,9 @@ impl TestArgs {
             } else {
                 compiler
             };
-            (compile_abi_project(&mut project, compiler)?, BTreeSet::new(), None)
+            (compile_abi_project(&mut project, compiler)?, BTreeSet::new(), None, Arc::default())
         } else {
-            let (files, inline_config) =
+            let TestCompilationSources { files, inline_config, unmatched_tests } =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
             let output = compiler.files(files.clone()).compile(&project);
             let output = if should_mutate {
@@ -1691,7 +1743,7 @@ impl TestArgs {
             } else {
                 output?
             };
-            (output, files, inline_config)
+            (output, files, inline_config, unmatched_tests)
         };
         let inline_config = match inline_config {
             Some(inline_config) => inline_config,
@@ -1707,6 +1759,7 @@ impl TestArgs {
             inline_config,
             replay_symbolic_artifact,
             selected_sources,
+            unmatched_tests,
             _brutalized_workspace: brutalized_workspace,
         })
     }
@@ -2163,6 +2216,7 @@ impl TestArgs {
         let execution = TestExecutionOptions { multi_network, ..execution };
         let verbosity = evm_opts.verbosity;
         let config = Arc::new(config);
+        let unmatched_tests = execution.unmatched_tests.clone();
         dispatch_network!(&evm_opts, |Net| {
             let runner = self
                 .build_runner::<Net>(
@@ -2175,7 +2229,9 @@ impl TestArgs {
                 )
                 .await?;
             let libraries = runner.libraries.clone();
-            let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+            let outcome = self
+                .run_tests_inner(runner, config, verbosity, filter, output, &unmatched_tests)
+                .await?;
             Ok((libraries, outcome))
         })
     }
@@ -2224,6 +2280,7 @@ impl TestArgs {
         verbosity: u8,
         filter: &mut ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
+        unmatched_tests: &UnmatchedTests,
     ) -> Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
 
@@ -2247,7 +2304,7 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if total_tests == 0 {
+            if total_tests == 0 && !unmatched_tests.has_tests {
                 sh_warn!(
                     "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
@@ -2256,7 +2313,10 @@ impl TestArgs {
                 // Try to suggest a test when there's no match.
                 if let Some(test_pattern) = &filter.args().test_pattern {
                     // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                    let candidates = runner
+                        .all_test_functions(filter)
+                        .map(|f| &f.name)
+                        .chain(&unmatched_tests.candidates);
                     if let Some(suggestion) =
                         utils::did_you_mean(test_pattern.as_str(), candidates).pop()
                     {
@@ -3112,6 +3172,47 @@ const fn apply_mutation_compiler_overrides(config: &mut Config) {
     if let Some(via_ir) = config.mutation.via_ir {
         config.via_ir = via_ir;
     }
+}
+
+/// Returns whether an ABI-discovered contract could be included in the test runner.
+fn is_runnable_test_contract(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    id: &ArtifactId,
+    artifact: &ConfigurableContractArtifact,
+    abi: &JsonAbi,
+    matcher: &TestFunctionMatcher<'_>,
+    empty_filter: &EmptyTestFilter,
+) -> bool {
+    if abi.constructor.as_ref().is_some_and(|constructor| !constructor.inputs.is_empty())
+        || !matcher.matches_contract(empty_filter, id, abi)
+        || is_external_artifact(&id.build_id)
+            && artifact.get_bytecode_bytes().is_none_or(|bytecode| bytecode.is_empty())
+    {
+        return false;
+    }
+
+    let contract_name = id.name.split('.').next().unwrap_or(&id.name);
+    let path = config.root.join(&id.source);
+    let compiler = output.parser().solc().compiler();
+    let mut is_concrete = None;
+    compiler.enter_sequential(|compiler| {
+        if let Some((_, source)) = compiler.gcx().get_ast_source(&path)
+            && let Some(ast) = &source.ast
+            && let Some(contract) = ast.items.iter().find_map(|item| match &item.kind {
+                ItemKind::Contract(contract) if contract.name.as_str() == contract_name => {
+                    Some(contract)
+                }
+                _ => None,
+            })
+        {
+            is_concrete = Some(matches!(
+                contract.kind,
+                SolarContractKind::Contract | SolarContractKind::Library
+            ));
+        }
+    });
+    is_concrete.unwrap_or(true)
 }
 
 /// Returns the deployable contracts in `output` that match `filter`, with project-relative ids.
