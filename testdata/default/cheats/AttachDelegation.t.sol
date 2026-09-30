@@ -208,7 +208,8 @@ contract AttachDelegationTest is Test {
         vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
         vm.signAndAttachDelegation(address(implementation), alice_pk, 0);
         vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
-        vm.signAndAttachDelegation(address(implementation2), bob_pk, 2);
+        // Bob's nonce 0 authorization is skipped because his transaction increments his nonce first.
+        vm.signAndAttachDelegation(address(implementation2), bob_pk, 1);
     }
 }
 

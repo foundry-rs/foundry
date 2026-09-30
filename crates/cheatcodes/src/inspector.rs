@@ -1767,29 +1767,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Apply active EIP-7702 delegations, if any.
                     if !active_delegations.is_empty() {
-                        for auth in &active_delegations {
-                            let Ok(authority) = auth.recover_authority() else {
-                                continue;
-                            };
-                            // Increment the nonce of every authority to reflect the signed
-                            // authorization, as EIP-7702 does on-chain.
-                            match journaled_account(ecx, authority) {
-                                Ok(account) => account.info.nonce += 1,
-                                Err(err) => {
-                                    return Some(CallOutcome {
-                                        result: InterpreterResult {
-                                            result: InstructionResult::Revert,
-                                            output: err.abi_encode().into(),
-                                            gas,
-                                        },
-                                        memory_offset: call.return_memory_offset.clone(),
-                                        was_precompile_called: false,
-                                        precompile_call_logs: vec![],
-                                        charged_new_account_state_gas: call
-                                            .charged_new_account_state_gas,
-                                    });
-                                }
-                            }
+                        if let Err(err) = apply_authorization_nonces::<FEN>(
+                            ecx,
+                            &active_delegations,
+                            broadcast.new_origin,
+                            chain_id,
+                        ) {
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: InstructionResult::Revert,
+                                    output: err.abi_encode().into(),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
+                            });
                         }
                         tx_req.set_authorization_list(active_delegations);
                     }
@@ -4263,6 +4257,35 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     );
 
     result
+}
+
+/// Increments the nonce of every authority whose authorization would be applied on-chain.
+///
+/// Mirrors EIP-7702 processing: authorizations are checked in order after the transaction has
+/// incremented the sender nonce, and invalid authorizations are skipped without changing the
+/// authority nonce.
+fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    authorizations: &[SignedAuthorization],
+    sender: Address,
+    chain_id: u64,
+) -> Result<()> {
+    for auth in authorizations {
+        if (!auth.chain_id.is_zero() && auth.chain_id != U256::from(chain_id))
+            || auth.nonce == u64::MAX
+        {
+            continue;
+        }
+        let Ok(authority) = auth.recover_authority() else { continue };
+        // The authority code check is skipped because attaching the delegation already replaced
+        // the local code that EIP-7702 validates.
+        let account = journaled_account(ecx, authority)?;
+        // The sender nonce has not been incremented for the transaction yet.
+        if auth.nonce == account.info.nonce + u64::from(authority == sender) {
+            account.info.nonce += 1;
+        }
+    }
+    Ok(())
 }
 
 /// Helper function to check if frame execution will exit.
