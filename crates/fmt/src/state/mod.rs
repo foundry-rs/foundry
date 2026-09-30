@@ -456,8 +456,19 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn estimate_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, false)
+    }
+
+    /// Parentheses and index brackets have no inner padding in the printed assignment.
+    /// Keep comment-bearing expressions on their existing estimate.
+    fn estimate_assignment_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, !self.has_comment_between(span.lo(), span.hi()))
+    }
+
+    fn estimate_size_inner(&self, span: Span, normalize_delimiters: bool) -> usize {
         if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
+            let mut quote = None;
 
             for line in snip.lines() {
                 let line = line.trim();
@@ -472,7 +483,14 @@ impl<'sess> State<'sess, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing => size += 1,
+                        '}' if self.config.bracket_spacing => size += 1,
+                        ')' | ']'
+                            if self.config.bracket_spacing
+                                && (!normalize_delimiters || quote.is_some()) =>
+                        {
+                            size += 1
+                        }
+
                         _ => (),
                     }
                 }
@@ -493,13 +511,30 @@ impl<'sess> State<'sess, '_> {
                     }
                 }
 
+                if normalize_delimiters {
+                    let mut chars = line.chars();
+                    while let Some(c) = chars.next() {
+                        match (quote, c) {
+                            (Some(_), '\\') => {
+                                chars.next();
+                            }
+                            (Some(delimiter), c) if c == delimiter => quote = None,
+                            (None, '\'' | '"') => quote = Some(c),
+                            _ => (),
+                        }
+                    }
+                }
+
                 // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some('{') => self.config.bracket_spacing,
+                    Some('[' | '(') => {
+                        self.config.bracket_spacing && (!normalize_delimiters || quote.is_some())
+                    }
                     Some(',' | ';') => true,
                     Some(
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',

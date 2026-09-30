@@ -901,6 +901,12 @@ impl<'ast> State<'_, 'ast> {
             && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
         {
             self.estimate_binary_size(rhs)
+        } else if assignment_member_depth(rhs) >= 2
+            && self.peek_comment_before(rhs.span.lo()).is_none()
+        {
+            // These chains can break before a member after collapsing their terminal delimiters.
+            // Size that collapsed form before choosing the assignment break instead.
+            self.estimate_assignment_size(rhs.span)
         } else {
             self.estimate_size(rhs.span)
         };
@@ -3453,6 +3459,17 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
+        _ => 0,
+    }
+}
+
+/// Counts member links in an assignment RHS, through calls and indexes.
+fn assignment_member_depth(expr: &ast::Expr<'_>) -> usize {
+    match &expr.kind {
+        ast::ExprKind::Member(child, _) => 1 + assignment_member_depth(child),
+        ast::ExprKind::Call(child, _) | ast::ExprKind::Index(child, _) => {
+            assignment_member_depth(child)
+        }
         _ => 0,
     }
 }
