@@ -954,9 +954,22 @@ where
         // Normalize both sides through the network's unsigned transaction representation. This
         // includes every consensus field and the envelope type, without comparing RPC-only fields
         // or treating equivalent omitted/default request fields as different transactions.
-        let expected = prepared.clone().build_unsigned().map_err(|_| {
-            eyre::eyre!("recovery snapshot contains an incomplete prepared transaction")
-        })?;
+        let expected = prepared
+            .clone()
+            .build_unsigned()
+            .or_else(|mut error| {
+                // CREATE serializes as null and reloads as an unspecified kind. Only retry
+                // incomplete requests, since network requests with explicit calls need no kind.
+                if error.request.kind().is_none() {
+                    error.request.set_create();
+                    error.request.build_unsigned()
+                } else {
+                    Err(error)
+                }
+            })
+            .map_err(|_| {
+                eyre::eyre!("recovery snapshot contains an incomplete prepared transaction")
+            })?;
         let expected = <N::TransactionRequest as From<N::UnsignedTx>>::from(expected);
         let actual = <N::TransactionRequest as From<N::UnsignedTx>>::from(envelope.clone().into());
         if serde_json::to_value(expected)? != serde_json::to_value(actual)? {
@@ -1510,6 +1523,44 @@ mod tests {
                     TransactionMaybeSigned::<Ethereum>::Signed { tx: envelope, from: sender },
                 );
             assert!(validate_signed_payload::<Ethereum>(payload, &planned, None, 1).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_creation_payload_survives_reload() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .unwrap();
+        let sender = signer.address();
+        let wallet = EthereumWallet::from(signer);
+        for ty in 0..=2 {
+            let dir = tempfile::tempdir().unwrap();
+            let mut request = TransactionRequest::default()
+                .with_from(sender)
+                .into_create()
+                .with_chain_id(1)
+                .with_nonce(0)
+                .with_gas_limit(100_000);
+            request.transaction_type = Some(ty);
+            if ty < 2 {
+                request.gas_price = Some(2);
+            } else {
+                request.max_fee_per_gas = Some(2);
+                request.max_priority_fee_per_gas = Some(1);
+            }
+            let envelope = request.clone().build(&wallet).await.unwrap();
+            let payload = Bytes::from(envelope.encoded_2718());
+            let mut data = signed_sequence(dir.path());
+            data.sequences_mut()[0].transactions[0] = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::new(request.clone()),
+            );
+            let paths = data.paths();
+            let mut store = RecoveryStore::create(data, false).unwrap();
+            let hash = store.persist_signed_payload(0, 0, Some(request), payload).unwrap();
+            drop(store);
+            let store = load(&paths, false).unwrap();
+            assert_eq!(store.signed_payload(0, 0).unwrap().hash, hash);
         }
     }
 
