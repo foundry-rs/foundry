@@ -2213,9 +2213,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         // Preserve the configured spec (evm_version) from the current environment — the fork's
         // evm_env is built with SPEC::default() and must not override the user's hardfork setting.
         let preserved_spec = evm_env.cfg_env.spec;
+        let disable_fee_charge = evm_env.cfg_env.disable_fee_charge;
         tx_env.set_chain_id(Some(fork_evm_env.cfg_env.chain_id));
         *evm_env = fork_evm_env;
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
+        evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
 
         #[cfg(feature = "monad")]
         return Ok(ContextUpdate::Replace(chain_context));
@@ -4513,6 +4515,61 @@ mod tests {
             ethereum_target.http_endpoint(),
         )))
         .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "optimism")]
+    async fn optimism_fork_rejects_non_op_source() {
+        let (_op_api, op) = spawn(NodeConfig::test().with_optimism()).await;
+        let (_eth_api, eth) = spawn(NodeConfig::test()).await;
+        let mut opts = EvmOpts { fork_url: Some(op.http_endpoint()), ..Default::default() };
+        opts.infer_network_from_fork().await.unwrap();
+        assert!(opts.fork_network_is_inferred);
+        assert!(opts.networks.is_optimism());
+        let original_fork = crate::fork::CreateFork {
+            url: op.http_endpoint(),
+            enable_caching: false,
+            evm_opts: opts.clone(),
+            resolved: None,
+        };
+        let mut backend = Backend::<OpEvmNetwork>::spawn(Some(original_fork)).unwrap();
+        let original_id = backend.active_fork_id();
+        let error = backend
+            .create_fork(crate::fork::CreateFork {
+                url: eth.http_endpoint(),
+                enable_caching: false,
+                evm_opts: opts.clone(),
+                resolved: None,
+            })
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot create a `ethereum` fork with an EVM instantiated for `optimism`; run the script with --rpc-url pointing to the forked chain to select its EVM"
+        );
+        assert_eq!(backend.active_fork_id(), original_id);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "optimism")]
+    async fn optimism_fork_selection_preserves_disabled_fee_charging() {
+        let (_api, op) = spawn(NodeConfig::test().with_optimism()).await;
+        let mut opts = EvmOpts { fork_url: Some(op.http_endpoint()), ..Default::default() };
+        opts.infer_network_from_fork().await.unwrap();
+        let mut backend = Backend::<OpEvmNetwork>::spawn(None).unwrap();
+        let id = backend
+            .create_fork(crate::fork::CreateFork {
+                url: op.http_endpoint(),
+                enable_caching: false,
+                evm_opts: opts,
+                resolved: None,
+            })
+            .unwrap();
+        let mut evm_env = EvmEnv::default();
+        evm_env.cfg_env.disable_fee_charge = true;
+        backend
+            .select_fork(id, &mut evm_env, &mut Default::default(), &mut JournalInner::new())
+            .unwrap();
+        assert!(evm_env.cfg_env.disable_fee_charge);
     }
 
     #[tokio::test(flavor = "multi_thread")]

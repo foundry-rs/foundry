@@ -17,6 +17,8 @@ use std::{
 mod data;
 use data::{collect_preprocessor_data, create_deploy_helpers};
 
+pub use data::is_deploy_helper_path;
+
 mod deps;
 use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_dependencies};
 

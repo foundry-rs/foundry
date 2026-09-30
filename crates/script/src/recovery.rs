@@ -1,4 +1,4 @@
-use crate::sequence::SequenceData;
+use crate::sequence::{SequenceData, completed_transaction_prefix};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
@@ -71,9 +71,10 @@ struct SubmissionAttempt<T> {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-enum AttemptKind<T> {
+pub(crate) enum AttemptKind<T> {
     Signed { request: Option<T>, payload: SignedPayload },
     Delegated { request: T, status: DelegatedStatus },
+    Legacy { hash: B256 },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +111,10 @@ where
 
     pub(crate) const fn data_mut(&mut self) -> &mut SequenceData<N> {
         &mut self.plan.data
+    }
+
+    pub(crate) const fn is_batch(&self) -> bool {
+        self.plan.batch
     }
 
     pub(crate) fn create(mut data: SequenceData<N>, batch: bool) -> Result<Self> {
@@ -156,14 +161,18 @@ where
         Self::finish_open(lock, plan).map(Some)
     }
 
-    pub(crate) fn import(
-        mut data: SequenceData<N>,
-        batch: bool,
-        lock: RecoveryLock,
-    ) -> Result<Self> {
+    pub(crate) fn import(mut data: SequenceData<N>, batch: bool, lock: RecoveryLock) -> Result<Self>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let generation = B256::random();
         data.set_recovery_generation(generation);
-        let plan = RecoveryPlan::new(data, batch, generation)?;
+        let mut plan = RecoveryPlan::new(data, batch, generation)?;
+        if batch {
+            plan.import_legacy_batch_attempts()?;
+        }
+        plan.validate_signed_payloads()?;
         write_snapshot(&lock.path, &plan)?;
         Self::finish_open(lock, plan)
     }
@@ -205,7 +214,7 @@ where
     pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
         self.submission_attempts(sequence, index).find_map(|attempt| match &attempt.kind {
             AttemptKind::Signed { payload, .. } => Some(payload),
-            AttemptKind::Delegated { .. } => None,
+            AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => None,
         })
     }
 
@@ -216,13 +225,7 @@ where
     ) -> Option<DelegatedStatus> {
         self.submission_attempts(sequence, index).find_map(|attempt| match &attempt.kind {
             AttemptKind::Delegated { status, .. } => Some(*status),
-            AttemptKind::Signed { .. } => None,
-        })
-    }
-
-    pub(crate) fn delegated_attempt_id(&self, sequence: usize, index: usize) -> Option<B256> {
-        self.submission_attempts(sequence, index).find_map(|attempt| {
-            matches!(attempt.kind, AttemptKind::Delegated { .. }).then_some(attempt.id)
+            AttemptKind::Signed { .. } | AttemptKind::Legacy { .. } => None,
         })
     }
 
@@ -244,10 +247,22 @@ where
                 AttemptKind::Delegated { status: DelegatedStatus::Pending { hash }, .. } => {
                     durable.push(*hash);
                 }
+                AttemptKind::Legacy { hash } => durable.push(*hash),
                 AttemptKind::Delegated { .. } => {}
             }
         }
         (durable, replayable)
+    }
+
+    pub(crate) fn batch_attempt(
+        &self,
+        sequence: usize,
+    ) -> Option<(usize, B256, &AttemptKind<N::TransactionRequest>)> {
+        if !self.plan.batch {
+            return None;
+        }
+        let attempt = self.plan.deployments.get(sequence)?.attempts.first()?;
+        Some((attempt.members.first()?.index as usize, attempt.id, &attempt.kind))
     }
 
     pub(crate) fn persist_signed_payload(
@@ -281,16 +296,16 @@ where
         if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
             bail!("refusing to replace an existing submission attempt");
         }
-        self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
-            id: B256::random(),
-            members: vec![id],
-            kind: AttemptKind::Signed { request: None, payload: signed },
-        });
-        if let Err(error) = write_snapshot(&self.path, &self.plan) {
-            self.plan.deployments[sequence].attempts.pop();
-            return Err(error);
-        }
-        Ok(self.signed_payload(sequence, index).expect("signed payload was persisted").hash)
+        let hash = signed.hash;
+        self.persist_attempt(
+            sequence,
+            SubmissionAttempt {
+                id: B256::random(),
+                members: vec![id],
+                kind: AttemptKind::Signed { request: None, payload: signed },
+            },
+        )?;
+        Ok(hash)
     }
 
     pub(crate) fn persist_delegated_request(
@@ -312,16 +327,14 @@ where
         if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
             bail!("refusing to replace an existing submission attempt");
         }
-        self.plan.deployments[sequence].attempts.push(SubmissionAttempt {
-            id: B256::random(),
-            members: vec![id],
-            kind: AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
-        });
-        if let Err(error) = write_snapshot(&self.path, &self.plan) {
-            self.plan.deployments[sequence].attempts.pop();
-            return Err(error);
-        }
-        Ok(())
+        self.persist_attempt(
+            sequence,
+            SubmissionAttempt {
+                id: B256::random(),
+                members: vec![id],
+                kind: AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
+            },
+        )
     }
 
     pub(crate) fn persist_delegated_status(
@@ -406,6 +419,20 @@ where
         })
     }
 
+    pub(crate) fn delegated_attempts(&self) -> Vec<(usize, usize, B256, DelegatedStatus)> {
+        self.plan
+            .deployments
+            .iter()
+            .enumerate()
+            .flat_map(|(sequence, deployment)| {
+                deployment.attempts.iter().filter_map(move |attempt| {
+                    let AttemptKind::Delegated { status, .. } = &attempt.kind else { return None };
+                    Some((sequence, attempt.members.first()?.index as usize, attempt.id, *status))
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn resolve_delegated_hash(
         &mut self,
         attempt_id: B256,
@@ -427,6 +454,83 @@ where
         validate_delegated_transaction::<N>(transaction, request, deployment.chain, hash)?;
         self.persist_delegated_status(sequence, index, DelegatedStatus::Pending { hash })?;
         Ok((sequence, index))
+    }
+
+    pub(crate) fn persist_batch_signed_payload(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: Decodable2718 + Encodable2718,
+    {
+        let signed = SignedPayload { hash: signed_payload_hash::<N>(&payload)?, payload };
+        let hash = signed.hash;
+        self.persist_batch_attempt(
+            sequence,
+            first_operation,
+            AttemptKind::Signed { request: Some(request), payload: signed },
+        )?;
+        Ok(hash)
+    }
+
+    pub(crate) fn persist_batch_delegated_request(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        self.persist_batch_attempt(
+            sequence,
+            first_operation,
+            AttemptKind::Delegated { request, status: DelegatedStatus::Prepared },
+        )
+    }
+
+    fn persist_batch_attempt(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        kind: AttemptKind<N::TransactionRequest>,
+    ) -> Result<()> {
+        if self.batch_attempt(sequence).is_some() {
+            bail!("refusing to replace an existing batch submission attempt");
+        }
+        let members = self
+            .plan
+            .deployments
+            .get(sequence)
+            .context("batch deployment is not in the recovery snapshot")?
+            .operations
+            .get(first_operation..)
+            .context("batch operation is not in the recovery snapshot")?
+            .iter()
+            .map(|operation| operation.id)
+            .collect::<Vec<_>>();
+        if members.is_empty() {
+            bail!("batch submission has no operations");
+        }
+        self.persist_attempt(sequence, SubmissionAttempt { id: B256::random(), members, kind })
+    }
+
+    fn persist_attempt(
+        &mut self,
+        sequence: usize,
+        attempt: SubmissionAttempt<N::TransactionRequest>,
+    ) -> Result<()> {
+        self.plan
+            .deployments
+            .get_mut(sequence)
+            .context("submission deployment is not in the recovery snapshot")?
+            .attempts
+            .push(attempt);
+        if let Err(error) = write_snapshot(&self.path, &self.plan) {
+            self.plan.deployments[sequence].attempts.pop();
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) fn prepare_relocation(
@@ -537,6 +641,51 @@ where
         })
     }
 
+    fn import_legacy_batch_attempts(&mut self) -> Result<()> {
+        for (deployment, data) in self.deployments.iter_mut().zip(self.data.sequences().iter()) {
+            let completed = completed_transaction_prefix(data)?;
+            if data.pending.is_empty() {
+                if data
+                    .transactions
+                    .iter()
+                    .skip(completed)
+                    .any(|transaction| transaction.hash.is_some())
+                {
+                    bail!("legacy batch progress has operation hashes without a pending hash");
+                }
+                continue;
+            }
+            let [hash] = data.pending.as_slice() else {
+                bail!("cannot import legacy batch progress with multiple pending hashes");
+            };
+            let first = data
+                .transactions
+                .iter()
+                .position(|transaction| transaction.hash == Some(*hash))
+                .context("legacy batch hash is not bound to a recovery operation")?;
+            if completed != first {
+                bail!("legacy batch progress omits an incomplete operation");
+            }
+            if data
+                .transactions
+                .iter()
+                .skip(first)
+                .any(|transaction| transaction.hash != Some(*hash))
+            {
+                bail!("cannot import inconsistent legacy batch operation hashes");
+            }
+            deployment.attempts.push(SubmissionAttempt {
+                id: B256::random(),
+                members: deployment.operations[first..]
+                    .iter()
+                    .map(|operation| operation.id)
+                    .collect(),
+                kind: AttemptKind::Legacy { hash: *hash },
+            });
+        }
+        Ok(())
+    }
+
     fn validate(&self, batch: bool) -> Result<()> {
         if self.version != RECOVERY_VERSION {
             bail!(
@@ -573,28 +722,105 @@ where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
         for (sequence, deployment) in self.deployments.iter().enumerate() {
+            let data = &self.data.sequences()[sequence];
+            if self.batch && deployment.attempts.is_empty() {
+                let completed = completed_transaction_prefix(data)?;
+                if !data.pending.is_empty()
+                    || data
+                        .transactions
+                        .iter()
+                        .skip(completed)
+                        .any(|transaction| transaction.hash.is_some())
+                {
+                    bail!("batch progress exists without a durable submission attempt");
+                }
+            }
+            if self.batch && deployment.attempts.len() > 1 {
+                bail!("recovery snapshot contains multiple batch submission attempts");
+            }
+            let mut claimed = vec![false; deployment.operations.len()];
             for attempt in &deployment.attempts {
-                let [member] = attempt.members.as_slice() else {
+                let Some(first) = attempt.members.first() else {
                     bail!("recovery snapshot attempt has invalid operation membership");
                 };
-                if member.sequence as usize != sequence {
+                if first.sequence as usize != sequence {
                     bail!("recovery snapshot attempt has invalid operation membership");
                 }
-                deployment
-                    .operations
-                    .get(member.index as usize)
-                    .filter(|operation| operation.id == *member)
+                let start = first.index as usize;
+                let end = start
+                    .checked_add(attempt.members.len())
                     .context("recovery snapshot attempt has invalid operation membership")?;
-                let transaction =
-                    &self.data.sequences()[sequence].transactions[member.index as usize];
-                if let AttemptKind::Signed { payload, .. } = &attempt.kind
-                    && validate_signed_payload::<N>(
-                        payload.payload.clone(),
-                        transaction,
-                        deployment.chain,
-                    )? != *payload
+                let operations = deployment
+                    .operations
+                    .get(start..end)
+                    .context("recovery snapshot attempt has invalid operation membership")?;
+                if operations
+                    .iter()
+                    .map(|operation| operation.id)
+                    .ne(attempt.members.iter().copied())
+                    || claimed[start..end].iter().any(|claimed| *claimed)
+                    || if self.batch {
+                        end != deployment.operations.len()
+                    } else {
+                        attempt.members.len() != 1
+                    }
                 {
-                    bail!("recovery snapshot signed payload does not match its hash");
+                    bail!("recovery snapshot attempt has invalid operation membership");
+                }
+                if self.batch {
+                    let completed = completed_transaction_prefix(data)?;
+                    if completed != start && completed != deployment.operations.len() {
+                        bail!("batch submission attempt omits an incomplete operation");
+                    }
+                    let expected_hash = match &attempt.kind {
+                        AttemptKind::Signed { payload, .. } => Some(payload.hash),
+                        AttemptKind::Delegated {
+                            status: DelegatedStatus::Pending { hash },
+                            ..
+                        }
+                        | AttemptKind::Legacy { hash } => Some(*hash),
+                        AttemptKind::Delegated { .. } => None,
+                    };
+                    if data.pending.len() > 1
+                        || data.pending.iter().any(|hash| Some(*hash) != expected_hash)
+                        || data
+                            .transactions
+                            .iter()
+                            .skip(start)
+                            .filter_map(|transaction| transaction.hash)
+                            .any(|hash| Some(hash) != expected_hash)
+                    {
+                        bail!("batch submission attempt conflicts with script progress");
+                    }
+                }
+                claimed[start..end].fill(true);
+                match &attempt.kind {
+                    AttemptKind::Signed { request, payload } => {
+                        if request.is_some() != self.batch {
+                            bail!("recovery snapshot signed attempt has an invalid request");
+                        }
+                        let validated = if let [operation] = operations
+                            && !self.batch
+                        {
+                            validate_signed_payload::<N>(
+                                payload.payload.clone(),
+                                &data.transactions[operation.id.index as usize],
+                                deployment.chain,
+                            )?
+                        } else {
+                            SignedPayload {
+                                hash: signed_payload_hash::<N>(&payload.payload)?,
+                                payload: payload.payload.clone(),
+                            }
+                        };
+                        if validated != *payload {
+                            bail!("recovery snapshot signed payload does not match its hash");
+                        }
+                    }
+                    AttemptKind::Legacy { .. } if !self.batch => {
+                        bail!("ordinary recovery snapshot contains a legacy batch attempt");
+                    }
+                    AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => {}
                 }
             }
         }
@@ -674,6 +900,15 @@ fn commit_pending_plan(pending: &Path, path: &Path) -> Result<()> {
 fn recovery_path_from_sensitive(sensitive_path: &Path) -> Result<PathBuf> {
     let filename = sensitive_path.file_name().context("sensitive cache path has no filename")?;
     Ok(sensitive_path.with_file_name(format!("{}.recovery.json", filename.to_string_lossy())))
+}
+
+fn signed_payload_hash<N: Network>(payload: &Bytes) -> Result<B256>
+where
+    N::TxEnvelope: Decodable2718 + Encodable2718,
+{
+    Ok(N::TxEnvelope::decode_2718_exact(payload)
+        .wrap_err("recovery snapshot contains an invalid signed payload")?
+        .trie_hash())
 }
 
 fn validate_signed_payload<N: Network>(
@@ -834,10 +1069,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{TxEnvelope, transaction::Recovered};
+    use alloy_consensus::{
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, transaction::Recovered,
+    };
     use alloy_network::Ethereum;
-    use alloy_primitives::{TxKind, U256, hex};
-    use alloy_rpc_types::{Transaction as RpcTransaction, TransactionRequest};
+    use alloy_primitives::{Bloom, TxKind, U256, hex};
+    use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
     use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
@@ -1144,6 +1381,28 @@ mod tests {
         request.from = Some(from);
         let hash = transaction.tx_hash();
         validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash).unwrap();
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(
+                &transaction,
+                &request,
+                4217,
+                B256::ZERO,
+            )
+            .is_err()
+        );
+
+        request.valid_before = std::num::NonZeroU64::new(1);
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash)
+                .is_err()
+        );
+        request.valid_before = None;
+        request.fee_token = Some(Address::repeat_byte(0x44));
+        assert!(
+            validate_delegated_transaction::<TempoNetwork>(&transaction, &request, 4217, hash)
+                .is_err()
+        );
+        request.fee_token = None;
 
         let top_level = request.calls.pop().unwrap();
         request.inner.to = Some(top_level.to);
@@ -1248,5 +1507,148 @@ mod tests {
         drop(store);
 
         assert!(load(&paths, false).unwrap().delegated_status(0, 0).is_none());
+    }
+
+    #[test]
+    fn batch_attempt_uses_shared_membership_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let request = TransactionRequest::default();
+        {
+            let mut store = RecoveryStore::create(data, true).unwrap();
+            store
+                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
+                .unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+        }
+
+        let store = load(&paths, true).unwrap();
+        let Some((0, _, AttemptKind::Signed { request: Some(saved), .. })) = store.batch_attempt(0)
+        else {
+            panic!("expected signed batch attempt");
+        };
+        assert_eq!(saved, &request);
+    }
+
+    #[test]
+    fn batch_attempt_rejects_conflicting_progress() {
+        let foreign = B256::repeat_byte(0x66);
+        for (transaction_hash, pending) in [(Some(foreign), vec![]), (None, vec![foreign])] {
+            let dir = tempfile::tempdir().unwrap();
+            let data = signed_sequence(dir.path());
+            let paths = data.paths();
+            {
+                let mut store = RecoveryStore::create(data, true).unwrap();
+                store
+                    .persist_batch_signed_payload(
+                        0,
+                        0,
+                        TransactionRequest::default(),
+                        SIGNED_TX.to_vec().into(),
+                    )
+                    .unwrap();
+                let deployment = &mut store.data_mut().sequences_mut()[0];
+                deployment.transactions[0].hash = transaction_hash;
+                deployment.pending = pending;
+                write_snapshot(&store.path, &store.plan).unwrap();
+            }
+
+            assert!(load(&paths, true).is_err());
+        }
+    }
+
+    #[test]
+    fn batch_progress_without_an_attempt_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        {
+            let mut store = RecoveryStore::create(data, true).unwrap();
+            store.data_mut().sequences_mut()[0].pending.push(B256::repeat_byte(0x77));
+            write_snapshot(&store.path, &store.plan).unwrap();
+        }
+
+        assert!(load(&paths, true).is_err());
+    }
+
+    #[test]
+    fn legacy_batch_import_requires_one_consistent_pending_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let hash = B256::repeat_byte(0x55);
+        let deployment = &mut data.sequences_mut()[0];
+        for transaction in &mut deployment.transactions {
+            transaction.hash = Some(hash);
+        }
+        deployment.pending.push(hash);
+        let store =
+            RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).unwrap();
+        assert!(
+            matches!(store.batch_attempt(0), Some((0, _, AttemptKind::Legacy { hash: saved })) if *saved == hash)
+        );
+        drop(store);
+
+        let other = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(other.path());
+        let paths = data.paths();
+        let deployment = &mut data.sequences_mut()[0];
+        deployment.transactions[1].hash = Some(hash);
+        deployment.pending.push(hash);
+        assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
+    }
+
+    #[test]
+    fn legacy_batch_import_accepts_a_receipted_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let completed = B256::repeat_byte(0x44);
+        let pending = B256::repeat_byte(0x55);
+        let deployment = &mut data.sequences_mut()[0];
+        deployment.transactions[0].hash = Some(completed);
+        deployment.transactions[1].hash = Some(pending);
+        let completed_receipt = TransactionReceipt {
+            inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: Eip658Value::success(),
+                    cumulative_gas_used: 0,
+                    logs: Vec::new(),
+                },
+                logs_bloom: Bloom::ZERO,
+            }),
+            transaction_hash: completed,
+            transaction_index: None,
+            block_hash: None,
+            block_number: None,
+            gas_used: 0,
+            effective_gas_price: 0,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
+        };
+        deployment.receipts.push(completed_receipt);
+        deployment.pending.push(pending);
+
+        let store =
+            RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).unwrap();
+        assert!(
+            matches!(store.batch_attempt(0), Some((1, _, AttemptKind::Legacy { hash })) if *hash == pending)
+        );
+    }
+
+    #[test]
+    fn rejected_legacy_batch_import_does_not_publish_a_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        data.sequences_mut()[0].transactions[0].hash = Some(B256::repeat_byte(0x55));
+        let snapshot = recovery_path_from_sensitive(&paths.1).unwrap();
+
+        assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
+        assert!(!snapshot.exists());
     }
 }

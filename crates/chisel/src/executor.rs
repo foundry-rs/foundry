@@ -103,6 +103,10 @@ fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
 impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// Runs the source with the [ChiselRunner]
     pub async fn execute(&mut self) -> Result<ChiselResult> {
+        eyre::ensure!(
+            !self.config.fork_url_required || self.config.evm_opts.fork_url.is_some(),
+            "this saved Chisel session requires a current fork endpoint before execution"
+        );
         // Recompile the project and ensure no errors occurred.
         let output = self.build()?;
 
@@ -668,6 +672,28 @@ mod tests {
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
+
+    #[tokio::test]
+    async fn saved_fork_cannot_execute_without_a_current_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut source = TestSessionSource::new(SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(foundry_config::SolcReq::Local(dir.path().join("missing-solc"))),
+                ..Default::default()
+            },
+            fork_url_required: true,
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let error = source.execute().await.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "this saved Chisel session requires a current fork endpoint before execution"
+        );
+    }
 
     async fn assert_celo_transfer_precompile(config: SessionSourceConfig<EthEvmNetwork>) {
         let mut source = SessionSource::<EthEvmNetwork>::new(config).unwrap();

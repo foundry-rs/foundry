@@ -938,3 +938,33 @@ casttest!(wallet_list_turnkey, |_prj, cmd| {
         }
     }
 });
+
+casttest!(malformed_dotenv_warns_without_exposing_values, |prj, cmd| {
+    fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
+    cmd.args([
+        "wallet",
+        "address",
+        "--private-key",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf\n")
+    .stderr_eq(str![[r#"
+Warning: Failed to load [..]/.env: invalid syntax; remaining variables were not loaded
+
+"#]]);
+});
+
+casttest!(malformed_dotenv_quiet_suppresses_warning, |prj, cmd| {
+    fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
+    cmd.args([
+        "--quiet",
+        "wallet",
+        "address",
+        "--private-key",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq("")
+    .stderr_eq("");
+});

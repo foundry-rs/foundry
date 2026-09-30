@@ -1,5 +1,6 @@
 //! OP-stack receipt construction for the Anvil block executor.
 
+use super::AnvilBlockExecutor;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
 use alloy_primitives::Log;
 use foundry_evm::hardfork::FoundryHardfork;
@@ -10,8 +11,6 @@ use revm::context_interface::result::ExecutionResult;
 #[cfg(feature = "base")]
 use foundry_evm::hardforks::BaseUpgrade;
 
-#[cfg(feature = "optimism")]
-use super::AnvilBlockExecutor;
 #[cfg(feature = "optimism")]
 use alloy_consensus::Transaction;
 #[cfg(feature = "optimism")]
