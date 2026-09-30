@@ -87,6 +87,8 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-default-features
       - run: cargo build --workspace --no-default-features --locked
+      - name: Check Anvil with Base alone
+        run: cargo check -p anvil --no-default-features --features base --locked
 
   touch-id-link:
     name: touch-id link (macOS)
