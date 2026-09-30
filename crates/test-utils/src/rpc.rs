@@ -3,6 +3,7 @@
 use alloy_primitives::B256;
 use axum::{
     Json, Router,
+    body::Bytes,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::post,
@@ -23,6 +24,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+use tokio::sync::Notify;
 
 macro_rules! shuffled_list {
     ($name:ident, $e:expr $(,)?) => {
@@ -655,6 +657,66 @@ pub async fn spawn_rpc_proxy_requiring_header(
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+/// Spawns an RPC proxy that records the params of every request to `method` and holds the first
+/// one until `release` is notified, then answers it with `503 Service Unavailable`.
+///
+/// `reached` is notified once the first request is held. When `forward` is true, that request is
+/// forwarded before it is held and the upstream response is withheld.
+pub async fn spawn_rpc_proxy_blocking_first_submission(
+    endpoint: String,
+    method: &'static str,
+    forward: bool,
+) -> (String, Arc<Mutex<Vec<Value>>>, Arc<Notify>, Arc<Notify>) {
+    let client = reqwest::Client::new();
+    let submissions = Arc::new(Mutex::new(Vec::new()));
+    let reached = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let router = Router::new().fallback({
+        let submissions = submissions.clone();
+        let reached = reached.clone();
+        let release = release.clone();
+        move |body: Bytes| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let submissions = submissions.clone();
+            let reached = reached.clone();
+            let release = release.clone();
+            async move {
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                let first = request.get("method").and_then(Value::as_str) == Some(method) && {
+                    let mut submissions = submissions.lock().unwrap();
+                    submissions.push(request.get("params").cloned().unwrap_or(Value::Null));
+                    submissions.len() == 1
+                };
+                let response = if first && !forward {
+                    Bytes::new()
+                } else {
+                    client
+                        .post(endpoint)
+                        .header("content-type", "application/json")
+                        .body(body)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap()
+                };
+                if first {
+                    reached.notify_one();
+                    release.notified().await;
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+                response.into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), submissions, reached, release)
 }
 
 #[derive(Clone)]

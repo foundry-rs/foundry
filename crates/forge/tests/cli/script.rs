@@ -2,7 +2,7 @@
 
 use crate::{
     constants::TEMPLATE_CONTRACT,
-    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+    utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
@@ -16,8 +16,9 @@ use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
-        self, next_http_archive_rpc_url, spawn_rpc_proxy_mapping_method,
-        spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after_when_enabled,
+        self, next_http_archive_rpc_url, spawn_rpc_proxy_blocking_first_submission,
+        spawn_rpc_proxy_mapping_method, spawn_rpc_proxy_recording_method,
+        spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -26,17 +27,13 @@ use regex::Regex;
 use serde_json::Value;
 use std::{
     env, fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    thread::{self, JoinHandle},
     time::Duration,
 };
-use tokio::sync::Notify;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -63,99 +60,6 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
         .find(|path| path.ends_with("dry-run/run-latest.json"))
         .unwrap();
     foundry_common::fs::read_json_file(&path).unwrap()
-}
-
-struct KillOnDrop {
-    child: Option<Child>,
-    stderr: Option<JoinHandle<Vec<u8>>>,
-}
-
-impl KillOnDrop {
-    fn spawn(command: &mut Command) -> Self {
-        let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
-        let mut child_stderr = child.stderr.take().unwrap();
-        let stderr = thread::spawn(move || {
-            let mut stderr = Vec::new();
-            child_stderr.read_to_end(&mut stderr).unwrap();
-            stderr
-        });
-        Self { child: Some(child), stderr: Some(stderr) }
-    }
-
-    fn is_running(&mut self) -> bool {
-        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
-    }
-
-    fn kill_and_wait(mut self) -> Output {
-        let mut child = self.child.take().unwrap();
-        child.kill().unwrap();
-        let status = child.wait().unwrap();
-        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
-    }
-}
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if let Some(child) = &mut self.child {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(stderr) = self.stderr.take() {
-            let _ = stderr.join();
-        }
-    }
-}
-
-async fn spawn_rpc_proxy_blocking_first_submission(
-    endpoint: String,
-    method: &'static str,
-) -> (String, Arc<std::sync::Mutex<Vec<Value>>>, Arc<Notify>, Arc<Notify>) {
-    let client = reqwest::Client::new();
-    let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let reached = Arc::new(Notify::new());
-    let release = Arc::new(Notify::new());
-    let app = Router::new().fallback({
-        let submissions = submissions.clone();
-        let reached = reached.clone();
-        let release = release.clone();
-        move |body: BodyBytes| {
-            let client = client.clone();
-            let endpoint = endpoint.clone();
-            let submissions = submissions.clone();
-            let reached = reached.clone();
-            let release = release.clone();
-            async move {
-                let request: Value = serde_json::from_slice(&body).unwrap();
-                if request.get("method").and_then(Value::as_str) == Some(method) {
-                    let first = {
-                        let mut submissions = submissions.lock().unwrap();
-                        submissions.push(request.get("params").cloned().unwrap_or(Value::Null));
-                        submissions.len() == 1
-                    };
-                    if first {
-                        reached.notify_one();
-                        release.notified().await;
-                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                    }
-                }
-                client
-                    .post(endpoint)
-                    .header("content-type", "application/json")
-                    .body(body)
-                    .send()
-                    .await
-                    .unwrap()
-                    .bytes()
-                    .await
-                    .unwrap()
-                    .into_response()
-            }
-        }
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let rpc = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (rpc, submissions, reached, release)
 }
 
 // Tests that fork cheat codes can be used in script
@@ -5395,9 +5299,12 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     let script = prj.add_source("MultiDeploy", &source);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
-    let (rpc, submissions, reached, release) =
-        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendRawTransaction")
-            .await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        false,
+    )
+    .await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     cmd.env("BATCH_EXECUTION_REQUIRED", "1");
@@ -5491,9 +5398,12 @@ forgetest_async!(tempo_batch_unlocked_crash_blocks_resubmission, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let (rpc, submissions, reached, release) =
-        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendTransaction")
-            .await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        false,
+    )
+    .await;
     let sender = handle.dev_accounts().next().unwrap();
 
     cmd.arg("script").arg(&script).args([
