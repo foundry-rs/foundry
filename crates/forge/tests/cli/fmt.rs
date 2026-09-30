@@ -1,6 +1,6 @@
 //! Integration tests for `forge fmt` command
 
-use foundry_test_utils::forgetest;
+use foundry_test_utils::{forgetest, snapbox::IntoData};
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT
 pragma         solidity  =0.8.33    ;
@@ -321,4 +321,43 @@ HINT: If you are working outside of the project, try providing paths to your sou
     cmd.forge_fuse().args(["fmt", "src/Link.sol", "test/linked"]).assert_success();
     assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), FORMATTED);
     assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), FORMATTED);
+});
+
+forgetest!(fmt_external_configured_directories, |prj, cmd| {
+    let outside = tempfile::tempdir().unwrap();
+    for name in ["src", "test", "script"] {
+        let dir = outside.path().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("External.sol"), UNFORMATTED).unwrap();
+    }
+    prj.update_config(|config| {
+        config.src = outside.path().join("src");
+        config.test = outside.path().join("test");
+        config.script = outside.path().join("script");
+    });
+
+    cmd.args(["fmt", "--check"]).assert_failure().stderr_eq("");
+    for name in ["src", "test", "script"] {
+        assert_data_eq!(
+            std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
+            UNFORMATTED,
+        );
+    }
+
+    cmd.forge_fuse().arg("fmt").assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Formatted [..]/src/External.sol
+Formatted [..]/test/External.sol
+Formatted [..]/script/External.sol
+
+"#]]
+        .unordered(),
+    );
+    for name in ["src", "test", "script"] {
+        assert_data_eq!(
+            std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
+            FORMATTED,
+        );
+    }
+    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
 });
