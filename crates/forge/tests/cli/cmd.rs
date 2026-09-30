@@ -1,7 +1,10 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
+use foundry_compilers::{
+    artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping},
+    solc::Solc,
+};
 use foundry_config::{
     BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
     parse_with_profile,
@@ -10,7 +13,7 @@ use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{OutputExt, read_string},
+    util::{OutputExt, SOLC_VERSION, read_string},
 };
 use std::{
     fs,
@@ -4441,6 +4444,21 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 }
 
 "#]]);
+
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "standard-json", "--use", SOLC_VERSION])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let solc = Solc::find_svm_installed_version(&SOLC_VERSION.parse().unwrap()).unwrap().unwrap();
+    for compiler in [format!("solc:{SOLC_VERSION}"), solc.solc.display().to_string()] {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "standard-json", "--use", &compiler])
+            .assert_success()
+            .stdout_eq(expected.clone());
+    }
 });
 
 forgetest!(can_inspect_artifact_json, |prj, cmd| {

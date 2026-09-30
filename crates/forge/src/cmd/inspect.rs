@@ -22,7 +22,7 @@ use foundry_compilers::{
             EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
-    solc::SolcLanguage,
+    solc::{SolcCompiler, SolcLanguage},
 };
 use path_slash::PathExt;
 use regex::Regex;
@@ -76,8 +76,7 @@ impl InspectArgs {
             build.compiler.optimize
         };
 
-        // Get the solc version if specified
-        let solc_version = build.use_solc.clone();
+        let explicit_solc = build.use_solc.is_some();
 
         // Build modified Args
         let modified_build_args = BuildOpts {
@@ -194,11 +193,13 @@ impl InspectArgs {
                 print_errors_events(&out, false, wrap)?;
             }
             ContractArtifactField::StandardJson => {
-                let standard_json = if let Some(version) = solc_version {
-                    let version = version.parse()?;
-                    let mut standard_json =
-                        project.standard_json_input(&target_path)?.normalize_evm_version(&version);
-                    standard_json.settings.sanitize(&version, SolcLanguage::Solidity);
+                let standard_json = if explicit_solc
+                    && let Some(SolcCompiler::Specific(solc)) = &project.compiler.solc
+                {
+                    let mut standard_json = project
+                        .standard_json_input(&target_path)?
+                        .normalize_evm_version(&solc.version);
+                    standard_json.settings.sanitize(&solc.version, SolcLanguage::Solidity);
                     standard_json
                 } else {
                     project.standard_json_input(&target_path)?
