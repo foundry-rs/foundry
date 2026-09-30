@@ -40,12 +40,15 @@ use foundry_evm::{
         env::FromAnyRpcTransaction as _,
         evm::{ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
-    executors::{EvmError, Executor, ExecutorBuilder, TracingExecutor},
+    executors::{Executor, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
 use foundry_evm_networks::NetworkVariant;
-use revm::{context::Block as _, state::AccountInfo};
+use revm::{
+    context::{Block as _, Transaction as _},
+    state::AccountInfo,
+};
 use std::path::PathBuf;
 
 #[cfg(feature = "base")]
@@ -946,16 +949,19 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
             etherscan_metadata,
             ..
         } = self;
-        let kind = ConsensusTransaction::kind(&transaction);
         let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&transaction)?;
+        // Only the creation call is redeployed; batched follow-up calls cannot change its code.
+        tx_env.truncate_to_first_call();
         tx_env.set_nonce(prev_block_nonce);
+        // Read the call from the decoded env: batched transactions have no top-level `to`/`input`.
+        let kind = tx_env.kind();
         let target_context =
             target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
 
         // Replace the `input` with local creation code in the creation tx.
         if let TxKind::Call(to) = kind {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = transaction.input()[..32].to_vec(); // Salt
+                let mut input = tx_env.input()[..32].to_vec(); // Salt
                 input.extend_from_slice(&local_bytecode_vec);
                 tx_env.set_data(Bytes::from(input));
 
@@ -1107,33 +1113,17 @@ fn execute_replay_transaction<FEN: FoundryEvmNetwork>(
     tx_env: TxEnvFor<FEN>,
     chain_context: ChainFor<FEN>,
 ) -> Result<()> {
-    if ConsensusTransaction::to(tx).is_some() {
-        executor
-            .transact_with_env_and_context(evm_env.clone(), tx_env, chain_context)
-            .wrap_err_with(|| {
-                format!(
-                    "Failed to execute transaction: {:?} in block {}",
-                    tx.tx_hash(),
-                    evm_env.block_env.number()
-                )
-            })?;
-    } else if let Err(error) =
-        executor.deploy_with_env_and_context(evm_env.clone(), tx_env, chain_context, None)
-    {
-        match error {
-            // Reverted transactions should be skipped.
-            EvmError::Execution(_) => (),
-            error => {
-                return Err(error).wrap_err_with(|| {
-                    format!(
-                        "Failed to deploy transaction: {:?} in block {}",
-                        tx.tx_hash(),
-                        evm_env.block_env.number()
-                    )
-                });
-            }
-        }
-    }
+    // Transact creations too: batched transactions can mix a creation with calls, so their result
+    // need not be a deployment. Reverted transactions are committed and replay continues.
+    executor.transact_with_env_and_context(evm_env.clone(), tx_env, chain_context).wrap_err_with(
+        || {
+            format!(
+                "Failed to execute transaction: {:?} in block {}",
+                tx.tx_hash(),
+                evm_env.block_env.number()
+            )
+        },
+    )?;
     Ok(())
 }
 

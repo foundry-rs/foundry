@@ -17,6 +17,7 @@ use revm::{
     primitives::{TxKind, hardfork::SpecId},
 };
 use std::fmt::Debug;
+use tempo_alloy::primitives::{TEMPO_TX_TYPE_ID, TempoTxEnvelope};
 use tempo_revm::{TempoBlockEnv, TempoTxEnv};
 
 #[cfg(feature = "optimism")]
@@ -274,6 +275,9 @@ pub trait FoundryTransaction: Transaction {
 
     /// Sets the fee payer for this transaction.
     fn set_fee_payer(&mut self, _payer: Option<Option<Address>>) {}
+
+    /// Drops every batched call after the first one, which is the only call that may create.
+    fn truncate_to_first_call(&mut self) {}
 }
 
 impl FoundryTransaction for TxEnv {
@@ -420,6 +424,12 @@ impl FoundryTransaction for TempoTxEnv {
 
     fn set_fee_payer(&mut self, payer: Option<Option<Address>>) {
         self.fee_payer = payer;
+    }
+
+    fn truncate_to_first_call(&mut self) {
+        if let Some(env) = self.tempo_tx_env.as_deref_mut() {
+            env.aa_calls.truncate(1);
+        }
     }
 }
 
@@ -745,34 +755,23 @@ impl FromAnyRpcTransaction for TxEnv {
 
 impl FromAnyRpcTransaction for TempoTxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
-        if let Some(envelope) = tx.as_envelope() {
-            return Ok(TxEnv::from_recovered_tx(envelope, tx.from()).into());
-        }
-
-        // Handle Tempo transactions from `Unknown` envelope variant.
-        if let AnyTxEnvelope::Unknown(unknown) = &*tx.inner.inner
-            && unknown.ty() == tempo_alloy::primitives::TEMPO_TX_TYPE_ID
-        {
-            let base = TxEnv {
-                tx_type: unknown.ty(),
-                caller: tx.from(),
-                gas_limit: unknown.gas_limit(),
-                gas_price: unknown.max_fee_per_gas(),
-                gas_priority_fee: unknown.max_priority_fee_per_gas(),
-                kind: unknown.kind(),
-                value: unknown.value(),
-                data: unknown.input().clone(),
-                nonce: unknown.nonce(),
-                chain_id: unknown.chain_id(),
-                access_list: unknown.access_list().cloned().unwrap_or_default(),
-                ..Default::default()
-            };
-            let fee_token =
-                unknown.inner.fields.get_deserialized::<Address>("feeToken").and_then(Result::ok);
-            return Ok(Self { inner: base, fee_token, ..Default::default() });
-        }
-
-        Err(unknown_transaction_type(tx, "TempoTxEnv"))
+        // Rebuild the signed Tempo envelope so Tempo's own conversion populates the transaction
+        // hash and sender-scoped identifier for every type, and the batch calls, nonce key,
+        // validity window, authorizations and fee payer for AA transactions.
+        let envelope = match &*tx.inner.inner {
+            AnyTxEnvelope::Ethereum(envelope) => TempoTxEnvelope::try_from(envelope.clone())
+                .map_err(|_| unknown_transaction_type(tx, "TempoTxEnv"))?,
+            AnyTxEnvelope::Unknown(unknown) if unknown.ty() == TEMPO_TX_TYPE_ID => {
+                serde_json::from_value::<alloy_rpc_types::Transaction<TempoTxEnvelope>>(
+                    serde_json::to_value(tx)?,
+                )
+                .map_err(|err| eyre::eyre!("cannot decode Tempo AA transaction: {err}"))?
+                .inner
+                .into_inner()
+            }
+            AnyTxEnvelope::Unknown(_) => return Err(unknown_transaction_type(tx, "TempoTxEnv")),
+        };
+        Ok(Self::from_recovered_tx(&envelope, tx.from()))
     }
 }
 
@@ -1130,14 +1129,17 @@ mod tests {
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use foundry_evm_hardforks::TempoHardfork;
     use revm::database::EmptyDB;
     use std::num::NonZeroU64;
     use tempo_alloy::primitives::{
-        AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
+        AASigned, TempoSignature, TempoTransaction,
         transaction::{Call, PrimitiveSignature},
     };
     use tempo_evm::TempoEvmFactory;
+    use tempo_revm::ExecutionContext;
 
     #[cfg(feature = "base")]
     use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseTransaction, BaseUpgrade};
@@ -1441,8 +1443,9 @@ mod tests {
     fn from_any_rpc_transaction_for_tempo_eth_envelope() {
         let from = Address::random();
         let signed_tx = make_signed_eip1559();
+        let tempo_envelope = TempoTxEnvelope::Eip1559(signed_tx.clone());
         let rpc_tx = RpcTransaction::from_transaction(
-            Recovered::new_unchecked(signed_tx.into(), from),
+            Recovered::new_unchecked(signed_tx.clone().into(), from),
             TransactionInfo::default(),
         );
         let any_tx = <AnyRpcTransaction as From<RpcTransaction>>::from(rpc_tx);
@@ -1453,45 +1456,108 @@ mod tests {
         assert_eq!(tx_env.inner.gas_limit, 21001);
         assert_eq!(tx_env.inner.value, U256::from(101));
         assert_eq!(tx_env.fee_token, None);
+        assert_eq!(
+            tx_env.execution_context(),
+            ExecutionContext::Transaction { tx_hash: *signed_tx.hash() }
+        );
+        assert_eq!(tx_env.unique_tx_identifier(), Some(tempo_envelope.unique_tx_identifier(from)));
+        assert!(tx_env.tempo_tx_env.is_none());
     }
 
     #[test]
     fn from_any_rpc_transaction_for_tempo_aa() {
-        let from = Address::random();
+        let sender = PrivateKeySigner::random();
+        let sponsor = PrivateKeySigner::random();
         let fee_token = Some(Address::random());
-        let tempo_tx = TempoTransaction {
+        let calls = vec![
+            Call {
+                to: TxKind::Call(Address::with_last_byte(0x11)),
+                value: U256::ZERO,
+                input: Bytes::from_static(&[0xaa, 0xbb]),
+            },
+            Call {
+                to: TxKind::Call(Address::with_last_byte(0x22)),
+                value: U256::ZERO,
+                input: Bytes::from_static(&[0xcc, 0xdd]),
+            },
+        ];
+        let mut tempo_tx = TempoTransaction {
             chain_id: 42431,
             nonce: 42,
             gas_limit: 424242,
             fee_token,
             nonce_key: U256::from(4242),
             valid_after: NonZeroU64::new(1800000000),
+            valid_before: NonZeroU64::new(1900000000),
+            calls: calls.clone(),
             ..Default::default()
         };
+        tempo_tx.fee_payer_signature = Some(
+            sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap(),
+        );
+        let signature = sender.sign_hash_sync(&tempo_tx.signature_hash()).unwrap();
         let aa_signed = AASigned::new_unhashed(
             tempo_tx,
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+        );
+        let tx_hash = *aa_signed.hash();
+        let unique_tx_identifier = aa_signed.expiring_nonce_hash(sender.address());
+
+        // Round-trip a Tempo RPC transaction through JSON, as `AnyNetwork` providers receive it.
+        let rpc_tx = RpcTransaction::from_transaction(
+            Recovered::new_unchecked(TempoTxEnvelope::AA(aa_signed), sender.address()),
+            TransactionInfo::default(),
+        );
+        let any_tx: AnyRpcTransaction =
+            serde_json::from_value(serde_json::to_value(&rpc_tx).unwrap()).unwrap();
+        assert!(matches!(&*any_tx.inner.inner, AnyTxEnvelope::Unknown(_)));
+
+        let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
+        assert_eq!(tx_env.inner.tx_type, TEMPO_TX_TYPE_ID);
+        assert_eq!(tx_env.inner.caller, sender.address());
+        assert_eq!(tx_env.inner.nonce, 42);
+        assert_eq!(tx_env.inner.gas_limit, 424242);
+        assert_eq!(tx_env.inner.chain_id, Some(42431));
+        assert_eq!(tx_env.fee_token, fee_token);
+        assert_eq!(tx_env.fee_payer, Some(Some(sponsor.address())));
+        assert_eq!(tx_env.execution_context(), ExecutionContext::Transaction { tx_hash });
+        assert_eq!(tx_env.unique_tx_identifier(), Some(unique_tx_identifier));
+
+        let aa = tx_env.tempo_tx_env.as_deref().unwrap();
+        assert_eq!(aa.aa_calls, calls);
+        assert_eq!(aa.nonce_key, U256::from(4242));
+        assert_eq!(aa.valid_after, Some(1800000000));
+        assert_eq!(aa.valid_before, Some(1900000000));
+        assert_eq!(aa.tx_hash, tx_hash);
+
+        let mut first_call_env = tx_env.clone();
+        first_call_env.truncate_to_first_call();
+        assert_eq!(first_call_env.tempo_tx_env.unwrap().aa_calls, calls[..1]);
+    }
+
+    #[test]
+    fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
+        let aa_signed = AASigned::new_unhashed(
+            TempoTransaction::default(),
             TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::new(
                 U256::ZERO,
                 U256::ZERO,
                 false,
             ))),
         );
-
-        // Build a concrete Tempo RPC transaction, serialize to JSON, deserialize as
-        // AnyRpcTransaction.
         let rpc_tx = RpcTransaction::from_transaction(
-            Recovered::new_unchecked(TempoTxEnvelope::AA(aa_signed), from),
+            Recovered::new_unchecked(TempoTxEnvelope::AA(aa_signed), Address::random()),
             TransactionInfo::default(),
         );
-        let json = serde_json::to_value(&rpc_tx).unwrap();
+        let mut json = serde_json::to_value(&rpc_tx).unwrap();
+        json.as_object_mut().unwrap().remove("signature");
         let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
 
-        let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
-        assert_eq!(tx_env.inner.caller, from);
-        assert_eq!(tx_env.inner.nonce, 42);
-        assert_eq!(tx_env.inner.gas_limit, 424242);
-        assert_eq!(tx_env.inner.chain_id, Some(42431));
-        assert_eq!(tx_env.fee_token, fee_token);
+        let err = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "cannot decode Tempo AA transaction: missing field `signature`"
+        );
     }
 
     #[cfg(feature = "optimism")]
