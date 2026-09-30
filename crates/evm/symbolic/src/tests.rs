@@ -2535,35 +2535,6 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     assert_eq!(sha_word.hash_algorithm(), Some("sha256"));
 
     let input_bytes = SymBytes::exprs(&mut cx, input.clone());
-    let ecrecover = execute_symbolic_precompile(
-        &mut cx,
-        precompile_address(1),
-        input_bytes,
-        input_len.clone(),
-        SpecId::CANCUN,
-    )
-    .unwrap()
-    .unwrap();
-    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
-    let ecrecover_again = execute_symbolic_precompile(
-        &mut cx,
-        precompile_address(1),
-        input_bytes,
-        input_len.clone(),
-        SpecId::CANCUN,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(ecrecover.len(), 32);
-    for idx in 0..12 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), SymExpr::zero(&mut cx));
-    }
-    for idx in 0..32 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), ecrecover_again.byte(&mut cx, idx));
-    }
-
-    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let ripemd = execute_symbolic_precompile(
         &mut cx,
         precompile_address(3),
@@ -2591,6 +2562,95 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     for idx in 0..32 {
         assert_eq!(ripemd.byte(&mut cx, idx), ripemd_again.byte(&mut cx, idx));
     }
+}
+
+#[test]
+fn symbolic_ecrecover_rejects_invalid_recovery_ids() {
+    let mut cx = SymCx::new();
+    for (v, input_size) in [(0, 128), (29, 128), (0x11b, 128), (27, 32), (28, 63)] {
+        let words = [
+            SymExpr::var(&mut cx, "digest"),
+            SymExpr::constant(&mut cx, U256::from(v)),
+            SymExpr::var(&mut cx, "r"),
+            SymExpr::var(&mut cx, "s"),
+        ];
+        let words = words.into_iter().map(|word| word.into_bytes(&mut cx)).collect::<Vec<_>>();
+        let input = SymBytes::concat(&mut cx, words);
+        let input_len = SymExpr::constant(&mut cx, U256::from(input_size));
+        let output = execute_symbolic_precompile(
+            &mut cx,
+            precompile_address(1),
+            input,
+            input_len,
+            SpecId::CANCUN,
+        )
+        .unwrap()
+        .expect("invalid recovery is still a successful precompile call");
+        assert_eq!(output.len(), 0);
+        assert_eq!(output.len_word().as_const(), Some(U256::ZERO));
+    }
+}
+
+#[test]
+fn symbolic_ecrecover_preserves_both_recovery_outcomes() {
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    if let Err(err) = executor.solver.check_available() {
+        let _ = foundry_common::sh_eprintln!(
+            "skipping symbolic_ecrecover_preserves_both_recovery_outcomes: {err}"
+        );
+        return;
+    }
+    let (cx, solver) = (&mut executor.cx, &mut executor.solver);
+    let v = SymExpr::var(cx, "v");
+    let words =
+        [SymExpr::var(cx, "digest"), v.clone(), SymExpr::var(cx, "r"), SymExpr::var(cx, "s")];
+    let words = words.into_iter().map(|word| word.into_bytes(cx)).collect::<Vec<_>>();
+    let input = SymBytes::concat(cx, words);
+    let input_len = SymExpr::constant(cx, U256::from(128));
+    let output = execute_symbolic_precompile(
+        cx,
+        precompile_address(1),
+        input.clone(),
+        input_len,
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let trailing = SymExpr::var(cx, "ignored").into_bytes(cx);
+    let input = SymBytes::concat(cx, [input, trailing]);
+    let input_len = SymExpr::constant(cx, U256::from(160));
+    let again =
+        execute_symbolic_precompile(cx, precompile_address(1), input, input_len, SpecId::CANCUN)
+            .unwrap()
+            .unwrap();
+    assert_eq!(output.len_word(), again.len_word());
+    for idx in 0..32 {
+        assert_eq!(output.byte(cx, idx), again.byte(cx, idx));
+        if idx < 12 {
+            assert_eq!(output.byte(cx, idx).as_const(), Some(U256::ZERO));
+        }
+    }
+    for recovery_id in [27, 28, 29] {
+        for len in [0, 32] {
+            let constraints = [
+                SymBoolExpr::eq_word_const(cx, &v, U256::from(recovery_id)),
+                SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(len)),
+            ];
+            assert_eq!(solver.is_sat(cx, &constraints).unwrap(), recovery_id != 29 || len == 0);
+        }
+    }
+    // A successful recovery remains unconstrained over all 160-bit addresses, including zero.
+    let address = (0..32).map(|idx| output.byte(cx, idx)).collect::<Vec<_>>();
+    let address = SymExpr::from_bytes(cx, address);
+    let constraints = [
+        SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(32)),
+        SymBoolExpr::eq_word_const(cx, &address, U256::ZERO),
+    ];
+    assert!(solver.is_sat(cx, &constraints).unwrap());
+    let empty = SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::ZERO);
+    let full = SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(32));
+    let other_len = [SymBoolExpr::not_bool(cx, empty), SymBoolExpr::not_bool(cx, full)];
+    assert!(!solver.is_sat(cx, &other_len).unwrap());
 }
 
 #[test]

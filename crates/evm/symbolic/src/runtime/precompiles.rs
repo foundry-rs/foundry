@@ -87,11 +87,33 @@ pub(crate) fn execute_symbolic_precompile(
 
     match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
+            // ECRECOVER ignores trailing bytes and pads short input with zeros.
+            let input = SymBytes::sized(cx, input, input_len, 128);
+            if let Ok(input) = input.concrete_bytes(cx, "symbolic ecrecover input") {
+                return execute_precompile(cx, address, &input, spec_id);
+            }
+            let v = input.word_at(cx, 32);
+            let v27 = SymBoolExpr::eq_word_const(cx, &v, U256::from(27));
+            let v28 = SymBoolExpr::eq_word_const(cx, &v, U256::from(28));
+            let valid_v = SymBoolExpr::or(cx, vec![v27, v28]);
+            if valid_v.as_const() == Some(false) {
+                return Ok(Some(SymReturnData::empty(cx)));
+            }
+
             let input = input.materialize(cx);
+            let input_len = SymExpr::constant(cx, U256::from(128));
             let word = symbolic_hash_word_with_len(cx, "ecrecover", input, input_len);
+            // Recovery may fail even with a valid v. Use an otherwise discarded byte of the
+            // opaque word so this choice is independent of the low 160-bit recovered address.
+            let recovered = byte_word(cx, U256::ZERO, word.clone()).nonzero_bool(cx);
+            let recovered = SymBoolExpr::and(cx, vec![valid_v, recovered]);
+            let full_len = SymExpr::constant(cx, U256::from(32));
+            let empty_len = SymExpr::zero(cx);
+            let len = SymExpr::ite(cx, recovered, full_len, empty_len);
             let mut bytes = vec![SymExpr::zero(cx); 12];
             bytes.extend((12..32).map(|idx| byte_word(cx, U256::from(idx), word.clone())));
-            Ok(Some(SymReturnData::from_byte_exprs(cx, bytes)))
+            let bytes = SymBytes::exprs(cx, bytes);
+            Ok(Some(SymReturnData::from_bytes_with_len(bytes, len)))
         }
         Some(2) => {
             let input = input.materialize(cx);

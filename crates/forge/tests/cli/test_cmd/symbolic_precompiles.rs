@@ -1,4 +1,4 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
@@ -212,6 +212,69 @@ contract SymbolicPrecompileInput {
 "#]],
     );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
+});
+
+forgetest_init!(symbolic_ecrecover_return_data_conformance, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_ecrecover_return_data_conformance because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "EcrecoverReturnData.t.sol",
+        r#"
+contract EcrecoverReturnData {
+    function checkInvalidRecoveryId(bytes32 digest, bytes32 r, bytes32 s) public view {
+        bytes memory input = abi.encode(digest, uint256(29), r, s);
+        bool ok;
+        uint256 size;
+        uint256 output;
+        assembly {
+            let dest := mload(0x40)
+            mstore(dest, 0x1234)
+            ok := staticcall(gas(), 1, add(input, 0x20), mload(input), dest, 32)
+            size := returndatasize()
+            output := mload(dest)
+        }
+        assert(ok);
+        assert(size == 0);
+        assert(output == 0x1234);
+    }
+
+    function checkRecoveryOutput(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
+        (bool ok, bytes memory output) = address(1).staticcall(abi.encode(digest, v, r, s));
+        assert(ok);
+        assert(output.length == 0 || output.length == 32);
+        if (output.length == 32) {
+            assert(uint256(bytes32(output)) >> 160 == 0);
+        }
+    }
+
+    function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
+        checkInvalidRecoveryId(digest, r, s);
+        checkRecoveryOutput(digest, v, r, s);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testFuzzConformance", "--fuzz-runs", "16"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzzConformance(bytes32,uint8,bytes32,bytes32) (runs: 16, [..])
+...
+"#]]);
+    assert_symbolic(cmd.forge_fuse().args(["test", "--symbolic", "--match-test", "check"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+[PASS] checkInvalidRecoveryId(bytes32,bytes32,bytes32) ([METRICS])
+[PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
+...
+"#]]);
 });
 
 forgetest_init!(symbolic_identity_precompile_accepts_symbolic_input, |prj, cmd| {
