@@ -4859,9 +4859,20 @@ forgetest_async!(can_broadcast_salted_deploy_code_in_script, |prj, cmd| {
     prj.add_source(
         "Token.sol",
         r#"
+contract Child {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+    function setName(string memory _name) external { name = _name; }
+}
+
 contract Token {
     string public name;
-    constructor(string memory _name) payable { name = _name; }
+    address public child;
+    constructor(string memory _name) payable {
+        name = _name;
+        child = address(new Child(_name));
+        Child(child).setName("Child");
+    }
     function setName(string memory _name) external { name = _name; }
 }
         "#,
@@ -4886,38 +4897,49 @@ contract SaltedDeployCodeScript is Script {
         "#,
     );
 
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    cmd.args([
-        "script",
-        "script/SaltedDeployCode.s.sol:SaltedDeployCodeScript",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    ])
-    .assert_success();
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        cmd.forge_fuse()
+            .args([
+                "script",
+                "script/SaltedDeployCode.s.sol:SaltedDeployCodeScript",
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--broadcast",
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            ])
+            .assert_success();
 
-    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
-        .find(|path| path.ends_with("run-latest.json"))
-        .expect("No broadcast artifacts");
-    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
-    let returned = |name: &str| -> Address {
-        json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
-    };
-    let (first, second) = (returned("first"), returned("second"));
-    let transactions = json["transactions"].as_array().unwrap();
-    let transaction_types =
-        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
-    assert_eq!(transaction_types, ["CREATE2", "CALL", "CREATE2"]);
-    assert_eq!(transactions[0]["contractAddress"], first.to_string().to_lowercase());
-    assert_eq!(transactions[1]["transaction"]["to"], first.to_string().to_lowercase());
-    assert_eq!(transactions[2]["contractAddress"], second.to_string().to_lowercase());
+        let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| path.ends_with("run-latest.json"))
+            .expect("No broadcast artifacts");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        let returned = |name: &str| -> Address {
+            json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+        };
+        let (first, second) = (returned("first"), returned("second"));
+        let transactions = json["transactions"].as_array().unwrap();
+        let transaction_types = transactions
+            .iter()
+            .map(|tx| tx["transactionType"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(transaction_types, ["CREATE2", "CALL", "CREATE2"]);
+        assert_eq!(transactions[0]["contractAddress"], first.to_string().to_lowercase());
+        assert_eq!(transactions[1]["transaction"]["to"], first.to_string().to_lowercase());
+        assert_eq!(transactions[2]["contractAddress"], second.to_string().to_lowercase());
+        for (nonce, transaction) in transactions.iter().enumerate() {
+            let recorded_nonce =
+                transaction["transaction"]["nonce"].as_str().unwrap().parse::<U256>().unwrap();
+            assert_eq!(recorded_nonce, U256::from(nonce));
+        }
 
-    for deployed in [first, second] {
-        assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
+        for deployed in [first, second] {
+            assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
+        }
+        assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
     }
-    assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
 });
 
 // Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
@@ -5990,6 +6012,85 @@ contract DeployTempoAA is Script {
     }
 });
 
+forgetest_async!(tempo_batch_broadcasts_deploy_code_via_create2, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "TempoBatchCodeDeployment",
+        r#"
+contract TempoBatchCodeDeployment {
+    uint256 public calls;
+    function ping() external { calls++; }
+}
+"#,
+    );
+    let script = prj.add_script(
+        "DeployTempoBatch.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+interface ITempoBatchCodeDeployment {
+    function ping() external;
+}
+
+contract DeployTempoBatch is Script {
+    function run() external returns (address first, address second, address salted) {
+        vm.startBroadcast();
+        first = vm.deployCode("src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment");
+        second = vm.deployCode("src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment");
+        salted = vm.deployCode(
+            "src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment", bytes32(uint256(1))
+        );
+        ITempoBatchCodeDeployment(first).ping();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--tc",
+        "DeployTempoBatch",
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no broadcast artifact found");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let returned = |name: &str| -> Address {
+        json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+    };
+    let deployed = [returned("first"), returned("second"), returned("salted")];
+    assert_ne!(deployed[0], deployed[1]);
+
+    let transactions = json["transactions"].as_array().unwrap();
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE2", "CREATE2", "CREATE2", "CALL"]);
+    let factory = foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_string().to_lowercase();
+    for (transaction, address) in transactions.iter().zip(deployed) {
+        assert_eq!(transaction["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+        assert_eq!(transaction["contractAddress"], address.to_string().to_lowercase());
+        assert!(!api.get_code(address, None).await.unwrap().is_empty());
+    }
+    assert_eq!(transactions[3]["transaction"]["to"], deployed[0].to_string().to_lowercase());
+    assert_eq!(
+        handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
+        U256::from(1)
+    );
+});
+
 forgetest_async!(tempo_script_resume_preserves_completed_prefix, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(
@@ -6444,7 +6545,7 @@ forgetest!(script_unlocked_conflicts_with_remote_signers, |_prj, cmd| {
             .assert_failure()
             .stderr_eq(format!(
                 "error: the argument '--unlocked' cannot be used with '{signer}'\n\n\
-                 Usage: forge script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
+                 Usage: forge[..] script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
                  For more information, try '--help'.\n"
             ));
     }
