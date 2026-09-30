@@ -844,7 +844,7 @@ async fn create_fork<
         && !execution_networks.supports_fork_source(&fork_context.network_profile)
     {
         eyre::bail!(
-            "cannot create a `{}` fork with an EVM instantiated for `{}`",
+            "cannot create a `{}` fork with an EVM instantiated for `{}`; run the script with --rpc-url pointing to the forked chain to select its EVM",
             fork_context.network,
             execution_networks.execution_network()
         );

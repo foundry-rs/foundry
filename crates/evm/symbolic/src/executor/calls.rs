@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::precompile::u64_to_address;
 
 impl SymbolicExecutor {
     pub(super) fn call(
@@ -1378,7 +1379,7 @@ impl SymbolicExecutor {
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
         let mut candidates = state.world.symbolic_call_targets(&mut self.cx, executor)?;
-        candidates.extend((1..=10).map(precompile_address));
+        candidates.extend((1..=10).map(u64_to_address));
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {
@@ -1734,7 +1735,8 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(cx, state, input, 0, input_len) {
-        return execute_precompile(cx, precompile_address(10), &input, SpecId::CANCUN).map(Some);
+        return execute_precompile(cx, kzg_point_evaluation::ADDRESS, &input, SpecId::CANCUN)
+            .map(Some);
     }
 
     if constrained_byte(cx, state, &input[0])

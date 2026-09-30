@@ -456,6 +456,11 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.pc += 1;
 
+        if Into::<SpecId>::into(executor.spec_id()) < opcode_activation(op) {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            return Ok(StepOutcome::ExceptionalHalt);
+        }
+
         match op {
             opcode::PUSH0 => {
                 state.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -1564,6 +1569,26 @@ impl SymbolicExecutor {
     }
 }
 
+/// Returns the activation fork for opcodes implemented by the symbolic executor.
+const fn opcode_activation(op: u8) -> SpecId {
+    match op {
+        opcode::DELEGATECALL => SpecId::HOMESTEAD,
+        opcode::RETURNDATASIZE | opcode::RETURNDATACOPY | opcode::STATICCALL | opcode::REVERT => {
+            SpecId::BYZANTIUM
+        }
+        opcode::SHL | opcode::SHR | opcode::SAR | opcode::EXTCODEHASH | opcode::CREATE2 => {
+            SpecId::PETERSBURG
+        }
+        opcode::CHAINID | opcode::SELFBALANCE => SpecId::ISTANBUL,
+        opcode::BASEFEE => SpecId::LONDON,
+        opcode::PUSH0 => SpecId::SHANGHAI,
+        opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
+            SpecId::CANCUN
+        }
+        _ => SpecId::FRONTIER,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1808,6 +1833,88 @@ mod tests {
                 .unwrap();
             assert!(matches!(outcome, StepOutcome::ExceptionalHalt), "opcode {op:#x}");
             assert_eq!(state.return_data.len(), 0);
+        }
+    }
+
+    #[test]
+    fn opcodes_respect_activation_forks() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut concrete = ExecutorBuilder::default().build(
+            Default::default(),
+            Default::default(),
+            backend,
+            Default::default(),
+        );
+        for (before, active, ops) in [
+            (SpecId::FRONTIER, SpecId::HOMESTEAD, &[opcode::DELEGATECALL][..]),
+            (
+                SpecId::SPURIOUS_DRAGON,
+                SpecId::BYZANTIUM,
+                &[
+                    opcode::RETURNDATASIZE,
+                    opcode::RETURNDATACOPY,
+                    opcode::STATICCALL,
+                    opcode::REVERT,
+                ],
+            ),
+            (
+                SpecId::BYZANTIUM,
+                SpecId::PETERSBURG,
+                &[opcode::SHL, opcode::SHR, opcode::SAR, opcode::EXTCODEHASH, opcode::CREATE2],
+            ),
+            (SpecId::PETERSBURG, SpecId::ISTANBUL, &[opcode::CHAINID, opcode::SELFBALANCE]),
+            (SpecId::BERLIN, SpecId::LONDON, &[opcode::BASEFEE]),
+            (SpecId::MERGE, SpecId::SHANGHAI, &[opcode::PUSH0]),
+            (
+                SpecId::SHANGHAI,
+                SpecId::CANCUN,
+                &[
+                    opcode::TLOAD,
+                    opcode::TSTORE,
+                    opcode::MCOPY,
+                    opcode::BLOBHASH,
+                    opcode::BLOBBASEFEE,
+                ],
+            ),
+        ] {
+            for &op in ops {
+                for spec in [before, active] {
+                    concrete.set_spec_id(spec);
+                    let mut state = empty_state(&mut executor);
+                    state.return_data =
+                        SymReturnData::from_concrete_bytes(&mut executor.cx, vec![1]);
+                    for _ in 0..opcode::OPCODE_INFO[usize::from(op)].unwrap().inputs() {
+                        state.stack.push(SymExpr::zero(&mut executor.cx)).unwrap();
+                    }
+                    if matches!(op, opcode::DELEGATECALL | opcode::STATICCALL) {
+                        state.stack.pop().unwrap();
+                        let gas = state.fresh_gasleft(&mut executor.cx);
+                        state.stack.push(gas).unwrap();
+                    }
+                    let code = SymCode::concrete(&mut executor.cx, vec![op]);
+                    let outcome = executor
+                        .step(
+                            &concrete,
+                            &code,
+                            code.jump_table(),
+                            &mut state,
+                            &mut VecDeque::new(),
+                            &mut 0,
+                            op,
+                        )
+                        .unwrap();
+                    if spec == before {
+                        assert!(matches!(outcome, StepOutcome::ExceptionalHalt), "opcode {op:#x}");
+                        assert_eq!(state.return_data.len(), 0);
+                    } else {
+                        assert!(
+                            matches!(outcome, StepOutcome::Continue | StepOutcome::Revert),
+                            "opcode {op:#x}"
+                        );
+                    }
+                }
+            }
         }
     }
 }
