@@ -1690,7 +1690,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast {
+        if let Some(broadcast) = &mut self.broadcast {
             // Additional check as transfers in forge scripts seem to be estimated at 2300
             // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
             let is_fixed_gas_limit = call.gas_limit >= 21_000 && !self.dynamic_gas_limit;
@@ -1699,8 +1699,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // We only apply a broadcast *to a specific depth*.
             //
             // We do this because any subsequent contract calls *must* exist on chain and
-            // we only want to grab *this* call, not internal ones
-            if curr_depth == broadcast.depth && call.caller == broadcast.original_caller {
+            // we only want to grab *this* call, not internal ones. `deployCode` routed through
+            // the CREATE2 factory runs one level deeper in a nested EVM.
+            if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
+                && call.caller == broadcast.original_caller
+            {
+                // Reset deploy from code flag for upcoming calls.
+                broadcast.deploy_from_code = false;
+
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
                 // broadcast.origin.
@@ -3232,7 +3238,13 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
         let target_depth = if let Some(prank) = &self.get_prank(depth) {
             prank.depth
         } else if let Some(broadcast) = &self.broadcast {
-            broadcast.depth
+            // `deployCode` executes its create frame in a nested EVM one level deeper, so match
+            // it by caller rather than by the broadcast depth.
+            if broadcast.deploy_from_code && inputs.caller() == broadcast.original_caller {
+                depth
+            } else {
+                broadcast.depth
+            }
         } else {
             1
         };

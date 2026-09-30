@@ -4851,6 +4851,75 @@ contract SaltedSrcScript is Script {
     assert_eq!(tx["arguments"][0], "SaltedSrc");
 });
 
+// Regression: salted `vm.deployCode` must be broadcast through the CREATE2 factory so the
+// on-chain address matches the address returned to the script, and must consume a single-call
+// `vm.broadcast()`.
+forgetest_async!(can_broadcast_salted_deploy_code_in_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) payable { name = _name; }
+    function setName(string memory _name) external { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "SaltedDeployCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+contract SaltedDeployCodeScript is Script {
+    function run() external returns (address first, address second) {
+        vm.broadcast();
+        first = vm.deployCode("src/Token.sol:Token", abi.encode("First"), 1, bytes32(uint256(1)));
+        Token(first).setName("Local");
+
+        vm.startBroadcast();
+        Token(first).setName("Updated");
+        second = vm.deployCode("src/Token.sol:Token", abi.encode("Second"), bytes32(uint256(2)));
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "script/SaltedDeployCode.s.sol:SaltedDeployCodeScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let returned = |name: &str| -> Address {
+        json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+    };
+    let (first, second) = (returned("first"), returned("second"));
+    let transactions = json["transactions"].as_array().unwrap();
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE2", "CALL", "CREATE2"]);
+    assert_eq!(transactions[0]["contractAddress"], first.to_string().to_lowercase());
+    assert_eq!(transactions[1]["transaction"]["to"], first.to_string().to_lowercase());
+    assert_eq!(transactions[2]["contractAddress"], second.to_string().to_lowercase());
+
+    for deployed in [first, second] {
+        assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
+    }
+    assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
+});
+
 // Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
 // The injected cheatcode is `view`, so using it in a `pure` script helper breaks compilation.
 forgetest_init!(can_build_script_creation_code_in_pure_function, |prj, cmd| {
@@ -5913,7 +5982,9 @@ contract DeployTempoAA is Script {
         .expect("no broadcast artifact found");
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
     let transactions = json["transactions"].as_array().unwrap();
-    assert_eq!(transactions.len(), 4, "expected CREATE, CALL, CREATE, and CREATE2 transactions");
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE", "CALL", "CREATE", "CREATE2"]);
     for transaction in transactions {
         assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
     }
