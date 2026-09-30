@@ -60,11 +60,6 @@ pub struct FilterArgs {
     /// Only show coverage for files that do not match the specified regex pattern.
     #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "REGEX")]
     pub coverage_pattern_inverse: Option<regex::Regex>,
-
-    /// Test name pattern loaded from a legacy `forge test --rerun` failure file, applied on top
-    /// of the CLI and config patterns.
-    #[arg(skip)]
-    pub rerun_pattern: Option<regex::Regex>,
 }
 
 impl FilterArgs {
@@ -76,7 +71,6 @@ impl FilterArgs {
             && self.contract_pattern_inverse.is_none()
             && self.path_pattern.is_none()
             && self.path_pattern_inverse.is_none()
-            && self.rerun_pattern.is_none()
     }
 
     /// Merges the set filter globs with the config's values
@@ -107,7 +101,7 @@ impl FilterArgs {
     }
 
     /// Returns all patterns as `(flag, pattern)` pairs.
-    fn patterns(&self) -> [(&'static str, Option<&str>); 8] {
+    fn patterns(&self) -> [(&'static str, Option<&str>); 7] {
         [
             ("match-test", self.test_pattern.as_ref().map(|r| r.as_str())),
             ("no-match-test", self.test_pattern_inverse.as_ref().map(|r| r.as_str())),
@@ -116,7 +110,6 @@ impl FilterArgs {
             ("match-path", self.path_pattern.as_ref().map(|g| g.as_str())),
             ("no-match-path", self.path_pattern_inverse.as_ref().map(|g| g.as_str())),
             ("no-match-coverage", self.coverage_pattern_inverse.as_ref().map(|r| r.as_str())),
-            ("rerun", self.rerun_pattern.as_ref().map(|r| r.as_str())),
         ]
     }
 }
@@ -144,7 +137,6 @@ impl TestFilter for FilterArgs {
     fn matches_test(&self, test_signature: &str) -> bool {
         self.test_pattern.as_ref().is_none_or(|re| re.is_match(test_signature))
             && self.test_pattern_inverse.as_ref().is_none_or(|re| !re.is_match(test_signature))
-            && self.rerun_pattern.as_ref().is_none_or(|re| re.is_match(test_signature))
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {
@@ -180,7 +172,7 @@ pub struct ProjectPathsAwareFilter {
 impl ProjectPathsAwareFilter {
     /// Returns true if the filter is empty.
     pub const fn is_empty(&self) -> bool {
-        self.args_filter.is_empty() && self.rerun_failures.is_none()
+        self.args_filter.is_empty()
     }
 
     /// Returns the CLI arguments.
@@ -285,10 +277,6 @@ impl TestFilter for ProjectPathsAwareFilter {
 
 impl fmt::Display for ProjectPathsAwareFilter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.args_filter.fmt(f)?;
-        if let Some(failures) = &self.rerun_failures {
-            writeln!(f, "\trerun: {} previously failed tests", failures.len())?;
-        }
-        Ok(())
+        self.args_filter.fmt(f)
     }
 }
