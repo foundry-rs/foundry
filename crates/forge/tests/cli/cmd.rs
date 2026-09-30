@@ -1,7 +1,10 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
+use foundry_compilers::{
+    artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping},
+    solc::Solc,
+};
 use foundry_config::{
     BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
     parse_with_profile,
@@ -10,7 +13,7 @@ use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{OutputExt, read_string},
+    util::{OTHER_SOLC_VERSION, OutputExt, read_string},
 };
 use std::{
     fs,
@@ -3194,7 +3197,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-|                                              153519 |             494 |      |        |      |         |
+|                                              153531 |             494 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -3240,7 +3243,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 153519,
+      "gas": 153531,
       "size": 494
     },
     "functions": {
@@ -3429,7 +3432,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                    328961 |            1163 |     |        |     |         |
+|                                    328949 |            1163 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -3484,7 +3487,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328961,
+      "gas": 328949,
       "size": 1163
     },
     "functions": {
@@ -4441,6 +4444,27 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 }
 
 "#]]);
+
+    prj.update_config(|config| config.solc = Some(OTHER_SOLC_VERSION.into()));
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "standard-json", "--use", OTHER_SOLC_VERSION])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let solc =
+        Solc::find_svm_installed_version(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap().unwrap();
+    for compiler in [format!("solc:{OTHER_SOLC_VERSION}"), solc.solc.display().to_string()] {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "standard-json", "--use", &compiler])
+            .assert_success()
+            .stdout_eq(expected.clone());
+    }
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "standard-json"])
+        .assert_success()
+        .stdout_eq(expected);
 });
 
 forgetest!(can_inspect_artifact_json, |prj, cmd| {

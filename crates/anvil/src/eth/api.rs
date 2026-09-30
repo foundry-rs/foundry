@@ -1774,8 +1774,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_addBalance`
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_addBalance");
-        let current_balance = self.backend.get_balance(address, None).await?;
-        self.backend.set_balance(address, current_balance.saturating_add(balance)).await?;
+        self.backend.add_balance(address, balance).await?;
         Ok(())
     }
 
@@ -5168,14 +5167,17 @@ impl EthApi<FoundryNetwork> {
         #[cfg(not(feature = "base"))]
         let base_markers = None;
 
-        let (requires, provides) = if let Some(markers) =
-            base_markers.or_else(|| tempo_parallel_nonce_markers(&pending_transaction))
-        {
+        let markers = if base_markers.is_some() {
+            base_markers
+        } else {
+            self.tempo_nonce_markers(&pending_transaction).await?
+        };
+        let (requires, provides) = if let Some(markers) = markers {
             markers
         } else {
             let nonce = pending_transaction.transaction.nonce();
             let on_chain_nonce = self.backend.current_nonce(from).await?;
-            nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
         };
 
         debug_assert!(requires != provides);
@@ -5185,6 +5187,36 @@ impl EthApi<FoundryNetwork> {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Returns Tempo lane/replay markers when the transaction does not use the protocol nonce.
+    async fn tempo_nonce_markers(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+    ) -> Result<Option<(Vec<TxMarker>, Vec<TxMarker>)>> {
+        let FoundryTxEnvelope::Tempo(signed) = pending.transaction.as_ref() else {
+            return Ok(None);
+        };
+        let tx = signed.tx();
+        if tx.nonce_key.is_zero() {
+            return Ok(None);
+        }
+        if tx.nonce_key == U256::MAX {
+            return Ok(Some((Vec::new(), vec![pending.hash().to_vec()])));
+        }
+
+        let state_nonce = self.backend.tempo_nonce(*pending.sender(), tx.nonce_key, None).await?;
+        if tx.nonce < state_nonce {
+            return Err(InvalidTransactionError::NonceTooLow.into());
+        }
+
+        let requires = if tx.nonce == state_nonce {
+            Vec::new()
+        } else {
+            vec![tempo_nonce_marker(*pending.sender(), tx.nonce_key, tx.nonce - 1)]
+        };
+        let provides = vec![tempo_nonce_marker(*pending.sender(), tx.nonce_key, tx.nonce)];
+        Ok(Some((requires, provides)))
     }
 
     /// Returns Base EIP-8130 channel/replay markers when the transaction does not use the
@@ -5447,6 +5479,14 @@ fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> V
     if on_chain_nonce <= prev_nonce { vec![to_marker(prev_nonce, from)] } else { Vec::new() }
 }
 
+fn tempo_nonce_marker(sender: Address, nonce_key: U256, nonce: u64) -> TxMarker {
+    let mut marker = b"tempo-nonce".to_vec();
+    marker.extend_from_slice(sender.as_slice());
+    marker.extend_from_slice(&nonce_key.to_be_bytes::<32>());
+    marker.extend_from_slice(&nonce.to_be_bytes());
+    marker
+}
+
 #[cfg(feature = "base")]
 fn eip8130_channel_marker(sender: Address, nonce_key: U256, nonce_sequence: u64) -> TxMarker {
     let mut marker = b"base-eip8130-channel".to_vec();
@@ -5461,31 +5501,6 @@ fn eip8130_replay_marker(replay_id: B256) -> TxMarker {
     let mut marker = b"base-eip8130-replay".to_vec();
     marker.extend_from_slice(replay_id.as_slice());
     marker
-}
-
-fn tempo_parallel_nonce_markers(
-    pending_transaction: &PendingTransaction<FoundryTxEnvelope>,
-) -> Option<(Vec<TxMarker>, Vec<TxMarker>)> {
-    // Tempo txs with non-zero nonce_key use a 2D nonce system and should not
-    // be sequenced by account nonce markers.
-    pending_transaction
-        .transaction
-        .as_ref()
-        .has_nonzero_tempo_nonce_key()
-        .then(|| (vec![], vec![pending_transaction.hash().to_vec()]))
-}
-
-/// Returns the pool `(requires, provides)` markers for a transaction, accounting for
-/// Tempo's 2D nonce system (see [`tempo_parallel_nonce_markers`]).
-fn nonce_markers(
-    pending_transaction: &PendingTransaction<FoundryTxEnvelope>,
-    nonce: u64,
-    on_chain_nonce: u64,
-    from: Address,
-) -> (Vec<TxMarker>, Vec<TxMarker>) {
-    tempo_parallel_nonce_markers(pending_transaction).unwrap_or_else(|| {
-        (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
-    })
 }
 
 /// Rewrites the Tempo fee payer service encoding of a raw transaction into the standard envelope

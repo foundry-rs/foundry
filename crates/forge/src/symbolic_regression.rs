@@ -7,6 +7,7 @@ use alloy_primitives::{U256, hex};
 use eyre::{Result, bail};
 use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs, sh_warn};
 use foundry_config::Config;
+use foundry_evm::constants::CALLER;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
@@ -234,6 +235,12 @@ fn plan_symbolic_regression(
     writeln!(contents, "    function prank(address msgSender) external;")?;
     writeln!(contents, "    function roll(uint256 newHeight) external;")?;
     writeln!(contents, "    function warp(uint256 newTimestamp) external;")?;
+    if !artifact.storage.is_empty() {
+        writeln!(
+            contents,
+            "    function store(address target, bytes32 slot, bytes32 value) external;"
+        )?;
+    }
     writeln!(contents, "}}")?;
     writeln!(contents)?;
     writeln!(contents, "contract {generated_contract} is {contract} {{")?;
@@ -250,6 +257,15 @@ fn plan_symbolic_regression(
     writeln!(contents, "    }}")?;
     writeln!(contents)?;
     writeln!(contents, "    function {generated_test}() public payable {{")?;
+    for assignment in &artifact.storage {
+        writeln!(
+            contents,
+            "        __foundrySymbolicVm.store({}, bytes32(uint256({})), bytes32(uint256({})));",
+            assignment.address,
+            u256_literal(assignment.slot),
+            u256_literal(assignment.value)
+        )?;
+    }
     match artifact.kind {
         SymbolicCounterexampleArtifactKind::SingleCall => {
             let call = artifact.calls.first().expect("single-call artifact has at least one call");
@@ -266,12 +282,14 @@ fn plan_symbolic_regression(
                     Some(index),
                 )?;
             }
+            writeln!(contents, "        __foundrySymbolicVm.prank({CALLER});")?;
             writeln!(
                 contents,
                 "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",
                 hex::encode(selector_from_signature(&artifact.test.test))
             )?;
             if call_after_invariant {
+                writeln!(contents, "        __foundrySymbolicVm.prank({CALLER});")?;
                 writeln!(
                     contents,
                     "        __foundrySymbolicRegressionCall(address(this), hex\"{}\", 0, true);",

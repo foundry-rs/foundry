@@ -214,6 +214,8 @@ pub struct CheckSequenceOutcome {
     /// Whether replay stopped on an assertion in a sequence call rather than a plain revert or
     /// terminal invariant check.
     pub sequence_assertion_failure: bool,
+    /// Innermost reverter for a sequence assertion, used to recognize legacy handler identities.
+    pub sequence_reverter: Option<Address>,
 }
 
 pub struct ShrunkSequence {
@@ -226,6 +228,9 @@ pub struct ShrunkSequence {
 #[derive(Debug)]
 pub struct HandlerReplayOutcome {
     pub anchor_asserted: bool,
+    /// Top-level fuzzed handler target used as the canonical failure identity.
+    pub handler_target: Address,
+    /// Innermost reverting frame, retained to recognize legacy persisted identities.
     pub reverter: Address,
     pub selector: Selector,
     pub revert_reason: Option<String>,
@@ -698,7 +703,16 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                 reverts += 1;
             }
             if did_fail_on_assert(&call_result, &call_result.state_changeset) {
-                let site = sequence_call_failure_site(&calls[idx], &call_result);
+                let call = &calls[idx];
+                let target = call.call_details.target;
+                let selector = selector_from_calldata(&call.call_details.calldata);
+                let fingerprint = handler_edge_fingerprint(
+                    snapshot_edge_fingerprint(&call_result),
+                    target,
+                    selector,
+                );
+                let sequence_reverter = call_result.reverter.or(Some(target));
+                let site = CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint };
                 return Ok(ReplayDecision::Stop(CheckSequenceOutcome {
                     success: false,
                     replayed_entirely: false,
@@ -707,6 +721,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     reverts,
                     failure_site: Some(site),
                     sequence_assertion_failure: true,
+                    sequence_reverter,
                 }));
             }
             if call_result.reverted && options.fail_on_revert {
@@ -719,6 +734,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                         reverts,
                         failure_site: None,
                         sequence_assertion_failure: false,
+                        sequence_reverter: None,
                     }));
                 }
                 let site = sequence_call_failure_site(&calls[idx], &call_result);
@@ -730,6 +746,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     reverts,
                     failure_site: Some(site),
                     sequence_assertion_failure: false,
+                    sequence_reverter: None,
                 }));
             }
             Ok(ReplayDecision::Continue)
@@ -751,6 +768,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         reverts,
         failure_site,
         sequence_assertion_failure: false,
+        sequence_reverter: None,
     })
 }
 
@@ -950,6 +968,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
     let Some(&anchor_idx) = sequence.last() else {
         return Ok(HandlerReplayOutcome {
             anchor_asserted: false,
+            handler_target: Address::ZERO,
             reverter: Address::ZERO,
             selector: Selector::ZERO,
             revert_reason: None,
@@ -967,7 +986,10 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
             if idx == anchor_idx {
                 let snapshot = snapshot_edge_fingerprint(&call_result);
                 let anchor = &calls[anchor_idx];
-                let reverter = call_result.reverter.unwrap_or(anchor.call_details.target);
+                // Handler failures are identified by the top-level fuzzed call. The innermost
+                // reverter can instead be a nested callee or the cheatcode address.
+                let handler_target = anchor.call_details.target;
+                let reverter = call_result.reverter.unwrap_or(handler_target);
                 let selector_bytes: [u8; 4] = anchor
                     .call_details
                     .calldata
@@ -975,11 +997,12 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
                     .and_then(|s| s.try_into().ok())
                     .unwrap_or_default();
                 let selector = Selector::from(selector_bytes);
-                let fingerprint = handler_edge_fingerprint(snapshot, reverter, selector);
+                let fingerprint = handler_edge_fingerprint(snapshot, handler_target, selector);
                 let reason =
                     if asserted { assertion_failure_reason(call_result, rd) } else { None };
                 return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
                     anchor_asserted: asserted,
+                    handler_target,
                     reverter,
                     selector,
                     revert_reason: reason,
@@ -990,6 +1013,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
                 // Pre-anchor assertion = different bug; reject.
                 return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
                     anchor_asserted: false,
+                    handler_target: Address::ZERO,
                     reverter: Address::ZERO,
                     selector: Selector::ZERO,
                     revert_reason: None,
@@ -1002,6 +1026,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
 
     Ok(outcome.unwrap_or(HandlerReplayOutcome {
         anchor_asserted: false,
+        handler_target: Address::ZERO,
         reverter: Address::ZERO,
         selector: Selector::ZERO,
         revert_reason: None,

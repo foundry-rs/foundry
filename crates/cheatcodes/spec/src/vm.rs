@@ -602,7 +602,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function blobhashes(bytes32[] calldata hashes) external;
 
-    /// Gets the blockhashes from the current transaction.
+    /// Gets the blobhashes from the current transaction.
     /// Not available on EVM versions before Cancun.
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]

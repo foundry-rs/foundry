@@ -2702,6 +2702,7 @@ contract SymbolicRegressionSequence is Test {
     }
 
     function invariant_counterNeverEleven() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected invariant sender");
         assert(target.value() != 11);
     }
 }
@@ -2727,14 +2728,25 @@ contract SymbolicRegressionSequence is Test {
     );
     assert!(regression.exists(), "missing regression {}", regression.display());
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(["test", "--match-test", "test_regression_invariant_counterNeverEleven_symbolic"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(stdout.contains("test_regression_invariant_counterNeverEleven_symbolic()"), "{stdout}");
-    assert!(stdout.contains("assertion failed"), "{stdout}");
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_counterNeverEleven_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression.t.sol:SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_counterNeverEleven_symbolic()": {
+        "status": "Failure",
+        "reason": "panic: assertion failed (0x01)",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
 });
 
 forgetest_init!(symbolic_emits_stateful_regression_with_after_invariant, |prj, cmd| {
@@ -2768,9 +2780,12 @@ contract SymbolicRegressionAfterInvariant is Test {
         targetContract(address(target));
     }
 
-    function invariant_ok() public pure {}
+    function invariant_ok() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected invariant sender");
+    }
 
     function afterInvariant() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected afterInvariant sender");
         require(target.value() != 1, "afterInvariant failure");
     }
 }
@@ -2801,14 +2816,165 @@ contract SymbolicRegressionAfterInvariant is Test {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
     assert!(generated.contains(r#"hex"93969ddf""#), "{generated}");
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(["test", "--match-test", "test_regression_invariant_ok_symbolic"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(stdout.contains("test_regression_invariant_ok_symbolic()"), "{stdout}");
-    assert!(stdout.contains("afterInvariant failure"), "{stdout}");
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression.t.sol:SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_ok_symbolic()": {
+        "status": "Failure",
+        "reason": "afterInvariant failure",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+});
+
+forgetest_init!(symbolic_emits_regression_with_setup_storage, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_with_setup_storage because z3 is not available"
+        );
+        return;
+    }
+    prj.update_config(|config| config.invariant.runs = 0);
+
+    prj.add_test(
+        "StorageRegression.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageVm {
+    function setArbitraryStorage(address target) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function copyStorage(address from, address to) external;
+}
+
+contract RegressionStore {
+    uint256 public value;
+    uint256 public zero;
+
+    constructor(uint256 initial) {
+        value = initial;
+        zero = initial;
+    }
+}
+
+contract StorageRegressionTarget {
+    RegressionStore source;
+    RegressionStore store;
+    bool public hit;
+
+    constructor(RegressionStore source_, RegressionStore store_) {
+        source = source_;
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42 && store.zero() == 0);
+        require(source.value() == 42 && source.zero() == 0);
+        hit = true;
+    }
+}
+
+abstract contract StorageRegressionBase is Test {
+    StorageRegressionTarget target;
+
+    function initTarget(RegressionStore source, RegressionStore store) internal {
+        target = new StorageRegressionTarget(source, store);
+        targetContract(address(target));
+    }
+
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+
+contract DirectStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore store = new RegressionStore(0);
+        StorageVm(address(vm)).setArbitraryStorage(address(store));
+        initTarget(store, store);
+    }
+}
+
+contract CopiedStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore source = new RegressionStore(0);
+        RegressionStore copy = new RegressionStore(0);
+        StorageVm(address(vm)).setArbitraryStorage(address(source));
+        StorageVm(address(vm)).copyStorage(address(source), address(copy));
+        initTarget(source, copy);
+    }
+}
+
+contract OverwriteStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore store = new RegressionStore(1);
+        StorageVm(address(vm)).setArbitraryStorage(address(store), true);
+        initTarget(store, store);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--emit-regression",
+        "--match-test",
+        "invariant_notHit",
+        "--symbolic-invariant-depth",
+        "1",
+    ])
+    .assert_failure();
+
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_notHit_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/DirectStorageRegression_invariant_notHit_SymbolicRegression.t.sol:DirectStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/regressions/CopiedStorageRegression_invariant_notHit_SymbolicRegression.t.sol:CopiedStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/regressions/OverwriteStorageRegression_invariant_notHit_SymbolicRegression.t.sol:OverwriteStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
 });
 
 forgetest_init!(symbolic_emits_handler_assertion_regression, |prj, cmd| {
@@ -4062,12 +4228,13 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "covered_invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
         "SymbolicInvariantFrontierSeed",
         "--invariant-depth",
-        "1",
+        "2",
         "--threads",
         "1",
         "--invariant-frontier-dir",
@@ -4080,7 +4247,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "--symbolic-frontier-ids",
         &target_frontier_id,
     ])
-    .assert_success();
+    .assert_failure();
     cmd.forge_fuse()
         .args([
             "fuzz",
@@ -4101,7 +4268,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "--match-contract",
         "SymbolicInvariantFrontierSeed",
         "--invariant-depth",
-        "1",
+        "2",
         "--threads",
         "1",
         "--invariant-frontier-dir",
@@ -4150,7 +4317,7 @@ contract SymbolicInvariantFrontierSeed is Test {
             "--match-contract",
             "SymbolicInvariantFrontierSeed",
             "--invariant-depth",
-            "1",
+            "2",
             "--threads",
             "1",
             "--invariant-frontier-dir",
@@ -4176,12 +4343,13 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
         "SymbolicInvariantFrontierSeed",
         "--invariant-depth",
-        "1",
+        "2",
         "--threads",
         "1",
         "--invariant-frontier-dir",
@@ -4192,7 +4360,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "--symbolic-frontier-limit",
         "1",
     ])
-    .assert_success();
+    .assert_failure();
 
     let output = cmd
         .forge_fuse()
@@ -4218,12 +4386,13 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "filtered_invariant_failures");
     cmd.args([
         "test",
         "--match-contract",
         "SymbolicInvariantFrontierSeed",
         "--invariant-depth",
-        "1",
+        "2",
         "--threads",
         "1",
         "--invariant-frontier-dir",
@@ -4236,7 +4405,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "--symbolic-frontier-ids",
         &target_frontier_id,
     ])
-    .assert_success();
+    .assert_failure();
     cmd.forge_fuse()
         .args([
             "fuzz",
@@ -4252,6 +4421,7 @@ contract SymbolicInvariantFrontierSeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "alternate_anchor_failures");
     cmd.args([
         "test",
         "--match-contract",
@@ -4259,7 +4429,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "--match-test",
         "invariant_notBroken",
         "--invariant-depth",
-        "1",
+        "2",
         "--threads",
         "1",
         "--invariant-frontier-dir",
@@ -4272,7 +4442,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "--symbolic-frontier-ids",
         &target_frontier_id,
     ])
-    .assert_success();
+    .assert_failure();
     let alternate_anchor_corpus = prj
         .root()
         .join("alternate_anchor_corpus")
@@ -4394,7 +4564,7 @@ contract SymbolicInvariantRevertedPrefixTest is Test {
         "--symbolic-frontier-limit",
         "1",
     ])
-    .assert_success();
+    .assert_failure();
 
     cmd.forge_fuse()
         .args([
@@ -4694,13 +4864,17 @@ contract SymbolicInvariantCandidateSeed is Test {
         targetContract(address(target));
     }
 
-    function invariant_anchor() public pure {}
+    function invariant_anchor() public view {
+        assertFalse(target.broken());
+    }
 
     function invariant_notBroken() public view {
         assertFalse(target.broken());
     }
 
-    function afterInvariant() public pure {}
+    function afterInvariant() public view {
+        assertFalse(target.broken());
+    }
 }
 "#,
         );
@@ -4737,26 +4911,115 @@ contract SymbolicInvariantCandidateSeed is Test {
                         || frontier["operands"]["rhs"] == "0xa")
             });
         let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+        let artifact: Value =
+            serde_json::from_slice(&std::fs::read(&frontier_path).unwrap()).unwrap();
 
+        let failure_dir = prj.root().join("unwritable_failures");
+        std::fs::write(&failure_dir, b"not a directory").unwrap();
         cmd.forge_fuse();
         cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
-        cmd.args([
-            "test",
-            "--match-contract",
-            "SymbolicInvariantCandidateSeed",
-            "--threads",
-            "1",
-            "--invariant-frontier-dir",
-            "candidate_frontiers",
-            "--invariant-corpus-dir",
-            "candidate_corpus",
-            "--symbolic-use-fuzz-frontiers",
-            "--symbolic-frontier-limit",
-            "1",
-            "--symbolic-frontier-ids",
-            &target_frontier_id,
-        ])
-        .assert_success();
+        cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", failure_dir);
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+        cmd.env("FOUNDRY_INVARIANT_CHECK_INTERVAL", "0");
+        let nonterminal_output = cmd
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "nonterminal_candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-check-invariant-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_success()
+            .get_output()
+            .clone();
+        let nonterminal_corpus = prj
+            .root()
+            .join("nonterminal_candidate_corpus")
+            .join("SymbolicInvariantCandidateSeed")
+            .join("worker0")
+            .join("corpus");
+        assert!(
+            std::fs::read_dir(&nonterminal_corpus)
+                .is_ok_and(|mut entries| entries.next().is_some()),
+            "empty {}\nstdout={}\nstderr={}",
+            nonterminal_corpus.display(),
+            nonterminal_output.stdout_lossy(),
+            nonterminal_output.stderr_lossy()
+        );
+
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "1");
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--json",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        let failures = result["invariant_failures"].as_array().unwrap();
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[1]["name"], "invariant_notBroken");
+
+        let broken_worker = prj
+            .root()
+            .join("broken_candidate_corpus")
+            .join("SymbolicInvariantCandidateSeed")
+            .join("worker0");
+        std::fs::create_dir_all(broken_worker.parent().unwrap()).unwrap();
+        std::fs::write(&broken_worker, b"not a directory").unwrap();
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--json",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "broken_candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        let failures = result["invariant_failures"].as_array().unwrap();
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[1]["name"], "invariant_notBroken");
 
         let output = cmd
             .forge_fuse()
@@ -4779,6 +5042,217 @@ contract SymbolicInvariantCandidateSeed is Test {
             output.stdout_lossy(),
             output.stderr_lossy()
         );
+
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+        cmd.env("FOUNDRY_INVARIANT_DEPTH_MODE", "random");
+        cmd.env("FOUNDRY_INVARIANT_MIN_DEPTH", "1");
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--json",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "random_depth_candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-check-invariant-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        assert_eq!(result["invariant_failures"].as_array().unwrap().len(), 2);
+
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "0");
+        cmd.env("FOUNDRY_INVARIANT_MIN_DEPTH", "0");
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "zero_depth_candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-check-invariant-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure();
+
+        cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+        cmd.env("FOUNDRY_INVARIANT_DEPTH_MODE", "fixed");
+        let mut sequenced_artifact = artifact;
+        let second_call = sequenced_artifact["sequences"][0][0].clone();
+        sequenced_artifact["sequences"][0].as_array_mut().unwrap().push(second_call);
+        let mut terminal_frontier = target_frontier.clone();
+        terminal_frontier["id"] = Value::from(target_frontier["id"].as_u64().unwrap() + 1);
+        terminal_frontier["call_index"] = Value::from(1);
+        let terminal_frontier_id = terminal_frontier["id"].as_u64().unwrap().to_string();
+        sequenced_artifact["frontiers"].as_array_mut().unwrap().push(terminal_frontier);
+        std::fs::write(&frontier_path, serde_json::to_vec_pretty(&sequenced_artifact).unwrap())
+            .unwrap();
+        let frontier_ids = format!("{target_frontier_id},{terminal_frontier_id}");
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "SymbolicInvariantCandidateSeed",
+                "--json",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "candidate_frontiers",
+                "--invariant-corpus-dir",
+                "sequenced_candidate_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-check-invariant-frontiers",
+                "--symbolic-frontier-limit",
+                "2",
+                "--symbolic-frontier-ids",
+                &frontier_ids,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        let failures = result["invariant_failures"].as_array().unwrap();
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[1]["name"], "invariant_notBroken");
+    }
+);
+
+forgetest_init!(
+    symbolic_invariant_frontier_seeding_checks_hook_after_objective_revert,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_invariant_frontier_seeding_checks_hook_after_objective_revert because z3 is not available"
+            );
+            return;
+        }
+
+        prj.add_test(
+            "SymbolicInvariantOptimizationSeed.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantOptimizationTarget {
+    uint256 public stored = 100;
+
+    function act(uint256 value) external {
+        if (value < 10) stored = value;
+    }
+}
+
+contract SymbolicInvariantOptimizationSeed is Test {
+    SymbolicInvariantOptimizationTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantOptimizationTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_objective() public view returns (int256) {
+        if (target.stored() < 10) revert("no objective");
+        return int256(target.stored());
+    }
+
+    function afterInvariant() public view {
+        require(target.stored() >= 10, "hook failure");
+    }
+}
+"#,
+        );
+
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "run",
+                "--match-contract",
+                "SymbolicInvariantOptimizationSeed",
+                "--runs",
+                "1",
+                "--depth",
+                "1",
+                "--seed",
+                "0x1234",
+                "--dictionary-weight",
+                "0",
+                "--threads",
+                "1",
+                "--frontier-dir",
+                "optimization_frontiers",
+            ])
+            .assert_success();
+
+        let frontier_path =
+            find_stateful_frontier_artifact(&prj.root().join("optimization_frontiers"));
+        let target_frontier =
+            keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+                frontier["call_index"] == 0
+                    && frontier["site"]["opcode_name"] == "LT"
+                    && frontier["operands"]["result"] == false
+                    && (frontier["operands"]["lhs"] == "0xa"
+                        || frontier["operands"]["rhs"] == "0xa")
+            });
+        let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        let output = cmd
+            .args([
+                "test",
+                "--json",
+                "--match-contract",
+                "SymbolicInvariantOptimizationSeed",
+                "--invariant-depth",
+                "1",
+                "--threads",
+                "1",
+                "--invariant-frontier-dir",
+                "optimization_frontiers",
+                "--invariant-corpus-dir",
+                "optimization_corpus",
+                "--symbolic-use-fuzz-frontiers",
+                "--symbolic-check-invariant-frontiers",
+                "--symbolic-frontier-limit",
+                "1",
+                "--symbolic-frontier-ids",
+                &target_frontier_id,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_objective()");
+        assert_eq!(result["invariant_failures"][0]["reason"], "hook failure");
+
+        let corpus_dir = prj
+            .root()
+            .join("optimization_corpus")
+            .join("SymbolicInvariantOptimizationSeed")
+            .join("invariant_objective")
+            .join("worker0")
+            .join("corpus");
+        assert!(std::fs::read_dir(corpus_dir).unwrap().next().is_some());
     }
 );
 
@@ -4901,6 +5375,8 @@ contract SymbolicInvariantPropertySeed is Test {
         "test",
         "--match-contract",
         "SymbolicInvariantPropertySeed",
+        "--invariant-depth",
+        "2",
         "--threads",
         "1",
         "--invariant-frontier-dir",
@@ -4929,12 +5405,15 @@ contract SymbolicInvariantPropertySeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "property_failures");
     cmd.env("RUST_LOG", "forge::runner=debug");
     let output = cmd
         .args([
             "test",
             "--match-contract",
             "SymbolicInvariantPropertySeed",
+            "--invariant-depth",
+            "2",
             "--threads",
             "1",
             "--invariant-frontier-dir",
@@ -4948,7 +5427,7 @@ contract SymbolicInvariantPropertySeed is Test {
             "--symbolic-frontier-ids",
             &target_frontier_id,
         ])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .clone();
     let stderr = output.stderr_lossy();
@@ -5003,8 +5482,9 @@ contract SymbolicInvariantPropertySeed is Test {
             .assert_success();
     }
 
-    let output = cmd
-        .forge_fuse()
+    let symbolic_cmd = cmd.forge_fuse();
+    symbolic_cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "symbolic_failures");
+    let output = symbolic_cmd
         .args([
             "test",
             "--symbolic",
@@ -5025,10 +5505,10 @@ contract SymbolicInvariantPropertySeed is Test {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
-forgetest_init!(symbolic_invariant_frontier_seeding_checks_after_invariant, |prj, cmd| {
+forgetest_init!(symbolic_invariant_frontier_seeding_defers_hook, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_invariant_frontier_seeding_checks_after_invariant because z3 is not available"
+            "skipping symbolic_invariant_frontier_seeding_defers_hook because z3 is not available"
         );
         return;
     }
@@ -5078,7 +5558,7 @@ contract SymbolicInvariantHookSeed is Test {
             "--runs",
             "1",
             "--depth",
-            "1",
+            "2",
             "--seed",
             "0xdef0",
             "--threads",
@@ -5158,6 +5638,127 @@ contract SymbolicInvariantHookSeed is Test {
             "hook_corpus",
         ])
         .assert_failure();
+});
+
+forgetest_init!(symbolic_invariant_frontier_seeding_tracks_checkpoint_failures, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_tracks_checkpoint_failures because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantCheckpointSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantCheckpointTarget {
+    uint256 public stored;
+    uint256 public marker;
+
+    function set(uint256 value) external {
+        stored = value;
+        if (value == 2) marker = 1;
+    }
+}
+
+contract SymbolicInvariantCheckpointSeed is Test {
+    SymbolicInvariantCheckpointTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantCheckpointTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public view {
+        require(target.stored() != 1, "predicate failure");
+    }
+
+    function afterInvariant() public view {
+        require(target.stored() != 2, "hook failure");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantCheckpointSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--dictionary-weight",
+            "0",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "checkpoint_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("checkpoint_frontiers"));
+    let mut artifact: Value =
+        serde_json::from_slice(&std::fs::read(&frontier_path).unwrap()).unwrap();
+    let mut frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|frontier| frontier["call_index"] == 0 && frontier["site"]["opcode_name"] == "EQ")
+        .max_by_key(|frontier| frontier["site"]["pc"].as_u64())
+        .cloned()
+        .unwrap_or_else(|| panic!("missing target comparison frontier in {artifact}"));
+    frontier["call_index"] = Value::from(1);
+    let frontier_id = frontier["id"].as_u64().unwrap().to_string();
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![frontier.clone()];
+
+    let mut first_call = artifact["sequences"][0][0].clone();
+    let selector = &keccak256(b"set(uint256)")[..4];
+    first_call["calldata"] = Value::from(format!("0x{}{:064x}", hex::encode(selector), 1));
+    artifact["sequences"][0].as_array_mut().unwrap().insert(0, first_call);
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_CHECK_INTERVAL", "1");
+    let output = cmd
+        .args([
+            "test",
+            "--json",
+            "--match-contract",
+            "SymbolicInvariantCheckpointSeed",
+            "--invariant-depth",
+            "2",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "checkpoint_frontiers",
+            "--invariant-corpus-dir",
+            "checkpoint_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(
+        !output.stdout.is_empty(),
+        "missing JSON output\nstdout={}\nstderr={}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
+    let result = json_test_result(&output.stdout, "invariant_anchor()");
+    assert_eq!(result["invariant_failures"][0]["reason"], "predicate failure");
 });
 
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {

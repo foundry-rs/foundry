@@ -1,5 +1,7 @@
 use foundry_cheatcodes_spec::Vm::*;
-use foundry_evm::inspectors::cheatcodes::current_execution_context;
+use foundry_evm::{
+    core::backend::GLOBAL_FAIL_SLOT, inspectors::cheatcodes::current_execution_context,
+};
 
 use super::*;
 
@@ -1967,7 +1969,7 @@ impl SymbolicExecutor {
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
                 let slot = state.memory.load_word(&mut self.cx, in_offset + 36)?;
                 let value = state.memory.load_word(&mut self.cx, in_offset + 68)?;
-                let failed_slot = SymExpr::constant(&mut self.cx, failed_slot());
+                let failed_slot = SymExpr::constant(&mut self.cx, GLOBAL_FAIL_SLOT);
                 let one = SymExpr::one(&mut self.cx);
                 if target == CHEATCODE_ADDRESS && slot == failed_slot && value == one {
                     return Ok(CheatcodeOutcome::Failure);

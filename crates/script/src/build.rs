@@ -328,12 +328,12 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             sequence
         };
 
+        let resolution = sequence.restore_delegated_pending(
+            self.args.resume_attempt,
+            self.args.resume_tx_hash,
+            self.args.resume_retry,
+        )?;
         if !self.args.batch {
-            let resolution = sequence.restore_delegated_pending(
-                self.args.resume_attempt,
-                self.args.resume_tx_hash,
-                self.args.resume_retry,
-            )?;
             if let Some((sequence_index, _, attempt_id, hash)) = resolution {
                 let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
                     &self.script_config.config,

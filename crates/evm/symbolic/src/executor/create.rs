@@ -11,7 +11,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(StepOutcome::Revert);
+            return Ok(StepOutcome::ExceptionalHalt);
         }
 
         let offset = state.stack.peek(1)?.clone();

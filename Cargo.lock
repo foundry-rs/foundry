@@ -4052,9 +4052,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.135.2"
+version = "0.136.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcb1cc85ccb60cfc53c3d55e23196fef28ae78fbcebe4e1ff3ff866a3c93d61c"
+checksum = "2b46ea04636aa506eb49e5a61c54270314912de7f1c33ad7f7c2c57cb0784e23"
 
 [[package]]
 name = "crc"
@@ -5583,7 +5583,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5833,7 +5833,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5865,7 +5865,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5874,7 +5874,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5894,7 +5894,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5907,7 +5907,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6258,7 +6258,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6368,7 +6368,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=57dad48701b209e0b68b10458d0efab5a5e7597a#57dad48701b209e0b68b10458d0efab5a5e7597a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39c03a49ade2f74a6e97e2af308283a42d78d302#39c03a49ade2f74a6e97e2af308283a42d78d302"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -10669,9 +10669,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.44.0"
+version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c1f17ebaa6be220728837731a3c87d1a542bf31a68138e9364a3a33b149415c"
+checksum = "3584d48ecc82f4df573c0b68994a27f46da53e06dfae224e446b1aa868bc1665"
 dependencies = [
  "alloy-eip2930",
  "alloy-primitives",
@@ -11874,7 +11874,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -11890,7 +11890,7 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -11898,11 +11898,11 @@ dependencies = [
  "anstyle",
  "bitflags 2.13.1",
  "bs58",
- "cfg-if",
  "clap",
  "indexmap 2.14.0",
  "libc",
  "mimalloc",
+ "rayon",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -11921,7 +11921,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -11942,7 +11942,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -11960,7 +11960,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -11973,7 +11973,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "bumpalo",
  "diff",
@@ -11988,7 +11988,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -12016,7 +12016,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -12027,7 +12027,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "arc-swap",
  "async-lsp",
@@ -12054,7 +12054,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12064,7 +12064,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
@@ -12085,7 +12085,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=ab300772cbccfd7e5bca424c34fceeed83bd6fde#ab300772cbccfd7e5bca424c34fceeed83bd6fde"
+source = "git+https://github.com/paradigmxyz/solar?rev=8f8a4899459d43774c1cc5a2e1146f843c5b1478#8f8a4899459d43774c1cc5a2e1146f843c5b1478"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
