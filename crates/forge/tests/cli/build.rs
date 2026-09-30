@@ -1619,3 +1619,23 @@ Error: foundry.lock does not match installed dependencies:
 
 "#]]);
 });
+
+forgetest!(deny_warnings_checks_warm_cache, |prj, cmd| {
+    prj.add_source(
+        "Warn.sol",
+        r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+contract Warn {
+    function f(uint256 a) public pure returns (uint256) {
+        uint256 unused;
+        return a;
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--deny", "warnings"]).assert_failure();
+    prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
+    cmd.forge_fuse().arg("build").assert_failure();
+});
