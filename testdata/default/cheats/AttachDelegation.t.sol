@@ -204,9 +204,10 @@ contract AttachDelegationTest is Test {
         assertEq(token.balanceOf(address(this)), 50);
         assertEq(token.balanceOf(alice), 50);
 
+        // Alice's nonce 0 authorization was consumed by Bob's transaction.
         vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
-        vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
         vm.signAndAttachDelegation(address(implementation), alice_pk, 0);
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
         vm.signAndAttachDelegation(address(implementation2), bob_pk, 2);
     }
 }

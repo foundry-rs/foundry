@@ -1730,15 +1730,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let fee_token = ecx.tx().fee_token();
-                    let account =
-                        ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
+                    let nonce =
+                        ecx.journal().evm_state().get(&broadcast.new_origin).unwrap().info.nonce;
 
                     let mut tx_req = TransactionRequestFor::<FEN>::default()
                         .with_from(broadcast.new_origin)
                         .with_to(call.target_address)
                         .with_value(call.transfer_value().unwrap_or_default())
                         .with_input(input)
-                        .with_nonce(account.info.nonce)
+                        .with_nonce(nonce)
                         .with_chain_id(chain_id);
                     if is_fixed_gas_limit {
                         tx_req.set_gas_limit(call.gas_limit)
@@ -1771,10 +1771,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             let Ok(authority) = auth.recover_authority() else {
                                 continue;
                             };
-                            if authority == broadcast.new_origin {
-                                // Increment nonce of broadcasting account to reflect signed
-                                // authorization.
-                                account.info.nonce += 1;
+                            // Increment the nonce of every authority to reflect the signed
+                            // authorization, as EIP-7702 does on-chain.
+                            match journaled_account(ecx, authority) {
+                                Ok(account) => account.info.nonce += 1,
+                                Err(err) => {
+                                    return Some(CallOutcome {
+                                        result: InterpreterResult {
+                                            result: InstructionResult::Revert,
+                                            output: err.abi_encode().into(),
+                                            gas,
+                                        },
+                                        memory_offset: call.return_memory_offset.clone(),
+                                        was_precompile_called: false,
+                                        precompile_call_logs: vec![],
+                                        charged_new_account_state_gas: call
+                                            .charged_new_account_state_gas,
+                                    });
+                                }
                             }
                         }
                         tx_req.set_authorization_list(active_delegations);
@@ -1791,6 +1805,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
                     if !isolate_call {
+                        let account = ecx
+                            .journal_mut()
+                            .evm_state_mut()
+                            .get_mut(&broadcast.new_origin)
+                            .unwrap();
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
