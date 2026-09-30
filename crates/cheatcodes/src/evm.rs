@@ -810,7 +810,11 @@ impl Cheatcode for etchCall {
         ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        // Clear synthetic history only in local mode. On forks, preserve storage as for other
+        // etched accounts; clearing the ring can require one synchronous RPC read per uncached
+        // slot.
         if *target == HISTORY_STORAGE_ADDRESS
+            && !ccx.ecx.db().is_forked_mode()
             && bytecode.hash_slow() != keccak256(&HISTORY_STORAGE_CODE)
             && ccx.ecx.journal_mut().evm_state()[target].info.code_hash
                 == keccak256(&HISTORY_STORAGE_CODE)

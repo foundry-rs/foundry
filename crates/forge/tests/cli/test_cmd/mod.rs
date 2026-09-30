@@ -2117,33 +2117,40 @@ contract EIP2935EtchInSetUpTest is Test {
     cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
 });
 
-// Same rollback guarantee when the history storage is served by a fork RPC.
-forgetest_async!(eip2935_history_storage_etch_rollback_fork, |prj, cmd| {
+// On a fork the history storage is the chain's real storage, so replacing the contract keeps it.
+forgetest_async!(eip2935_history_storage_etch_keeps_fork_storage, |prj, cmd| {
     let (api, handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
     let endpoint = handle.http_endpoint();
 
     prj.add_test(
-        "EIP2935EtchRollbackFork.t.sol",
+        "EIP2935EtchForkStorage.t.sol",
         r#"
 interface Vm {
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 }
 
-contract EIP2935EtchRollbackForkTest {
+contract EIP2935EtchForkStorageTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
     bytes32 constant SLOT = bytes32(uint256(5));
 
     function child() external {
         vm.etch(HISTORY, hex"00");
-        require(vm.load(HISTORY, SLOT) == bytes32(0), "slot not cleared");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot cleared");
         revert("child");
     }
 
-    function testForkHistoryEtchRevertRestoresStorage() public {
+    function testForkHistoryEtchKeepsStorage() public {
+        require(blockhash(5) != bytes32(0), "block hash unavailable");
+        vm.etch(HISTORY, hex"00");
+        require(keccak256(HISTORY.code) == keccak256(hex"00"), "code not replaced");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot cleared");
+    }
+
+    function testForkHistoryEtchRevertRestoresCode() public {
         bytes32 codehash = HISTORY.codehash;
         require(blockhash(5) != bytes32(0), "block hash unavailable");
         try this.child() {
@@ -2152,7 +2159,7 @@ contract EIP2935EtchRollbackForkTest {
             require(keccak256(bytes(reason)) == keccak256("child"), reason);
         }
         require(HISTORY.codehash == codehash, "code not restored");
-        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot not restored");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot changed");
     }
 }
 "#,
