@@ -1,4 +1,6 @@
 use super::{abi::*, runtime::*, *};
+use alloy_sol_types::{Panic, PanicKind, Revert, SolError};
+use foundry_evm::revm::precompile::u64_to_address as precompile_address;
 
 fn empty_state(cx: &mut SymCx) -> PathState {
     let calldata =
@@ -25,12 +27,6 @@ macro_rules! sym_from_bytes {
     }};
 }
 
-fn precompile_address(index: u8) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[19] = index;
-    Address::from(bytes)
-}
-
 fn symbolic_model<S: AsRef<str>>(
     cx: &mut SymCx,
     values: impl IntoIterator<Item = (S, U256)>,
@@ -52,15 +48,18 @@ fn model_value(cx: &SymCx, model: &SymbolicModel, name: &str) -> Option<U256> {
 fn precompile_number_respects_active_spec() {
     for number in 1..=4 {
         assert_eq!(
-            precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER),
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::FRONTIER),
             Some(number)
         );
     }
 
     for number in 5..=8 {
-        assert_eq!(precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER), None);
         assert_eq!(
-            precompile_number_for_spec(precompile_address(number), SpecId::BYZANTIUM),
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::FRONTIER),
+            None
+        );
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::BYZANTIUM),
             Some(number)
         );
     }
@@ -6863,11 +6862,8 @@ outcome counts:
 
 #[test]
 fn assertion_revert_classifies_assert_panic_only() {
-    let mut assert_payload = PANIC_SELECTOR.to_vec();
-    assert_payload.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
-
-    let mut overflow_payload = PANIC_SELECTOR.to_vec();
-    overflow_payload.extend_from_slice(&U256::from(0x11).to_be_bytes::<32>());
+    let assert_payload = Panic::from(PanicKind::Assert).abi_encode();
+    let overflow_payload = Panic::from(PanicKind::UnderOverflow).abi_encode();
 
     assert!(is_assertion_revert(&assert_payload));
     assert!(!is_assertion_revert(&overflow_payload));
@@ -6883,12 +6879,45 @@ fn assertion_revert_accepts_forge_assertion_reverts() {
     assert!(is_assertion_revert(&error_payload("assertion failed: expected 1 to equal 2")));
 }
 
+#[test]
+fn assertion_revert_preserves_noncanonical_encoding() {
+    let message = "assertion failed: expected 1 to equal 2";
+    let mut payload = error_payload(message);
+    payload.truncate(68 + message.len());
+    assert!(is_assertion_revert(&payload));
+    payload.extend_from_slice(&[0xff; 5]);
+    assert!(is_assertion_revert(&payload));
+
+    // Dynamic offsets need not be canonical to identify an assertion message.
+    payload[4..36].copy_from_slice(&U256::from(64).to_be_bytes::<32>());
+    payload.splice(36..36, [0; 32]);
+    assert!(is_assertion_revert(&payload));
+
+    let mut panic = Panic::from(PanicKind::Assert).abi_encode();
+    panic.extend_from_slice(&[0xff; 5]);
+    assert!(is_assertion_revert(&panic));
+}
+
+#[test]
+fn assertion_revert_rejects_malformed_encoding() {
+    let message = "assertion failed";
+    let payload = error_payload(message);
+    for len in [0, 3, 4, 35, 36, 67, 68, 68 + message.len() - 1] {
+        assert!(!is_assertion_revert(&payload[..len]));
+    }
+    let mut invalid_utf8 = payload.clone();
+    invalid_utf8[68 + message.len() - 1] = 0xff;
+    assert!(!is_assertion_revert(&invalid_utf8));
+    for start in [4, 36] {
+        let mut invalid_word = payload.clone();
+        invalid_word[start..start + 32].fill(0xff);
+        assert!(!is_assertion_revert(&invalid_word));
+    }
+    let panic = Panic::from(PanicKind::Assert).abi_encode();
+    assert!(!is_assertion_revert(&panic[..35]));
+    assert!(!is_assertion_revert(&Panic { code: U256::MAX }.abi_encode()));
+}
+
 fn error_payload(message: &str) -> Vec<u8> {
-    let mut payload = ERROR_SELECTOR.to_vec();
-    payload.extend_from_slice(&U256::from(32).to_be_bytes::<32>());
-    payload.extend_from_slice(&U256::from(message.len()).to_be_bytes::<32>());
-    payload.extend_from_slice(message.as_bytes());
-    let padded_len = message.len().div_ceil(32) * 32;
-    payload.resize(4 + 64 + padded_len, 0);
-    payload
+    Revert::from(message).abi_encode()
 }

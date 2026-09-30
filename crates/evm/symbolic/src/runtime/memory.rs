@@ -1,11 +1,12 @@
 use super::*;
+use foundry_evm::revm::interpreter::STACK_LIMIT;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymStack(Vec<SymExpr>);
 
 impl SymStack {
     pub(crate) fn push(&mut self, value: SymExpr) -> Result<(), SymbolicError> {
-        if self.0.len() >= EVM_STACK_LIMIT {
+        if self.0.len() >= STACK_LIMIT {
             return Err(SymbolicError::StackOverflow);
         }
         self.0.push(value);

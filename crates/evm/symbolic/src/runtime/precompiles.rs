@@ -28,12 +28,6 @@ pub(crate) fn precompile_number_for_spec(address: Address, spec_id: SpecId) -> O
     }
 }
 
-pub(crate) fn precompile_address(number: u8) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS] = number;
-    Address::from(bytes)
-}
-
 pub(crate) fn is_supported_precompile(address: Address, spec_id: SpecId) -> bool {
     precompile_number_for_spec(address, spec_id).is_some()
 }
