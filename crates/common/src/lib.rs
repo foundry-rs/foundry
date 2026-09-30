@@ -46,6 +46,7 @@ pub use compile::Analysis;
 pub use constants::*;
 pub use contracts::*;
 pub use io::{Shell, shell, stdin};
+pub use preprocessor::is_deploy_helper_path;
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;

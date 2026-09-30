@@ -44,10 +44,19 @@ use crate::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
+use alloy_sol_types::SolCall;
 use eyre::{Result, eyre};
+use foundry_cheatcodes::Vm::{
+    revertToAndDeleteCall, revertToCall, revertToStateAndDeleteCall, revertToStateCall, rollCall,
+    warpCall,
+};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
+use foundry_evm_core::{
+    constants::{CALLER, CHEATCODE_ADDRESS},
+    evm::FoundryEvmNetwork,
+    utils::StateChangeset,
+};
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
     invariant::{
@@ -56,6 +65,7 @@ use foundry_evm_fuzz::{
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
 use proptest::test_runner::TestRunner;
+use revm::context::Block;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -1138,12 +1148,7 @@ impl WorkerCorpus {
 
         let tx_seq = {
             let targets = targeted_contracts.targets();
-            sequence_from_observed(
-                observed,
-                &targets,
-                ObservedCallDepth::All,
-                Some((parent_tx.warp, parent_tx.roll)),
-            )
+            sequence_from_observed(observed, &targets, Some((parent_tx.warp, parent_tx.roll)))
         };
 
         self.push_observed_sequence(tx_seq, insertion_mode)
@@ -1198,9 +1203,17 @@ impl WorkerCorpus {
                 continue;
             }
 
-            let seq = {
+            let Some(seq) = ({
                 let targets = targeted_contracts.targets();
-                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
+                let block = executor
+                    .inspector()
+                    .cheatcodes
+                    .as_ref()
+                    .and_then(|cheatcodes| cheatcodes.block.as_ref())
+                    .unwrap_or(&executor.evm_env().block_env);
+                sequence_from_test_trace(&observed, &targets, block.timestamp(), block.number())
+            }) else {
+                continue;
             };
 
             let insertion_mode = if self.id == 0 {
@@ -1703,22 +1716,14 @@ impl WorkerCorpus {
     }
 }
 
-#[derive(Clone, Copy)]
-enum ObservedCallDepth {
-    DirectOnly,
-    All,
-}
-
 fn sequence_from_observed(
     observed: &[ObservedCall],
     targets: &TargetedContracts,
-    depth: ObservedCallDepth,
     first_delay: Option<(Option<U256>, Option<U256>)>,
 ) -> Vec<BasicTxDetails> {
     let mut first_delay = first_delay;
     observed
         .iter()
-        .filter(|call| matches!(depth, ObservedCallDepth::All) || call.depth == 1)
         .filter_map(|call| {
             let mut tx = BasicTxDetails {
                 warp: None,
@@ -1738,6 +1743,68 @@ fn sequence_from_observed(
             })
         })
         .collect()
+}
+
+fn sequence_from_test_trace(
+    observed: &[ObservedCall],
+    targets: &TargetedContracts,
+    mut timestamp: U256,
+    mut block_number: U256,
+) -> Option<Vec<BasicTxDetails>> {
+    let mut next_timestamp = timestamp;
+    let mut next_block_number = block_number;
+    let mut sequence = Vec::new();
+
+    for call in observed {
+        if call.target == CHEATCODE_ADDRESS {
+            match <[u8; 4]>::try_from(call.calldata.get(..4)?).ok()? {
+                warpCall::SELECTOR => {
+                    if call.depth != 1 {
+                        return None;
+                    }
+                    next_timestamp = warpCall::abi_decode(&call.calldata).ok()?.newTimestamp;
+                }
+                rollCall::SELECTOR => {
+                    if call.depth != 1 {
+                        return None;
+                    }
+                    next_block_number = rollCall::abi_decode(&call.calldata).ok()?.newHeight;
+                }
+                // Snapshot restoration can undo target calls and environment changes, but the
+                // observed trace does not retain enough snapshot state to reproduce that exactly.
+                revertToCall::SELECTOR
+                | revertToStateCall::SELECTOR
+                | revertToAndDeleteCall::SELECTOR
+                | revertToStateAndDeleteCall::SELECTOR => return None,
+                _ => {}
+            }
+            continue;
+        }
+        if call.depth != 1 {
+            continue;
+        }
+
+        if next_timestamp < timestamp || next_block_number < block_number {
+            return None;
+        }
+        let tx = BasicTxDetails {
+            warp: next_timestamp.checked_sub(timestamp).filter(|delay| !delay.is_zero()),
+            roll: next_block_number.checked_sub(block_number).filter(|delay| !delay.is_zero()),
+            sender: call.caller,
+            call_details: CallDetails {
+                target: call.target,
+                calldata: call.calldata.clone(),
+                value: call.value,
+            },
+        };
+        if targets.can_replay(&tx) {
+            timestamp = next_timestamp;
+            block_number = next_block_number;
+            sequence.push(tx);
+        }
+    }
+
+    Some(sequence)
 }
 
 fn persist_optimization_output(
@@ -2921,59 +2988,74 @@ mod tests {
     }
 
     #[test]
-    fn sequence_from_observed_keeps_only_direct_replayable_calls() {
+    fn sequence_from_test_trace_preserves_forward_environment_and_rejects_restores() {
         let target = Address::from([0x42; 20]);
-        let other = Address::from([0x43; 20]);
         let sender = Address::from([0xaa; 20]);
-        let nested_caller = Address::from([0xbb; 20]);
-        let foo = Function::parse("foo(uint256)").unwrap();
-        let bar = Function::parse("bar()").unwrap();
+        let foo = Function::parse("foo()").unwrap();
         let foo_selector = foo.selector();
-        let bar_selector = bar.selector();
         let targeted_contracts =
-            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+            targeted_contracts_with_selective_functions(target, vec![foo], [foo_selector]);
         let targets = targeted_contracts.targets();
-
-        let mut foo_calldata = vec![0u8; 36];
-        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
-        let bar_calldata = bar_selector.to_vec();
+        let target_call = || ObservedCall {
+            depth: 1,
+            caller: sender,
+            target,
+            calldata: Bytes::from(foo_selector.to_vec()),
+            value: Some(U256::from(7)),
+        };
+        let cheatcode_call = |calldata| ObservedCall {
+            depth: 1,
+            caller: sender,
+            target: CHEATCODE_ADDRESS,
+            calldata: Bytes::from(calldata),
+            value: None,
+        };
         let observed = vec![
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target,
-                calldata: Bytes::from(foo_calldata.clone()),
-                value: None,
-            },
-            ObservedCall {
-                depth: 2,
-                caller: nested_caller,
-                target,
-                calldata: Bytes::from(foo_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target,
-                calldata: Bytes::from(bar_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: other,
-                calldata: Bytes::from(foo_selector.to_vec()),
-                value: None,
-            },
+            cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+            target_call(),
+            cheatcode_call(rollCall { newHeight: U256::from(12) }.abi_encode()),
+            cheatcode_call(warpCall { newTimestamp: U256::from(110) }.abi_encode()),
+            target_call(),
         ];
 
-        let seq = sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None);
+        let sequence =
+            sequence_from_test_trace(&observed, &targets, U256::from(100), U256::from(10)).unwrap();
 
-        assert_eq!(seq.len(), 1);
-        assert_eq!(seq[0].sender, sender);
-        assert_eq!(seq[0].call_details.target, target);
-        assert_eq!(&seq[0].call_details.calldata[..4], &foo_selector[..]);
+        assert_eq!(sequence.len(), 2);
+        assert_eq!(sequence[0].warp, Some(U256::from(5)));
+        assert_eq!(sequence[0].roll, None);
+        assert_eq!(sequence[1].warp, Some(U256::from(5)));
+        assert_eq!(sequence[1].roll, Some(U256::from(2)));
+        assert!(sequence.iter().all(|tx| {
+            tx.sender == sender
+                && tx.call_details.target == target
+                && tx.call_details.value == Some(U256::from(7))
+        }));
+
+        let backwards =
+            [cheatcode_call(warpCall { newTimestamp: U256::from(99) }.abi_encode()), target_call()];
+        assert!(
+            sequence_from_test_trace(&backwards, &targets, U256::from(100), U256::from(10))
+                .is_none()
+        );
+
+        for calldata in [
+            revertToCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToStateCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToStateAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+        ] {
+            let restored = [
+                cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+                cheatcode_call(rollCall { newHeight: U256::from(12) }.abi_encode()),
+                cheatcode_call(calldata),
+                target_call(),
+            ];
+            assert!(
+                sequence_from_test_trace(&restored, &targets, U256::from(100), U256::from(10))
+                    .is_none()
+            );
+        }
     }
 
     #[test]

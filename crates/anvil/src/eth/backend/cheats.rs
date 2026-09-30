@@ -95,6 +95,10 @@ impl CheatsManager {
         state.next_block_prevrandao = Some(prevrandao);
     }
 
+    pub(crate) fn next_block_prevrandao(&self) -> Option<B256> {
+        self.state.read().next_block_prevrandao
+    }
+
     /// Prepares the manually set `prevrandao` without consuming it.
     pub(crate) fn prepare_next_block_prevrandao(&self) -> Option<PendingPrevrandao> {
         let state = self.state.read();

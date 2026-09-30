@@ -5,6 +5,8 @@ use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 #[cfg(unix)]
 use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
+#[cfg(unix)]
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 // <https://github.com/foundry-rs/foundry/issues/16852>
 forgetest!(preprocess_parenthesized_new, |prj, cmd| {
@@ -1168,12 +1170,11 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 #[cfg(unix)]
 forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
-    use foundry_test_utils::util::OutputExt;
-    use std::{fs, os::unix::fs::PermissionsExt};
-
     prj.initialize_default_contracts();
     prj.update_config(|config| config.dynamic_test_linking = true);
     cmd.arg("build").assert_success();
+    // Discovery keeps an unprocessed ABI cache separate from the dynamic-linking artifacts.
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
 
     let solc = prj.root().join("fake-solc");
     let invoked = prj.root().join("fake-solc.invoked");
@@ -1197,14 +1198,16 @@ exit 1
         config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
     });
 
-    let output =
-        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(
-        stdout.contains("Ran 2 tests for test/Counter.t.sol:CounterTest"),
-        "cached ABI did not select CounterTest: {stdout}"
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 2 tests for test/Counter.t.sol:CounterTest
+...
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]],
     );
-    assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
+    assert!(!invoked.exists(), "filtered test compilation did not reuse cached discovery");
 
     cmd.forge_fuse().args(["selectors", "list"]).assert_success();
     assert!(!invoked.exists(), "selector compilation did not reuse the preprocessed cache");
@@ -1221,10 +1224,42 @@ exit 1
     assert!(abi_cache.is_dir());
     assert!(!prj.artifacts().join("Other.t.sol").exists());
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Local(solc));
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
     });
     cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
     assert!(!invoked.exists(), "partial-cache discovery invoked solc");
+
+    // Editing either a selected or unselected test must leave unrelated ABI entries cached.
+    // <https://github.com/foundry-rs/foundry/issues/17204>
+    for name in ["Other.t.sol", "Counter.t.sol"] {
+        let path = prj.root().join("test").join(name);
+        let source = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{source}\n// edit.\n")).unwrap();
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_failure();
+        let input = serde_json::from_slice::<SolcInput>(&fs::read(&invoked).unwrap()).unwrap();
+        let tests =
+            input.sources.keys().filter(|path| path.starts_with("test")).collect::<Vec<_>>();
+        assert_eq!(tests, vec![&PathBuf::from(format!("test/{name}"))]);
+        let expected = OutputSelection::common_output_selection(["abi".to_string()]);
+        assert_eq!(input.settings.output_selection.0[&format!("test/{name}")], expected.0["*"]);
+        for output in input.settings.output_selection.0.values().flat_map(|s| s.values()).flatten()
+        {
+            assert_eq!(output, "abi");
+        }
+        fs::remove_file(&invoked).unwrap();
+
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Version(
+                foundry_test_utils::util::SOLC_VERSION.parse().unwrap(),
+            ));
+        });
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+        });
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+        assert!(!invoked.exists(), "edited discovery was not cached");
+    }
 
     // Disabling caching must bypass both stores, even after warming them.
     prj.update_config(|config| config.cache = false);

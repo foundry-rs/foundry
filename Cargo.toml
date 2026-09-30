@@ -38,7 +38,7 @@ resolver = "2"
 [workspace.package]
 version = "1.8.4"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.98"
 authors = ["Foundry Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://getfoundry.sh"
@@ -406,7 +406,7 @@ alloy-op-evm = "0.32.0"
 
 # revm
 revm = { version = "43.0.2", default-features = false }
-revm-inspectors = { version = "0.44.0", features = ["serde"] }
+revm-inspectors = { version = "0.44.1", features = ["serde"] }
 op-revm = { git = "https://github.com/foundry-rs/optimism", rev = "206d26cedb9d861b983d89fc71e1122187dfa877", default-features = false }
 
 ## cli
@@ -570,10 +570,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "251aea256d66c6a28c0d3809d7d4f74c4aced7b0" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "251aea256d66c6a28c0d3809d7d4f74c4aced7b0" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "251aea256d66c6a28c0d3809d7d4f74c4aced7b0" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "251aea256d66c6a28c0d3809d7d4f74c4aced7b0" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "8f8a4899459d43774c1cc5a2e1146f843c5b1478" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "8f8a4899459d43774c1cc5a2e1146f843c5b1478" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "8f8a4899459d43774c1cc5a2e1146f843c5b1478" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "8f8a4899459d43774c1cc5a2e1146f843c5b1478" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "39c03a49ade2f74a6e97e2af308283a42d78d302" }
