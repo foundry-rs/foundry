@@ -3088,3 +3088,111 @@ contract InvariantStorageHooks is Test {
 
     assert_invariant(cmd.args(["test"])).success();
 });
+
+forgetest_init!(invariant_test_trace_seed_preserves_time_advances, |prj, cmd| {
+    prj.update_config(|config| {
+        config.isolate = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 0,
+        };
+    });
+
+    prj.add_test(
+        "TimedTraceSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TimedHandler {
+    uint256 immutable expectedOpenTime;
+    uint256 immutable expectedOpenBlock;
+    bool opened;
+    bool public finished;
+
+    constructor(uint256 expectedOpenTime_, uint256 expectedOpenBlock_) {
+        expectedOpenTime = expectedOpenTime_;
+        expectedOpenBlock = expectedOpenBlock_;
+    }
+
+    function open() external {
+        opened = block.timestamp == expectedOpenTime && block.number == expectedOpenBlock;
+    }
+
+    function finish() external {
+        if (
+            opened && block.timestamp == expectedOpenTime + 1 days
+                && block.number == expectedOpenBlock + 5
+        ) finished = true;
+    }
+}
+
+contract TimedTraceSeedTest is Test {
+    TimedHandler handler;
+
+    function setUp() public {
+        vm.warp(block.timestamp + 30 days);
+        vm.roll(block.number + 100);
+        handler = new TimedHandler(block.timestamp, block.number);
+        targetContract(address(handler));
+    }
+
+    function test_seedTimedLifecycle() public {
+        handler.open();
+        vm.warp(block.timestamp + 1 days);
+        vm.roll(block.number + 5);
+        handler.finish();
+    }
+
+    function invariant_notFinished() public view {
+        assertFalse(handler.finished());
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args([
+        "test",
+        "--match-test",
+        "invariant_notFinished",
+        "--fuzz-seed",
+        "0x1",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TimedTraceSeed.t.sol:TimedTraceSeedTest
+[FAIL: assertion failed]
+	[SEQUENCE]
+ invariant_notFinished() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TimedTraceSeed.t.sol:TimedTraceSeedTest
+[FAIL: assertion failed]
+	[SEQUENCE]
+ invariant_notFinished() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
