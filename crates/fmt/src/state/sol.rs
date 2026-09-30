@@ -764,12 +764,25 @@ impl<'ast> State<'_, 'ast> {
     ) {
         match map.remove(&span.lo()) {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
-                // Print preceding comments.
+                // Print preceding comments. The separator before the attribute is printed below,
+                // so a mixed comment must not add one of its own or the two become a blank line.
+                let mut previous_mixed = false;
                 for cmnt in pre_cmnts {
+                    // A line comment after a mixed comment becomes isolated once the header wraps.
+                    if previous_mixed
+                        && cmnt.style.is_trailing()
+                        && matches!(cmnt.kind, ast::CommentKind::Line)
+                    {
+                        self.hardbreak_if_not_bol();
+                    }
+                    previous_mixed = cmnt.style.is_mixed();
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
-                    self.print_comment(cmnt, CommentConfig::default());
+                    self.print_comment(
+                        cmnt,
+                        CommentConfig::default().mixed_no_break_post().mixed_prev_space(),
+                    );
                 }
                 // Push the inner comments back to the queue, so that they are printed in their
                 // intended place.
@@ -884,7 +897,19 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = self.estimate_size(rhs.span);
+        let rhs_size = if matches!(rhs.kind, ast::ExprKind::Binary(..))
+            && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
+        {
+            self.estimate_binary_size(rhs)
+        } else if assignment_member_depth(rhs) >= 2
+            && self.peek_comment_before(rhs.span.lo()).is_none()
+        {
+            // These chains can break before a member after collapsing their terminal delimiters.
+            // Size that collapsed form before choosing the assignment break instead.
+            self.estimate_assignment_size(rhs.span)
+        } else {
+            self.estimate_size(rhs.span)
+        };
         let overflows = lhs_size + rhs_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
         let fits_alone_no_cmnts =
@@ -1189,6 +1214,13 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::TypeKind::Array(ast::TypeArray { element, size }) => {
                 self.print_ty(element);
+                let open_bracket = self
+                    .find_uncommented_char(Span::new(element.span.hi(), ty.span.hi()), '[')
+                    .unwrap();
+                self.print_comments(
+                    open_bracket,
+                    CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                );
                 if let Some(size) = size {
                     self.word("[");
                     self.print_expr(size);
@@ -1249,9 +1281,9 @@ impl<'ast> State<'_, 'ast> {
                 // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
                 // To be more conservative, we use 18 to decide whether to force a break or not.
                 else if 18
-                    + self.estimate_size(key.span)
+                    + self.estimate_type_size(key)
                     + key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0)
-                    + self.estimate_size(value.span)
+                    + self.estimate_type_size(value)
                     + value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0)
                     >= self.space_left()
                 {
@@ -1420,7 +1452,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
-                        self.estimate_size(call_args.span),
+                        self.estimate_call_args_size(call_args.span),
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {
@@ -1565,6 +1597,16 @@ impl<'ast> State<'_, 'ast> {
 
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
+        // Normalize only indexes that the existing layout keeps together. Longer indexes keep
+        // their own breaks, so their source delimiter padding remains relevant to that layout.
+        let lhs_size = if matches!(lhs.kind, ast::ExprKind::Index(..))
+            && lhs_size + 2 <= space_left
+            && !self.has_comment_between(lhs.span.lo(), rhs.span.lo())
+        {
+            self.estimate_assignment_size(lhs.span)
+        } else {
+            lhs_size
+        };
         self.print_expr(lhs);
         self.word(" =");
         self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
@@ -2377,7 +2419,7 @@ impl<'ast> State<'_, 'ast> {
                 expr.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
-                Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
+                Some(_) if !is_simple => self.s.offset(self.ind),
                 None => self.print_sep(Separator::SpaceOrNbsp(allow_break)),
                 _ => {}
             }
@@ -2530,6 +2572,16 @@ impl<'ast> State<'_, 'ast> {
                 && self.peek_comment_before(then.span.hi()).is_none()
             {
                 self.neverbreak();
+                self.print_sep(Separator::Nbsp);
+            } else if inline
+                && matches!(cond.kind, ast::ExprKind::Call(..))
+                && matches!(
+                    self.config.single_line_statement_blocks,
+                    config::SingleLineBlockStyle::Preserve
+                )
+            {
+                // Keep the body beside a wrapped call condition so Preserve sees the same
+                // layout on the next pass.
                 self.print_sep(Separator::Nbsp);
             } else {
                 self.print_sep(Separator::Space);
@@ -2727,7 +2779,7 @@ impl<'ast> State<'_, 'ast> {
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
-            if self.sm.is_multiline(if_span)
+            if !self.same_source_line(if_span.lo(), if_span.hi())
                 && matches!(
                     self.config.single_line_statement_blocks,
                     config::SingleLineBlockStyle::Preserve
@@ -2747,7 +2799,7 @@ impl<'ast> State<'_, 'ast> {
             if matches!(
                 self.config.single_line_statement_blocks,
                 config::SingleLineBlockStyle::Preserve
-            ) && self.sm.is_multiline(stmt.span)
+            ) && !self.same_source_line(stmt.span.lo(), stmt.span.hi())
             {
                 return false;
             }
@@ -2765,7 +2817,7 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
     ) -> bool {
         let span_between = cond.span.between(then.span);
-        if let Ok(snip) = self.sm.span_to_snippet(span_between) {
+        if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
             if let Some((_, after_paren)) = snip.split_once(')') {
                 return after_paren.lines().count() > 1;
@@ -2860,8 +2912,8 @@ impl<'ast> State<'_, 'ast> {
 
         // Check for multiline block.span first.
         // Block can spans multipline because of comments.
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
@@ -2969,6 +3021,27 @@ impl<'ast> State<'_, 'ast> {
             .fold(0, |len, p| if len != 0 { len + 2 } else { 2 } + self.estimate_size(p.span));
 
         kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
+    }
+
+    /// Estimates a comment-free binary expression using the printed operator spacing.
+    fn estimate_binary_size(&self, expr: &ast::Expr<'_>) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, rhs) => {
+                let spaces = if self.config.pow_no_space && matches!(op.kind, ast::BinOpKind::Pow) {
+                    0
+                } else {
+                    2
+                };
+                self.estimate_binary_size(lhs)
+                    + op.kind.to_str().len()
+                    + spaces
+                    + self.estimate_binary_size(rhs)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(inner)] = exprs.as_ref() => {
+                self.estimate_binary_size(inner) + 2
+            }
+            _ => self.estimate_size(expr.span),
+        }
     }
 
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
@@ -3400,6 +3473,17 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
     }
 }
 
+/// Counts member links in an assignment RHS, through calls and indexes.
+fn assignment_member_depth(expr: &ast::Expr<'_>) -> usize {
+    match &expr.kind {
+        ast::ExprKind::Member(child, _) => 1 + assignment_member_depth(child),
+        ast::ExprKind::Call(child, _) | ast::ExprKind::Index(child, _) => {
+            assignment_member_depth(child)
+        }
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3443,13 +3527,7 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(
-                    gcx.sess.source_map(),
-                    source_obj.file.start_pos,
-                    config,
-                    inline_config,
-                    comments,
-                );
+                let mut state = State::new(&source_obj.file, config, inline_config, comments);
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

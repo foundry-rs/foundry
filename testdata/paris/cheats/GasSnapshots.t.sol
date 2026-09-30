@@ -241,6 +241,49 @@ contract GasComparisonTest is Test {
         assertEq(a, b);
     }
 
+    function testGasComparisonRepeatedWindows() public {
+        TargetB target = new TargetB();
+        target.update(1);
+
+        vm.startSnapshotGas("ComparisonGroup", "window1");
+        target.update(1);
+        uint256 first = vm.stopSnapshotGas();
+
+        vm.startSnapshotGas("ComparisonGroup", "window2");
+        target.update(1);
+        uint256 second = vm.stopSnapshotGas();
+
+        // Work between windows must not be charged to the next snapshot.
+        Flare flare = new Flare();
+        flare.run(8);
+
+        vm.startSnapshotGas("ComparisonGroup", "window3");
+        target.update(1);
+        uint256 third = vm.stopSnapshotGas();
+
+        assertGt(first, 0);
+        assertEq(second, first);
+        assertEq(third, first);
+    }
+
+    /// forge-config: default.isolate = false
+    function testGasComparisonExternalRefund() public {
+        TargetB target = new TargetB();
+        target.update(1);
+
+        vm.startSnapshotGas("ComparisonGroup", "external refund");
+        target.update(0);
+        uint256 a = vm.stopSnapshotGas();
+
+        target.update(1);
+        _snapStart();
+        target.update(0);
+        uint256 b = _snapEnd();
+
+        // Non-isolated regions still measure gross gas, even when storage is cleared.
+        assertEq(a, b);
+    }
+
     function testGasComparisonCreate() public {
         // Start a cheatcode snapshot.
         vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");

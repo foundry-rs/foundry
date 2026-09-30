@@ -62,10 +62,13 @@ fn check_expr(ctx: &LintContext, expr: &Expr<'_>, allow_bare: bool) {
             check_expr(ctx, true_expr, false);
             check_expr(ctx, false_expr, false);
         }
+        // A tuple is a grouping, not an operation, so it neither grants nor
+        // removes permission: `return (true, x)` is as fine as `return true`,
+        // and `if ((true))` is as wrong as `if (true)`.
         ExprKind::Tuple(exprs) => exprs
             .iter()
             .filter_map(|expr| Option::from(expr.as_deref()))
-            .for_each(|expr| check_expr(ctx, expr, false)),
+            .for_each(|expr| check_expr(ctx, expr, allow_bare)),
         _ => {}
     }
 }

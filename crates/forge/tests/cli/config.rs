@@ -102,6 +102,7 @@ via_ssa_cfg = false
 experimental = false
 ast = false
 no_storage_caching = false
+no_fork_bal = false
 no_rpc_rate_limit = false
 use_literal_content = false
 bytecode_hash = "ipfs"
@@ -112,6 +113,7 @@ isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
+decode_external_storage = false
 create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
 create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
@@ -466,6 +468,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             endpoints: CachedEndpoints::Remote,
         },
         no_storage_caching: true,
+        no_fork_bal: true,
         no_rpc_rate_limit: true,
         use_literal_content: false,
         bytecode_hash: Default::default(),
@@ -485,9 +488,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         labels: Default::default(),
         isolate: true,
         unchecked_cheatcode_artifacts: false,
+        decode_external_storage: false,
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
+        external_compilers: vec![],
         skip: vec![],
         dependencies: Default::default(),
         soldeer: Default::default(),
@@ -1984,6 +1989,22 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     // read permission to file should be granted through symlink
     let permission = fs_permissions.find_permission(&config_path.join("config.json")).unwrap();
     assert_eq!(permission, FsAccessPermission::Read);
+
+    std::os::unix::fs::symlink("links/config.json", prj.root().join("config-link")).unwrap();
+    prj.add_test(
+        "ReadLink.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReadLinkTest is Test {
+    function testReadLink() public view {
+        assertEq(vm.readLink("config-link"), "links/config.json");
+        assertEq(vm.readLink(string.concat(vm.projectRoot(), "/config-link")), "links/config.json");
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success();
 });
 
 // tests if evm version is normalized for config output
@@ -2357,6 +2378,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "endpoints": "all"
   },
   "no_storage_caching": false,
+  "no_fork_bal": false,
   "no_rpc_rate_limit": false,
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
@@ -2434,6 +2456,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
   "unchecked_cheatcode_artifacts": false,
+  "decode_external_storage": false,
   "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
   "vyper": {},
@@ -2614,6 +2637,23 @@ Error: Snapshots differ from previous run
 ...
 "#]]);
 
+    let snapshot_path = prj.root().join("snapshots/GasSnapshotCheckTest.json");
+    let previous_snapshot = fs::read(&snapshot_path).unwrap();
+    for format in ["--json", "--junit"] {
+        cmd.forge_fuse()
+            .args(["test", format, "--gas-snapshot-check=true"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+        assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+    }
+
     // Disable gas_snapshot_check, assert that running the test will pass.
     prj.update_config(|config| config.gas_snapshot_check = false);
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
@@ -2737,8 +2777,17 @@ contract GasSnapshotEmitTest is DSTest {
     // Assert that snapshots were emitted to disk.
     assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
 
+    let snapshot_path = prj.root().join("snapshots/GasSnapshotEmitTest.json");
+    let expected_snapshot = fs::read(&snapshot_path).unwrap();
+
     // Remove the snapshot file.
     fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    for format in ["--json", "--junit"] {
+        cmd.forge_fuse().args(["test", format, "--gas-snapshot-emit=true"]).assert_success();
+        assert_eq!(fs::read(&snapshot_path).unwrap(), expected_snapshot);
+        fs::remove_file(&snapshot_path).unwrap();
+    }
 
     // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots.
     cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();

@@ -1,7 +1,10 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
+use foundry_compilers::{
+    artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping},
+    solc::Solc,
+};
 use foundry_config::{
     BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
     parse_with_profile,
@@ -10,7 +13,7 @@ use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{OutputExt, read_string},
+    util::{OTHER_SOLC_VERSION, OutputExt, read_string},
 };
 use std::{
     fs,
@@ -3194,7 +3197,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-|                                              153519 |             494 |      |        |      |         |
+|                                              153531 |             494 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -3240,7 +3243,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 153519,
+      "gas": 153531,
       "size": 494
     },
     "functions": {
@@ -3429,7 +3432,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                    328961 |            1163 |     |        |     |         |
+|                                    328949 |            1163 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -3484,7 +3487,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328961,
+      "gas": 328949,
       "size": 1163
     },
     "functions": {
@@ -4004,6 +4007,119 @@ forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
     assert_eq!(built, inspected);
 });
 
+forgetest!(inspect_output_cache_preserves_fields_and_artifacts, |prj, cmd| {
+    prj.add_source(
+        "Dependency.sol",
+        "library Dependency { function value() internal pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "Counter.sol",
+        r#"
+import {Dependency} from "./Dependency.sol";
+contract Counter {
+    function value() external pure returns (uint256) { return Dependency.value(); }
+}
+"#,
+    );
+    cmd.args(["build", "--no-lint"]).assert_success();
+    let built = [
+        prj.paths().artifacts.join("Counter.sol/Counter.json"),
+        prj.paths().artifacts.join("Dependency.sol/Dependency.json"),
+        prj.cache().clone(),
+    ]
+    .map(|path| {
+        let contents = fs::read(&path).unwrap();
+        (path, contents)
+    });
+    let abi_cache = prj.cache().with_extension("json.abi");
+    let fields = ["ir", "irOptimized", "assembly"];
+    let uncached = fields.map(|field| {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", field, "--json", "--no-cache"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy()
+    });
+    assert!(!abi_cache.exists());
+
+    for (field, expected) in fields.iter().zip(&uncached) {
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    assert!(abi_cache.is_dir());
+    // Switching fields must preserve output correctness even when a selection is recompiled.
+    for (field, expected) in fields.iter().zip(&uncached).rev() {
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    for (path, contents) in &built {
+        assert_eq!(fs::read(path).unwrap(), *contents);
+    }
+
+    prj.add_source(
+        "Dependency.sol",
+        "library Dependency { function value() internal pure returns (uint256) { return 2; } }",
+    );
+    for (field, previous) in fields.iter().zip(&uncached) {
+        let expected = cmd
+            .forge_fuse()
+            .args(["inspect", "Counter", field, "--json", "--no-cache"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert_ne!(&expected, previous);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    for (path, contents) in &built {
+        assert_eq!(fs::read(path).unwrap(), *contents);
+    }
+
+    let marker = abi_cache.join("force-marker");
+    fs::write(&marker, "").unwrap();
+    cmd.forge_fuse().args(["inspect", "Counter", "ir", "--force"]).assert_success();
+    assert!(!marker.exists());
+    assert!(!abi_cache.exists());
+    assert!(!prj.paths().artifacts.exists());
+    assert!(!prj.cache().exists());
+    cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
+    assert!(abi_cache.is_dir());
+    cmd.forge_fuse().arg("clean").assert_success();
+    assert!(!abi_cache.exists());
+});
+
+forgetest!(inspect_output_cache_rejects_missing_ewasm, |prj, cmd| {
+    prj.add_source("Counter.sol", "contract Counter {}");
+
+    for _ in 0..2 {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "ewasm"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(
+                "Error: EWASM output missing from artifact; this could be a spurious caching issue, \
+                 consider running `forge clean`\n",
+            );
+    }
+});
+
+forgetest!(inspect_output_cache_respects_warning_denial, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        "contract Counter { function value() external returns (uint256) { return 1; } }",
+    );
+    cmd.args(["inspect", "Counter", "ir"]).assert_success();
+    cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "ir", "--deny", "warnings", "--no-cache"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "ir", "--deny", "warnings"])
+        .assert_failure()
+        .stderr_eq(expected.into_data().raw());
+});
+
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4328,6 +4444,27 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 }
 
 "#]]);
+
+    prj.update_config(|config| config.solc = Some(OTHER_SOLC_VERSION.into()));
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "standard-json", "--use", OTHER_SOLC_VERSION])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let solc =
+        Solc::find_svm_installed_version(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap().unwrap();
+    for compiler in [format!("solc:{OTHER_SOLC_VERSION}"), solc.solc.display().to_string()] {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "standard-json", "--use", &compiler])
+            .assert_success()
+            .stdout_eq(expected.clone());
+    }
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "standard-json"])
+        .assert_success()
+        .stdout_eq(expected);
 });
 
 forgetest!(can_inspect_artifact_json, |prj, cmd| {
@@ -4718,12 +4855,16 @@ Bindings have been generated to [..]
     let bindings_path = prj.root().join("out/bindings");
 
     assert!(bindings_path.exists(), "Bindings directory should exist");
-    let out = super::bind::bindings_cargo(&bindings_path)
-        .arg("build")
+    let out = super::bind::bindings_cargo(&bindings_path, "build")
         .output()
         .expect("Failed to run cargo build");
 
-    assert!(out.status.success(), "Cargo build should succeed");
+    assert!(
+        out.status.success(),
+        "Cargo build should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 });
 
 // `forge flatten -o <path>` writes the file and emits its status string to stderr,

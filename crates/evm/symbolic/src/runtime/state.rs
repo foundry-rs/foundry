@@ -1,4 +1,7 @@
 use super::*;
+use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
+
+const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PathState {
@@ -17,6 +20,8 @@ pub(crate) struct PathState {
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
+    /// Predicate context follows child calls but is not committed back to handler state.
+    pub(crate) invariant_predicate: bool,
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
@@ -72,6 +77,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: Some(calldata),
+            invariant_predicate: false,
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
@@ -125,6 +131,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: None,
+            invariant_predicate: false,
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
@@ -296,12 +303,26 @@ impl PathState {
         self.constrained_word(cx, expr).map(|value| usize::try_from(value).map_err(|_| value))
     }
 
-    pub(crate) fn upper_bound_usize(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
-        self.constrained_usize(cx, expr).or_else(|| {
-            expr.as_const()
-                .and_then(|value| usize::try_from(value).ok())
-                .or_else(|| self.expr_upper_bound_usize(expr))
-        })
+    pub(crate) fn upper_bound_usize(&self, _cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
+        let mut bounds = HashMap::default();
+        let mut ordering = HashMap::default();
+        let mut remaining = MAX_BOUND_ANALYSIS_VISITS;
+        self.expr_upper_bound_usize_cached(expr, &mut bounds, &mut ordering, &mut remaining)
+    }
+
+    /// Returns a conservative lower bound for values representable as host memory offsets.
+    pub(crate) fn lower_bound_usize(&self, expr: &SymExpr) -> usize {
+        let mut lower_bounds = HashMap::default();
+        let mut upper_bounds = HashMap::default();
+        let mut ordering = HashMap::default();
+        let mut remaining = MAX_BOUND_ANALYSIS_VISITS;
+        self.expr_lower_bound_usize(
+            expr,
+            &mut lower_bounds,
+            &mut upper_bounds,
+            &mut ordering,
+            &mut remaining,
+        )
     }
 
     pub(crate) fn constrained_word(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<U256> {
@@ -403,6 +424,11 @@ impl PathState {
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
         self.access_record = child.access_record.take();
+        // Inspector state survives child reverts and exceptional halts.
+        self.block = child.block.clone();
+        self.expected_calls = std::mem::take(&mut child.expected_calls);
+        self.call_mocks = std::mem::take(&mut child.call_mocks);
+        self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
 
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
@@ -441,78 +467,280 @@ impl PathState {
         needs_check
     }
 
-    pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
-        if let Some(value) = expr.eval() {
-            return usize::try_from(value).ok();
+    fn expr_upper_bound_usize_cached(
+        &self,
+        expr: &SymExpr,
+        bounds: &mut HashMap<SymExpr, Option<usize>>,
+        ordering: &mut HashMap<(SymExpr, SymExpr), bool>,
+        remaining: &mut usize,
+    ) -> Option<usize> {
+        if let Some(bound) = bounds.get(expr) {
+            return *bound;
         }
-        if let Some(value) = expr.known_word() {
+        if let Some(value) = expr.as_const() {
             return usize::try_from(value).ok();
         }
 
         let constraint_bound = self.constraint_upper_bound_usize(expr);
-        let structural_bound = match expr.kind() {
-            SymExprKind::Const(value) => usize::try_from(*value).ok(),
-            SymExprKind::Var(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. } => None,
-            SymExprKind::Not(_) => None,
-            SymExprKind::TernOp(_, _, _, modulus) => match modulus.eval() {
-                Some(modulus) if modulus.is_zero() => Some(0),
-                Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
-                None => self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1)),
-            },
-            SymExprKind::Ite(_, left, right) => {
-                Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
-            }
-            SymExprKind::BinOp(op, left, right) => match op {
-                SymBinOp::Add => self
-                    .expr_upper_bound_usize(left)?
-                    .checked_add(self.expr_upper_bound_usize(right)?),
-                SymBinOp::Mul => self
-                    .expr_upper_bound_usize(left)?
-                    .checked_mul(self.expr_upper_bound_usize(right)?),
-                SymBinOp::UDiv => {
-                    let left = self.expr_upper_bound_usize(left)?;
-                    match right.eval()? {
-                        divisor if divisor.is_zero() => Some(0),
-                        divisor => Some(left / usize::try_from(divisor).ok()?),
+        let structural_bound = remaining.checked_sub(1).and_then(|next| {
+            *remaining = next;
+            match expr.kind() {
+                SymExprKind::Const(value) => usize::try_from(*value).ok(),
+                SymExprKind::Var(_)
+                | SymExprKind::GasLeft(_)
+                | SymExprKind::Keccak { .. }
+                | SymExprKind::Hash { .. } => None,
+                SymExprKind::Not(_) => None,
+                SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
+                    Some(modulus) if modulus.is_zero() => Some(0),
+                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
+                    None => self
+                        .expr_upper_bound_usize_cached(modulus, bounds, ordering, remaining)
+                        .and_then(|bound| bound.checked_sub(1)),
+                },
+                SymExprKind::Ite(condition, left, right) => {
+                    let left_bound =
+                        self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining);
+                    let right_bound =
+                        self.expr_upper_bound_usize_cached(right, bounds, ordering, remaining);
+                    match (left_bound, right_bound) {
+                        (Some(left_bound), Some(right_bound)) => Some(left_bound.max(right_bound)),
+                        (None, Some(right_bound)) => condition
+                            .implies_unsigned_less_or_equal(true, left, right, remaining)
+                            .then_some(right_bound),
+                        (Some(left_bound), None) => condition
+                            .implies_unsigned_less_or_equal(false, right, left, remaining)
+                            .then_some(left_bound),
+                        (None, None) => None,
                     }
                 }
-                SymBinOp::URem => match right.eval() {
-                    Some(divisor) if divisor.is_zero() => Some(0),
-                    Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
-                    None => self.expr_upper_bound_usize(left),
+                SymExprKind::BinOp(op, left, right) => match op {
+                    SymBinOp::Add => self
+                        .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?
+                        .checked_add(
+                            self.expr_upper_bound_usize_cached(right, bounds, ordering, remaining)?,
+                        ),
+                    SymBinOp::Mul => self
+                        .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?
+                        .checked_mul(
+                            self.expr_upper_bound_usize_cached(right, bounds, ordering, remaining)?,
+                        ),
+                    SymBinOp::UDiv => {
+                        let left =
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                        match right.as_const()? {
+                            divisor if divisor.is_zero() => Some(0),
+                            divisor => Some(left / usize::try_from(divisor).ok()?),
+                        }
+                    }
+                    SymBinOp::URem => match right.as_const() {
+                        Some(divisor) if divisor.is_zero() => Some(0),
+                        Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
+                        None => {
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
+                        }
+                    },
+                    SymBinOp::And => right
+                        .as_const()
+                        .and_then(|value| usize::try_from(value).ok())
+                        .or_else(|| left.as_const().and_then(|value| usize::try_from(value).ok()))
+                        .map(|mask| {
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
+                                .or_else(|| {
+                                    self.expr_upper_bound_usize_cached(
+                                        right, bounds, ordering, remaining,
+                                    )
+                                })
+                                .map_or(mask, |bound| bound.min(mask))
+                        }),
+                    SymBinOp::Shr => {
+                        let left =
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                        let shift = usize::try_from(right.as_const()?).ok()?;
+                        Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
+                    }
+                    SymBinOp::Sub => {
+                        if let Some(difference) = left
+                            .constant_difference(right)
+                            .and_then(|difference| usize::try_from(difference).ok())
+                        {
+                            return Some(difference);
+                        }
+                        let left_bound =
+                            self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                        self.expressions_are_unsigned_ordered(right, left, ordering, remaining)
+                            .then_some(left_bound)
+                    }
+                    SymBinOp::Shl => match right.as_const() {
+                        Some(shift) if shift >= U256::from(256) => Some(0),
+                        Some(shift) => usize::try_from(shift).ok().and_then(|shift| {
+                            let bound = self
+                                .expr_upper_bound_usize_cached(left, bounds, ordering, remaining)?;
+                            if bound == 0 {
+                                return Some(0);
+                            }
+                            let factor = 1usize.checked_shl(u32::try_from(shift).ok()?)?;
+                            bound.checked_mul(factor)
+                        }),
+                        None => None,
+                    },
+                    SymBinOp::SDiv
+                    | SymBinOp::SRem
+                    | SymBinOp::Or
+                    | SymBinOp::Xor
+                    | SymBinOp::Sar => None,
                 },
-                SymBinOp::And => right
-                    .eval()
-                    .and_then(|value| usize::try_from(value).ok())
-                    .or_else(|| left.eval().and_then(|value| usize::try_from(value).ok()))
-                    .map(|mask| {
-                        self.expr_upper_bound_usize(left)
-                            .or_else(|| self.expr_upper_bound_usize(right))
-                            .map_or(mask, |bound| bound.min(mask))
-                    }),
-                SymBinOp::Shr => {
-                    let left = self.expr_upper_bound_usize(left)?;
-                    let shift = usize::try_from(right.eval()?).ok()?;
-                    Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
-                }
-                SymBinOp::Sub
-                | SymBinOp::SDiv
-                | SymBinOp::SRem
-                | SymBinOp::Or
-                | SymBinOp::Xor
-                | SymBinOp::Shl
-                | SymBinOp::Sar => None,
-            },
-        };
+            }
+        });
 
-        match (constraint_bound, structural_bound) {
+        let bound = match (constraint_bound, structural_bound) {
             (Some(left), Some(right)) => Some(left.min(right)),
             (Some(bound), None) | (None, Some(bound)) => Some(bound),
             (None, None) => None,
+        };
+        bounds.insert(expr.clone(), bound);
+        bound
+    }
+
+    fn expressions_are_unsigned_ordered(
+        &self,
+        left: &SymExpr,
+        right: &SymExpr,
+        ordering: &mut HashMap<(SymExpr, SymExpr), bool>,
+        remaining: &mut usize,
+    ) -> bool {
+        if left == right {
+            return true;
         }
+        let key = (left.clone(), right.clone());
+        if let Some(ordered) = ordering.get(&key) {
+            return *ordered;
+        }
+        let Some(next) = remaining.checked_sub(1) else { return false };
+        *remaining = next;
+
+        let ordered = if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
+            left <= right
+        } else if let SymExprKind::Ite(condition, then_value, else_value) = left.kind() {
+            let then_ordered = condition
+                .implies_unsigned_less_or_equal(true, then_value, right, remaining)
+                || self.expressions_are_unsigned_ordered(then_value, right, ordering, remaining);
+            let else_ordered = condition
+                .implies_unsigned_less_or_equal(false, else_value, right, remaining)
+                || self.expressions_are_unsigned_ordered(else_value, right, ordering, remaining);
+            then_ordered && else_ordered
+        } else if let SymExprKind::Ite(condition, then_value, else_value) = right.kind() {
+            let then_ordered = condition
+                .implies_unsigned_less_or_equal(true, left, then_value, remaining)
+                || self.expressions_are_unsigned_ordered(left, then_value, ordering, remaining);
+            let else_ordered = condition
+                .implies_unsigned_less_or_equal(false, left, else_value, remaining)
+                || self.expressions_are_unsigned_ordered(left, else_value, ordering, remaining);
+            then_ordered && else_ordered
+        } else {
+            false
+        };
+        ordering.insert(key, ordered);
+        ordered
+    }
+
+    fn expr_lower_bound_usize(
+        &self,
+        expr: &SymExpr,
+        lower_bounds: &mut HashMap<SymExpr, usize>,
+        upper_bounds: &mut HashMap<SymExpr, Option<usize>>,
+        ordering: &mut HashMap<(SymExpr, SymExpr), bool>,
+        remaining: &mut usize,
+    ) -> usize {
+        if let Some(bound) = lower_bounds.get(expr) {
+            return *bound;
+        }
+        if let Some(value) = expr.as_const().and_then(|value| usize::try_from(value).ok()) {
+            return value;
+        }
+        let Some(next) = remaining.checked_sub(1) else {
+            return 0;
+        };
+        *remaining = next;
+
+        let bound = match expr.kind() {
+            SymExprKind::Const(value) => usize::try_from(*value).unwrap_or_default(),
+            SymExprKind::Ite(_, left, right) => {
+                let left = self.expr_lower_bound_usize(
+                    left,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                let right = self.expr_lower_bound_usize(
+                    right,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                left.min(right)
+            }
+            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                let no_wrap = self
+                    .expr_upper_bound_usize_cached(left, upper_bounds, ordering, remaining)
+                    .and_then(|left| {
+                        self.expr_upper_bound_usize_cached(right, upper_bounds, ordering, remaining)
+                            .and_then(|right| left.checked_add(right))
+                    })
+                    .is_some();
+                if no_wrap {
+                    let left = self.expr_lower_bound_usize(
+                        left,
+                        lower_bounds,
+                        upper_bounds,
+                        ordering,
+                        remaining,
+                    );
+                    let right = self.expr_lower_bound_usize(
+                        right,
+                        lower_bounds,
+                        upper_bounds,
+                        ordering,
+                        remaining,
+                    );
+                    left.checked_add(right).unwrap_or_default()
+                } else {
+                    0
+                }
+            }
+            SymExprKind::BinOp(SymBinOp::Sub, left, right) => left
+                .constant_difference(right)
+                .and_then(|difference| usize::try_from(difference).ok())
+                .unwrap_or_default(),
+            SymExprKind::BinOp(SymBinOp::Or, left, right) => {
+                let left = self.expr_lower_bound_usize(
+                    left,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                let right = self.expr_lower_bound_usize(
+                    right,
+                    lower_bounds,
+                    upper_bounds,
+                    ordering,
+                    remaining,
+                );
+                left.max(right)
+            }
+            SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. }
+            | SymExprKind::Not(_)
+            | SymExprKind::BinOp(_, _, _)
+            | SymExprKind::TernOp(_, _, _, _) => 0,
+        };
+        lower_bounds.insert(expr.clone(), bound);
+        bound
     }
 
     pub(crate) fn constraint_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
@@ -1071,8 +1299,8 @@ impl ExpectedCall {
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
             (
-                gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
-                min_gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
+                gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
+                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
             )
         } else {
             (gas, min_gas)
@@ -1126,7 +1354,7 @@ impl ExpectedCall {
         }
         let mut gas = gas.as_const_or("symbolic expected call gas")?;
         if value.is_some_and(|value| !value.is_zero()) {
-            gas = gas.saturating_add(U256::from(CALL_VALUE_STIPEND));
+            gas = gas.saturating_add(U256::from(CALL_STIPEND));
         }
         Ok(self.gas.is_none_or(|expected| gas == U256::from(expected))
             && self.min_gas.is_none_or(|expected| gas >= U256::from(expected)))
@@ -2082,8 +2310,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        let spec_id: SpecId = executor.spec_id().into();
-        if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
+        if is_known_cheatcode(address) {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {

@@ -1,7 +1,7 @@
 use super::creation_code::{
     constructor_args_offset, constructor_with_args, fetch_creation_code, load_abi,
 };
-use alloy_dyn_abi::DynSolType;
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, Bytes};
 use clap::Parser;
 use eyre::Result;
@@ -40,9 +40,8 @@ impl ConstructorArgsArgs {
         let constructor = constructor_with_args(&abi)?;
         let split = constructor_args_offset(constructor, &bytecode)?;
 
-        for (input, arg) in constructor.inputs.iter().zip(bytecode[split..].chunks(32)) {
-            let decoded = DynSolType::parse(&input.ty)?.abi_decode(arg)?;
-            sh_println!("{} → {decoded:?}", Bytes::copy_from_slice(arg))?;
+        for decoded in constructor.abi_decode_input(&bytecode[split..])? {
+            sh_println!("{} → {decoded:?}", Bytes::from(decoded.abi_encode()))?;
         }
         Ok(())
     }

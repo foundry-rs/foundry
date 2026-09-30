@@ -1,4 +1,5 @@
 use crate::{
+    dispatcher::view_session,
     opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
 };
@@ -17,6 +18,9 @@ use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
 
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
+
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 
@@ -27,19 +31,22 @@ use foundry_evm::core::evm::OpEvmNetwork;
 pub fn run() -> Result<()> {
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 
-    setup()?;
+    let warnings = setup()?;
 
     let args = Chisel::parse();
     args.global.init()?;
+    for warning in warnings {
+        let _ = foundry_common::sh_warn!("{warning}");
+    }
     args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
-pub fn setup() -> Result<()> {
-    utils::common_setup();
+pub fn setup() -> Result<Vec<String>> {
+    let warnings = utils::common_setup();
     utils::subscriber();
 
-    Ok(())
+    Ok(warnings)
 }
 
 macro_rules! try_cf {
@@ -53,6 +60,10 @@ macro_rules! try_cf {
 
 /// Run the subcommand.
 pub async fn run_command(args: Chisel) -> Result<()> {
+    if let Some(ChiselSubcommand::View { id }) = &args.cmd {
+        return view_session(id);
+    }
+
     // Load configuration
     let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;
 
@@ -70,6 +81,19 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             config,
             evm_opts,
             ExecutorBuilder::<TempoEvmNetwork>::new(),
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
+    }
+
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            ExecutorBuilder::<BaseEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -151,6 +175,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         cached_backend: None,
         calldata: None,
         ir_minimum: args.ir_minimum,
+        fork_url_required: false,
     })?;
 
     // Execute prelude Solidity source files
@@ -258,11 +283,8 @@ async fn handle_cli_command<FEN: FoundryEvmNetwork>(
         ChiselSubcommand::List => d.dispatch_command(ChiselCommand::ListSessions).await,
         ChiselSubcommand::Load { id } => d.dispatch_command(ChiselCommand::Load { id }).await,
         ChiselSubcommand::View { id } => {
-            let ControlFlow::Continue(()) = d.dispatch_command(ChiselCommand::Load { id }).await?
-            else {
-                return Ok(ControlFlow::Break(()));
-            };
-            d.dispatch_command(ChiselCommand::Source).await
+            view_session(&id)?;
+            Ok(ControlFlow::Continue(()))
         }
         ChiselSubcommand::ClearCache => d.dispatch_command(ChiselCommand::ClearCache).await,
         ChiselSubcommand::Eval { command } => d.dispatch(&command).await,
@@ -283,6 +305,18 @@ mod tests {
         Chisel::command().debug_assert();
     }
 
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature — which is what release binaries ship — must keep resolving them that way.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in [8453, 84532] {
+            let networks = infer_network_from_chain_id(NetworkConfigs::default(), Some(chain_id))
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
+    }
+
     #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
@@ -298,9 +332,9 @@ mod tests {
     #[test]
     fn explicit_ethereum_overrides_chain_id_inference() {
         let ethereum = NetworkConfigs::with_ethereum();
-        let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
-
-        assert_eq!(inferred, ethereum);
+        for chain_id in [8453, 143] {
+            assert_eq!(infer_network_from_chain_id(ethereum, Some(chain_id)).unwrap(), ethereum);
+        }
     }
 
     #[tokio::test]

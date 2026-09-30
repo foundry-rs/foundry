@@ -6,12 +6,12 @@ use alloy_evm::{Database, Evm, EvmEnv, EvmFactory};
 use alloy_network::Network;
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use foundry_evm::backend::DatabaseError;
-use op_revm::{OpHaltReason, OpTransaction};
+use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use revm::{
     DatabaseRef, Inspector,
     context::{
         TxEnv,
-        result::{EVMError, HaltReason, ResultAndState},
+        result::{HaltReason, ResultAndState},
     },
     database_interface::WrapDatabaseRef,
 };
@@ -27,6 +27,7 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: OpTransaction<TxEnv>,
+        spec: OpSpecId,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
@@ -34,7 +35,7 @@ impl<N: Network> Backend<N> {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let op_env = EvmEnv::new(
-            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork().into()),
+            evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(spec),
             evm_env.block_env.clone(),
         );
         let mut evm = OpEvmFactory::default().create_evm_with_inspector(
@@ -43,17 +44,11 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
-        let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
-            EVMError::Database(db) => EVMError::Database(db),
-            EVMError::Header(h) => EVMError::Header(h),
-            EVMError::Custom(s) => EVMError::Custom(s),
-            EVMError::CustomAny(err) => EVMError::CustomAny(err),
-            EVMError::Transaction(t) => EVMError::Transaction(t),
-        })?;
+        let result = evm.transact(OpTx(tx_env))?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
                 OpHaltReason::Base(eth) => eth,
-                _ => HaltReason::PrecompileError,
+                OpHaltReason::FailedDeposit => HaltReason::PrecompileError,
             }),
             state: result.state,
         })

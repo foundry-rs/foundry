@@ -551,6 +551,31 @@ pub(crate) fn is_known_precompile(
             }
         }
     }
+    // Base precompiles (only on a Base chain or in an explicitly configured Base context).
+    #[cfg(feature = "base")]
+    {
+        let base_upgrade = hardfork
+            .and_then(foundry_evm_hardforks::BaseSpecId::from_foundry_hardfork)
+            .map(|spec| spec.upgrade());
+        let is_base_context = networks.map_or_else(
+            || {
+                chain_id.is_some_and(|id| {
+                    matches!(
+                        Chain::from_id(id).named(),
+                        Some(NamedChain::Base | NamedChain::BaseSepolia)
+                    )
+                }) || base_upgrade.is_some()
+            },
+            |networks| networks.is_base(),
+        );
+        if is_base_context
+            && base_upgrade.is_some_and(|upgrade| {
+                foundry_evm_networks::is_base_precompile_active_at(address, upgrade)
+            })
+        {
+            return true;
+        }
+    }
     // Celo transfer precompile (only on Celo chains).
     let is_celo_context = networks.map_or_else(
         || {
@@ -624,6 +649,11 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, hex};
 
+    #[cfg(feature = "base")]
+    use base_common_precompiles::ActivationRegistryStorage;
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
+
     #[test]
     fn known_precompile_boundaries() {
         assert!(is_known_precompile(P256_VERIFY, None, None, None));
@@ -638,6 +668,19 @@ mod tests {
             None,
             None,
             None
+        ));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_precompiles_require_a_known_upgrade() {
+        let address = ActivationRegistryStorage::ADDRESS;
+        assert!(!is_known_precompile(address, Some(NetworkConfigs::with_base()), Some(8453), None));
+        assert!(is_known_precompile(
+            address,
+            Some(NetworkConfigs::with_base()),
+            Some(8453),
+            Some(FoundryHardfork::Base(BaseUpgrade::Beryl))
         ));
     }
 

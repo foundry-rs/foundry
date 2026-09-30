@@ -548,12 +548,17 @@ where
         };
 
         // We only allow user to omit the recipient address if transaction is an EIP-7702 tx
-        // without a value.
+        // without a value. The sender is used as the destination in that case, see `build`.
         if to.is_none()
             && code.is_none()
             && (!self.has_auth() || self.inner.tx.value().is_some_and(|v| !v.is_zero()))
         {
             eyre::bail!("Must specify a recipient address or contract code to deploy");
+        }
+        if to.is_none() && code.is_some() && self.has_auth() {
+            eyre::bail!(
+                "EIP-7702 transactions can't be CREATE transactions and require a destination address"
+            );
         }
 
         Ok(self.with_state(InputState { kind: to.into(), input, func }))
@@ -623,7 +628,13 @@ where
         let fill = self.fill;
         let from = sender.address();
 
-        self.tx.set_kind(state.kind);
+        // An EIP-7702 transaction can't be a CREATE. If the recipient was omitted, the sender
+        // itself is the destination, which is the common case for self-delegation.
+        let kind = match state.kind {
+            TxKind::Create if !self.auth.is_empty() => TxKind::Call(from),
+            kind => kind,
+        };
+        self.tx.set_kind(kind);
         // We set both fields to the same value because some nodes only accept the legacy
         // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
         self.tx.set_input_kind(state.input, TransactionInputKind::Both);
@@ -880,15 +891,18 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 mod tests {
     use super::*;
     use alloy_json_rpc::{RequestPacket, ResponsePacket};
-    use alloy_network::Ethereum;
+    use alloy_network::{Ethereum, NetworkTransactionBuilder};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
+    use alloy_sol_types::SolValue;
     use alloy_transport::{TransportFut, mock::MockTransport};
     use clap::Parser;
+    use foundry_common::tempo::resolve_and_set_fee_token;
     use std::{
         sync::{Arc, Mutex},
         task::{Context, Poll},
     };
+    use tempo_alloy::TempoNetwork;
     use tokio::{sync::Barrier, time::timeout};
     use tower::Service;
 
@@ -983,6 +997,49 @@ mod tests {
         let mut fill_methods = fill_methods.lock().unwrap().clone();
         fill_methods.sort();
         assert_eq!(fill_methods, ["eth_estimateGas", "eth_getTransactionCount"]);
+    }
+
+    #[tokio::test]
+    async fn browser_submission_resolves_type_after_tempo_fee_token() {
+        let asserter = Asserter::new();
+        let token = Address::repeat_byte(0x42);
+        asserter.push_success(&token.abi_encode());
+        let provider =
+            ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+        let chain = Chain::from_id(4217);
+        let config = Config { chain: Some(chain), ..Default::default() };
+        let opts = TransactionOpts::parse_from([
+            "test",
+            "--gas-limit",
+            "21000",
+            "--nonce",
+            "0",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "1",
+        ]);
+        let (mut tx, _) = CastTxBuilder::new(&provider, opts, &config)
+            .await
+            .unwrap()
+            .with_browser_wallet()
+            .with_to(Some(TO.into()))
+            .await
+            .unwrap()
+            .with_code_sig_and_args(None, None, Vec::new())
+            .await
+            .unwrap()
+            .build(Address::repeat_byte(0x22))
+            .await
+            .unwrap();
+        assert_eq!(tx.inner.transaction_type, None);
+        assert_eq!(tx.fee_token, None);
+
+        // Fee resolution happens after building and can change the submission type to Tempo AA.
+        resolve_and_set_fee_token(Some(&provider), Some(chain), &mut tx, None).await.unwrap();
+        tx.prep_for_submission();
+        assert_eq!(tx.inner.transaction_type, Some(0x76));
+        assert_eq!(tx.fee_token, Some(token));
     }
 
     #[tokio::test]

@@ -185,7 +185,7 @@ casttest!(
     #[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
     flaky_estimate_base_da,
     |_prj, cmd| {
-        cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
+        cmd.args(["da-estimate", "30558838", "-r", next_rpc_endpoint(NamedChain::Base).as_str()])
             .assert_success()
             .stdout_eq(str![[r#"
 52916546100
@@ -268,4 +268,26 @@ casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success();
+});
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+casttest!(cast_da_estimate_honors_config_and_cli_override, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_tempo();
+    });
+    cmd.args(["da-estimate", "latest", "--rpc-url", "http://127.0.0.1:1"])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: DA estimation is not supported for Tempo: EIP-4844 blob transactions are not available on this network
+
+"#]]);
+    cmd.cast_fuse().current_dir(prj.root())
+        .args(["da-estimate", "latest", "--network", "ethereum", "--rpc-url", "http://127.0.0.1:1", "--curl"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"method":"eth_getBlockByNumber","params":["latest",true],"id":0,"jsonrpc":"2.0"}' 'http://127.0.0.1:1/'
+
+"#]])
+        .stderr_eq(str![""]);
 });

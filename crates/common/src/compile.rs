@@ -1,7 +1,11 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
+    TestFunctionExt,
+    external_compiler::{ExternalCompilation, is_builtin_compiler_source},
+    preprocessor::DynamicTestLinkingPreprocessor,
+    shell,
+    term::SpinnerReporter,
 };
 use alloy_json_abi::JsonAbi;
 use comfy_table::{
@@ -13,7 +17,8 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Severity, Source, output_selection::OutputSelection,
+        remappings::Remapping,
     },
     compilers::{
         Compiler,
@@ -25,6 +30,7 @@ use foundry_compilers::{
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
+use foundry_config::Config;
 use num_format::{Locale, ToFormattedString};
 use revm::primitives::{eip170, eip3860, hardfork::SpecId};
 use solar::{
@@ -36,7 +42,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::Display,
     io::IsTerminal,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Instant,
@@ -78,11 +84,21 @@ pub struct ProjectCompiler {
     /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
+    /// Paths used by external adapters to select compiler-native build units.
+    selected_paths: Vec<PathBuf>,
+
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
+
+    /// External compiler configuration.
+    external_compilers: Option<Config>,
+
+    /// Preserves the caller's artifact policy when ABI caching enables artifacts on a cloned
+    /// project.
+    external_writes: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -106,8 +122,11 @@ impl ProjectCompiler {
             ignore_eip_3860: false,
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
+            selected_paths: Vec::new(),
             dynamic_test_linking: false,
             abi_cache: false,
+            external_compilers: None,
+            external_writes: true,
         }
     }
 
@@ -168,10 +187,48 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets paths used by external adapters to select compiler-native build units.
+    pub fn selected_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.selected_paths.extend(paths);
+        self
+    }
+
+    /// Selects targets for external adapters and built-in sources where applicable.
+    pub fn target_files(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        for path in paths {
+            if is_builtin_compiler_source(&path) {
+                self.files.push(path.clone());
+            }
+            self.selected_paths.push(path);
+        }
+        self
+    }
+
     /// Sets if tests should be dynamically linked.
     #[inline]
     pub const fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
         self.dynamic_test_linking = preprocess;
+        self
+    }
+
+    /// Enables explicitly configured external compilers for this build.
+    pub fn external_compilers(mut self, config: &Config) -> Self {
+        self.external_compilers = Some(config.clone());
+        self
+    }
+
+    /// Controls whether external artifacts and their cache may be published.
+    pub const fn external_artifacts(mut self, write: bool) -> Self {
+        self.external_writes = write;
+        self
+    }
+
+    /// Reuses normal artifacts before consulting the compiler-owned ABI cache.
+    ///
+    /// The project must request ABI output and may include other contract outputs.
+    /// The project's artifact policy controls writes to the secondary cache.
+    pub const fn cache_abi(mut self) -> Self {
+        self.abi_cache = true;
         self
     }
 
@@ -192,20 +249,37 @@ impl ProjectCompiler {
         // breaks compatibility with downstream crates like `foundry-cli`. This would need a
         // broader refactor across the call chain. Leaving it as-is for now until a larger
         // refactor is feasible.
-        if !project.paths.has_input_files() && self.files.is_empty() {
+        if !project.paths.has_input_files()
+            && self.files.is_empty()
+            && self.selected_paths.is_empty()
+            && self
+                .external_compilers
+                .as_ref()
+                .is_none_or(|config| config.external_compilers.is_empty())
+        {
             sh_println!("Nothing to compile")?;
             std::process::exit(0);
         }
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
+        let explicit_selection = !files.is_empty() || !self.selected_paths.is_empty();
+        let selected_paths = std::mem::take(&mut self.selected_paths);
         let preprocess = self.dynamic_test_linking;
         let abi_cache = self.abi_cache;
+        let external_compilers = self.external_compilers.take();
+        let external_writes = self.external_writes && !project.no_artifacts;
         self.compile_with(|| {
-            let sources = if files.is_empty() {
-                project.paths.read_input_files()?
-            } else {
+            let external = external_compilers
+                .as_ref()
+                .map(|config| {
+                    ExternalCompilation::compile(config, &selected_paths, external_writes)
+                })
+                .transpose()?;
+            let sources = if explicit_selection {
                 Source::read_all(files)?
+            } else {
+                project.paths.read_input_files()?
             };
 
             let mut compiler =
@@ -213,11 +287,14 @@ impl ProjectCompiler {
             if preprocess {
                 compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
-            if abi_cache {
-                compiler.compile_abi_cached().map_err(Into::into)
-            } else {
-                compiler.compile().map_err(Into::into)
+            let mut output =
+                if abi_cache { compiler.compile_abi_cached()? } else { compiler.compile()? };
+            if !output.has_compiler_errors()
+                && let Some(external) = external
+            {
+                external.merge(&mut output)?;
             }
+            Ok(output)
         })
     }
 
@@ -715,7 +792,9 @@ where
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
-    compiler.abi_cache |= project.no_artifacts;
+    // Cached ABI artifacts do not retain compiler diagnostics.
+    compiler.abi_cache = (compiler.abi_cache || project.no_artifacts)
+        && project.compiler_severity_filter == Severity::Error;
     compiler.compile(project)
 }
 
@@ -732,12 +811,14 @@ where
     if !project.cached
         || project.build_info
         || project.artifacts.additional_files != Default::default()
+        || project.compiler_severity_filter != Severity::Error
     {
         return compile_abi_project(project, compiler);
     }
     let mut cached_project = project.clone();
     cached_project.no_artifacts = false;
     compiler.abi_cache = true;
+    compiler.external_writes &= !project.no_artifacts;
     compile_abi_project(&mut cached_project, compiler)
 }
 
@@ -768,8 +849,12 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
     let mut settings = metadata.settings()?;
 
     // make remappings absolute with our root
+    //
+    // The remappings come from the explorer's copy of the contract's compiler settings, which is
+    // attacker controlled: a target of `../../..` would otherwise point the compiler at sources
+    // outside the checkout and let a verified contract pull arbitrary local files into the build.
     for remapping in &mut settings.remappings {
-        let new_path = sources_path.join(remapping.path.trim_start_matches('/'));
+        let new_path = sources_path.join(sanitize_relative_path(remapping.path.as_ref()));
         remapping.path = new_path.display().to_string();
     }
 
@@ -809,6 +894,36 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
         .ephemeral()
         .no_artifacts()
         .build(compiler)?)
+}
+
+/// Normalizes an untrusted path relative to the source root, discarding leading separators,
+/// drive prefixes, and parent components that would escape that root.
+fn sanitize_relative_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => {}
+        }
+    }
+    normalized
+}
+
+/// Adds `storageLayout` to the compiler output selection for the given project.
+pub fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+) {
+    project.artifacts.additional_values.storage_layout = true;
+    project.update_output_selection(|selection| {
+        for contract_selection in selection.0.values_mut() {
+            for selection in contract_selection.values_mut() {
+                selection.push("storageLayout".to_string());
+            }
+        }
+    })
 }
 
 /// Configures the reporter and runs the given closure.
@@ -984,6 +1099,30 @@ mod tests {
         assert_eq!(
             ContractSizeLimits::for_spec_id(SpecId::AMSTERDAM),
             ContractSizeLimits::new(65_536, 131_072)
+        );
+    }
+
+    #[test]
+    fn sanitized_remapping_paths_stay_inside_the_root() {
+        let root = Path::new("/tmp/sources");
+        for path in ["../../../etc", "a/../../../etc", "/etc", "./a/../b"] {
+            let joined = root.join(sanitize_relative_path(Path::new(path)));
+            assert!(
+                joined.starts_with(root) && !joined.components().any(|c| c == Component::ParentDir),
+                "{path} escaped the root: {}",
+                joined.display()
+            );
+        }
+
+        for (path, expected) in [("src/../lib/", "lib"), ("./a/../b", "b"), ("a/../../lib", "lib")]
+        {
+            assert_eq!(sanitize_relative_path(Path::new(path)), Path::new(expected));
+        }
+
+        // Ordinary relative paths are left alone.
+        assert_eq!(
+            sanitize_relative_path(Path::new("lib/openzeppelin")),
+            Path::new("lib/openzeppelin")
         );
     }
 }

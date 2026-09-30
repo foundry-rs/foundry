@@ -217,12 +217,16 @@ forgetest_init!(handler_assertion_persisted_to_disk, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
+        config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
+        config.invariant.corpus.evm_edge_coverage_collision_free = false;
+        config.invariant.corpus.evm_edge_coverage_include_call_depth = true;
     });
     prj.add_source(
         "AlwaysAssert.sol",
         r#"
 contract AlwaysAssert {
-    function boom() external { assert(false); }
+    function ping() external pure {}
+    function boom() external { this.ping(); assert(false); }
 }
    "#,
     );
@@ -263,12 +267,19 @@ contract AlwaysAssertTest is Test {
     // the orphaned file is removed.
     prj.update_config(|config| {
         config.invariant.runs = 0;
+        config.invariant.corpus.corpus_dir = None;
+        config.invariant.corpus.evm_edge_coverage_collision_free = true;
+        config.invariant.corpus.evm_edge_coverage_include_call_depth = false;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_ok"]).assert_failure().stderr_eq(
+        str![[r#"
 ...
 Warning: Replayed handler-side assertion bug from [..]
 ...
-"#]]);
+"#]],
+    );
+
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_ok"]).assert_failure();
 
     // Sanity check: persisted file is still there after a successful replay.
     let entries_after: Vec<_> = std::fs::read_dir(&handlers_dir)
@@ -277,6 +288,22 @@ Warning: Replayed handler-side assertion bug from [..]
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert_eq!(entries_after.len(), entries.len(), "replayed file should be preserved");
+
+    // Legacy edge fingerprints lack capture provenance and may be impossible to reproduce. A
+    // handler-site match retains the artifact instead of deleting or silently migrating it.
+    let legacy_path = entries_after[0].path();
+    let mut legacy: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&legacy_path).unwrap()).unwrap();
+    legacy.as_object_mut().unwrap().remove("fingerprint_provenance");
+    legacy["failure_site"]["fingerprint"] =
+        serde_json::Value::String(format!("0x{}", "11".repeat(32)));
+    std::fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+    cmd.forge_fuse().args(["fuzz", "replay", "--mt", "invariant_ok"]).assert_failure();
+    let retained: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&legacy_path).unwrap()).unwrap();
+    assert_eq!(retained["failure_site"]["fingerprint"], legacy["failure_site"]["fingerprint"]);
+    assert!(retained.get("fingerprint_provenance").is_none());
 
     // Replace the asserting handler with a no-op so the persisted sequence no longer
     // reproduces. The replay step must delete the stale file in place.
@@ -305,7 +332,8 @@ contract AlwaysAssert {
         "AlwaysAssert.sol",
         r#"
 contract AlwaysAssert {
-    function boom() external { assert(false); }
+    function ping() external pure {}
+    function boom() external { this.ping(); assert(false); }
 }
    "#,
     );
@@ -350,6 +378,249 @@ contract AlwaysAssertTest is Test {
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert!(entries_after.is_empty(), "stale handler file must be deleted, got {entries_after:?}");
+});
+
+forgetest_init!(nested_handler_assertion_replays_from_disk, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 30;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "NestedAssertion.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract NestedAssertion {
+    function boom() external pure { assert(false); }
+}
+
+contract OuterHandler {
+    bool primed;
+    NestedAssertion nested = new NestedAssertion();
+    function prime() external { primed = true; }
+    function noop() external {}
+    function step() external { if (primed) nested.boom(); }
+}
+   "#,
+    );
+    prj.add_test(
+        "NestedAssertionTest.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {OuterHandler} from "../src/NestedAssertion.sol";
+
+contract NestedAssertionTest is Test {
+    OuterHandler handler;
+    function setUp() public { handler = new OuterHandler(); targetContract(address(handler)); }
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    let output = cmd
+        .args(["test", "--mt", "invariant_ok", "--fuzz-seed", "2"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let original = stdout
+        .split_once("[Sequence] (original: ")
+        .unwrap_or_else(|| panic!("{stdout}\n{}", String::from_utf8_lossy(&output.stderr)))
+        .1
+        .split_once(',')
+        .unwrap()
+        .0
+        .parse::<usize>()
+        .unwrap();
+    assert!(original > 2, "expected a removable call: {stdout}");
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("NestedAssertionTest")
+        .join("handlers");
+    let file = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .find(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .expect("persisted nested handler failure");
+    let persisted: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
+    assert_eq!(persisted["call_sequence"].as_array().unwrap().len(), 2);
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Replayed handler-side assertion bug from [..]
+...
+"#]]);
+    assert!(file.path().exists(), "replayed nested handler failure should be preserved");
+});
+
+forgetest_init!(handler_vm_assert_replays_from_disk, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "HandlerVmAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract VmAssertHandler is Test {
+    function step() external { vm.assertEq(uint256(1), uint256(2)); }
+}
+
+contract HandlerVmAssertTest is Test {
+    VmAssertHandler handler;
+    function setUp() public { handler = new VmAssertHandler(); targetContract(address(handler)); }
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("HandlerVmAssertTest")
+        .join("handlers");
+    let file = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .find(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .expect("persisted vm.assert handler failure");
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Replayed handler-side assertion bug from [..]
+...
+"#]]);
+    assert!(file.path().exists(), "replayed vm.assert handler failure should be preserved");
+
+    // Simulate a symbolic handler artifact produced before handler identities were canonicalized:
+    // it stored the cheatcode reverter rather than the top-level handler target. Migration keeps
+    // the legacy record until normal result persistence has written its canonical replacement.
+    let mut legacy: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
+    let legacy_reverter: alloy_primitives::Address =
+        "0x7109709ecfa91a80626ff3989d68f67f5b1dd12d".parse().unwrap();
+    let selector: alloy_primitives::Selector =
+        legacy["failure_site"]["selector"].as_str().unwrap().parse().unwrap();
+    let mut identity = [0u8; 24];
+    identity[..20].copy_from_slice(legacy_reverter.as_slice());
+    identity[20..].copy_from_slice(selector.as_slice());
+    legacy["failure_site"]["target"] = serde_json::Value::String(legacy_reverter.to_string());
+    legacy["failure_site"]["fingerprint"] =
+        serde_json::Value::String(format!("{:#x}", alloy_primitives::keccak256(identity)));
+    let legacy_path = handlers_dir.join("legacy.json");
+    std::fs::write(&legacy_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+    std::fs::remove_file(file.path()).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure();
+    assert!(legacy_path.exists(), "legacy failure must remain until canonical persistence");
+    assert_eq!(handlers_dir.read_dir().unwrap().count(), 2);
+
+    // A malformed file at the canonical path is not proof that migration completed. Replay repairs
+    // it from the legacy record but retains that record until the canonical copy itself replays.
+    let canonical_path = handlers_dir
+        .read_dir()
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| path != &legacy_path)
+        .expect("canonical handler failure");
+    std::fs::write(&canonical_path, b"{").unwrap();
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure();
+    assert!(legacy_path.exists(), "malformed canonical file must not authorize legacy deletion");
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure();
+    assert!(!legacy_path.exists(), "legacy failure should be removed after safe migration");
+    assert_eq!(handlers_dir.read_dir().unwrap().count(), 1);
+});
+
+forgetest_init!(handler_replay_uses_full_persisted_sequence_after_depth_decrease, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "DelayedAssert.sol",
+        r#"
+contract DelayedAssert {
+    uint256 public calls;
+
+    function inc() external {
+        calls++;
+        assert(calls < 5);
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "DelayedAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {DelayedAssert} from "../src/DelayedAssert.sol";
+
+contract DelayedAssertTest is Test {
+    DelayedAssert handler;
+
+    function setUp() public {
+        handler = new DelayedAssert();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("DelayedAssertTest")
+        .join("handlers");
+    let file = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .find(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .expect("persisted handler file");
+    let json: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
+    assert_eq!(json["call_sequence"].as_array().unwrap().len(), 5);
+
+    // No depth-three campaign could reach the assertion, and runs = 0 prevents rediscovery.
+    // The failure must therefore come from replaying all five calls in the persisted sequence.
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.invariant.depth = 3;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
+...
+Warning: Replayed handler-side assertion bug from [..]
+...
+"#]]);
+    assert!(file.path().exists(), "replayed handler file should be preserved");
 });
 
 // Two distinct handler contracts → two persisted files, both reported.

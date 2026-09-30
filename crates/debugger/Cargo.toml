@@ -33,6 +33,11 @@ serde.workspace = true
 
 [features]
 default = ["optimism"]
+base = [
+    "foundry-common/base",
+    "foundry-evm-core/base",
+    "foundry-evm-traces/base",
+]
 optimism = [
     "foundry-common/optimism",
     "foundry-evm-core/optimism",

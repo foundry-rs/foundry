@@ -5,16 +5,30 @@ use std::{fs, path::Path, process::Command};
 
 // Keep each generated crate isolated while reusing its dependencies across binding tests.
 // Cargo locks the shared target directory across nextest processes and fingerprints each crate.
-pub(super) fn bindings_cargo(bindings_path: &Path) -> Command {
+pub(super) fn bindings_cargo(bindings_path: &Path, subcommand: &str) -> Command {
+    // Preserve the generated manifest, including its conditional serde_with dependency.
+    // Refresh these fixtures from the corresponding generated crates when updating bindings deps.
+    let manifest = fs::read_to_string(bindings_path.join("Cargo.toml"))
+        .unwrap()
+        .parse::<toml_edit::DocumentMut>()
+        .unwrap();
+    let lock = if manifest["dependencies"].get("serde_with").is_some() {
+        include_str!("../fixtures/bind-with-serde-with/Cargo.lock")
+    } else {
+        include_str!("../fixtures/bind/Cargo.lock")
+    };
+    fs::write(bindings_path.join("Cargo.lock"), lock).unwrap();
+
     let mut cmd = Command::new("cargo");
     cmd.current_dir(bindings_path)
+        .args([subcommand, "--locked"])
         .env("CARGO_TARGET_DIR", cargo_profile_dir().join("bind-test-target"));
     cmd
 }
 
 fn assert_bindings_compile(bindings_path: &Path) {
-    let out = bindings_cargo(bindings_path)
-        .args(["check", "--tests"])
+    let out = bindings_cargo(bindings_path, "check")
+        .arg("--tests")
         .output()
         .expect("failed to run cargo check");
 
@@ -251,6 +265,31 @@ contract EnumUser {
     let missing_solc = prj.root().join("missing-solc");
     prj.update_config(|config| config.solc = Some(SolcReq::Local(missing_solc)));
     cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub enum Status"), "{binding}");
+});
+
+forgetest!(bind_skip_build_keeps_enums_with_external_artifacts, |prj, cmd| {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    let artifact = prj.paths().artifacts.join("EnumUser.sol/EnumUser.json");
+    let external = prj.paths().artifacts.join(".external/fixture/app/External.json");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::copy(artifact, external).unwrap();
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^(EnumUser|External)$"])
+        .assert_success();
 
     let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
     assert!(binding.contains("pub enum Status"), "{binding}");

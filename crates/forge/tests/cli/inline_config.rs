@@ -688,3 +688,68 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]],
     );
 });
+
+// Suites with no selected tests in a network pass must be skipped before setup.
+forgetest!(network_pass_skips_unselected_setup, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        /// forge-config: default.networks.network = "tempo"
+        /// forge-config: default.hardfork = "tempo:T3"
+        contract TempoNetwork {
+            bool ready;
+
+            function setUp() public {
+                ready = true;
+            }
+
+            function test_contract_tempo() public view {
+                require(ready, "setup must run in the selected pass");
+            }
+        }
+
+        /// forge-config: default.networks.network = "ethereum"
+        contract EthereumNetwork {
+            function test_ethereum() public {}
+        }
+
+        contract FunctionNetwork {
+            bool ready;
+
+            function setUp() public {
+                require(
+                    address(0xfeEC000000000000000000000000000000000000).code.length > 0,
+                    "setup must only run on Tempo"
+                );
+                ready = true;
+            }
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_tempo() public view {
+                require(ready, "setup must run in the selected pass");
+            }
+        }
+        "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+});

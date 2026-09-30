@@ -1,4 +1,4 @@
-use alloy_sol_types::SolError;
+use alloy_sol_types::{SolError, SolType, sol_data};
 use foundry_cheatcodes_spec::Vm::{self, *};
 use foundry_common::wallet::private_key_from_u256;
 
@@ -294,23 +294,16 @@ pub(crate) fn abi_bytes_return_with_len(
 }
 
 pub(crate) fn abi_concrete_bytes_return(cx: &mut SymCx, bytes: &[u8]) -> SymReturnData {
-    let bytes = bytes.iter().map(|byte| SymExpr::constant(cx, U256::from(*byte))).collect();
-    abi_bytes_return(cx, bytes)
+    SymReturnData::from_concrete_bytes(cx, sol_data::Bytes::abi_encode(bytes))
 }
 
 pub(crate) fn abi_concrete_value_return(cx: &mut SymCx, value: DynSolValue) -> SymReturnData {
-    let bytes = value
-        .abi_encode()
-        .into_iter()
-        .map(|byte| SymExpr::constant(cx, U256::from(byte)))
-        .collect();
-    SymReturnData::from_byte_exprs(cx, bytes)
+    SymReturnData::from_concrete_bytes(cx, value.abi_encode())
 }
 
 pub(crate) fn error_string_return_data(cx: &mut SymCx, reason: &str) -> SymReturnData {
     let bytes = Vm::CheatcodeError { message: reason.to_string() }.abi_encode();
-    let bytes = bytes.into_iter().map(|byte| SymExpr::constant(cx, U256::from(byte))).collect();
-    SymReturnData::from_byte_exprs(cx, bytes)
+    SymReturnData::from_concrete_bytes(cx, bytes)
 }
 
 pub(crate) fn recorded_logs_return_data(cx: &mut SymCx, logs: Vec<SymbolicLog>) -> SymReturnData {
@@ -785,6 +778,14 @@ pub(crate) const fn array_assertion_element_type(
     }
 }
 
+pub(crate) fn is_full_word_array_assertion(selector: [u8; 4]) -> bool {
+    !selector_has_string_reason(selector)
+        && matches!(
+            array_assertion_element_type(selector),
+            Ok(DynSolType::Uint(256) | DynSolType::Int(256) | DynSolType::FixedBytes(32))
+        )
+}
+
 pub(crate) fn dyn_string(value: &DynSolValue) -> Result<String, SymbolicError> {
     match value {
         DynSolValue::String(value) => Ok(value.clone()),
@@ -989,8 +990,13 @@ pub(crate) fn sign_compact_hash_words(
     let sig = signer
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.signCompact"))?;
-    let y_parity = U256::from(sig.v() as u64) << 255;
-    Ok(vec![SymExpr::constant(cx, sig.r()), SymExpr::constant(cx, sig.s() | y_parity)])
+    Ok(sig
+        .as_erc2098()
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .map(|word| SymExpr::constant(cx, U256::from_be_bytes(*word)))
+        .collect())
 }
 
 pub(crate) fn derive_private_key<W: Wordlist>(
@@ -1088,5 +1094,28 @@ mod tests {
             foundry_cheatcode_min_input_size(registerMappingSstoreHookCall::SELECTOR),
             Some(abi_static_input_size(3))
         );
+    }
+
+    #[test]
+    fn symbolic_full_word_array_assertions_exclude_normalized_types_and_reasons() {
+        for selector in [
+            assertEq_16Call::SELECTOR,
+            assertEq_18Call::SELECTOR,
+            assertEq_22Call::SELECTOR,
+            assertNotEq_16Call::SELECTOR,
+            assertNotEq_18Call::SELECTOR,
+            assertNotEq_22Call::SELECTOR,
+        ] {
+            assert!(is_full_word_array_assertion(selector));
+        }
+        for selector in [
+            assertEq_14Call::SELECTOR,
+            assertEq_17Call::SELECTOR,
+            assertEq_20Call::SELECTOR,
+            assertNotEq_15Call::SELECTOR,
+            assertNotEq_20Call::SELECTOR,
+        ] {
+            assert!(!is_full_word_array_assertion(selector));
+        }
     }
 }

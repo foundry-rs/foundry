@@ -2,7 +2,7 @@
 
 use crate::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
+    traces::{CallTraceArena, CallTraceDecoder, CallTraceNode},
 };
 use alloy_primitives::{Address, map::HashSet};
 use comfy_table::{
@@ -117,9 +117,7 @@ impl GasReport {
         if is_create_call {
             trace!(contract_name, "adding create gas info");
             contract_info.gas = trace.gas_used;
-        } else if let Some(DecodedCallData { signature, .. }) =
-            decoder.decode_function(trace).await.call_data
-        {
+        } else if let Some(signature) = decoder.decode_function_signature(trace).await {
             let name = signature.split('(').next().unwrap();
             // Ignore any test/setup functions.
             if self.include_tests || !name.test_function_kind().is_known() {

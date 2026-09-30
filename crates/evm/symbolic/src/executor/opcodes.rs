@@ -227,7 +227,7 @@ impl SymbolicExecutor {
                     parent.world = outcome.state.world;
                     parent.block = outcome.state.block;
                 }
-                CallStatus::Revert | CallStatus::Failure => {
+                CallStatus::Revert | CallStatus::ExceptionalHalt | CallStatus::Failure => {
                     parent.return_data = outcome.state.frame.return_data;
                     parent.pending_storage_hook_revert = true;
                 }
@@ -455,6 +455,11 @@ impl SymbolicExecutor {
         op: u8,
     ) -> Result<StepOutcome, SymbolicError> {
         state.pc += 1;
+
+        if Into::<SpecId>::into(executor.spec_id()) < opcode_activation(op) {
+            state.return_data = SymReturnData::empty(&mut self.cx);
+            return Ok(StepOutcome::ExceptionalHalt);
+        }
 
         match op {
             opcode::PUSH0 => {
@@ -921,7 +926,8 @@ impl SymbolicExecutor {
                 }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
-                state.memory.store_word_offset(&mut self.cx, offset, value);
+                let minimum_offset = state.lower_bound_usize(&offset);
+                state.memory.store_word_offset(&mut self.cx, offset, value, minimum_offset);
             }
             opcode::MSTORE8 => {
                 let offset = state.stack.peek(0)?.clone();
@@ -932,7 +938,8 @@ impl SymbolicExecutor {
                 }
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
-                state.memory.store_byte_offset(&mut self.cx, offset, value);
+                let minimum_offset = state.lower_bound_usize(&offset);
+                state.memory.store_byte_offset(&mut self.cx, offset, value, minimum_offset);
             }
             opcode::SLOAD => {
                 let key = state.stack.pop()?;
@@ -967,7 +974,7 @@ impl SymbolicExecutor {
             opcode::SSTORE => {
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 }
                 let key = state.stack.peek(0)?.clone();
                 state.stack.peek(1)?;
@@ -1070,7 +1077,7 @@ impl SymbolicExecutor {
             opcode::TSTORE => {
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 }
                 let key = state.stack.pop()?;
                 let value = state.stack.pop()?;
@@ -1086,7 +1093,7 @@ impl SymbolicExecutor {
                 )?
                 else {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 };
                 if !self.take_loop_jump(state, state.pc, dest) {
                     return Ok(StepOutcome::AssumeRejected);
@@ -1106,7 +1113,7 @@ impl SymbolicExecutor {
                         )?
                         else {
                             state.return_data = SymReturnData::empty(&mut self.cx);
-                            return Ok(StepOutcome::Revert);
+                            return Ok(StepOutcome::ExceptionalHalt);
                         };
                         if !self.take_loop_jump(state, state.pc, dest) {
                             return Ok(StepOutcome::AssumeRejected);
@@ -1260,7 +1267,7 @@ impl SymbolicExecutor {
                 }
                 return self.return_or_revert(state, op == opcode::REVERT);
             }
-            opcode::INVALID => return Ok(StepOutcome::Failure),
+            opcode::INVALID => return Ok(StepOutcome::ExceptionalHalt),
             opcode::CALL => {
                 return self.call(executor, state, worklist, completed_paths, CallKind::Call);
             }
@@ -1294,7 +1301,7 @@ impl SymbolicExecutor {
             opcode::SELFDESTRUCT => {
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 }
                 let spec_id: SpecId = executor.spec_id().into();
                 let (beneficiary_word, beneficiary) =
@@ -1375,7 +1382,7 @@ impl SymbolicExecutor {
             opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
                 if state.is_static {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 }
                 let topics = (op - opcode::LOG0) as usize;
                 let offset = state.stack.peek(0)?.clone();
@@ -1482,7 +1489,7 @@ impl SymbolicExecutor {
         state.constraints = taken_constraints;
         state.set_corpus_seed_models(taken_seed_models);
         state.return_data = SymReturnData::empty(&mut self.cx);
-        Ok(StepOutcome::Revert)
+        Ok(StepOutcome::ExceptionalHalt)
     }
 
     fn guard_returndata_copy_range(
@@ -1559,6 +1566,26 @@ impl SymbolicExecutor {
         } else {
             StepOutcome::Revert
         }
+    }
+}
+
+/// Returns the activation fork for opcodes implemented by the symbolic executor.
+const fn opcode_activation(op: u8) -> SpecId {
+    match op {
+        opcode::DELEGATECALL => SpecId::HOMESTEAD,
+        opcode::RETURNDATASIZE | opcode::RETURNDATACOPY | opcode::STATICCALL | opcode::REVERT => {
+            SpecId::BYZANTIUM
+        }
+        opcode::SHL | opcode::SHR | opcode::SAR | opcode::EXTCODEHASH | opcode::CREATE2 => {
+            SpecId::PETERSBURG
+        }
+        opcode::CHAINID | opcode::SELFBALANCE => SpecId::ISTANBUL,
+        opcode::BASEFEE => SpecId::LONDON,
+        opcode::PUSH0 => SpecId::SHANGHAI,
+        opcode::TLOAD | opcode::TSTORE | opcode::MCOPY | opcode::BLOBHASH | opcode::BLOBBASEFEE => {
+            SpecId::CANCUN
+        }
+        _ => SpecId::FRONTIER,
     }
 }
 
@@ -1697,5 +1724,197 @@ mod tests {
         assert!(executor.constraints_with_condition(&state, offset_is_65.clone()).unwrap().1);
         assert!(executor.constraints_with_condition(&valid, offset_is_64).unwrap().1);
         assert!(!executor.constraints_with_condition(&valid, offset_is_65).unwrap().1);
+    }
+
+    #[test]
+    fn invalid_jumps_are_exceptional_halts() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let concrete = ExecutorBuilder::default().build(
+            Default::default(),
+            Default::default(),
+            backend,
+            Default::default(),
+        );
+        for op in [opcode::JUMP, opcode::JUMPI] {
+            let mut state = empty_state(&mut executor);
+            state.return_data = SymReturnData::from_concrete_bytes(&mut executor.cx, vec![1]);
+            if op == opcode::JUMPI {
+                state.stack.push(SymExpr::one(&mut executor.cx)).unwrap();
+            }
+            state.stack.push(SymExpr::zero(&mut executor.cx)).unwrap();
+            let code = SymCode::concrete(&mut executor.cx, vec![op]);
+            let outcome = executor
+                .step(
+                    &concrete,
+                    &code,
+                    code.jump_table(),
+                    &mut state,
+                    &mut VecDeque::new(),
+                    &mut 0,
+                    op,
+                )
+                .unwrap();
+            assert!(matches!(outcome, StepOutcome::ExceptionalHalt));
+            assert_eq!(state.return_data.len(), 0);
+        }
+    }
+
+    #[test]
+    fn invalid_jumpi_preserves_fallthrough() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        if let Err(err) = executor.solver.check_available() {
+            let _ =
+                foundry_common::sh_eprintln!("skipping invalid_jumpi_preserves_fallthrough: {err}");
+            return;
+        }
+        let mut state = empty_state(&mut executor);
+        state.return_data = SymReturnData::from_concrete_bytes(&mut executor.cx, vec![1]);
+        let condition = state.fresh_word(&mut executor.cx, "condition");
+        let taken = condition.clone().nonzero_bool(&mut executor.cx);
+        let mut worklist = VecDeque::new();
+        let outcome = executor.branch_invalid_jumpi(&mut state, &mut worklist, taken).unwrap();
+        assert!(matches!(outcome, StepOutcome::ExceptionalHalt));
+        assert_eq!(state.return_data.len(), 0);
+        let fallthrough = worklist.pop_back().unwrap();
+        assert_eq!(fallthrough.return_data.len(), 1);
+        assert!(worklist.is_empty());
+        let zero = SymBoolExpr::eq_word_const(&mut executor.cx, &condition, U256::ZERO);
+        assert!(!executor.constraints_with_condition(&state, zero.clone()).unwrap().1);
+        assert!(executor.constraints_with_condition(&fallthrough, zero).unwrap().1);
+    }
+
+    #[test]
+    fn static_state_changes_are_exceptional_halts() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let concrete = ExecutorBuilder::default().build(
+            Default::default(),
+            Default::default(),
+            backend,
+            Default::default(),
+        );
+        for op in [
+            opcode::SSTORE,
+            opcode::TSTORE,
+            opcode::LOG0,
+            opcode::LOG1,
+            opcode::LOG2,
+            opcode::LOG3,
+            opcode::LOG4,
+            opcode::CREATE,
+            opcode::CREATE2,
+            opcode::SELFDESTRUCT,
+            opcode::CALL,
+        ] {
+            let mut state = empty_state(&mut executor);
+            state.is_static = true;
+            state.return_data = SymReturnData::from_concrete_bytes(&mut executor.cx, vec![1]);
+            if op == opcode::CALL {
+                for _ in 0..4 {
+                    state.stack.push(SymExpr::zero(&mut executor.cx)).unwrap();
+                }
+                state.stack.push(SymExpr::one(&mut executor.cx)).unwrap();
+                state.stack.push(SymExpr::zero(&mut executor.cx)).unwrap();
+                let gas = state.fresh_gasleft(&mut executor.cx);
+                state.stack.push(gas).unwrap();
+            }
+            let code = SymCode::concrete(&mut executor.cx, vec![op]);
+            let outcome = executor
+                .step(
+                    &concrete,
+                    &code,
+                    code.jump_table(),
+                    &mut state,
+                    &mut VecDeque::new(),
+                    &mut 0,
+                    op,
+                )
+                .unwrap();
+            assert!(matches!(outcome, StepOutcome::ExceptionalHalt), "opcode {op:#x}");
+            assert_eq!(state.return_data.len(), 0);
+        }
+    }
+
+    #[test]
+    fn opcodes_respect_activation_forks() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut concrete = ExecutorBuilder::default().build(
+            Default::default(),
+            Default::default(),
+            backend,
+            Default::default(),
+        );
+        for (before, active, ops) in [
+            (SpecId::FRONTIER, SpecId::HOMESTEAD, &[opcode::DELEGATECALL][..]),
+            (
+                SpecId::SPURIOUS_DRAGON,
+                SpecId::BYZANTIUM,
+                &[
+                    opcode::RETURNDATASIZE,
+                    opcode::RETURNDATACOPY,
+                    opcode::STATICCALL,
+                    opcode::REVERT,
+                ],
+            ),
+            (
+                SpecId::BYZANTIUM,
+                SpecId::PETERSBURG,
+                &[opcode::SHL, opcode::SHR, opcode::SAR, opcode::EXTCODEHASH, opcode::CREATE2],
+            ),
+            (SpecId::PETERSBURG, SpecId::ISTANBUL, &[opcode::CHAINID, opcode::SELFBALANCE]),
+            (SpecId::BERLIN, SpecId::LONDON, &[opcode::BASEFEE]),
+            (SpecId::MERGE, SpecId::SHANGHAI, &[opcode::PUSH0]),
+            (
+                SpecId::SHANGHAI,
+                SpecId::CANCUN,
+                &[
+                    opcode::TLOAD,
+                    opcode::TSTORE,
+                    opcode::MCOPY,
+                    opcode::BLOBHASH,
+                    opcode::BLOBBASEFEE,
+                ],
+            ),
+        ] {
+            for &op in ops {
+                for spec in [before, active] {
+                    concrete.set_spec_id(spec);
+                    let mut state = empty_state(&mut executor);
+                    state.return_data =
+                        SymReturnData::from_concrete_bytes(&mut executor.cx, vec![1]);
+                    for _ in 0..opcode::OPCODE_INFO[usize::from(op)].unwrap().inputs() {
+                        state.stack.push(SymExpr::zero(&mut executor.cx)).unwrap();
+                    }
+                    if matches!(op, opcode::DELEGATECALL | opcode::STATICCALL) {
+                        state.stack.pop().unwrap();
+                        let gas = state.fresh_gasleft(&mut executor.cx);
+                        state.stack.push(gas).unwrap();
+                    }
+                    let code = SymCode::concrete(&mut executor.cx, vec![op]);
+                    let outcome = executor
+                        .step(
+                            &concrete,
+                            &code,
+                            code.jump_table(),
+                            &mut state,
+                            &mut VecDeque::new(),
+                            &mut 0,
+                            op,
+                        )
+                        .unwrap();
+                    if spec == before {
+                        assert!(matches!(outcome, StepOutcome::ExceptionalHalt), "opcode {op:#x}");
+                        assert_eq!(state.return_data.len(), 0);
+                    } else {
+                        assert!(
+                            matches!(outcome, StepOutcome::Continue | StepOutcome::Revert),
+                            "opcode {op:#x}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

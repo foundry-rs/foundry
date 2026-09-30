@@ -1,4 +1,6 @@
 use super::{abi::*, runtime::*, *};
+use alloy_sol_types::{Panic, PanicKind, Revert, SolError};
+use foundry_evm::revm::precompile::u64_to_address as precompile_address;
 
 fn empty_state(cx: &mut SymCx) -> PathState {
     let calldata =
@@ -25,12 +27,6 @@ macro_rules! sym_from_bytes {
     }};
 }
 
-fn precompile_address(index: u8) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[19] = index;
-    Address::from(bytes)
-}
-
 fn symbolic_model<S: AsRef<str>>(
     cx: &mut SymCx,
     values: impl IntoIterator<Item = (S, U256)>,
@@ -52,15 +48,18 @@ fn model_value(cx: &SymCx, model: &SymbolicModel, name: &str) -> Option<U256> {
 fn precompile_number_respects_active_spec() {
     for number in 1..=4 {
         assert_eq!(
-            precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER),
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::FRONTIER),
             Some(number)
         );
     }
 
     for number in 5..=8 {
-        assert_eq!(precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER), None);
         assert_eq!(
-            precompile_number_for_spec(precompile_address(number), SpecId::BYZANTIUM),
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::FRONTIER),
+            None
+        );
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::BYZANTIUM),
             Some(number)
         );
     }
@@ -441,6 +440,62 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
     let actual = SymBoolExpr::eq(&mut cx, selector_expr, selector_word);
     let expected = SymBoolExpr::constant(&mut cx, true);
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn calldata_variants_partition_address_inputs() {
+    let mut cx = SymCx::new();
+    let config = SymbolicConfig::default();
+
+    let single = Function::parse("check(address,uint256)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &single, &config).unwrap();
+    assert_eq!(variants.len(), 1);
+
+    // Two addresses: distinct, or the same account.
+    let pair = Function::parse("check(address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &pair, &config).unwrap();
+    assert_eq!(variants.len(), 2);
+    let distinct = variants[0].call_data(&mut cx);
+    assert_ne!(distinct.load(&mut cx, 4).unwrap(), distinct.load(&mut cx, 36).unwrap());
+    let equal = variants[1].call_data(&mut cx);
+    assert_eq!(equal.load(&mut cx, 4).unwrap(), equal.load(&mut cx, 36).unwrap());
+
+    let first = Address::from([0x11; 20]);
+    let second = Address::from([0x22; 20]);
+    let distinct_args = vec![DynSolValue::Address(first), DynSolValue::Address(second)];
+    let distinct_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&distinct_args).unwrap()),
+        args: distinct_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &distinct_seed).is_some());
+    assert!(variants[1].seed_model(&mut cx, &distinct_seed).is_none());
+    let equal_args = vec![DynSolValue::Address(first), DynSolValue::Address(first)];
+    let equal_seed = SymbolicConcreteInput {
+        calldata: Bytes::from(pair.abi_encode_input(&equal_args).unwrap()),
+        args: equal_args,
+    };
+    assert!(variants[0].seed_model(&mut cx, &equal_seed).is_none());
+    assert!(variants[1].seed_model(&mut cx, &equal_seed).is_some());
+
+    // Three addresses: the five set partitions.
+    let triple = Function::parse("check(address,address,address)").unwrap();
+    let variants = symbolic_calldata_variants(&mut cx, &triple, &config).unwrap();
+    assert_eq!(variants.len(), 5);
+    let mut class_counts = variants
+        .iter()
+        .map(|variant| {
+            let calldata = variant.call_data(&mut cx);
+            let words = [4, 36, 68].map(|offset| calldata.load(&mut cx, offset).unwrap());
+            words.iter().enumerate().filter(|(idx, word)| !words[..*idx].contains(word)).count()
+        })
+        .collect::<Vec<_>>();
+    class_counts.sort_unstable();
+    assert_eq!(class_counts, vec![1, 2, 2, 2, 3]);
+    let config = SymbolicConfig { width: Some(2), ..config };
+    assert!(matches!(
+        symbolic_calldata_variants(&mut cx, &triple, &config),
+        Err(SymbolicError::CalldataVariantLimit(2))
+    ));
 }
 
 #[test]
@@ -1093,13 +1148,38 @@ fn memory_load_accepts_symbolic_offsets() {
 }
 
 #[test]
+fn memory_bounded_relative_load_preserves_wrapping_offsets() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let byte = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0, byte);
+    // Keep the read on the general write-folding path where the lower bound is used for pruning.
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let other_byte = SymExpr::constant(&mut cx, U256::from(0xbb));
+    memory.store_byte_offset(&mut cx, write_offset, other_byte, 64);
+
+    let base = SymExpr::var(&mut cx, "base");
+    let loaded = memory.load_word_offset_with_bounds(&mut cx, &base, 4, 0, None);
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("base".to_string(), U256::MAX - U256::from(3)),
+            ("write_offset".to_string(), U256::from(64)),
+        ],
+    );
+
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xaa) << 248);
+}
+
+#[test]
 fn memory_store_word_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
     let value = SymExpr::var(&mut cx, "word");
 
     let offset = SymExpr::var(&mut cx, "offset");
-    memory.store_word_offset(&mut cx, offset, value);
+    memory.store_word_offset(&mut cx, offset, value, 0);
     let loaded = memory.load_word(&mut cx, 7).unwrap();
 
     let matching = symbolic_model(
@@ -1126,7 +1206,7 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
 
     let offset = SymExpr::var(&mut cx, "offset");
     let word = SymExpr::var(&mut cx, "word");
-    memory.store_word_offset(&mut cx, offset, word);
+    memory.store_word_offset(&mut cx, offset, word, 0);
     let size = memory.size_word(&mut cx);
 
     let below_concrete = symbolic_model(
@@ -1166,7 +1246,7 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
 
     let offset = SymExpr::var(&mut cx, "offset");
     let word = SymExpr::var(&mut cx, "word");
-    memory.store_word_offset(&mut cx, offset, word);
+    memory.store_word_offset(&mut cx, offset, word, 0);
     let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_word(&mut cx, 7, concrete);
     let loaded = memory.load_word(&mut cx, 7).unwrap();
@@ -1185,7 +1265,7 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
 
     let write_offset = SymExpr::var(&mut cx, "write_offset");
     let byte = SymExpr::var(&mut cx, "byte");
-    memory.store_byte_offset(&mut cx, write_offset, byte);
+    memory.store_byte_offset(&mut cx, write_offset, byte, 0);
     let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_byte(&mut cx, 5, concrete);
     let read_offset = SymExpr::var(&mut cx, "read_offset");
@@ -1203,18 +1283,39 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
 }
 
 #[test]
+fn memory_dynamic_read_resolves_branch_aligned_offsets() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let selector = SymExpr::var(&mut cx, "selector");
+    let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+    let first = SymExpr::constant(&mut cx, U256::from(0x100));
+    let second = SymExpr::constant(&mut cx, U256::from(0x200));
+    let base = SymExpr::ite(&mut cx, condition, first, second);
+    let value = SymExpr::constant(&mut cx, U256::from(0x1234_5678));
+    memory.store_word_offset(&mut cx, base.clone(), value, 0);
+
+    let offset = SymExpr::add_const(&mut cx, base, U256::from(28));
+    let bytes = memory.read_byte_exprs_offset(&mut cx, offset, 4);
+
+    assert_eq!(
+        bytes.iter().map(SymExpr::as_const).collect::<Option<Vec<_>>>(),
+        Some([0x12, 0x34, 0x56, 0x78].map(U256::from).into())
+    );
+}
+
+#[test]
 fn memory_symbolic_write_after_concrete_overwrite_still_applies() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
     let older_offset = SymExpr::var(&mut cx, "older_offset");
     let older_byte = SymExpr::var(&mut cx, "older_byte");
-    memory.store_byte_offset(&mut cx, older_offset, older_byte);
+    memory.store_byte_offset(&mut cx, older_offset, older_byte, 0);
     let concrete = SymExpr::constant(&mut cx, U256::from(0x55));
     memory.store_byte(&mut cx, 5, concrete);
     let later_offset = SymExpr::var(&mut cx, "later_offset");
     let later_byte = SymExpr::var(&mut cx, "later_byte");
-    memory.store_byte_offset(&mut cx, later_offset, later_byte);
+    memory.store_byte_offset(&mut cx, later_offset, later_byte, 0);
     let loaded = memory.byte(&mut cx, 5);
 
     let concrete_wins = symbolic_model(
@@ -1248,7 +1349,7 @@ fn memory_dynamic_read_finds_symbolic_write_with_no_concrete_write_at_all() {
 
     let write_offset = SymExpr::var(&mut cx, "write_offset");
     let byte = SymExpr::var(&mut cx, "byte");
-    memory.store_byte_offset(&mut cx, write_offset, byte);
+    memory.store_byte_offset(&mut cx, write_offset, byte, 0);
 
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
@@ -1275,7 +1376,7 @@ fn memory_dynamic_read_finds_symbolic_write_beyond_concretely_materialized_regio
 
     let write_offset = SymExpr::var(&mut cx, "write_offset");
     let byte = SymExpr::var(&mut cx, "byte");
-    memory.store_byte_offset(&mut cx, write_offset, byte); // symbolic offset, well past 0x20
+    memory.store_byte_offset(&mut cx, write_offset, byte, 0); // symbolic offset, well past 0x20
 
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
@@ -1302,7 +1403,7 @@ fn memory_load_word_offset_dynamic_finds_symbolic_write_beyond_materialized_regi
 
     let write_offset = SymExpr::var(&mut cx, "write_offset");
     let word = SymExpr::var(&mut cx, "word");
-    memory.store_word_offset(&mut cx, write_offset, word);
+    memory.store_word_offset(&mut cx, write_offset, word, 0);
 
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
@@ -1327,7 +1428,7 @@ fn memory_dynamic_read_finds_write_at_const_evaluable_but_undispatched_concrete_
     let (write_offset, concrete_write_offset) = undispatched_concrete_offset(&mut cx, 1);
 
     let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
-    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+    memory.store_byte_offset(&mut cx, write_offset, write_byte, 0);
 
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
@@ -1349,7 +1450,7 @@ fn memory_load_word_offset_dynamic_finds_write_at_const_evaluable_but_undispatch
     let (write_offset, concrete_write_offset) = undispatched_concrete_offset(&mut cx, 2);
 
     let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
-    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+    memory.store_byte_offset(&mut cx, write_offset, write_byte, 0);
 
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
@@ -1388,7 +1489,7 @@ fn memory_dynamic_read_finds_write_straddling_the_materialized_boundary() {
     memory.store_byte(&mut cx, offset_usize + 1, filler);
 
     let write_word = SymExpr::var(&mut cx, "write_word");
-    memory.store_word_offset(&mut cx, write_offset, write_word);
+    memory.store_word_offset(&mut cx, write_offset, write_word, 0);
 
     // Memory expands in 32-byte words; the marker must cross that rounded boundary.
     let materialized_end = (offset_usize + 2).next_multiple_of(32);
@@ -1428,7 +1529,7 @@ fn memory_load_word_offset_dynamic_word_read_includes_pseudo_concrete_write_past
     assert!(offset_value >= U256::from(0x80));
 
     let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
-    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+    memory.store_byte_offset(&mut cx, write_offset, write_byte, 0);
 
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
@@ -1448,7 +1549,7 @@ fn memory_store_byte_accepts_symbolic_offsets() {
 
     let offset = SymExpr::var(&mut cx, "offset");
     let byte = SymExpr::var(&mut cx, "byte");
-    memory.store_byte_offset(&mut cx, offset, byte);
+    memory.store_byte_offset(&mut cx, offset, byte, 0);
     let loaded = memory.byte(&mut cx, 0x80);
 
     let matching = symbolic_model(
@@ -1462,6 +1563,57 @@ fn memory_store_byte_accepts_symbolic_offsets() {
         [("offset".to_string(), U256::from(0x81)), ("byte".to_string(), U256::from(0xab))],
     );
     assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
+}
+
+#[test]
+fn memory_concrete_read_skips_proven_disjoint_symbolic_write() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let original = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0x40, original.clone());
+
+    let offset = SymExpr::var(&mut cx, "offset");
+    let byte = SymExpr::var(&mut cx, "byte");
+    memory.store_byte_offset(&mut cx, offset, byte, 0x100);
+
+    assert_eq!(memory.byte(&mut cx, 0x40), original);
+}
+
+#[test]
+fn memory_concrete_read_keeps_write_at_lower_bound() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let offset = SymExpr::var(&mut cx, "offset");
+    let byte = SymExpr::var(&mut cx, "byte");
+    memory.store_byte_offset(&mut cx, offset, byte, 0x40);
+
+    let loaded = memory.byte(&mut cx, 0x40);
+    let model = symbolic_model(
+        &mut cx,
+        [("offset".to_string(), U256::from(0x40)), ("byte".to_string(), U256::from(0xab))],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xab));
+}
+
+#[test]
+fn memory_concrete_read_keeps_overlapping_bounded_write() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let offset = SymExpr::var(&mut cx, "offset");
+    let word = SymExpr::var(&mut cx, "word");
+    memory.store_word_offset(&mut cx, offset, word, 0x30);
+
+    let loaded = memory.byte(&mut cx, 0x40);
+    let mut word_bytes = [0u8; 32];
+    word_bytes[0x10] = 0xab;
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("offset".to_string(), U256::from(0x30)),
+            ("word".to_string(), U256::from_be_bytes(word_bytes)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xab));
 }
 
 #[test]
@@ -2077,6 +2229,70 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
+fn path_state_only_adds_symbolic_lower_bounds_without_wrap() {
+    let mut cx = SymCx::new();
+    let state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+    let value = SymExpr::var(&mut cx, "value");
+    let mask = SymExpr::constant(&mut cx, U256::from(0xff));
+    let bounded = SymExpr::binop(&mut cx, SymBinOp::And, value.clone(), mask);
+    let offset = SymExpr::add_const(&mut cx, bounded, U256::from(288));
+    assert_eq!(state.lower_bound_usize(&offset), 288);
+
+    let wrap = SymExpr::add_const(&mut cx, value, U256::MAX);
+    assert_eq!(state.lower_bound_usize(&wrap), 0);
+}
+
+#[test]
+fn path_state_bounds_sanitized_symbolic_slice_size() {
+    let mut cx = SymCx::new();
+    let state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+    let start = SymExpr::var(&mut cx, "start");
+    let end = SymExpr::var(&mut cx, "end");
+    let one = SymExpr::one(&mut cx);
+
+    let end_below_length = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, end.clone(), one.clone());
+    let bounded_end = SymExpr::ite(&mut cx, end_below_length, end, one);
+    let start_below_end =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, start.clone(), bounded_end.clone());
+    let bounded_start = SymExpr::ite(&mut cx, start_below_end, start, bounded_end.clone());
+    let slice_length = SymExpr::binop(&mut cx, SymBinOp::Sub, bounded_end, bounded_start);
+    let shift = SymExpr::constant(&mut cx, U256::from(5));
+    let byte_length = SymExpr::binop(&mut cx, SymBinOp::Shl, slice_length, shift);
+
+    assert_eq!(state.upper_bound_usize(&mut cx, &byte_length), Some(32));
+}
+
+#[test]
+fn path_state_symbolic_bounds_reject_wrapping_arithmetic() {
+    let mut cx = SymCx::new();
+    let state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+    let value = SymExpr::var(&mut cx, "value");
+    let one = SymExpr::one(&mut cx);
+
+    let wrapping_sub = SymExpr::binop(&mut cx, SymBinOp::Sub, one.clone(), value.clone());
+    assert_eq!(state.upper_bound_usize(&mut cx, &wrapping_sub), None);
+
+    let below_one = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), one.clone());
+    let symbolic_max = SymExpr::ite(&mut cx, below_one, one, value);
+    assert_eq!(state.upper_bound_usize(&mut cx, &symbolic_max), None);
+}
+
+#[test]
+fn path_state_bound_analysis_stops_at_its_work_budget() {
+    let mut cx = SymCx::new();
+    let state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+    let mask = SymExpr::constant(&mut cx, U256::ONE);
+    let value = SymExpr::var(&mut cx, "value_0");
+    let value = SymExpr::binop(&mut cx, SymBinOp::And, value, mask);
+    let mut sum = value.clone();
+    for _ in 1..512 {
+        sum = SymExpr::binop(&mut cx, SymBinOp::Add, sum, value.clone());
+    }
+
+    assert_eq!(state.upper_bound_usize(&mut cx, &sum), None);
+}
+
+#[test]
 fn path_state_child_replaces_frame_and_resets_local_state() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
@@ -2318,35 +2534,6 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     assert_eq!(sha_word.hash_algorithm(), Some("sha256"));
 
     let input_bytes = SymBytes::exprs(&mut cx, input.clone());
-    let ecrecover = execute_symbolic_precompile(
-        &mut cx,
-        precompile_address(1),
-        input_bytes,
-        input_len.clone(),
-        SpecId::CANCUN,
-    )
-    .unwrap()
-    .unwrap();
-    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
-    let ecrecover_again = execute_symbolic_precompile(
-        &mut cx,
-        precompile_address(1),
-        input_bytes,
-        input_len.clone(),
-        SpecId::CANCUN,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(ecrecover.len(), 32);
-    for idx in 0..12 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), SymExpr::zero(&mut cx));
-    }
-    for idx in 0..32 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), ecrecover_again.byte(&mut cx, idx));
-    }
-
-    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let ripemd = execute_symbolic_precompile(
         &mut cx,
         precompile_address(3),
@@ -2374,6 +2561,95 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     for idx in 0..32 {
         assert_eq!(ripemd.byte(&mut cx, idx), ripemd_again.byte(&mut cx, idx));
     }
+}
+
+#[test]
+fn symbolic_ecrecover_rejects_invalid_recovery_ids() {
+    let mut cx = SymCx::new();
+    for (v, input_size) in [(0, 128), (29, 128), (0x11b, 128), (27, 32), (28, 63)] {
+        let words = [
+            SymExpr::var(&mut cx, "digest"),
+            SymExpr::constant(&mut cx, U256::from(v)),
+            SymExpr::var(&mut cx, "r"),
+            SymExpr::var(&mut cx, "s"),
+        ];
+        let words = words.into_iter().map(|word| word.into_bytes(&mut cx)).collect::<Vec<_>>();
+        let input = SymBytes::concat(&mut cx, words);
+        let input_len = SymExpr::constant(&mut cx, U256::from(input_size));
+        let output = execute_symbolic_precompile(
+            &mut cx,
+            precompile_address(1),
+            input,
+            input_len,
+            SpecId::CANCUN,
+        )
+        .unwrap()
+        .expect("invalid recovery is still a successful precompile call");
+        assert_eq!(output.len(), 0);
+        assert_eq!(output.len_word().as_const(), Some(U256::ZERO));
+    }
+}
+
+#[test]
+fn symbolic_ecrecover_preserves_both_recovery_outcomes() {
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    if let Err(err) = executor.solver.check_available() {
+        let _ = foundry_common::sh_eprintln!(
+            "skipping symbolic_ecrecover_preserves_both_recovery_outcomes: {err}"
+        );
+        return;
+    }
+    let (cx, solver) = (&mut executor.cx, &mut executor.solver);
+    let v = SymExpr::var(cx, "v");
+    let words =
+        [SymExpr::var(cx, "digest"), v.clone(), SymExpr::var(cx, "r"), SymExpr::var(cx, "s")];
+    let words = words.into_iter().map(|word| word.into_bytes(cx)).collect::<Vec<_>>();
+    let input = SymBytes::concat(cx, words);
+    let input_len = SymExpr::constant(cx, U256::from(128));
+    let output = execute_symbolic_precompile(
+        cx,
+        precompile_address(1),
+        input.clone(),
+        input_len,
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let trailing = SymExpr::var(cx, "ignored").into_bytes(cx);
+    let input = SymBytes::concat(cx, [input, trailing]);
+    let input_len = SymExpr::constant(cx, U256::from(160));
+    let again =
+        execute_symbolic_precompile(cx, precompile_address(1), input, input_len, SpecId::CANCUN)
+            .unwrap()
+            .unwrap();
+    assert_eq!(output.len_word(), again.len_word());
+    for idx in 0..32 {
+        assert_eq!(output.byte(cx, idx), again.byte(cx, idx));
+        if idx < 12 {
+            assert_eq!(output.byte(cx, idx).as_const(), Some(U256::ZERO));
+        }
+    }
+    for recovery_id in [27, 28, 29] {
+        for len in [0, 32] {
+            let constraints = [
+                SymBoolExpr::eq_word_const(cx, &v, U256::from(recovery_id)),
+                SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(len)),
+            ];
+            assert_eq!(solver.is_sat(cx, &constraints).unwrap(), recovery_id != 29 || len == 0);
+        }
+    }
+    // A successful recovery remains unconstrained over all 160-bit addresses, including zero.
+    let address = (0..32).map(|idx| output.byte(cx, idx)).collect::<Vec<_>>();
+    let address = SymExpr::from_bytes(cx, address);
+    let constraints = [
+        SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(32)),
+        SymBoolExpr::eq_word_const(cx, &address, U256::ZERO),
+    ];
+    assert!(solver.is_sat(cx, &constraints).unwrap());
+    let empty = SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::ZERO);
+    let full = SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(32));
+    let other_len = [SymBoolExpr::not_bool(cx, empty), SymBoolExpr::not_bool(cx, full)];
+    assert!(!solver.is_sat(cx, &other_len).unwrap());
 }
 
 #[test]
@@ -3780,10 +4056,20 @@ fn solver_normalizes_udiv_comparisons_only_at_safe_product_boundaries() {
         assert_eq!(normalized.len(), 1);
         assert!(!normalized[0].smt(&cx).contains("bvudiv"));
     }
-    for condition in overflowing {
+    for (condition, expected) in overflowing.into_iter().zip([true, false]) {
         let normalized =
             normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
-        assert_eq!(normalized, vec![condition]);
+        // Cross-multiplication would overflow, but the uint256 quotient bound decides
+        // these comparisons directly without constructing an overflowing product.
+        if expected {
+            assert!(normalized.is_empty());
+        } else {
+            assert_eq!(normalized, vec![SymBoolExpr::constant(&mut cx, false)]);
+        }
+        for numerator in [U256::ZERO, U256::ONE, U256::MAX - U256::ONE, U256::MAX] {
+            let model = symbolic_model(&mut cx, [("numerator", numerator)]);
+            assert_eq!(condition.eval_model(&model).unwrap(), expected);
+        }
     }
 
     let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value - U256::ONE);
@@ -4130,18 +4416,68 @@ fn solver_normalizes_mul_div_at_exact_no_wrap_boundary() {
 }
 
 #[test]
-fn solver_does_not_normalize_wrapping_mul_div_identity() {
+fn solver_preserves_wrapping_mul_div_counterexamples() {
     let mut cx = SymCx::new();
     let value = SymExpr::var(&mut cx, "value");
-    let factor = SymExpr::constant(&mut cx, U256::from(58));
+    let factor_value = U256::from(58);
+    let factor = SymExpr::constant(&mut cx, factor_value);
     let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), factor.clone());
     let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, factor);
-    let identity = SymBoolExpr::eq(&mut cx, quotient, value);
+    let identity = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+    let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity));
+    let expected =
+        SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / factor_value);
+    assert_eq!(normalized, vec![expected]);
 
-    assert_eq!(
-        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&identity)),
-        vec![identity]
-    );
+    let failure = identity.clone().not(&mut cx);
+    let normalized_failure =
+        normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&failure));
+    for input in [U256::MAX / factor_value + U256::ONE, U256::MAX] {
+        let model = symbolic_model(&mut cx, [("value", input)]);
+        assert!(!identity.eval_model(&model).unwrap());
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+        assert!(failure.eval_model(&model).unwrap());
+        assert!(normalized_failure.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    }
+}
+
+#[test]
+fn constant_mul_div_guard_branches_are_decided_locally_and_cached() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let scale_value = U256::from(1_000_000_000_000_000_000u64);
+    let scale = SymExpr::constant(&mut cx, scale_value);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), scale.clone());
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, scale);
+    let guard = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+    let failure = guard.clone().not(&mut cx);
+    let fits = SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &value, U256::MAX / scale_value);
+    let wraps = fits.clone().not(&mut cx);
+
+    // No SMT backend is configured: every branch below must be decided by the rewrite.
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 16, false);
+    for (constraints, feasible) in [
+        (vec![guard.clone()], true),
+        (vec![failure.clone()], true),
+        (vec![fits.clone(), guard.clone()], true),
+        (vec![wraps.clone(), failure.clone()], true),
+        (vec![fits, failure], false),
+        (vec![wraps, guard], false),
+    ] {
+        assert_eq!(
+            solver.is_sat_branch(&mut cx, &constraints).unwrap(),
+            feasible,
+            "{constraints:?}"
+        );
+        let cache_hits = solver.stats().sat_cache_hits;
+        assert_eq!(
+            solver.is_sat_branch(&mut cx, &constraints).unwrap(),
+            feasible,
+            "{constraints:?}"
+        );
+        assert_eq!(solver.stats().sat_cache_hits, cache_hits + 1, "{constraints:?}");
+    }
+    assert_eq!(solver.stats().smt_queries, 0);
 }
 
 #[test]
@@ -4230,20 +4566,25 @@ fn solver_excludes_hidden_mul_div_candidates_from_context() {
     let past_boundary = boundary + U256::ONE;
     let past_boundary_expr = SymExpr::constant(&mut cx, past_boundary);
     let quotient_3_is_past_boundary = SymBoolExpr::eq(&mut cx, quotient_3, past_boundary_expr);
-    let constraints = vec![
-        identity_58.clone(),
-        quotient_58_bounded,
-        identity_3.clone(),
-        quotient_3_is_past_boundary,
-    ];
+    let constraints =
+        vec![identity_58, quotient_58_bounded, identity_3, quotient_3_is_past_boundary];
     let model = symbolic_model(&mut cx, [("x".to_string(), past_boundary)]);
 
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    assert!(normalized.contains(&identity_58));
-    assert!(normalized.contains(&identity_3));
+    // A retained identity may establish bounds that refute another conjunct. The conjunction
+    // must stay false, whether identities survive syntactically or the contradiction is folded.
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+    for value in
+        [U256::ZERO, U256::ONE, boundary, past_boundary, U256::MAX / U256::from(3), U256::MAX]
+    {
+        let model = symbolic_model(&mut cx, [("x".to_string(), value)]);
+        assert_eq!(
+            constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()),
+            normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap())
+        );
+    }
 }
 
 #[test]
@@ -5197,20 +5538,25 @@ fn is_sat_uses_single_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
-fn is_sat_uses_two_var_witness_before_solver() {
+fn is_sat_uses_bounded_multi_var_witness_before_solver() {
     let mut cx = SymCx::new();
-    let marker = portfolio_test_marker("two-var-is-sat");
+    let marker = portfolio_test_marker("bounded-multi-var-is-sat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = SymExpr::var(&mut cx, "calldata_0");
-    let y = SymExpr::var(&mut cx, "calldata_1");
-    let zero = SymExpr::zero(&mut cx);
-    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    solver.enable_bounded_model_search();
+    let a = SymExpr::var(&mut cx, "calldata_0");
+    let b = SymExpr::var(&mut cx, "calldata_1");
+    let c = SymExpr::var(&mut cx, "calldata_2");
+    let d = SymExpr::var(&mut cx, "calldata_3");
+    let e = SymExpr::var(&mut cx, "calldata_4");
+    let limit = SymExpr::constant(&mut cx, U256::from(1) << 160);
     let constraints = vec![
-        SymBoolExpr::eq(&mut cx, x.clone(), zero.clone()).not(&mut cx),
-        SymBoolExpr::eq(&mut cx, y.clone(), zero).not(&mut cx),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y.clone()),
-        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, ten),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, a, limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, b.clone(), limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, c, limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, d.clone(), limit.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, e, limit),
+        SymBoolExpr::eq(&mut cx, b, d).not(&mut cx),
     ];
 
     assert!(solver.is_sat(&mut cx, &constraints).unwrap());
@@ -5339,6 +5685,7 @@ fn model_uses_two_var_witness_before_solver() {
     let marker = portfolio_test_marker("two-var-model");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    solver.enable_bounded_model_search();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
     let zero = SymExpr::zero(&mut cx);
@@ -5369,6 +5716,7 @@ fn is_sat_falls_through_when_two_var_witness_misses() {
     let marker = portfolio_test_marker("two-var-fallthrough");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    solver.enable_bounded_model_search();
     let x = SymExpr::var(&mut cx, "calldata_0");
     let y = SymExpr::var(&mut cx, "calldata_1");
     let ten = SymExpr::constant(&mut cx, U256::from(10));
@@ -5611,13 +5959,11 @@ fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
     executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
 
     let x = SymExpr::var(&mut executor.cx, "x");
-    let y = SymExpr::var(&mut executor.cx, "y");
     let mut hard = empty_state(&mut executor.cx);
-    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
-    let zero = SymExpr::zero(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
-    let one = SymExpr::one(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    // Unlike contradictory constant bounds, this still requires deferred arithmetic solving.
+    let square = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x.clone(), x);
+    let two = SymExpr::constant(&mut executor.cx, U256::from(2));
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, square, two));
     hard.defer_feasibility_check();
 
     let mut easy = empty_state(&mut executor.cx);
@@ -5655,13 +6001,11 @@ fn nested_feasible_path_selection_skips_hard_arithmetic_without_escalating() {
     executor.solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
 
     let x = SymExpr::var(&mut executor.cx, "x");
-    let y = SymExpr::var(&mut executor.cx, "y");
     let mut hard = empty_state(&mut executor.cx);
-    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
-    let zero = SymExpr::zero(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
-    let one = SymExpr::one(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    // Unlike contradictory constant bounds, this still requires deferred arithmetic solving.
+    let square = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x.clone(), x);
+    let two = SymExpr::constant(&mut executor.cx, U256::from(2));
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, square, two));
     hard.defer_feasibility_check();
 
     let mut easy = empty_state(&mut executor.cx);
@@ -5913,12 +6257,17 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = SymExpr::var(&mut cx, "x");
-    let two = SymExpr::constant(&mut cx, U256::from(2));
-    let one = SymExpr::constant(&mut cx, U256::from(1));
-    let lower = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, x.clone(), two);
-    let upper = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, x.clone(), one.clone());
-    let base = SymBoolExpr::and(&mut cx, vec![lower, upper]);
-    let condition = SymBoolExpr::eq(&mut cx, x, one);
+    let y = SymExpr::var(&mut cx, "y");
+    let z = SymExpr::var(&mut cx, "z");
+    let branch = SymExpr::var(&mut cx, "branch");
+    let one = SymExpr::one(&mut cx);
+    // A strict order cycle is unsatisfiable but has no independent scalar bounds. Keep the
+    // fixture beyond local interval pruning so it still exercises complement-cache safety.
+    let xy = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let yz = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, z.clone());
+    let zx = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, z, x);
+    let base = SymBoolExpr::and(&mut cx, vec![xy, yz, zx]);
+    let condition = SymBoolExpr::eq(&mut cx, branch, one);
 
     assert!(!solver.is_sat_branch(&mut cx, &[base.clone(), condition.clone()]).unwrap());
     let not_condition = condition.not(&mut cx);
@@ -5928,9 +6277,7 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     assert_eq!(stats.solver_queries, 2);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
-    // Exact-value propagation makes one contradictory branch local; the other still exercises
-    // the solver without reusing the unsatisfiable complement cache entry.
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 
@@ -6575,11 +6922,8 @@ outcome counts:
 
 #[test]
 fn assertion_revert_classifies_assert_panic_only() {
-    let mut assert_payload = PANIC_SELECTOR.to_vec();
-    assert_payload.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
-
-    let mut overflow_payload = PANIC_SELECTOR.to_vec();
-    overflow_payload.extend_from_slice(&U256::from(0x11).to_be_bytes::<32>());
+    let assert_payload = Panic::from(PanicKind::Assert).abi_encode();
+    let overflow_payload = Panic::from(PanicKind::UnderOverflow).abi_encode();
 
     assert!(is_assertion_revert(&assert_payload));
     assert!(!is_assertion_revert(&overflow_payload));
@@ -6595,12 +6939,45 @@ fn assertion_revert_accepts_forge_assertion_reverts() {
     assert!(is_assertion_revert(&error_payload("assertion failed: expected 1 to equal 2")));
 }
 
+#[test]
+fn assertion_revert_preserves_noncanonical_encoding() {
+    let message = "assertion failed: expected 1 to equal 2";
+    let mut payload = error_payload(message);
+    payload.truncate(68 + message.len());
+    assert!(is_assertion_revert(&payload));
+    payload.extend_from_slice(&[0xff; 5]);
+    assert!(is_assertion_revert(&payload));
+
+    // Dynamic offsets need not be canonical to identify an assertion message.
+    payload[4..36].copy_from_slice(&U256::from(64).to_be_bytes::<32>());
+    payload.splice(36..36, [0; 32]);
+    assert!(is_assertion_revert(&payload));
+
+    let mut panic = Panic::from(PanicKind::Assert).abi_encode();
+    panic.extend_from_slice(&[0xff; 5]);
+    assert!(is_assertion_revert(&panic));
+}
+
+#[test]
+fn assertion_revert_rejects_malformed_encoding() {
+    let message = "assertion failed";
+    let payload = error_payload(message);
+    for len in [0, 3, 4, 35, 36, 67, 68, 68 + message.len() - 1] {
+        assert!(!is_assertion_revert(&payload[..len]));
+    }
+    let mut invalid_utf8 = payload.clone();
+    invalid_utf8[68 + message.len() - 1] = 0xff;
+    assert!(!is_assertion_revert(&invalid_utf8));
+    for start in [4, 36] {
+        let mut invalid_word = payload.clone();
+        invalid_word[start..start + 32].fill(0xff);
+        assert!(!is_assertion_revert(&invalid_word));
+    }
+    let panic = Panic::from(PanicKind::Assert).abi_encode();
+    assert!(!is_assertion_revert(&panic[..35]));
+    assert!(!is_assertion_revert(&Panic { code: U256::MAX }.abi_encode()));
+}
+
 fn error_payload(message: &str) -> Vec<u8> {
-    let mut payload = ERROR_SELECTOR.to_vec();
-    payload.extend_from_slice(&U256::from(32).to_be_bytes::<32>());
-    payload.extend_from_slice(&U256::from(message.len()).to_be_bytes::<32>());
-    payload.extend_from_slice(message.as_bytes());
-    let padded_len = message.len().div_ceil(32) * 32;
-    payload.resize(4 + 64 + padded_len, 0);
-    payload
+    Revert::from(message).abi_encode()
 }
