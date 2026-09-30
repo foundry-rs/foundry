@@ -33,7 +33,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        7
     }
 
     fn preprocess(
@@ -82,15 +82,6 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         };
         let original_sources = input.input.sources.clone();
         let mut parser_paths = paths.clone();
-        // Match the compiler input's source-unit names, including the trailing slashes restored
-        // when remappings are serialized after stripping the project root.
-        parser_paths.remappings = input
-            .input
-            .settings
-            .remappings
-            .iter()
-            .map(|remapping| remapping.to_string().parse().expect("valid serialized remapping"))
-            .collect();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(parser_paths.with_language_ref())
@@ -171,7 +162,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        8
+        7
     }
 
     fn preprocess(
@@ -320,7 +311,7 @@ mod tests {
 
     // <https://github.com/foundry-rs/foundry/issues/17219>
     #[test]
-    fn preprocess_uses_compiler_input_remappings() {
+    fn preprocess_reuses_remapped_source_units() {
         let (_root, mut paths, mut input) = input();
         paths.remappings =
             vec![format!("dep/={}/src/", paths.root.display()).parse::<Remapping>().unwrap()];
