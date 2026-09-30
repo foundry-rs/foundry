@@ -142,12 +142,14 @@ existing attempt.
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
-`pending` and appends its receipt. A revert removes the hash and returns an error without appending
-the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction. If that endpoint
-returns no transaction, the durable attempt remains the source of identity: signed bytes may be
-replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
-while unknown outcomes remain blocked until explicitly resolved.
+`pending` and appends its receipt. A revert also removes the hash and appends its receipt as the
+operation's terminal outcome, then returns an error once the checked hashes are saved. A receipt
+therefore means an operation finished, and its status records whether it succeeded;
+`vm.getDeployment` and `vm.getDeployments` ignore reverted receipts. Receipt-watcher timeouts keep
+retrying without consuming the retry budget while the selected RPC still returns the transaction.
+If that endpoint returns no transaction, the durable attempt remains the source of identity: signed
+bytes may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
+`--resume`, while unknown outcomes remain blocked until explicitly resolved.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
 also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint
@@ -182,11 +184,12 @@ generation-tagged state fails closed. A generationless legacy public/sensitive p
 after its pair-consistency checks pass. Batch import additionally validates transaction-hash,
 pending, and receipt associations. Resume then:
 
-1. reuses available signers or re-executes only to collect missing script-provided signers;
-2. reconciles hashes currently listed in `pending`;
-3. derives remaining ordinary work by operation hash and batch work by a validated contiguous
+1. reconciles hashes currently listed in `pending`;
+2. stops if any persisted receipt reverted;
+3. reuses available signers or re-executes only to collect missing script-provided signers;
+4. derives remaining ordinary work by operation hash and batch work by a validated contiguous
    prefix;
-4. prepares and submits that remaining work.
+5. prepares and submits that remaining work.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
 endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
@@ -219,15 +222,16 @@ completion permits skipping an operation on another.
 
 ## Known failure windows
 
-| Window                                                                    | Recovery behavior or remaining limitation                                  |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| A node accepts a transaction but its response is lost                     | A signed attempt is reconciled by hash; a delegated attempt fails closed   |
+| Window                                                                    | Recovery behavior or remaining limitation                                   |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A node accepts a transaction but its response is lost                     | A signed attempt is reconciled by hash; a delegated attempt fails closed    |
 | The RPC returns a hash but the process exits before save                  | The pre-submission attempt remains durable and is reconciled conservatively |
 | A receipt is observed but the process exits before save                   | Resume sees old pending state and rediscovers the receipt                   |
-| A batch receipt hole precedes later confirmations                         | Batch resume advances only across a contiguous completed prefix            |
-| One RPC forgets a transaction or repeatedly returns an incomplete receipt | The attempt remains durable and replacement is not inferred                |
-| The process exits during a snapshot write                                 | Atomic replacement retains either the previous or new complete snapshot    |
-| Two processes resume the same sequence                                    | The recovery lock excludes a competing writer                              |
+| A batch receipt hole precedes later confirmations                         | Batch resume advances only across a contiguous completed prefix             |
+| A submitted transaction or batch reverts                                  | Its receipt is saved and resume stops before requesting signers             |
+| One RPC forgets a transaction or repeatedly returns an incomplete receipt | The attempt remains durable and replacement is not inferred                 |
+| The process exits during a snapshot write                                 | Atomic replacement retains either the previous or new complete snapshot     |
+| Two processes resume the same sequence                                    | The recovery lock excludes a competing writer                               |
 
 ## Recovery contract
 

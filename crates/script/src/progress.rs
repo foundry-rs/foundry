@@ -185,8 +185,8 @@ impl ScriptProgress {
     /// them from the deployment sequence.
     ///
     /// For each `tx_hash`, we check if it has confirmed. If it has
-    /// confirmed, we push the receipt (if successful) or push an error (if
-    /// revert). If the transaction has not confirmed, but can be found in the
+    /// confirmed, we push the receipt, and also push an error if it
+    /// reverted. If the transaction has not confirmed, but can be found in the
     /// node's mempool, we wait for its receipt to be available. If the transaction
     /// has not confirmed, and cannot be found in the mempool, we remove it from
     /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
@@ -281,20 +281,19 @@ impl ScriptProgress {
                     deployment_sequence.add_receipt(receipt);
                 }
                 Ok(TxStatus::Revert(receipt)) => {
-                    // consider:
-                    // if this is not removed from pending, then the script becomes
-                    // un-resumable. Is this desirable on reverts?
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
-                    deployment_sequence.remove_pending(receipt.transaction_hash());
 
                     let msg = format_receipt(
                         deployment_sequence.chain.into(),
                         &receipt,
                         Some(deployment_sequence),
                     );
-                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
-
                     errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
+                    // The failed receipt is the operation's terminal outcome; resume must not
+                    // resubmit it.
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
+                    deployment_sequence.add_receipt(receipt);
+                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                 }
             }
         }
