@@ -255,7 +255,13 @@ implemented guarantee.
 
 - Model attempts separately from planned operations. Once prepared, an attempt's chain, sender,
   nonce, payload, fee fields, and signer mode are immutable.
-- For locally signed submissions, persist final encoded bytes and the derived hash before sending.
+- For locally signed submissions, persist the fully prepared request, final encoded bytes, and the
+  derived hash before sending. Compare the request and decoded payload through the network's
+  canonical unsigned transaction representation, including envelope type, gas, fees, access lists,
+  blob hashes, and network-specific consensus fields. Repeat this check when loading the snapshot.
+  Ordinary unsigned-plan snapshots from older nightlies that lack the prepared request fail closed;
+  their final preparation cannot be reconstructed independently of the payload. Already-signed
+  planned transactions remain bound by their exact hash. Legacy broadcast/cache imports are unchanged.
   A retry sends exactly those bytes.
 - For browser or unlocked signing, persist the delegation intent before invoking the external
   signer or RPC. If control returns without a definitive hash, or the process exits before recording

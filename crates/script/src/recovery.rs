@@ -1,7 +1,7 @@
 use crate::sequence::{SequenceData, completed_transaction_prefix};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_network::{Network, TransactionBuilder, TransactionResponse};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
@@ -269,6 +269,7 @@ where
         &mut self,
         sequence: usize,
         index: usize,
+        request: Option<N::TransactionRequest>,
         payload: Bytes,
     ) -> Result<B256>
     where
@@ -285,7 +286,8 @@ where
             .get(index)
             .context("signed payload operation is not in the recovery snapshot")?;
         let transaction = &self.plan.data.sequences()[sequence].transactions[index];
-        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain)?;
+        let signed =
+            validate_signed_payload::<N>(payload, transaction, request.as_ref(), deployment.chain)?;
         if let Some(existing) = self.signed_payload(sequence, index) {
             if existing != &signed {
                 bail!("refusing to replace an existing signed payload");
@@ -302,7 +304,7 @@ where
             SubmissionAttempt {
                 id: B256::random(),
                 members: vec![id],
-                kind: AttemptKind::Signed { request: None, payload: signed },
+                kind: AttemptKind::Signed { request, payload: signed },
             },
         )?;
         Ok(hash)
@@ -796,7 +798,7 @@ where
                 claimed[start..end].fill(true);
                 match &attempt.kind {
                     AttemptKind::Signed { request, payload } => {
-                        if request.is_some() != self.batch {
+                        if self.batch && request.is_none() {
                             bail!("recovery snapshot signed attempt has an invalid request");
                         }
                         let validated = if let [operation] = operations
@@ -805,6 +807,7 @@ where
                             validate_signed_payload::<N>(
                                 payload.payload.clone(),
                                 &data.transactions[operation.id.index as usize],
+                                request.as_ref(),
                                 deployment.chain,
                             )?
                         } else {
@@ -914,6 +917,7 @@ where
 fn validate_signed_payload<N: Network>(
     payload: Bytes,
     planned: &TransactionWithMetadata<N>,
+    prepared: Option<&N::TransactionRequest>,
     chain: u64,
 ) -> Result<SignedPayload>
 where
@@ -942,6 +946,26 @@ where
             != envelope.authorization_list().unwrap_or_default()
     {
         bail!("signed payload does not match its planned transaction");
+    }
+    if let Some(prepared) = prepared {
+        if prepared.from() != Some(signer) {
+            bail!("signed payload does not match its prepared sender");
+        }
+        // Normalize both sides through the network's unsigned transaction representation. This
+        // includes every consensus field and the envelope type, without comparing RPC-only fields
+        // or treating equivalent omitted/default request fields as different transactions.
+        let expected = prepared.clone().build_unsigned().map_err(|_| {
+            eyre::eyre!("recovery snapshot contains an incomplete prepared transaction")
+        })?;
+        let expected = <N::TransactionRequest as From<N::UnsignedTx>>::from(expected);
+        let actual = <N::TransactionRequest as From<N::UnsignedTx>>::from(envelope.clone().into());
+        if serde_json::to_value(expected)? != serde_json::to_value(actual)? {
+            bail!("signed payload does not match its prepared transaction");
+        }
+    } else if transaction.is_unsigned() {
+        bail!(
+            "signed recovery attempt has no prepared request; refusing to resume an unbound legacy snapshot"
+        );
     }
     Ok(SignedPayload { hash: envelope.trie_hash(), payload })
 }
@@ -1070,14 +1094,18 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::{
-        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, transaction::Recovered,
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SidecarBuilder, SimpleCoder,
+        TxEnvelope, transaction::Recovered,
     };
-    use alloy_network::Ethereum;
+    use alloy_network::{Ethereum, EthereumWallet};
     use alloy_primitives::{Bloom, TxKind, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
-    use alloy_signer::SignerSync;
+    use alloy_signer::{Signer, SignerSync};
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{
+        AASigned, TempoSignature, TempoTxEnvelope,
+        transaction::{Call, PrimitiveSignature},
+    };
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1289,8 +1317,24 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let hash = store
+                .persist_signed_payload(
+                    0,
+                    0,
+                    Some(delegated_transaction(SIGNED_TX).0),
+                    SIGNED_TX.to_vec().into(),
+                )
+                .unwrap();
+            assert!(
+                store
+                    .persist_signed_payload(
+                        0,
+                        0,
+                        Some(delegated_transaction(OTHER_SIGNED_TX).0),
+                        OTHER_SIGNED_TX.to_vec().into()
+                    )
+                    .is_err()
+            );
             hash
         };
 
@@ -1305,8 +1349,244 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(
+            store
+                .persist_signed_payload(
+                    1,
+                    0,
+                    Some(delegated_transaction(SIGNED_TX).0),
+                    SIGNED_TX.to_vec().into()
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .persist_signed_payload(
+                    0,
+                    1,
+                    Some(delegated_transaction(SIGNED_TX).0),
+                    SIGNED_TX.to_vec().into()
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn signed_payload_requires_a_complete_prepared_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let (request, _) = delegated_transaction(SIGNED_TX);
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        assert!(store.persist_signed_payload(0, 0, None, SIGNED_TX.into()).is_err());
+        let mut incomplete = request.clone();
+        incomplete.gas = None;
+        assert!(store.persist_signed_payload(0, 0, Some(incomplete), SIGNED_TX.into()).is_err());
+        store.persist_signed_payload(0, 0, Some(request), SIGNED_TX.into()).unwrap();
+        let AttemptKind::Signed { request, .. } = &mut store.plan.deployments[0].attempts[0].kind
+        else {
+            panic!("expected signed attempt");
+        };
+        *request = None;
+        // Old ordinary attempts cannot be upgraded by trusting the payload being checked.
+        write_snapshot(&store.path, &store.plan).unwrap();
+        drop(store);
+        let error = load(&paths, false).err().unwrap();
+        assert!(error.to_string().contains("no prepared request"));
+    }
+
+    #[test]
+    fn signed_payload_checks_prepared_consensus_fields_on_persist_and_reload() {
+        let (request, _) = delegated_transaction(SIGNED_TX);
+        let fields = [
+            ("gas", serde_json::json!("0x5209")),
+            ("maxFeePerGas", serde_json::json!("0x2540be401")),
+            ("maxPriorityFeePerGas", serde_json::json!("0x3b9aca01")),
+            (
+                "accessList",
+                serde_json::json!([{
+                    "address": Address::repeat_byte(0x11), "storageKeys": [B256::ZERO]
+                }]),
+            ),
+            ("type", serde_json::json!("0x1")),
+        ];
+        for (field, value) in fields {
+            let dir = tempfile::tempdir().unwrap();
+            let data = signed_sequence(dir.path());
+            let paths = data.paths();
+            let mut changed = serde_json::to_value(&request).unwrap();
+            changed[field] = value;
+            if field == "type" {
+                changed["gasPrice"] = serde_json::json!("0x1");
+                changed.as_object_mut().unwrap().remove("maxFeePerGas");
+                changed.as_object_mut().unwrap().remove("maxPriorityFeePerGas");
+            }
+            let changed = serde_json::from_value::<TransactionRequest>(changed).unwrap();
+            let mut store = RecoveryStore::create(data, false).unwrap();
+            assert!(
+                store
+                    .persist_signed_payload(0, 0, Some(changed.clone()), SIGNED_TX.into())
+                    .is_err(),
+                "accepted changed {field}"
+            );
+            assert!(store.plan.deployments[0].attempts.is_empty());
+            store.persist_signed_payload(0, 0, Some(request.clone()), SIGNED_TX.into()).unwrap();
+            let AttemptKind::Signed { request, .. } =
+                &mut store.plan.deployments[0].attempts[0].kind
+            else {
+                panic!("expected signed attempt");
+            };
+            *request = Some(changed);
+            write_snapshot(&store.path, &store.plan).unwrap();
+            drop(store);
+            assert!(load(&paths, false).is_err(), "loaded changed {field}");
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_payload_binds_each_ethereum_envelope() {
+        let signer = foundry_wallets::utils::create_private_key_signer(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .unwrap();
+        let sender = signer.address();
+        let wallet = EthereumWallet::new(signer);
+        for ty in 0..=4 {
+            let mut request = TransactionRequest::default()
+                .with_from(sender)
+                .with_chain_id(1)
+                .with_nonce(0)
+                .with_to(Address::repeat_byte(0x11))
+                .with_gas_limit(100_000);
+            if ty <= 1 {
+                request.gas_price = Some(1);
+            } else {
+                request.max_fee_per_gas = Some(2);
+                request.max_priority_fee_per_gas = Some(1);
+            }
+            if ty != 0 {
+                request.access_list = Some(Default::default());
+            }
+            if ty == 3 {
+                let sidecar =
+                    SidecarBuilder::<SimpleCoder>::from_slice(b"recovery").build().unwrap();
+                request = request.with_blob_sidecar_4844(sidecar);
+                request.max_fee_per_blob_gas = Some(1);
+            }
+            if ty == 4 {
+                request.authorization_list = Some(Vec::new());
+            }
+            let envelope = request.clone().build(&wallet).await.unwrap();
+            let payload = Bytes::from(envelope.encoded_2718());
+            let planned =
+                TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<Ethereum>::new(
+                    request.clone(),
+                ));
+            assert!(
+                validate_signed_payload::<Ethereum>(payload.clone(), &planned, Some(&request), 1,)
+                    .is_ok()
+            );
+            if ty == 3 {
+                let sidecar =
+                    SidecarBuilder::<SimpleCoder>::from_slice(b"different blob").build().unwrap();
+                let different_blobs = request.clone().with_blob_sidecar_4844(sidecar);
+                let mut different_fee = request.clone();
+                different_fee.max_fee_per_blob_gas = Some(2);
+                for changed in [different_blobs, different_fee] {
+                    assert!(
+                        validate_signed_payload::<Ethereum>(
+                            payload.clone(),
+                            &planned,
+                            Some(&changed),
+                            1,
+                        )
+                        .is_err()
+                    );
+                }
+            }
+            // Pre-signed plans retain exact-envelope binding without a separate prepared request.
+            let planned =
+                TransactionWithMetadata::from_tx_request(
+                    TransactionMaybeSigned::<Ethereum>::Signed { tx: envelope, from: sender },
+                );
+            assert!(validate_signed_payload::<Ethereum>(payload, &planned, None, 1).is_ok());
+        }
+    }
+
+    #[test]
+    fn signed_payload_binds_tempo_consensus_fields() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .unwrap();
+        let request = TempoTransactionRequest {
+            inner: TransactionRequest::default()
+                .with_from(signer.address())
+                .with_to(Address::repeat_byte(0x11))
+                .with_chain_id(4217)
+                .with_nonce(0)
+                .with_gas_limit(100_000)
+                .with_max_fee_per_gas(2)
+                .with_max_priority_fee_per_gas(1),
+            nonce_key: Some(U256::from(1)),
+            ..Default::default()
+        };
+        let unsigned = request.clone().build_aa().unwrap();
+        let signature = signer.sign_hash_sync(&unsigned.signature_hash()).unwrap();
+        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
+            unsigned,
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+        ));
+        let payload = Bytes::from(envelope.encoded_2718());
+        let planned = TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<
+            TempoNetwork,
+        >::new(request.clone()));
+        assert!(
+            validate_signed_payload::<TempoNetwork>(
+                payload.clone(),
+                &planned,
+                Some(&request),
+                4217,
+            )
+            .is_ok()
+        );
+        for (field, value) in [
+            ("nonceKey", serde_json::json!("0x2")),
+            ("validBefore", serde_json::json!("0x100")),
+            ("feeToken", serde_json::json!(Address::repeat_byte(0x22))),
+        ] {
+            let mut changed = serde_json::to_value(&request).unwrap();
+            changed[field] = value;
+            let changed = serde_json::from_value(changed).unwrap();
+            assert!(
+                validate_signed_payload::<TempoNetwork>(
+                    payload.clone(),
+                    &planned,
+                    Some(&changed),
+                    4217,
+                )
+                .is_err(),
+                "accepted changed {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_gas_and_fees_may_differ_from_simulation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let (prepared, _) = delegated_transaction(SIGNED_TX);
+        let mut simulated = prepared.clone();
+        simulated.gas = Some(100_000);
+        simulated.max_fee_per_gas = None;
+        simulated.max_priority_fee_per_gas = None;
+        data.sequences_mut()[0].transactions[0] =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(simulated));
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        store.persist_signed_payload(0, 0, Some(prepared), SIGNED_TX.into()).unwrap();
+        drop(store);
+        assert!(load(&paths, false).unwrap().signed_payload(0, 0).is_some());
     }
 
     #[test]
@@ -1520,7 +1800,16 @@ mod tests {
             store
                 .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
                 .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            assert!(
+                store
+                    .persist_signed_payload(
+                        0,
+                        1,
+                        Some(delegated_transaction(OTHER_SIGNED_TX).0),
+                        OTHER_SIGNED_TX.to_vec().into()
+                    )
+                    .is_err()
+            );
         }
 
         let store = load(&paths, true).unwrap();

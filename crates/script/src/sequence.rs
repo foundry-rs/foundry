@@ -284,13 +284,14 @@ where
         &mut self,
         sequence: usize,
         index: usize,
+        request: Option<N::TransactionRequest>,
         payload: Bytes,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        self.recovery.persist_signed_payload(sequence, index, payload)
+        self.recovery.persist_signed_payload(sequence, index, request, payload)
     }
 
     pub(crate) fn delegated_status(
