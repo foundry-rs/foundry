@@ -1,4 +1,5 @@
 use crate::{
+    dispatcher::view_session,
     opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
 };
@@ -56,6 +57,10 @@ macro_rules! try_cf {
 
 /// Run the subcommand.
 pub async fn run_command(args: Chisel) -> Result<()> {
+    if let Some(ChiselSubcommand::View { id }) = &args.cmd {
+        return view_session(id);
+    }
+
     // Load configuration
     let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;
 
@@ -275,7 +280,7 @@ async fn handle_cli_command<FEN: FoundryEvmNetwork>(
         ChiselSubcommand::List => d.dispatch_command(ChiselCommand::ListSessions).await,
         ChiselSubcommand::Load { id } => d.dispatch_command(ChiselCommand::Load { id }).await,
         ChiselSubcommand::View { id } => {
-            d.view_session(&id)?;
+            view_session(&id)?;
             Ok(ControlFlow::Continue(()))
         }
         ChiselSubcommand::ClearCache => d.dispatch_command(ChiselCommand::ClearCache).await,
