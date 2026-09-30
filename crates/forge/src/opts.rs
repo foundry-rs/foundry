@@ -242,7 +242,7 @@ pub enum ForgeSubcommand {
     /// Rewrite the project's functions with a model through Solar, paying from your Tempo account
     ///
     /// Examples:
-    /// - forge optimize --model anthropic/MODEL --endpoint https://gateway.example/anthropic/v1
+    /// - forge optimize --model anthropic/MODEL --endpoint $GATEWAY_URL
     /// - forge optimize --replay (rebuild with the kept rewrites, without a model)
     #[command(verbatim_doc_comment)]
     Optimize(OptimizeArgs),
