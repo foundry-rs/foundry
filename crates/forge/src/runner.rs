@@ -1254,16 +1254,15 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Classified before `setUp`; the full function list is built after setup so
         // contract-level inline config can still affect symbolic entrypoint discovery.
         let test_matcher = self.test_matcher();
-        // In fuzz-only mode, drop suites with no runnable fuzz or invariant tests before
-        // executing `setUp`.
-        if self.mcr.tcfg.fuzz_only
-            && !self.matching_test_functions(filter, &test_matcher).into_iter().any(|func| {
-                matches!(
+        // Skip suites with no selected tests in this network pass before deploying the
+        // contract or executing `setUp`. Fuzz-only mode also excludes unit and symbolic tests.
+        if !self.matching_test_functions(filter, &test_matcher).into_iter().any(|func| {
+            !self.mcr.tcfg.fuzz_only
+                || matches!(
                     test_matcher.test_function_kind(self.name, func, generated_symbolic_regression),
                     TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
                 )
-            })
-        {
+        }) {
             return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
         }
 

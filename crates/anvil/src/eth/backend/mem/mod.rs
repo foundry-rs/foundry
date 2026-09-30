@@ -1024,6 +1024,7 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time_offset: i128,
     next_block_timestamp: Option<u64>,
+    next_block_prevrandao: Option<B256>,
 }
 
 #[cfg(test)]
@@ -1892,6 +1893,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time_offset,
                 next_block_timestamp,
+                next_block_prevrandao: self.cheats.next_block_prevrandao(),
             },
         );
         id
@@ -5297,7 +5299,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset, next_block_timestamp)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5305,6 +5307,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time_offset,
                     snapshot.next_block_timestamp,
+                    snapshot.next_block_prevrandao,
                 )
             })
         else {
@@ -5321,15 +5324,20 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+        self.states.write().remove_block_states(&removed_hashes);
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
-        // drop any pending next-block prevrandao override so it does not leak into a block
-        self.cheats.clear_next_block_prevrandao();
+        if let Some(prevrandao) = next_block_prevrandao {
+            self.cheats.set_next_block_prevrandao(prevrandao);
+        } else {
+            self.cheats.clear_next_block_prevrandao();
+        }
 
         {
             let mut env = self.evm_env.write();

@@ -347,7 +347,7 @@ fn assert_arbitrum_arb_block_number(cmd: &mut TestCommand) {
         .stdout_eq(str![[r#"
 Traces:
   [..] 0xeAB71344cc3D1BF0803BbFCb36bAB6ee07650B74::01000000([..]1e5c14c0)
-    ├─ [3] 0x0000000000000000000000000000000000000064::[..] [staticcall]
+    ├─ [803] 0x0000000000000000000000000000000000000064::[..] [staticcall]
     │   └─ ← [Return] 0x000000000000000000000000000000000000000000000000000000001e5c14c1
     └─ ← [Revert] EvmError: Revert
 
