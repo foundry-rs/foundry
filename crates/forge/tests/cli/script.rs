@@ -6444,7 +6444,7 @@ forgetest!(script_unlocked_conflicts_with_remote_signers, |_prj, cmd| {
             .assert_failure()
             .stderr_eq(format!(
                 "error: the argument '--unlocked' cannot be used with '{signer}'\n\n\
-                 Usage: forge script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
+                 Usage: forge[..] script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
                  For more information, try '--help'.\n"
             ));
     }
