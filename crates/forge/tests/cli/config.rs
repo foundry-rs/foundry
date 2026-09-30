@@ -914,73 +914,52 @@ forgetest!(non_compiling_commands_do_not_run_solc, |prj, cmd| {
     }
 });
 
-// The default EVM version follows the version of a configured local compiler at runtime, while an
-// explicit EVM version is preserved.
-forgetest!(local_solc_derives_runtime_evm_version, |prj, cmd| {
-    let add_contracts = |evm_version: &str| {
-        let assertion = format!(
-            r#"
+// An explicit EVM version is preserved at runtime, even if the compiler does not support it.
+forgetest!(explicit_evm_version_is_preserved_at_runtime, |prj, cmd| {
+    let assertion = r#"
 pragma solidity ^0.8.0;
 
-interface Vm {{
+interface Vm {
     function getEvmVersion() external pure returns (string memory evm);
-}}
+}
 
-library EvmVersionAssert {{
-    function check() internal pure {{
+library EvmVersionAssert {
+    function check() internal pure {
         string memory evm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).getEvmVersion();
-        require(keccak256(bytes(evm)) == keccak256("{evm_version}"), evm);
-    }}
-}}
-"#
-        );
-        prj.add_test(
-            "EvmVersion.t.sol",
-            &format!(
-                "{assertion}\ncontract EvmVersionTest {{ function test_evm_version() public pure {{ EvmVersionAssert.check(); }} }}"
-            ),
-        );
-        prj.add_script(
-            "EvmVersion.s.sol",
-            &format!(
-                "{assertion}\ncontract EvmVersionScript {{ function run() public pure {{ EvmVersionAssert.check(); }} }}"
-            ),
-        );
-    };
+        require(keccak256(bytes(evm)) == keccak256("osaka"), evm);
+    }
+}
+"#;
+    prj.add_test(
+        "EvmVersion.t.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionTest {{ function test_evm_version() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+    prj.add_script(
+        "EvmVersion.s.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionScript {{ function run() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
 
+    // Local compiler binary.
     let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
-    prj.update_config(|config| config.solc = Some(SolcReq::Local(solc.solc.clone())));
-    add_contracts("cancun");
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = '{}'\nevm_version = 'osaka'\n", solc.solc.display()),
+    )
+    .unwrap();
     cmd.args(["test"]).assert_success();
     cmd.forge_fuse().args(["coverage"]).assert_success();
     cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).assert_success();
 
-    prj.update_config(|config| config.solc = None);
-    add_contracts("osaka");
+    // Pinned compiler version.
+    fs::write(prj.root().join(Config::FILE_NAME), "[profile.default]\n").unwrap();
     let explicit = ["--use", OTHER_SOLC_VERSION, "--evm-version", "osaka"];
     cmd.forge_fuse().arg("test").args(explicit).assert_success();
     cmd.forge_fuse().arg("coverage").args(explicit).assert_success();
     cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).args(explicit).assert_success();
-});
-
-// EVM version restrictions match the default EVM version of a configured local compiler.
-forgetest!(local_solc_matches_evm_version_restrictions, |prj, cmd| {
-    prj.add_raw_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
-    let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
-    fs::write(
-        prj.root().join(Config::FILE_NAME),
-        format!(
-            r#"[profile.default]
-solc = '{}'
-compilation_restrictions = [{{ paths = "src/**", evm_version = "cancun" }}]
-"#,
-            solc.solc.display()
-        ),
-    )
-    .unwrap();
-
-    cmd.arg("build").assert_success();
-    cmd.forge_fuse().arg("lint").assert_success();
 });
 
 // test to ensure yul optimizer can be set as intended
