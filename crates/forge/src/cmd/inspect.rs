@@ -76,8 +76,6 @@ impl InspectArgs {
             build.compiler.optimize
         };
 
-        let explicit_solc = build.use_solc.is_some();
-
         // Build modified Args
         let modified_build_args = BuildOpts {
             compiler: CompilerOpts { extra_output: cos, optimize: optimized, ..build.compiler },
@@ -193,13 +191,18 @@ impl InspectArgs {
                 print_errors_events(&out, false, wrap)?;
             }
             ContractArtifactField::StandardJson => {
-                let standard_json = if explicit_solc
-                    && let Some(SolcCompiler::Specific(solc)) = &project.compiler.solc
-                {
-                    let mut standard_json = project
-                        .standard_json_input(&target_path)?
-                        .normalize_evm_version(&solc.version);
-                    standard_json.settings.sanitize(&solc.version, SolcLanguage::Solidity);
+                let version = match &project.compiler.solc {
+                    Some(SolcCompiler::Specific(solc)) => Some(solc.version.clone()),
+                    _ => artifact
+                        .metadata
+                        .as_ref()
+                        .map(|metadata| metadata.compiler.version.parse())
+                        .transpose()?,
+                };
+                let standard_json = if let Some(version) = version {
+                    let mut standard_json =
+                        project.standard_json_input(&target_path)?.normalize_evm_version(&version);
+                    standard_json.settings.sanitize(&version, SolcLanguage::Solidity);
                     standard_json
                 } else {
                     project.standard_json_input(&target_path)?
