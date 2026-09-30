@@ -1499,6 +1499,11 @@ impl TestArgs {
             ProjectCompiler::new()
                 .external_compilers(config)
                 .files(sources.iter().cloned())
+                .source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
                 .quiet(true),
         )?;
         if output.has_compiler_errors() {
@@ -1697,6 +1702,15 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
+            let compiler = if filter.is_empty() {
+                compiler
+            } else {
+                compiler.source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+            };
             let output = compiler.files(files.clone()).compile(&project);
             let output = if should_mutate {
                 output.wrap_err(
