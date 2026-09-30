@@ -234,7 +234,12 @@ pub fn load_dotenv() {
                 }
                 _ => err.to_string(),
             };
-            let _ = foundry_common::sh_warn!("Failed to load {}: {}", path.display(), reason);
+            let _ = foundry_common::sh_warn!(
+                &mut foundry_common::Shell::new(),
+                "Failed to load {}: {}",
+                path.display(),
+                reason
+            );
         }
     }
 }
