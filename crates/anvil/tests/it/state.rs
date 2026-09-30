@@ -713,6 +713,24 @@ async fn can_preserve_historical_states_between_dump_and_load() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn revert_removes_historical_states_of_discarded_blocks() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let genesis_hash = api.backend.best_hash();
+
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    let discarded_hash = api.backend.best_hash();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
+    let state = api.serialized_state(true).await.unwrap();
+    let hashes: Vec<_> =
+        state.historical_states.unwrap().into_iter().map(|(hash, _)| hash).collect();
+    assert!(hashes.contains(&genesis_hash));
+    assert!(!hashes.contains(&discarded_hash));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn state_dump_is_deterministic() {
     let timestamp = 1_700_000_000u64;
     let (api, handle) = spawn(NodeConfig::test().with_genesis_timestamp(timestamp.into())).await;

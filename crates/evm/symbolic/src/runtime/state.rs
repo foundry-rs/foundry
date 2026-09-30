@@ -2309,8 +2309,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        let spec_id: SpecId = executor.spec_id().into();
-        if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
+        if is_known_cheatcode(address) {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {

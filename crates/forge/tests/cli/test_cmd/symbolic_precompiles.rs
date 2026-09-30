@@ -1,6 +1,6 @@
 use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
@@ -678,6 +678,105 @@ contract SymbolicPreCancunKzg {
 [PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256)
 "#]],
     );
+});
+
+forgetest_init!(symbolic_precompile_codehash_matches_account_state, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_precompile_codehash_matches_account_state because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "PrecompileAccounts.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract PrecompileAccounts is Test {
+    function setUp() public {
+        vm.deal(address(2), 1);
+        vm.setNonce(address(3), 1);
+    }
+
+    function checkPrecompileAccounts() public {
+        assertPrecompileAccounts();
+    }
+
+    function testPrecompileAccounts() public {
+        assertPrecompileAccounts();
+    }
+
+    function assertPrecompileAccounts() internal {
+        for (uint160 i = 1; i <= 10; ++i) {
+            address target = address(i);
+            assert(target.code.length == 0);
+            assert(target.codehash == (i == 2 || i == 3 ? keccak256("") : bytes32(0)));
+        }
+
+        (bool ok, bytes memory out) = address(4).staticcall(hex"010203");
+        assert(ok);
+        assert(keccak256(out) == keccak256(hex"010203"));
+        assert(address(4).codehash == bytes32(0));
+
+        vm.deal(address(4), 1);
+        assert(address(4).codehash == keccak256(""));
+        vm.setNonce(address(5), 1);
+        assert(address(5).codehash == keccak256(""));
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--json",
+        "--evm-version",
+        "cancun",
+        "--match-test",
+        "testPrecompileAccounts",
+    ])
+    .assert_json_stdout(str![[r#"
+{
+  "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
+    "test_results": {
+      "testPrecompileAccounts()": {
+        "status": "Success",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]]);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--evm-version",
+            "cancun",
+            "--match-test",
+            "checkPrecompileAccounts",
+        ])
+        .assert_json_stdout(str![[r#"
+{
+  "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
+    "test_results": {
+      "checkPrecompileAccounts()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]]);
 });
 
 forgetest_init!(symbolic_kzg_precompile_residual_reports_incomplete, |prj, cmd| {

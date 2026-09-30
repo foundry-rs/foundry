@@ -5324,7 +5324,9 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+        self.states.write().remove_block_states(&removed_hashes);
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
