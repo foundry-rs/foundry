@@ -1570,7 +1570,7 @@ impl SymbolicExecutor {
 }
 
 /// Returns the activation fork for opcodes implemented by the symbolic executor.
-fn opcode_activation(op: u8) -> SpecId {
+const fn opcode_activation(op: u8) -> SpecId {
     match op {
         opcode::DELEGATECALL => SpecId::HOMESTEAD,
         opcode::RETURNDATASIZE | opcode::RETURNDATACOPY | opcode::STATICCALL | opcode::REVERT => {
