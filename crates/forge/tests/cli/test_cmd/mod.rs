@@ -521,8 +521,13 @@ forgetest!(warn_when_filtered_tests_are_not_compiled, |prj, cmd| {
     prj.add_source("Dummy.sol", "contract Dummy {}");
     prj.add_test("Filtered.t.sol", "contract Filtered { function testFoo(uint256) public {} }");
 
-    for dynamic_test_linking in [false, true] {
-        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+    for (dynamic_test_linking, cache) in
+        [(false, true), (true, true), (false, false), (true, false)]
+    {
+        prj.update_config(|config| {
+            config.dynamic_test_linking = dynamic_test_linking;
+            config.cache = cache;
+        });
         cmd.forge_fuse().args(["test", "--mt", "testFoo$"]).assert_success().stderr_eq(str![[r#"
 Warning: no tests match the provided pattern:
 	match-test: `testFoo$`
