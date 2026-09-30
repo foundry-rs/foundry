@@ -663,6 +663,15 @@ Compiler run successful!
 
 "#]]);
 
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--quiet"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: some contracts exceed the initcode size limit (EIP-3860: 49152 bytes)
+
+"#]]);
+
     cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
         str![[r#"
 {
