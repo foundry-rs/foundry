@@ -147,7 +147,9 @@ impl fmt::Debug for LazyAccountsProvider {
 }
 
 impl LazyAccountsProvider {
-    pub(super) fn new(origin: String) -> Self {
+    /// Creates a provider that pays the 402 challenges of the endpoint at `origin`, opening
+    /// Tempo Accounts only when the endpoint first asks for payment.
+    pub fn new(origin: String) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             funding_by_challenge: Arc::new(Mutex::new(HashMap::new())),
@@ -163,7 +165,7 @@ impl LazyAccountsProvider {
 
         let mut provider = TempoAccountsProvider::from_default_store().map_err(|error| {
             MppError::InvalidConfig(format!(
-                "RPC endpoint returned HTTP 402 Payment Required, but the Tempo Accounts store \
+                "Endpoint returned HTTP 402 Payment Required, but the Tempo Accounts store \
                  could not provide a Charge wallet: {error}\n\nAuthorize an access key with:\n  \
                  cast tempo login\n\nIn a headless environment, use:\n  cast tempo login --no-browser"
             ))
@@ -401,7 +403,7 @@ impl FundingContext {
             .map(|token| format!("Requested payment token: {token}\n\n"))
             .unwrap_or_default();
         format!(
-            "\n\nTempo wallet payment could not be funded for this paid RPC request.\n\n{token}\
+            "\n\nTempo wallet payment could not be funded for this paid request.\n\n{token}\
              Fund the wallet, then rerun the command:\n  {command}\n\n\
              If this CLI is running on a remote or headless host, use:\n  {command} --no-browser"
         )
