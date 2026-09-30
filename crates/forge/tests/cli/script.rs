@@ -2,7 +2,7 @@
 
 use crate::{
     constants::TEMPLATE_CONTRACT,
-    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+    utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
@@ -16,8 +16,9 @@ use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
-        self, next_http_archive_rpc_url, spawn_rpc_proxy_mapping_method,
-        spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after_when_enabled,
+        self, next_http_archive_rpc_url, spawn_rpc_proxy_blocking_first_submission,
+        spawn_rpc_proxy_mapping_method, spawn_rpc_proxy_recording_method,
+        spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -26,17 +27,13 @@ use regex::Regex;
 use serde_json::Value;
 use std::{
     env, fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    thread::{self, JoinHandle},
     time::Duration,
 };
-use tokio::sync::Notify;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -63,99 +60,6 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
         .find(|path| path.ends_with("dry-run/run-latest.json"))
         .unwrap();
     foundry_common::fs::read_json_file(&path).unwrap()
-}
-
-struct KillOnDrop {
-    child: Option<Child>,
-    stderr: Option<JoinHandle<Vec<u8>>>,
-}
-
-impl KillOnDrop {
-    fn spawn(command: &mut Command) -> Self {
-        let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
-        let mut child_stderr = child.stderr.take().unwrap();
-        let stderr = thread::spawn(move || {
-            let mut stderr = Vec::new();
-            child_stderr.read_to_end(&mut stderr).unwrap();
-            stderr
-        });
-        Self { child: Some(child), stderr: Some(stderr) }
-    }
-
-    fn is_running(&mut self) -> bool {
-        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
-    }
-
-    fn kill_and_wait(mut self) -> Output {
-        let mut child = self.child.take().unwrap();
-        child.kill().unwrap();
-        let status = child.wait().unwrap();
-        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
-    }
-}
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if let Some(child) = &mut self.child {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(stderr) = self.stderr.take() {
-            let _ = stderr.join();
-        }
-    }
-}
-
-async fn spawn_rpc_proxy_blocking_first_submission(
-    endpoint: String,
-    method: &'static str,
-) -> (String, Arc<std::sync::Mutex<Vec<Value>>>, Arc<Notify>, Arc<Notify>) {
-    let client = reqwest::Client::new();
-    let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let reached = Arc::new(Notify::new());
-    let release = Arc::new(Notify::new());
-    let app = Router::new().fallback({
-        let submissions = submissions.clone();
-        let reached = reached.clone();
-        let release = release.clone();
-        move |body: BodyBytes| {
-            let client = client.clone();
-            let endpoint = endpoint.clone();
-            let submissions = submissions.clone();
-            let reached = reached.clone();
-            let release = release.clone();
-            async move {
-                let request: Value = serde_json::from_slice(&body).unwrap();
-                if request.get("method").and_then(Value::as_str) == Some(method) {
-                    let first = {
-                        let mut submissions = submissions.lock().unwrap();
-                        submissions.push(request.get("params").cloned().unwrap_or(Value::Null));
-                        submissions.len() == 1
-                    };
-                    if first {
-                        reached.notify_one();
-                        release.notified().await;
-                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                    }
-                }
-                client
-                    .post(endpoint)
-                    .header("content-type", "application/json")
-                    .body(body)
-                    .send()
-                    .await
-                    .unwrap()
-                    .bytes()
-                    .await
-                    .unwrap()
-                    .into_response()
-            }
-        }
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let rpc = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (rpc, submissions, reached, release)
 }
 
 // Tests that fork cheat codes can be used in script
@@ -4947,6 +4851,97 @@ contract SaltedSrcScript is Script {
     assert_eq!(tx["arguments"][0], "SaltedSrc");
 });
 
+// Regression: salted `vm.deployCode` must be broadcast through the CREATE2 factory so the
+// on-chain address matches the address returned to the script, and must consume a single-call
+// `vm.broadcast()`.
+forgetest_async!(can_broadcast_salted_deploy_code_in_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Child {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+    function setName(string memory _name) external { name = _name; }
+}
+
+contract Token {
+    string public name;
+    address public child;
+    constructor(string memory _name) payable {
+        name = _name;
+        child = address(new Child(_name));
+        Child(child).setName("Child");
+    }
+    function setName(string memory _name) external { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "SaltedDeployCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+contract SaltedDeployCodeScript is Script {
+    function run() external returns (address first, address second) {
+        vm.broadcast();
+        first = vm.deployCode("src/Token.sol:Token", abi.encode("First"), 1, bytes32(uint256(1)));
+        Token(first).setName("Local");
+
+        vm.startBroadcast();
+        Token(first).setName("Updated");
+        second = vm.deployCode("src/Token.sol:Token", abi.encode("Second"), bytes32(uint256(2)));
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        cmd.forge_fuse()
+            .args([
+                "script",
+                "script/SaltedDeployCode.s.sol:SaltedDeployCodeScript",
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--broadcast",
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            ])
+            .assert_success();
+
+        let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| path.ends_with("run-latest.json"))
+            .expect("No broadcast artifacts");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        let returned = |name: &str| -> Address {
+            json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+        };
+        let (first, second) = (returned("first"), returned("second"));
+        let transactions = json["transactions"].as_array().unwrap();
+        let transaction_types = transactions
+            .iter()
+            .map(|tx| tx["transactionType"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(transaction_types, ["CREATE2", "CALL", "CREATE2"]);
+        assert_eq!(transactions[0]["contractAddress"], first.to_string().to_lowercase());
+        assert_eq!(transactions[1]["transaction"]["to"], first.to_string().to_lowercase());
+        assert_eq!(transactions[2]["contractAddress"], second.to_string().to_lowercase());
+        for (nonce, transaction) in transactions.iter().enumerate() {
+            let recorded_nonce =
+                transaction["transaction"]["nonce"].as_str().unwrap().parse::<U256>().unwrap();
+            assert_eq!(recorded_nonce, U256::from(nonce));
+        }
+
+        for deployed in [first, second] {
+            assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
+        }
+        assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
+    }
+});
+
 // Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
 // The injected cheatcode is `view`, so using it in a `pure` script helper breaks compilation.
 forgetest_init!(can_build_script_creation_code_in_pure_function, |prj, cmd| {
@@ -5395,9 +5390,12 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     let script = prj.add_source("MultiDeploy", &source);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
-    let (rpc, submissions, reached, release) =
-        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendRawTransaction")
-            .await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        false,
+    )
+    .await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     cmd.env("BATCH_EXECUTION_REQUIRED", "1");
@@ -5491,9 +5489,12 @@ forgetest_async!(tempo_batch_unlocked_crash_blocks_resubmission, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let (rpc, submissions, reached, release) =
-        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendTransaction")
-            .await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        false,
+    )
+    .await;
     let sender = handle.dev_accounts().next().unwrap();
 
     cmd.arg("script").arg(&script).args([
@@ -6003,10 +6004,91 @@ contract DeployTempoAA is Script {
         .expect("no broadcast artifact found");
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
     let transactions = json["transactions"].as_array().unwrap();
-    assert_eq!(transactions.len(), 4, "expected CREATE, CALL, CREATE, and CREATE2 transactions");
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE", "CALL", "CREATE", "CREATE2"]);
     for transaction in transactions {
         assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
     }
+});
+
+forgetest_async!(tempo_batch_broadcasts_deploy_code_via_create2, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "TempoBatchCodeDeployment",
+        r#"
+contract TempoBatchCodeDeployment {
+    uint256 public calls;
+    function ping() external { calls++; }
+}
+"#,
+    );
+    let script = prj.add_script(
+        "DeployTempoBatch.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+interface ITempoBatchCodeDeployment {
+    function ping() external;
+}
+
+contract DeployTempoBatch is Script {
+    function run() external returns (address first, address second, address salted) {
+        vm.startBroadcast();
+        first = vm.deployCode("src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment");
+        second = vm.deployCode("src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment");
+        salted = vm.deployCode(
+            "src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment", bytes32(uint256(1))
+        );
+        ITempoBatchCodeDeployment(first).ping();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--tc",
+        "DeployTempoBatch",
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no broadcast artifact found");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let returned = |name: &str| -> Address {
+        json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+    };
+    let deployed = [returned("first"), returned("second"), returned("salted")];
+    assert_ne!(deployed[0], deployed[1]);
+
+    let transactions = json["transactions"].as_array().unwrap();
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE2", "CREATE2", "CREATE2", "CALL"]);
+    let factory = foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_string().to_lowercase();
+    for (transaction, address) in transactions.iter().zip(deployed) {
+        assert_eq!(transaction["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+        assert_eq!(transaction["contractAddress"], address.to_string().to_lowercase());
+        assert!(!api.get_code(address, None).await.unwrap().is_empty());
+    }
+    assert_eq!(transactions[3]["transaction"]["to"], deployed[0].to_string().to_lowercase());
+    assert_eq!(
+        handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
+        U256::from(1)
+    );
 });
 
 forgetest_async!(tempo_script_resume_preserves_completed_prefix, |prj, cmd| {
@@ -6452,4 +6534,19 @@ contract SetStorageViaRpc {
     cmd.arg("script")
         .args(["SetStorageViaRpc", "--rpc-url", &handle.http_endpoint()])
         .assert_success();
+});
+
+// tests that `--unlocked` cannot be combined with any remote signer
+forgetest!(script_unlocked_conflicts_with_remote_signers, |_prj, cmd| {
+    for signer in ["--aws", "--gcp", "--turnkey"] {
+        cmd.forge_fuse()
+            .args(["script", "Foo", "--unlocked", "--sender"])
+            .args(["0x0000000000000000000000000000000000000001", signer])
+            .assert_failure()
+            .stderr_eq(format!(
+                "error: the argument '--unlocked' cannot be used with '{signer}'\n\n\
+                 Usage: forge[..] script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
+                 For more information, try '--help'.\n"
+            ));
+    }
 });
