@@ -719,12 +719,18 @@ forgetest!(update_rejects_lockfile_paths_outside_submodules, |prj, cmd| {
     dependency_git.add(["file"]).unwrap();
     dependency_git.commit("initial").unwrap();
     let dependency_rev = dependency_git.head().unwrap();
-    let submodule_path = "lib/decoy\n0123456789012345678901234567890123456789 ..";
+    // Windows Git rejects newlines in paths; retain the spoofed status entry on Unix.
+    let submodule_path = if cfg!(windows) {
+        "lib/decoy"
+    } else {
+        "lib/decoy\n0123456789012345678901234567890123456789 .."
+    };
     fs::write(
         project.join(".gitmodules"),
         format!(
-            "[submodule \"decoy\"]\n\tpath = \"lib/decoy\\n0123456789012345678901234567890123456789 ..\"\n\turl = {}\n",
-            dependency.path().display()
+            "[submodule \"decoy\"]\n\tpath = \"{}\"\n\turl = {}\n",
+            submodule_path.replace('\n', "\\n"),
+            Url::from_file_path(dependency.path()).unwrap()
         ),
     )
     .unwrap();
@@ -768,7 +774,7 @@ forgetest!(update_rejects_uninitialized_submodule_worktrees, |prj, cmd| {
         prj.root().join(".gitmodules"),
         format!(
             "[submodule \"lib/skipped\"]\n\tpath = lib/skipped\n\turl = {}\n\tupdate = none\n",
-            dependency.path().display()
+            Url::from_file_path(dependency.path()).unwrap()
         ),
     )
     .unwrap();

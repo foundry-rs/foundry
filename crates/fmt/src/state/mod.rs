@@ -565,6 +565,12 @@ impl<'sess> State<'sess, '_> {
         self.estimate_size_inner(span, true)
     }
 
+    /// Parentheses and index brackets have no inner padding in the printed assignment.
+    /// Keep comment-bearing expressions on their existing estimate.
+    fn estimate_assignment_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, !self.has_comment_between(span.lo(), span.hi()))
+    }
+
     fn estimate_size_inner(&self, span: Span, normalize_delimiters: bool) -> usize {
         if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
@@ -583,7 +589,10 @@ impl<'sess> State<'sess, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' | ')' | ']' if self.config.bracket_spacing && !normalize_delimiters => {
+                        ')' | ']'
+                            if self.config.bracket_spacing
+                                && (!normalize_delimiters || quote.is_some()) =>
+                        {
                             size += 1
                         }
                         '}' if self.config.bracket_spacing => size += 1,
@@ -615,8 +624,10 @@ impl<'sess> State<'sess, '_> {
                 // - ends with ';' a line break is required.
                 // - ends with an operator, mirroring lines that start with one.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[' | '(') if normalize_delimiters => false,
-                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some('{') => self.config.bracket_spacing,
+                    Some('[' | '(') => {
+                        self.config.bracket_spacing && (!normalize_delimiters || quote.is_some())
+                    }
                     Some(',' | ';') => true,
                     Some(
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?' | ':',

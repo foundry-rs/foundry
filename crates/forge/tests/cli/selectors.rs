@@ -35,6 +35,7 @@ forgetest!(collision_cache_preserves_artifacts_and_invalidates_imports, |prj, cm
 
     let qualified =
         ["selectors", "collision", "src/First.sol:First", "src/Second.sol:Second", "--md"];
+    cmd.forge_fuse().args(qualified).arg("--no-cache").assert_success().stdout_eq(expected.clone());
     cmd.forge_fuse().args(qualified).assert_success().stdout_eq(expected.clone());
 
     cmd.forge_fuse().args(["build", "--no-lint"]).assert_success();

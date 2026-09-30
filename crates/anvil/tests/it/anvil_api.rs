@@ -892,6 +892,21 @@ async fn test_set_next_block_prevrandao_cleared_on_revert() {
     assert_ne!(block.header.mix_hash, Some(prevrandao));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_restored_on_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, Some(prevrandao));
+}
+
 // test that after a snapshot revert, the env block is reset
 // to its correct value (block number, etc.)
 #[tokio::test(flavor = "multi_thread")]

@@ -680,6 +680,7 @@ fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions,
+    AssignmentMemberChain,
     BlockComments,
     BlockCommentsFunction,
     CallOptionsAssign,
@@ -709,6 +710,7 @@ fmt_tests! {
     IfStatementLongCondition,
     IfStatementMultilineCall,
     ImportDirective,
+    IndexedAssignment,
     InlineDisable,
     IntTypes,
     LineComments,
