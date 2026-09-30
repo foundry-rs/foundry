@@ -8,7 +8,7 @@ use foundry_common::{
     comments::{Comment, CommentStyle, Comments, estimate_line_width, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt::{DocCommentStyle, IndentStyle};
+use foundry_config::fmt::{DocCommentStyle, IndentStyle, IntTypes};
 use solar::parse::{
     ast::{self, Span},
     interface::{BytePos, source_map::SourceFile},
@@ -455,8 +455,114 @@ impl<'sess> State<'sess, '_> {
         self.print_word(")");
     }
 
+    /// Account for brace spacing, ignoring literal and comment text.
+    fn brace_spacing_delta(
+        &self,
+        line: &str,
+        in_block_comment: &mut bool,
+        quote: &mut Option<u8>,
+    ) -> isize {
+        let bytes = line.as_bytes();
+        let mut delta = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            if let Some(delimiter) = *quote {
+                match bytes[i] {
+                    b'\\' => i = (i + 2).min(bytes.len()),
+                    c if c == delimiter => {
+                        *quote = None;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+                continue;
+            }
+            if *in_block_comment {
+                if bytes.get(i..i + 2) == Some(b"*/") {
+                    *in_block_comment = false;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            match bytes[i] {
+                b'/' if bytes.get(i + 1) == Some(&b'/') => break,
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    *in_block_comment = true;
+                    i += 2;
+                }
+                delimiter @ (b'\'' | b'"') => {
+                    *quote = Some(delimiter);
+                    i += 1;
+                }
+                b'{' | b'}' => {
+                    let inner = if bytes[i] == b'{' {
+                        bytes.get(i + 1)
+                    } else {
+                        i.checked_sub(1).and_then(|j| bytes.get(j))
+                    };
+                    if let Some(&inner) = inner
+                        && !matches!(inner, b'{' | b'}')
+                    {
+                        delta += match (matches!(inner, b' ' | b'\t'), self.config.bracket_spacing)
+                        {
+                            (true, false) => -1,
+                            (false, true) => 1,
+                            _ => 0,
+                        };
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+        delta
+    }
+
+    /// Measure integer type spelling from parsed types so identifiers and literal text do not
+    /// affect the estimate.
+    fn int_type_delta(&self, ty: &ast::Type<'_>) -> isize {
+        match &ty.kind {
+            ast::TypeKind::Elementary(
+                ast::ElementaryType::Int(size) | ast::ElementaryType::UInt(size),
+            ) => match (self.config.int_types, size.bits_raw()) {
+                (IntTypes::Long, 0) => 3,
+                (IntTypes::Short, 256) => -3,
+                _ => 0,
+            },
+            ast::TypeKind::Array(array) => self.int_type_delta(&array.element),
+            ast::TypeKind::Mapping(mapping) => {
+                self.int_type_delta(&mapping.key) + self.int_type_delta(&mapping.value)
+            }
+            ast::TypeKind::Function(function) => {
+                let params: isize = function
+                    .parameters
+                    .vars
+                    .iter()
+                    .map(|param| self.int_type_delta(&param.ty))
+                    .sum();
+                let returns: isize = function.returns.as_ref().map_or(0, |returns| {
+                    returns.vars.iter().map(|ret| self.int_type_delta(&ret.ty)).sum()
+                });
+                params + returns
+            }
+            _ => 0,
+        }
+    }
+
+    fn estimate_type_size(&self, ty: &ast::Type<'_>) -> usize {
+        self.estimate_size(ty.span).saturating_add_signed(self.int_type_delta(ty))
+    }
+
     fn estimate_size(&self, span: Span) -> usize {
         self.estimate_size_inner(span, false)
+    }
+
+    /// Call argument layout needs printed delimiter widths. Keep other layout decisions on their
+    /// existing estimate so already stable source does not change formatting.
+    fn estimate_call_args_size(&self, span: Span) -> usize {
+        self.estimate_size_inner(span, true)
     }
 
     /// Parentheses and index brackets have no inner padding in the printed assignment.
@@ -468,7 +574,7 @@ impl<'sess> State<'sess, '_> {
     fn estimate_size_inner(&self, span: Span, normalize_delimiters: bool) -> usize {
         if let Some(snip) = self.snippet(span) {
             let (mut size, mut first, mut prev_needs_space) = (0, true, false);
-            let mut quote = None;
+            let (mut in_block_comment, mut quote) = (false, None);
 
             for line in snip.lines() {
                 let line = line.trim();
@@ -483,14 +589,13 @@ impl<'sess> State<'sess, '_> {
                     match char {
                         '&' | '|' | '=' | '>' | '<' | '+' | '-' | '*' | '/' | '%' | '^' | '?'
                         | ':' => size += 1,
-                        '}' if self.config.bracket_spacing => size += 1,
                         ')' | ']'
                             if self.config.bracket_spacing
                                 && (!normalize_delimiters || quote.is_some()) =>
                         {
                             size += 1
                         }
-
+                        '}' if self.config.bracket_spacing => size += 1,
                         _ => (),
                     }
                 }
@@ -510,20 +615,8 @@ impl<'sess> State<'sess, '_> {
                         break;
                     }
                 }
-
-                if normalize_delimiters {
-                    let mut chars = line.chars();
-                    while let Some(c) = chars.next() {
-                        match (quote, c) {
-                            (Some(_), '\\') => {
-                                chars.next();
-                            }
-                            (Some(delimiter), c) if c == delimiter => quote = None,
-                            (None, '\'' | '"') => quote = Some(c),
-                            _ => (),
-                        }
-                    }
-                }
+                let brace_delta = self.brace_spacing_delta(line, &mut in_block_comment, &mut quote);
+                size = size.saturating_add_signed(brace_delta);
 
                 // Next line requires a line break if this one:
                 // - ends with a bracket and fmt config forces bracket spacing.
