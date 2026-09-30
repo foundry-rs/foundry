@@ -879,3 +879,19 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     assert_eq!(decrypted_private_key, test_private_key);
 });
+
+casttest!(
+    #[cfg(feature = "turnkey")]
+    wallet_list_turnkey_requires_configuration,
+    |prj, cmd| {
+        let keystore = prj.root().join(".foundry/keystores");
+        fs::create_dir_all(&keystore).unwrap();
+        fs::write(keystore.join("local-account"), "{}").unwrap();
+        cmd.env("HOME", prj.root());
+        cmd.unset_env("TURNKEY_API_PRIVATE_KEY");
+        cmd.args(["wallet", "list", "--turnkey"])
+            .assert_success()
+            .stdout_eq("")
+            .stderr_eq("Error: environment variable not found\n");
+    }
+);
