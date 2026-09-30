@@ -270,6 +270,31 @@ contract EnumUser {
     assert!(binding.contains("pub enum Status"), "{binding}");
 });
 
+forgetest!(bind_skip_build_keeps_enums_with_external_artifacts, |prj, cmd| {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    let artifact = prj.paths().artifacts.join("EnumUser.sol/EnumUser.json");
+    let external = prj.paths().artifacts.join(".external/fixture/app/External.json");
+    fs::create_dir_all(external.parent().unwrap()).unwrap();
+    fs::copy(artifact, external).unwrap();
+
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--select", "^(EnumUser|External)$"])
+        .assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub enum Status"), "{binding}");
+});
+
 forgetest!(bind_stale_untracked_enum_artifacts_fall_back_to_udvt, |prj, cmd| {
     prj.add_source(
         "A.sol",

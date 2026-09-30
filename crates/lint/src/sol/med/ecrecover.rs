@@ -264,7 +264,7 @@ impl<'gcx> Analyzer<'gcx> {
     /// parens and `uint256(..)`/`bytes32(..)` casts.
     fn place_key(&self, expr: &Expr<'_>) -> Option<ValueKey> {
         match &expr.peel_parens().kind {
-            ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
+            ExprKind::Call(callee, args) if is_transparent_cast(callee) && args.len() == 1 => {
                 self.place_key(args.exprs().next()?)
             }
             ExprKind::Member(base, field) => {
@@ -319,7 +319,7 @@ impl<'gcx> Analyzer<'gcx> {
         expr: &'gcx Expr<'gcx>,
     ) -> Option<(&'gcx Expr<'gcx>, Signature<'gcx>)> {
         let expr = expr.peel_parens();
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+        let ExprKind::Call(callee, args) = &expr.kind else { return None };
         let callee = self.gcx.resolved_builtin(callee.peel_parens());
         (callee == Some(Builtin::EcRecover) && args.len() == 4)
             .then_some(expr)
@@ -363,7 +363,7 @@ impl<'gcx> Analyzer<'gcx> {
     fn const_value(&self, expr: &Expr<'_>) -> Option<U256> {
         let expr = expr.peel_parens();
         match &expr.kind {
-            ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
+            ExprKind::Call(callee, args) if is_transparent_cast(callee) && args.len() == 1 => {
                 self.const_value(args.exprs().next()?)
             }
             // Fold arithmetic with wrapping semantics so `unchecked` bounds evaluate.
@@ -800,7 +800,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                     },
                 );
             }
-            ExprKind::Call(callee, args, _) if is_require_or_assert(self.gcx, callee) => {
+            ExprKind::Call(callee, args) if is_require_or_assert(self.gcx, callee) => {
                 let _ = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
                     self.assume(cond, false);
@@ -827,7 +827,7 @@ impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
                     self.assign(key, (None, false));
                 }
             }
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 let _ = self.walk_expr(expr);
                 if call_may_mutate_state(self.gcx, callee) {
                     self.invalidate_mutable_state();
@@ -892,7 +892,7 @@ impl<'gcx> Visit<'gcx> for SideEffects<'_, 'gcx> {
 fn var_of(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => gcx.resolved_variable(expr),
-        ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
+        ExprKind::Call(callee, args) if is_transparent_cast(callee) && args.len() == 1 => {
             args.exprs().next().and_then(|expr| var_of(gcx, expr))
         }
         _ => None,

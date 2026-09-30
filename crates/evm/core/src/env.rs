@@ -444,6 +444,9 @@ pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
 
     /// Refreshes journal state derived from the active chain position.
     fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+
+    /// Clears cached protocol fees after a synthetic transaction restores chain context.
+    fn clear_transaction_fee_cache(&mut self) {}
 }
 
 impl<Tx> FoundryChain<Tx> for () {}
@@ -697,6 +700,11 @@ pub trait FromAnyRpcTransaction: Sized {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self>;
 }
 
+/// Returns the error for a transaction whose envelope `target` cannot represent.
+fn unknown_transaction_type(tx: &AnyRpcTransaction, target: &str) -> eyre::Report {
+    eyre::eyre!("cannot convert unknown transaction type {:#04x} to {target}", tx.inner.inner.ty())
+}
+
 impl FromAnyRpcTransaction for TxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
         if let Some(envelope) = tx.as_envelope() {
@@ -731,7 +739,7 @@ impl FromAnyRpcTransaction for TxEnv {
             });
         }
 
-        eyre::bail!("cannot convert unknown transaction type to TxEnv");
+        Err(unknown_transaction_type(tx, "TxEnv"))
     }
 }
 
@@ -764,7 +772,7 @@ impl FromAnyRpcTransaction for TempoTxEnv {
             return Ok(Self { inner: base, fee_token, ..Default::default() });
         }
 
-        eyre::bail!("cannot convert unknown transaction type to TempoTxEnv");
+        Err(unknown_transaction_type(tx, "TempoTxEnv"))
     }
 }
 
@@ -1108,7 +1116,7 @@ mod optimism {
                 return Ok(Self::from_recovered_tx(&deposit_tx, deposit_tx.from));
             }
 
-            eyre::bail!("cannot convert unknown transaction type to OpTransaction");
+            Err(unknown_transaction_type(tx, "OpTransaction"))
         }
     }
 }
@@ -1377,7 +1385,7 @@ mod tests {
         }));
 
         let result = TxEnv::from_any_rpc_transaction(&any_tx).unwrap_err();
-        assert!(result.to_string().contains("unknown transaction type"));
+        assert_eq!(result.to_string(), "cannot convert unknown transaction type 0xff to TxEnv");
     }
 
     #[test]

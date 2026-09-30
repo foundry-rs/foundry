@@ -112,6 +112,9 @@ impl AccessListArgs {
         let access_list = if shell::is_json() {
             serde_json::to_string(&access_list)?
         } else {
+            if let Some(error) = &access_list.error {
+                sh_warn!("access list generated from a failed execution: {error}")?;
+            }
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {

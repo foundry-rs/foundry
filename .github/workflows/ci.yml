@@ -39,14 +39,14 @@ jobs:
       id-token: write
 
   doctest:
-    runs-on: depot-ubuntu-latest
+    runs-on: depot-ubuntu-24.04-4
     timeout-minutes: 30
     permissions:
       id-token: write
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -71,7 +71,7 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -100,7 +100,7 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1.50.1
+      - uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
 
   shellcheck:
     runs-on: depot-ubuntu-latest
@@ -171,7 +171,7 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -209,7 +209,7 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -229,29 +229,13 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
-    name: cargo deny check
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    uses: tempoxyz/gh-actions/.github/workflows/rust-deny.yml@d5402286a7abdfb7232173b3228d56473feb8a66
     permissions:
       contents: read
       id-token: write
-    env:
-      RUSTC_WRAPPER: ""
-    steps:
-      - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
-        with:
-          toolchain: nightly
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
-        with:
-          tool: cargo-deny@0.20.2
-          checksum: true
-          fallback: none
-      - run: cargo deny --all-features --locked check all
+    with:
+      rust-toolchain: nightly
+      flags: --all-features --locked
 
   codeql:
     name: analyze (${{ matrix.language }})
@@ -272,25 +256,25 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           category: "/language:${{matrix.language}}"
 
   workflow-validation:
     name: Workflow Validation
-    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@d5402286a7abdfb7232173b3228d56473feb8a66
     permissions:
       actions: read
       contents: read
-    secrets:
-      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
+      id-token: write
     with:
       pinact: true
+      ensure-secure-runner: false
 
   ci-success:
     runs-on: ubuntu-latest

@@ -892,3 +892,21 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+casttest!(curl_call_rejects_local_trace, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "number()(uint256)",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "--trace",
+        "--curl",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: --trace cannot be combined with --curl; use --debug-trace-call --curl instead
+
+"#]]);
+});

@@ -16,6 +16,8 @@ updates:
       default-days: 7
   - package-ecosystem: cargo
     directory: /editors/zed
+    allow:
+      - dependency-type: all
     patterns: ["*"]
     multi-ecosystem-group: code-weekly
     cooldown:
@@ -35,6 +37,8 @@ updates:
           - '*'
   - package-ecosystem: cargo
     directory: /
+    allow:
+      - dependency-type: all
     patterns: ["*"]
     multi-ecosystem-group: code-weekly
     cooldown:

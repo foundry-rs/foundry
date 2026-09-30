@@ -117,6 +117,10 @@ impl<N: Network> MaybeFullDatabase for ForkedDatabase<N> {
         Some(&self.database().cache.accounts)
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        Some(&mut self.database_mut().cache.accounts)
+    }
+
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         None
     }

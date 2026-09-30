@@ -39,7 +39,9 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{
+        ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState, LocalForkId, RevertDiagnostic,
+    },
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
@@ -308,6 +310,8 @@ pub struct RecordDebugStepInfo {
 pub struct EnvOverrides {
     /// Override for the `BASEFEE` opcode (set via `vm.fee`).
     pub basefee: Option<u64>,
+    /// Base fee restored from a snapshot during isolation, valid until the fork is rolled.
+    pub implicit_basefee: Option<u64>,
     /// Override for the `GASPRICE` opcode (set via `vm.txGasPrice`).
     pub gas_price: Option<u128>,
     /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
@@ -338,7 +342,10 @@ impl EnvOverrides {
     /// Whether any override is set.
     #[inline]
     pub const fn is_any_set(&self) -> bool {
-        self.basefee.is_some() || self.gas_price.is_some() || self.blob_hashes.is_some()
+        self.basefee.is_some()
+            || self.implicit_basefee.is_some()
+            || self.gas_price.is_some()
+            || self.blob_hashes.is_some()
     }
 }
 
@@ -920,6 +927,16 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// route the change through `EnvOverrides` instead of the actual env
     /// when `true`, so they don't fight with the fee-accounting zeroing.
     pub in_isolation_context: bool,
+
+    /// Journal restored by a state snapshot inside an isolated transaction, to be applied to its
+    /// suspended parent alongside the returned state.
+    pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
+
+    /// Whether snapshot restorations belong to the active isolated transaction.
+    pub track_isolated_snapshots: bool,
+
+    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    pub isolated_snapshot_restores: Vec<JournaledState>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -1004,6 +1021,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             #[cfg(feature = "monad")]
             context_snapshots: Default::default(),
             in_isolation_context: false,
+            pending_isolated_snapshot_journal: None,
+            track_isolated_snapshots: false,
+            isolated_snapshot_restores: Vec::new(),
         }
     }
 
@@ -1307,7 +1327,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         apply_dispatch(
             &decoded,
-            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx,
+                gas_limit: call.gas_limit,
+                caller,
+                is_static: call.is_static,
+            },
             executor,
         )
     }
@@ -1327,7 +1353,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
         crate::monad::apply_monad_cheatcode(
-            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &mut CheatsCtxt {
+                state: self,
+                ecx,
+                gas_limit: call.gas_limit,
+                caller,
+                is_static: call.is_static,
+            },
             &input,
         )
     }
@@ -1658,7 +1690,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast {
+        if let Some(broadcast) = &mut self.broadcast {
             // Additional check as transfers in forge scripts seem to be estimated at 2300
             // by revm leading to "Intrinsic gas too low" failure when simulated on chain.
             let is_fixed_gas_limit = call.gas_limit >= 21_000 && !self.dynamic_gas_limit;
@@ -1667,8 +1699,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // We only apply a broadcast *to a specific depth*.
             //
             // We do this because any subsequent contract calls *must* exist on chain and
-            // we only want to grab *this* call, not internal ones
-            if curr_depth == broadcast.depth && call.caller == broadcast.original_caller {
+            // we only want to grab *this* call, not internal ones. `deployCode` routed through
+            // the CREATE2 factory runs one level deeper in a nested EVM.
+            if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
+                && call.caller == broadcast.original_caller
+            {
+                // Reset deploy from code flag for upcoming calls.
+                broadcast.deploy_from_code = false;
+
                 // At the target depth we set `msg.sender` & tx.origin.
                 // We are simulating the caller as being an EOA, so *both* must be set to the
                 // broadcast.origin.
@@ -3200,7 +3238,13 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
         let target_depth = if let Some(prank) = &self.get_prank(depth) {
             prank.depth
         } else if let Some(broadcast) = &self.broadcast {
-            broadcast.depth
+            // `deployCode` executes its create frame in a nested EVM one level deeper, so match
+            // it by caller rather than by the broadcast depth.
+            if broadcast.deploy_from_code && inputs.caller() == broadcast.original_caller {
+                depth
+            } else {
+                broadcast.depth
+            }
         } else {
             1
         };
@@ -3329,7 +3373,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let Some(opcode) = env_overrides.pending_opcode.take() else { return };
         match opcode {
             op::BASEFEE => {
-                if let Some(basefee) = env_overrides.basefee {
+                if let Some(basefee) = env_overrides.basefee.or(env_overrides.implicit_basefee) {
                     // BASEFEE pushed one value; replace it.
                     Self::replace_top_of_stack(interpreter, U256::from(basefee));
                 }

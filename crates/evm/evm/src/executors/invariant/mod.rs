@@ -71,7 +71,7 @@ mod error;
 pub(crate) use error::snapshot_edge_fingerprint;
 pub use error::{
     FailureKey, HandlerAssertionFailure, InvariantFailures, InvariantFuzzError,
-    handler_site_already_minimal,
+    handler_edge_fingerprint, handler_site_already_minimal,
 };
 mod campaign;
 
@@ -885,6 +885,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
     pub fn config(&self) -> InvariantConfig {
         self.config.clone()
+    }
+
+    /// Retains corpus replay and result aggregation without starting fresh invariant runs.
+    pub const fn skip_fresh_runs(&mut self) {
+        self.config.runs = 0;
+        self.config.timeout = None;
     }
 
     /// Refs for tracking contracts deployed mid-sequence during corpus replay.

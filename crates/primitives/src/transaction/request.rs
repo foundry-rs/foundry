@@ -334,12 +334,7 @@ impl TryFrom<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest 
 
     fn try_from(tx: WithOtherFields<TransactionRequest>) -> Result<Self, Self::Error> {
         #[derive(Deserialize)]
-        struct NonZeroQuantity(
-            #[serde(
-                with = "tempo_primitives::transaction::key_authorization::serde_nonzero_quantity_opt"
-            )]
-            Option<NonZeroU64>,
-        );
+        struct NonZeroQuantity(#[serde(with = "alloy_serde::quantity::opt")] Option<NonZeroU64>);
 
         #[cfg(feature = "base")]
         {

@@ -67,8 +67,57 @@ impl SymbolicCalldata {
             variants.iter().map(|(state, _)| state.positional_dynamic_index).max().unwrap_or(0),
         )?;
 
-        let mut out = Vec::with_capacity(variants.len());
+        // Explore equal-address cases as variants sharing a representative account.
+        let mut partitioned = Vec::new();
         for (state, inputs) in variants {
+            let address_indices = inputs
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, input)| match input.value {
+                    SymbolicAbiValue::Address { .. } => Some(idx),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for partition in set_partitions(address_indices.len(), variant_limit)? {
+                let mut state = state.clone();
+                let mut inputs = inputs.clone();
+                let mut representatives = Vec::with_capacity(partition.len());
+                for block in partition {
+                    let representative = match &inputs[address_indices[block[0]]].value {
+                        SymbolicAbiValue::Address { word } => word.clone(),
+                        _ => unreachable!("address index must refer to an address input"),
+                    };
+                    for member in block {
+                        let replaced = match &mut inputs[address_indices[member]].value {
+                            SymbolicAbiValue::Address { word } => {
+                                let replaced = word.clone();
+                                *word = representative.clone();
+                                replaced
+                            }
+                            _ => unreachable!("address index must refer to an address input"),
+                        };
+                        if replaced != representative {
+                            for constraint in &mut state.constraints {
+                                *constraint = constraint.fold_exprs(builder.cx, &mut |_, expr| {
+                                    if expr == replaced { representative.clone() } else { expr }
+                                });
+                            }
+                        }
+                    }
+                    representatives.push(representative);
+                }
+                for (idx, representative) in representatives.iter().enumerate() {
+                    for other in &representatives[idx + 1..] {
+                        let eq = SymBoolExpr::eq(builder.cx, representative.clone(), other.clone());
+                        state.constraints.push(eq.not(builder.cx));
+                    }
+                }
+                push_variant(&mut partitioned, (state, inputs), variant_limit)?;
+            }
+        }
+
+        let mut out = Vec::with_capacity(partitioned.len());
+        for (state, inputs) in partitioned {
             let selector = SymBytes::concrete(builder.cx, function.selector().to_vec());
             let encoded = builder.encode_sequence(inputs.iter().map(|input| &input.value));
             let bytes = SymBytes::concat(builder.cx, [selector, encoded]);
@@ -583,6 +632,34 @@ fn validate_positional_dynamic_lengths(
         )));
     }
     Ok(())
+}
+
+/// Enumerates address partitions within the variant budget, all-distinct first.
+fn set_partitions(len: usize, limit: usize) -> Result<Vec<Vec<Vec<usize>>>, SymbolicError> {
+    let mut out = Vec::new();
+    let mut blocks = Vec::<Vec<usize>>::new();
+    fn go(
+        idx: usize,
+        len: usize,
+        blocks: &mut Vec<Vec<usize>>,
+        out: &mut Vec<Vec<Vec<usize>>>,
+        limit: usize,
+    ) -> Result<(), SymbolicError> {
+        if idx == len {
+            return push_variant(out, blocks.clone(), limit);
+        }
+        blocks.push(vec![idx]);
+        go(idx + 1, len, blocks, out, limit)?;
+        blocks.pop();
+        for block in 0..blocks.len() {
+            blocks[block].push(idx);
+            go(idx + 1, len, blocks, out, limit)?;
+            blocks[block].pop();
+        }
+        Ok(())
+    }
+    go(0, len, &mut blocks, &mut out, limit)?;
+    Ok(out)
 }
 
 /// Returns the maximum number of calldata variants allowed during ABI expansion.

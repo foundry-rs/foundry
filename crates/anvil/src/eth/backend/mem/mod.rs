@@ -19,7 +19,9 @@ use crate::{
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
             mem::{
-                state::{state_root, state_trie_witness, storage_root, trie_accounts},
+                state::{
+                    StateRootCache, state_root, state_trie_witness, storage_root, trie_accounts,
+                },
                 storage::MinedTransactionReceipt,
             },
             notifications::{ChainNotification, ChainNotifications, NewBlockNotification},
@@ -206,6 +208,8 @@ use tempo_revm::{
     ExecutionContext, TempoBatchCallEnv, TempoBlockEnv, TempoInvalidTransaction, TempoTxEnv,
     evm::TempoContext, gas_params::tempo_gas_params,
 };
+#[cfg(test)]
+use tokio::sync::Notify;
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
 #[cfg(any(feature = "base", feature = "optimism"))]
@@ -1019,6 +1023,15 @@ struct StateSnapshot {
     block_hash: B256,
     fees: FeeSnapshot,
     time_offset: i128,
+    next_block_timestamp: Option<u64>,
+    next_block_prevrandao: Option<B256>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct MiningCommitHook {
+    reached: Arc<Notify>,
+    resume: Arc<Notify>,
 }
 
 /// Gives access to the [revm::Database]
@@ -1089,6 +1102,9 @@ pub struct Backend<N: Network> {
     precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Prevent race conditions during mining
     mining: Arc<tokio::sync::Mutex<()>>,
+    /// Test-only synchronization point after database commit and before canonical publication.
+    #[cfg(test)]
+    mining_commit_hook: Arc<Mutex<Option<MiningCommitHook>>>,
     /// Disable pool balance checks
     disable_pool_balance_checks: bool,
     /// Keeps startup fork-cache rollback armed until startup initialization completes.
@@ -1127,6 +1143,8 @@ impl<N: Network> Clone for Backend<N> {
             slots_in_an_epoch: self.slots_in_an_epoch,
             precompile_factory: self.precompile_factory.clone(),
             mining: self.mining.clone(),
+            #[cfg(test)]
+            mining_commit_hook: self.mining_commit_hook.clone(),
             disable_pool_balance_checks: self.disable_pool_balance_checks,
             startup_fork_cache_user: self.startup_fork_cache_user.clone(),
         }
@@ -1183,6 +1201,11 @@ impl<N: Network> Backend<N> {
     /// Locks block production while a backend-wide lifecycle transition is committed.
     pub(crate) async fn lock_mining(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.mining.lock().await
+    }
+
+    /// Locks block production with a guard that can be moved into a mining task.
+    pub(crate) async fn lock_mining_owned(self: &Arc<Self>) -> tokio::sync::OwnedMutexGuard<()> {
+        self.mining.clone().lock_owned().await
     }
 
     /// Returns the `AccountInfo` from the database
@@ -1308,6 +1331,13 @@ impl<N: Network> Backend<N> {
     /// Sets the balance of the given address
     pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
         self.db.write().await.set_balance(address, balance)
+    }
+
+    /// Increases the balance of the given address, saturating at `U256::MAX`.
+    pub(crate) async fn add_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
+        let mut db = self.db.write().await;
+        let current_balance = db.basic(address)?.unwrap_or_default().balance;
+        db.set_balance(address, current_balance.saturating_add(balance))
     }
 
     /// Sets the code of the given address
@@ -1546,6 +1576,17 @@ impl<N: Network> Backend<N> {
         }
 
         precompiles_map
+    }
+
+    /// Returns whether the address is an active precompile in the given block environment.
+    pub fn is_precompile(&self, address: &Address, block_env: &BlockEnv) -> bool {
+        let mut evm_env = self.evm_env.read().clone();
+        evm_env.block_env = block_env.clone();
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::new(
+            PrecompileSpecId::from_spec_id(self.spec_id()),
+        ));
+        self.inject_precompiles(&mut precompiles, &evm_env);
+        precompiles.get(address).is_some()
     }
 
     /// Returns the system contracts for the current spec.
@@ -1842,6 +1883,7 @@ impl<N: Network> Backend<N> {
         let num = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
+        let (time_offset, next_block_timestamp) = self.time.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
@@ -1849,7 +1891,9 @@ impl<N: Network> Backend<N> {
                 block_number: num,
                 block_hash: hash,
                 fees: self.fees.snapshot(),
-                time_offset: self.time.offset(),
+                time_offset,
+                next_block_timestamp,
+                next_block_prevrandao: self.cheats.next_block_prevrandao(),
             },
         );
         id
@@ -1942,8 +1986,8 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef<Error = DatabaseError> + Debug,
     {
-        let mut cache_db = AnvilCacheDB::new(db);
         let (evm_env, hardfork) = self.tx_replay_evm_env(block);
+        let mut cache_db = AnvilCacheDB::new(db, *evm_env.spec_id());
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
@@ -3626,7 +3670,11 @@ impl<N: Network> Backend<N> {
         overrides: TypedCallOverrides,
         mut monad_context: Option<MonadReplayContext>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        let mut inspector = self.build_inspector();
+        // Estimation probes do not return or print traces, but still collect console logs.
+        let mut inspector = AnvilInspector::default();
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
         evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
@@ -3838,16 +3886,16 @@ impl<N: Network> Backend<N> {
     pub async fn trace_transaction(
         &self,
         hash: B256,
-    ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+    ) -> Result<Option<Vec<LocalizedTransactionTrace>>, BlockchainError> {
         if let Some(traces) = self.mined_parity_trace_transaction(hash) {
-            return Ok(traces);
+            return Ok(Some(traces));
         }
 
         if let Some(fork) = self.get_fork() {
             return Ok(fork.trace_transaction(hash).await?);
         }
 
-        Ok(vec![])
+        Ok(None)
     }
 
     /// Returns a transaction trace at a given index.
@@ -3971,27 +4019,24 @@ impl<N: Network> Backend<N> {
         hash: B256,
         trace_types: HashSet<TraceType>,
     ) -> Result<TraceResults, BlockchainError> {
-        let block_number =
-            self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.block_number);
+        let mined = self.blockchain.storage.read().transactions.contains_key(&hash);
 
         // If the transaction was mined locally, replay it locally. Do not fall
         // through to the fork when the local replay fails; that would misreport
         // a local data problem as an upstream transaction lookup.
-        if let Some(block_number) = block_number {
-            let results = self
-                .mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
-                .ok_or(BlockchainError::BlockNotFound)?;
-
-            return results
-                .into_iter()
-                .find(|result| result.transaction_hash == hash)
-                .map(|result| result.full_trace)
-                .ok_or_else(|| {
-                    BlockchainError::Internal(format!(
-                        "replayed block {block_number} for local transaction {hash:?}, \
-                         but its trace was missing"
-                    ))
-                });
+        if mined {
+            let inspector =
+                TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
+            return self.replay_tx_with_inspector(
+                hash,
+                inspector,
+                |result, cache_db, inspector, _, _| {
+                    inspector
+                        .into_parity_builder()
+                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                        .map_err(BlockchainError::from)
+                },
+            )?;
         }
 
         // Not known locally: forward to the fork if present.
@@ -4160,14 +4205,73 @@ impl<N: Network> Backend<N> {
         Ok(results)
     }
 
+    fn replay_tx_with_inspector<I, F, T>(
+        &self,
+        hash: B256,
+        mut inspector: I,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
+        for<'a> F:
+            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
+    {
+        let block = {
+            let storage = self.blockchain.storage.read();
+            let MinedTransaction { block_hash, .. } =
+                storage.transactions.get(&hash).ok_or(BlockchainError::TransactionNotFound)?;
+
+            storage.blocks.get(block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+        };
+
+        let index = block
+            .body
+            .transactions
+            .iter()
+            .position(|tx| tx.hash() == hash)
+            .expect("transaction not found in block");
+
+        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
+            self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
+
+            let target_tx = block.body.transactions[index].clone();
+            let target_tx = self.pending_mined_transaction(target_tx)?;
+            let monad_context = self.active_monad_context_for_mined_block(&block)?;
+            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+            let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                &target_tx,
+                EnvelopeExecution::replay(transaction_context, hardfork),
+            )?;
+
+            Ok(f(result, cache_db, inspector, base_tx_env, evm_env))
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
+    }
+
     // Returns the traces matching a given filter
     pub async fn trace_filter(
         &self,
         filter: TraceFilter,
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let matcher = filter.matcher();
-        let start = filter.from_block.unwrap_or(0);
-        let end = filter.to_block.unwrap_or_else(|| self.best_number());
+        let best_number = self.best_number();
+        let start = filter.from_block.unwrap_or(best_number);
+        let end = filter.to_block.unwrap_or(best_number);
 
         if start > end {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
@@ -4391,6 +4495,8 @@ impl<N: Network> Backend<N> {
             slots_in_an_epoch,
             precompile_factory,
             mining: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            mining_commit_hook: Default::default(),
             disable_pool_balance_checks,
             startup_fork_cache_user,
         };
@@ -4806,6 +4912,9 @@ impl<N: Network> Backend<N> {
                 staged_client_config.block_hash,
             );
         }
+        if !staged_config.no_bal && !staged_config.no_fork_node_info {
+            staged_client_config.prefill_cache(staged_db.inner()).await;
+        }
         let mut invalidated_cache_namespaces = Vec::new();
         if cache_identity_changed && !staged_config.no_storage_caching {
             if let Some(source) = &previous_source
@@ -5186,15 +5295,26 @@ impl<N: Network> Backend<N> {
     }
 
     /// Reverts the state to the state snapshot identified by the given `id`.
-    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash, fees, time_offset)) =
+    pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
-                (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
+                (
+                    snapshot.block_number,
+                    snapshot.block_hash,
+                    snapshot.fees,
+                    snapshot.time_offset,
+                    snapshot.next_block_timestamp,
+                    snapshot.next_block_prevrandao,
+                )
             })
         else {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let removed_logs = self.removed_logs_since(num);
         if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
             return Ok(false);
         }
@@ -5204,12 +5324,20 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+        self.states.write().remove_block_states(&removed_hashes);
+        if !removed_logs.is_empty() {
+            self.notify_on_removed_logs(removed_logs);
+        }
 
         let reset_time = block.header.timestamp();
-        self.time.reset_with_offset(reset_time, time_offset);
-        // drop any pending next-block prevrandao override so it does not leak into a block
-        self.cheats.clear_next_block_prevrandao();
+        self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
+        if let Some(prevrandao) = next_block_prevrandao {
+            self.cheats.set_next_block_prevrandao(prevrandao);
+        } else {
+            self.cheats.clear_next_block_prevrandao();
+        }
 
         {
             let mut env = self.evm_env.write();
@@ -5309,9 +5437,9 @@ where
     /// Returns all logs of the blocks with a number greater than `block_number`, marked as
     /// removed.
     ///
-    /// This is used during a reorg to capture the logs of the blocks that are about to be
-    /// unwound before their transactions and receipts are cleared from storage, so they can be
-    /// re-delivered to log subscriptions and filters with `removed: true`.
+    /// This captures the logs of blocks that are about to be unwound before their transactions
+    /// and receipts are cleared from storage, so they can be re-delivered to log subscriptions
+    /// and filters with `removed: true`.
     fn removed_logs_since(&self, block_number: u64) -> Vec<Log> {
         let storage = self.blockchain.storage.read();
         let mut all_logs = Vec::new();
@@ -5460,6 +5588,14 @@ where
         self.do_mine_block(pool_transactions).await
     }
 
+    /// Mines a new block while the caller holds the mining lock.
+    pub(crate) async fn mine_block_locked(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
+        self.do_mine_block_locked(pool_transactions).await
+    }
+
     /// Replays a transaction-hash fork prefix before the live pool and miner are created.
     pub(crate) async fn apply_fork_transaction_replay(
         &self,
@@ -5559,7 +5695,7 @@ where
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
-            let mut overlay = AnvilCacheDB::new(&**db);
+            let mut overlay = AnvilCacheDB::new(&**db, *replay_env.spec_id());
             let ExecutedHistoricalReplay {
                 block_result,
                 transactions,
@@ -5855,6 +5991,14 @@ where
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
     ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         let _mining_guard = self.mining.lock().await;
+        self.do_mine_block_locked(pool_transactions).await
+    }
+
+    /// Mines a block while the caller holds the mining lock.
+    async fn do_mine_block_locked(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Result<MinedBlockOutcome<FoundryTxEnvelope>, BlockchainError> {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let (outcome, header, block_hash) = {
@@ -5862,6 +6006,8 @@ where
             let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
 
             let mut evm_env = self.evm_env.read().clone();
+            #[cfg(feature = "monad")]
+            let execution_chain_id = evm_env.cfg_env.chain_id;
             let hardfork = self.hardfork();
 
             if evm_env.block_env.basefee == 0 {
@@ -5892,12 +6038,16 @@ where
                 Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
 
             let (
+                db_guard,
                 block_info,
                 included,
+                stale,
                 invalid,
                 not_yet_valid,
                 block_hash,
                 parent_state,
+                next_block_base_fee,
+                next_block_blob_fees,
                 block_access_list,
             ) = {
                 let mut db = self.db.write().await;
@@ -5921,7 +6071,7 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let mut candidate_db = AnvilCacheDB::new(&**db);
+                let mut candidate_db = AnvilCacheDB::new(&**db, *mining_evm_env.spec_id());
                 if matches!(
                     hardfork,
                     FoundryHardfork::Ethereum(hardfork) if hardfork >= EthereumHardfork::Amsterdam
@@ -5947,6 +6097,7 @@ where
                 let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
+                let stale = pool_result.stale;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
@@ -5977,13 +6128,30 @@ where
                     self.cheats.consume_next_block_prevrandao(pending);
                 }
 
+                let header = &block_info.block.header;
+                let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(header);
+                let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+                    self.fees.blob_params(),
+                    header.excess_blob_gas.unwrap_or_default(),
+                    header.blob_gas_used.unwrap_or_default(),
+                    header.base_fee_per_gas.unwrap_or_default(),
+                );
+                let next_block_blob_fees = BlobExcessGasAndPrice::new(
+                    next_block_excess_blob_gas,
+                    self.fees.blob_params().update_fraction as u64,
+                );
+
                 (
+                    db,
                     block_info,
                     included,
+                    stale,
                     invalid,
                     not_yet_valid,
                     block_hash,
                     parent_state,
+                    next_block_base_fee,
+                    next_block_blob_fees,
                     block_access_list,
                 )
             };
@@ -6017,6 +6185,13 @@ where
                 transactions.len(),
                 transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
+            #[cfg(test)]
+            let mining_commit_hook = { self.mining_commit_hook.lock().clone() };
+            #[cfg(test)]
+            if let Some(hook) = mining_commit_hook {
+                hook.reached.notify_one();
+                hook.resume.notified().await;
+            }
             let mut storage = self.blockchain.storage.write();
             // update block metadata
             storage.best_number = block_number;
@@ -6039,7 +6214,7 @@ where
                     &mut storage,
                     block_hash,
                     participants,
-                    evm_env.cfg_env.chain_id,
+                    execution_chain_id,
                     hardfork,
                 );
             }
@@ -6075,13 +6250,19 @@ where
                 storage.remove_block_transactions_by_number(to_clear)
             }
 
-            self.time.mark_block_created();
-
-            // we intentionally set the difficulty to `0` for newer blocks
-            evm_env.block_env.difficulty = U256::from(0);
-
-            // update env with new values
+            // Live execution readers acquire the database read lock before cloning the block
+            // environment, next-block fee state, and canonical head. Publish the complete snapshot
+            // while retaining the database write lock so readers observe either the parent or newly
+            // mined state. The database is always the outer lock, and no path holds a storage,
+            // environment, or fee guard while waiting for it, so these acquisitions cannot form a
+            // lock cycle.
+            evm_env.block_env.difficulty = U256::ZERO;
             *self.evm_env.write() = evm_env;
+            self.fees.set_next_block_fees(next_block_base_fee, next_block_blob_fees);
+            drop(storage);
+            drop(db_guard);
+
+            self.time.mark_block_created();
 
             let timestamp = utc_from_secs(header.timestamp);
 
@@ -6094,49 +6275,30 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome = MinedBlockOutcome { block_number, included, invalid, not_yet_valid };
+            let outcome =
+                MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid };
 
             (outcome, header, block_hash)
         };
-        let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
-        let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
-            self.fees.blob_params(),
-            header.excess_blob_gas.unwrap_or_default(),
-            header.blob_gas_used.unwrap_or_default(),
-            header.base_fee_per_gas.unwrap_or_default(),
-        );
-
-        // update next base fee
-        self.fees.set_base_fee(next_block_base_fee);
-
-        self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
-            next_block_excess_blob_gas,
-            self.fees.blob_params().update_fraction as u64,
-        ));
-
         // notify all listeners
         self.notify_on_new_block(header.into_inner(), block_hash);
 
         Ok(outcome)
     }
 
-    /// Reorg the chain to a common height and execute blocks to build new chain.
+    /// Mines replacement blocks after the caller has rewound the chain for a reorg.
     ///
-    /// The state of the chain is rewound using `rewind` to the common block, including the db,
-    /// storage, and env.
-    ///
-    /// Finally, `do_mine_block` is called to create the new chain.
+    /// The caller must hold the mining lock across ancestor selection, rollback, and this method.
     pub async fn reorg(
         &self,
         depth: u64,
         tx_pairs: HashMap<u64, Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>>,
-        common_block: Block,
+        _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
     ) -> Result<(), BlockchainError> {
-        self.rollback(common_block).await?;
         // Create the new reorged chain, filling the blocks with transactions if supplied
         for i in 0..depth {
             let to_be_mined = tx_pairs.get(&i).cloned().unwrap_or_else(Vec::new);
-            let outcome = self.do_mine_block(to_be_mined).await?;
+            let outcome = self.do_mine_block_locked(to_be_mined).await?;
             node_info!(
                 "    Mined reorg block number {}. With {} valid txs and with invalid {} txs",
                 outcome.block_number,
@@ -6172,7 +6334,7 @@ where
         let db = self.db.read().await;
         let evm_env = self.next_evm_env();
 
-        let mut cache_db = AnvilCacheDB::new(&*db);
+        let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
 
@@ -6912,67 +7074,6 @@ where
         .await?
     }
 
-    fn replay_tx_with_inspector<I, F, T>(
-        &self,
-        hash: B256,
-        mut inspector: I,
-        f: F,
-    ) -> Result<T, BlockchainError>
-    where
-        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
-        for<'a> F:
-            FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
-    {
-        let block = {
-            let storage = self.blockchain.storage.read();
-            let MinedTransaction { block_hash, .. } = storage
-                .transactions
-                .get(&hash)
-                .cloned()
-                .ok_or(BlockchainError::TransactionNotFound)?;
-
-            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
-        };
-
-        let index = block
-            .body
-            .transactions
-            .iter()
-            .position(|tx| tx.hash() == hash)
-            .expect("transaction not found in block");
-
-        let trace = |parent_state: &StateDb| -> Result<T, BlockchainError> {
-            let (mut cache_db, evm_env, hardfork) =
-                self.prepare_block_replay_with_db(&block, Box::new(parent_state))?;
-            self.replay_mined_transaction_prefix(&mut cache_db, &evm_env, hardfork, &block, index)?;
-
-            let target_tx = block.body.transactions[index].clone();
-            let target_tx = self.pending_mined_transaction(target_tx)?;
-            let monad_context = self.active_monad_context_for_mined_block(&block)?;
-            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
-            let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
-                &cache_db,
-                &evm_env,
-                &mut inspector,
-                &target_tx,
-                EnvelopeExecution::replay(transaction_context, hardfork),
-            )?;
-
-            Ok(f(result, cache_db, inspector, base_tx_env, evm_env))
-        };
-
-        let read_guard = self.states.upgradable_read();
-        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
-            trace(state)
-        } else {
-            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            let state = write_guard
-                .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
-            trace(state)
-        }
-    }
-
     /// Traces the transaction with the js tracer
     #[cfg(feature = "js-tracer")]
     pub async fn trace_tx_with_js_tracer(
@@ -7320,11 +7421,15 @@ where
     ///
     /// The state of the chain is rewound using `rewind` to the common block, including the db,
     /// storage, and env.
-    pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
+    pub async fn rollback(
+        &self,
+        common_block: Block,
+        _mining_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<(), BlockchainError> {
         let hash = common_block.header.hash_slow();
 
         // Get the database at the common block
-        let common_state = {
+        let (common_state, replace_accounts) = {
             let return_state_or_throw_err =
                 |db: Option<&StateDb>| -> Result<AddressMap<DbAccount>, BlockchainError> {
                     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
@@ -7335,13 +7440,15 @@ where
 
             let read_guard = self.states.upgradable_read();
             if let Some(db) = read_guard.get_state(&hash) {
-                return_state_or_throw_err(Some(db))?
+                (return_state_or_throw_err(Some(db))?, true)
             } else {
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?
+                (return_state_or_throw_err(write_guard.get_on_disk_state(&hash))?, false)
             }
         };
 
+        // Acquire the only awaited mutation lock before publishing any part of the rewind.
+        let mut db = self.db.write().await;
         {
             // Collect the logs of the blocks that are about to be removed from the canonical
             // chain, while their transactions and receipts are still in storage
@@ -7375,25 +7482,23 @@ where
             self.cheats.clear_next_block_prevrandao();
         }
 
-        {
-            // Collect block hashes before acquiring db lock to avoid holding blockchain storage
-            // lock across await. Only collect the last 256 blocks since that's all BLOCKHASH can
-            // access.
-            let block_hashes: Vec<_> = {
-                let storage = self.blockchain.storage.read();
-                let min_block = common_block.header.number().saturating_sub(256);
-                storage
-                    .hashes
-                    .iter()
-                    .filter(|(num, _)| **num >= min_block)
-                    .map(|(&num, &hash)| (num, hash))
-                    .collect()
-            };
+        // Only collect the last 256 block hashes since that's all BLOCKHASH can access.
+        let block_hashes: Vec<_> = {
+            let storage = self.blockchain.storage.read();
+            let min_block = common_block.header.number().saturating_sub(256);
+            storage
+                .hashes
+                .iter()
+                .filter(|(num, _)| **num >= min_block)
+                .map(|(&num, &hash)| (num, hash))
+                .collect()
+        };
 
-            // Acquire db lock once for the entire restore operation to reduce lock churn.
-            let mut db = self.db.write().await;
-            db.clear();
+        db.clear();
 
+        if replace_accounts && let Some(accounts) = db.maybe_as_full_db_mut() {
+            *accounts = common_state;
+        } else {
             // Insert account info before storage to prevent fork-mode RPC fetches after clear.
             for (address, acc) in common_state {
                 db.insert_account(address, acc.info);
@@ -7401,12 +7506,11 @@ where
                     db.set_storage_at(address, key.into(), value.into())?;
                 }
             }
+        }
 
-            // Restore block hashes from blockchain storage (now unwound, contains only valid
-            // blocks).
-            for (block_num, hash) in block_hashes {
-                db.insert_block_hash(U256::from(block_num), hash);
-            }
+        // Restore block hashes from blockchain storage (now unwound, contains only valid blocks).
+        for (block_num, hash) in block_hashes {
+            db.insert_block_hash(U256::from(block_num), hash);
         }
 
         Ok(())
@@ -7466,22 +7570,7 @@ where
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BlockchainError> {
         if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
-            }
-            return Ok(traces);
+            return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -7500,22 +7589,7 @@ where
         let number = self.convert_block_number(Some(block_number));
 
         if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
-            }
-            return Ok(traces);
+            return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -7523,6 +7597,111 @@ where
         }
 
         Err(BlockchainError::BlockNotFound)
+    }
+
+    async fn debug_trace_mined_block(
+        &self,
+        block: &Block,
+        opts: GethDebugTracingOptions,
+    ) -> Vec<TraceResult> {
+        if block.body.transactions.is_empty() {
+            return Vec::new();
+        }
+
+        // A single transaction has no prefix replay to share.
+        if block.body.transactions.len() > 1
+            && matches!(
+                opts.tracer,
+                Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer))
+            )
+            && let Ok(config) = call_config_from_tracer_config(opts.tracer_config.clone())
+            && let Ok(traces) = self.replay_block_call_traces(block, config)
+        {
+            return traces;
+        }
+
+        // Preserve per-transaction errors and fork lookup when sequential replay is unavailable.
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for tx in &block.body.transactions {
+            let tx_hash = tx.hash();
+            traces.push(match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                Ok(result) => TraceResult::Success { result, tx_hash: Some(tx_hash) },
+                Err(error) => {
+                    TraceResult::Error { error: error.to_string(), tx_hash: Some(tx_hash) }
+                }
+            });
+        }
+        traces
+    }
+
+    /// Replays a local block once, keeping each transaction's committed state for the next call.
+    fn replay_block_call_traces(
+        &self,
+        block: &Block,
+        config: CallConfig,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let gas_used = {
+            let storage = self.blockchain.storage.read();
+            let block_hash = block.header.hash_slow();
+            block
+                .body
+                .transactions
+                .iter()
+                .enumerate()
+                .map(|(index, tx)| {
+                    let hash = tx.hash();
+                    let mined = storage
+                        .transactions
+                        .get(&hash)
+                        .ok_or(BlockchainError::TransactionNotFound)?;
+                    if mined.block_hash != block_hash
+                        || mined.info.transaction_index as usize != index
+                        || mined.info.transaction_hash != hash
+                    {
+                        return Err(BlockchainError::TransactionNotFound);
+                    }
+                    Ok(mined.info.gas_used)
+                })
+                .collect::<Result<Vec<_>, BlockchainError>>()?
+        };
+
+        let trace = |parent_state: &StateDb| -> Result<Vec<TraceResult>, BlockchainError> {
+            let (mut cache_db, evm_env, hardfork) =
+                self.prepare_block_replay(block, parent_state)?;
+            let monad_context = self.active_monad_context_for_mined_block(block)?;
+            let mut traces = Vec::with_capacity(block.body.transactions.len());
+            for (index, (tx, gas_used)) in block.body.transactions.iter().zip(&gas_used).enumerate()
+            {
+                let mut inspector =
+                    TracingInspector::new(TracingInspectorConfig::from_geth_call_config(&config));
+                let pending = self.pending_mined_transaction(tx.clone())?;
+                let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+                let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    &pending,
+                    EnvelopeExecution::replay(transaction_context, hardfork),
+                )?;
+                traces.push(TraceResult::Success {
+                    result: inspector.geth_builder().geth_call_traces(config, *gas_used).into(),
+                    tx_hash: Some(tx.hash()),
+                });
+                cache_db.commit(result.state);
+            }
+            Ok(traces)
+        };
+
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&block.header.parent_hash) {
+            trace(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&block.header.parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            trace(state)
+        }
     }
 
     fn geth_trace(
@@ -7856,6 +8035,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        // Keep account state and head metadata coherent across mining and state replacement.
+        let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
         let mut monad_block_participants = BTreeMap::new();
@@ -8029,6 +8210,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             storage.hashes.insert(number, hash);
             storage.best_number = number;
             storage.best_hash = hash;
+            storage.hashes.retain(|block_number, _| *block_number <= number);
         }
 
         #[cfg(feature = "monad")]
@@ -8422,6 +8604,9 @@ impl Backend<FoundryNetwork> {
             let mut cache_db = BalDatabase::new(CacheDB::new(state));
             cache_db.cache.block_hashes.insert(U256::from(base_number), base_hash);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
+            // A single block cannot amortize building an incremental trie.
+            let cache_state_roots = block_state_calls.len() > 1;
+            let mut state_root_cache = None::<(StateRootCache, AddressMap<DbAccount>)>;
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
             let mut inherited_block_env = base_block_env;
@@ -8955,10 +9140,39 @@ impl Backend<FoundryNetwork> {
                 };
 
                 // Fork databases are partial, so their synthetic blocks use a zero state root.
-                let state_root = cache_db
-                    .maybe_full_db()
-                    .map(|accounts| state_root(&accounts))
-                    .unwrap_or_default();
+                let incremental = state_root_cache.as_mut().is_some_and(|(cache, previous)| {
+                    cache.record_overlay(&cache_db.cache.accounts, previous)
+                });
+                let state_root = if incremental {
+                    let (cache, previous) = state_root_cache.as_mut().unwrap();
+                    let root = cache.root(&cache_db.cache.accounts);
+                    previous.clone_from(&cache_db.cache.accounts);
+                    root
+                } else {
+                    cache_db
+                        .maybe_full_db()
+                        .map(|accounts| {
+                            // A deleted base account can retain storage written by
+                            // anvil_setStorageAt. A later touch exposes it in the full merge,
+                            // although it has no trie leaf. Keep the full rebuild in that case.
+                            if cache_state_roots
+                                && accounts.values().all(|account| {
+                                    account.account_state != AccountState::NotExisting
+                                        || account.storage.is_empty()
+                                })
+                            {
+                                let (cache, previous) =
+                                    state_root_cache.get_or_insert_with(Default::default);
+                                let root = cache.root(&accounts);
+                                previous.clone_from(&cache_db.cache.accounts);
+                                root
+                            } else {
+                                state_root_cache = None;
+                                state_root(&accounts)
+                            }
+                        })
+                        .unwrap_or_default()
+                };
                 let block_access_list_hash = cache_db
                     .bal_state
                     .take_built_alloy_bal()
@@ -10233,12 +10447,13 @@ fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
 #[cfg(test)]
 mod tests {
     use super::{
-        ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser,
+        BlockRequest, FeeDetails, ForkCacheNamespace, ForkCacheSource, InstructionResult,
+        MiningCommitHook, Output, StagedForkCacheLease, StagedForkDbUser,
         arbitrum_replay_block_number,
     };
     use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
-    use alloy_primitives::{B256, Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::Provider;
     use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
     use alloy_serde::WithOtherFields;
@@ -10250,6 +10465,7 @@ mod tests {
     use foundry_evm_networks::arbitrum;
     use std::sync::Arc;
     use tempfile::tempdir;
+    use tokio::sync::Notify;
 
     #[cfg(feature = "base")]
     use base_common_precompiles::{ActivationRegistryStorage, B20FactoryStorage};
@@ -10407,6 +10623,89 @@ mod tests {
         assert_eq!(api.backend.best_number(), best_number);
         assert_eq!(api.backend.best_hash(), best_hash);
         assert_eq!(api.backend.time().last_block_wall_time(), head_wall_time);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn live_execution_snapshot_is_coherent_during_mining() {
+        let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let recipient = Address::repeat_byte(0x11);
+        let contract = Address::repeat_byte(0x22);
+
+        // Return the recipient balance followed by NUMBER. Before mining both are zero; after the
+        // queued transfer is mined both are one.
+        let mut code = vec![0x73];
+        code.extend_from_slice(recipient.as_slice());
+        code.extend_from_slice(&[
+            0x31, 0x60, 0x00, 0x52, 0x43, 0x60, 0x20, 0x52, 0x60, 0x40, 0x60, 0x00, 0xf3,
+        ]);
+        api.anvil_set_code(contract, code.into()).await.unwrap();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+        let resolved_head = api.backend.best_number();
+        let db_guard = api.backend.db.write().await;
+
+        // Polling while holding the database makes the lock queue deterministic: mining owns the
+        // first waiter and the call that already resolved `latest` owns the second.
+        let mining_api = api.clone();
+        let mut mining = Box::pin(async move { mining_api.mine_one().await });
+        assert!(futures::poll!(mining.as_mut()).is_pending());
+
+        let request = WithOtherFields::new(TransactionRequest::default().to(contract));
+        let mut call = Box::pin(api.backend.call(
+            request,
+            FeeDetails::zero(),
+            Some(BlockRequest::Number(resolved_head)),
+            EvmOverrides::default(),
+        ));
+        assert!(futures::poll!(call.as_mut()).is_pending());
+
+        let mut pending_block = Box::pin(api.backend.pending_block(Vec::new()));
+        assert!(futures::poll!(pending_block.as_mut()).is_pending());
+
+        let mut state = Box::pin(api.serialized_state(false));
+        assert!(futures::poll!(state.as_mut()).is_pending());
+
+        // Pause mining after the database commit but before canonical publication without locking
+        // storage, so an incorrectly unblocked pending reader can observe the old parent.
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        drop(db_guard);
+        let mining = tokio::spawn(mining);
+        hook.reached.notified().await;
+
+        // Mining retains the database write lock while waiting to publish the canonical head, so
+        // neither a live call nor a pending block can observe the partially published snapshot.
+        assert!(futures::poll!(call.as_mut()).is_pending());
+        assert!(futures::poll!(pending_block.as_mut()).is_pending());
+        assert!(futures::poll!(state.as_mut()).is_pending());
+
+        hook.resume.notify_one();
+        mining.await.unwrap().unwrap();
+
+        let (exit, output, _, _) = call.await.unwrap();
+        let pending_block = pending_block.await.unwrap();
+        let state = state.await.unwrap();
+
+        assert_eq!(state.accounts[&recipient].balance, U256::from(1));
+        assert_eq!(state.block.unwrap().number, U256::from(1));
+        assert_eq!(state.best_block_number, Some(1));
+
+        assert_eq!(exit, InstructionResult::Return);
+        let Some(Output::Call(output)) = output else { panic!("call did not return data") };
+        assert_eq!(output.len(), 64);
+        let balance = U256::from_be_slice(&output[..32]);
+        let block_number = U256::from_be_slice(&output[32..]);
+        assert_eq!((balance, block_number), (U256::from(1), U256::from(1)));
+
+        assert_eq!(pending_block.block.header.number, api.backend.best_number() + 1);
+        assert_eq!(pending_block.block.header.parent_hash, api.backend.best_hash());
+        assert_eq!(pending_block.block.header.base_fee_per_gas, Some(875_175_000));
     }
 
     struct CacheFlushingDb(BlockchainDb);

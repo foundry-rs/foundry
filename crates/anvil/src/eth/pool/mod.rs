@@ -57,6 +57,12 @@ pub struct Pool<T> {
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
 }
 
+/// An independent snapshot of a transaction pool.
+#[derive(Debug)]
+pub(crate) struct PoolSnapshot<T> {
+    inner: PoolInner<T>,
+}
+
 impl<T> Default for Pool<T> {
     fn default() -> Self {
         Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
@@ -66,6 +72,29 @@ impl<T> Default for Pool<T> {
 // == impl Pool ==
 
 impl<T> Pool<T> {
+    /// Returns an independent snapshot of the pool.
+    pub(crate) fn snapshot(&self) -> PoolSnapshot<T> {
+        let pool = self.inner.read();
+        PoolSnapshot {
+            inner: PoolInner {
+                ready_transactions: pool.ready_transactions.snapshot(),
+                pending_transactions: pool.pending_transactions.snapshot(),
+            },
+        }
+    }
+
+    /// Restores the pool to a previous snapshot.
+    pub(crate) fn restore(&self, snapshot: PoolSnapshot<T>) {
+        let ready = {
+            let mut pool = self.inner.write();
+            *pool = snapshot.inner;
+            pool.ready_transactions().map(|tx| tx.hash()).collect::<Vec<_>>()
+        };
+        for hash in ready {
+            self.notify_listener(hash);
+        }
+    }
+
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator<T> {
         self.inner.read().ready_transactions()
@@ -155,7 +184,8 @@ impl<T> Pool<T> {
         let removed = {
             let mut pool = self.inner.write();
             let mut removed = pool.ready_transactions.remove_with_markers(vec![tx], None);
-            removed.extend(pool.pending_transactions.remove(vec![tx]));
+            let invalidated = removed.iter().flat_map(|tx| tx.provides.iter().cloned());
+            removed.extend(pool.pending_transactions.remove_with_dependents(vec![tx], invalidated));
             removed
         };
         trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
@@ -217,14 +247,16 @@ impl<T: Transaction> Pool<T> {
     ///
     /// This will remove the transactions from the pool.
     pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
-        let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
+        let MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid } = outcome;
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
-        // prune all the markers the mined transactions provide
-        let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+        // Prune mined and stale markers; both are satisfied by the resulting state.
+        let res = self.prune_markers(
+            block_number,
+            included.into_iter().chain(stale).flat_map(|tx| tx.provides.clone()),
+        );
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
 
         // Re-notify the miner about not-yet-valid transactions so they'll be retried.

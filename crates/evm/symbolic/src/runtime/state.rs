@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -19,6 +20,8 @@ pub(crate) struct PathState {
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
+    /// Predicate context follows child calls but is not committed back to handler state.
+    pub(crate) invariant_predicate: bool,
     corpus_seed_models: Vec<Arc<SymbolicModel>>,
     branch_target: Option<SymbolicBranchTarget>,
     branch_target_reached: bool,
@@ -74,6 +77,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: Some(calldata),
+            invariant_predicate: false,
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
@@ -127,6 +131,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: None,
+            invariant_predicate: false,
             corpus_seed_models: Vec::new(),
             branch_target: None,
             branch_target_reached: false,
@@ -419,6 +424,11 @@ impl PathState {
             std::mem::take(&mut child.mapping_hook_keccak_preimages);
         self.recorded_logs = child.recorded_logs.take();
         self.access_record = child.access_record.take();
+        // Inspector state survives child reverts and exceptional halts.
+        self.block = child.block.clone();
+        self.expected_calls = std::mem::take(&mut child.expected_calls);
+        self.call_mocks = std::mem::take(&mut child.call_mocks);
+        self.function_mocks = std::mem::take(&mut child.function_mocks);
     }
 
     pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
@@ -1289,8 +1299,8 @@ impl ExpectedCall {
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
             (
-                gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
-                min_gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
+                gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
+                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
             )
         } else {
             (gas, min_gas)
@@ -1344,7 +1354,7 @@ impl ExpectedCall {
         }
         let mut gas = gas.as_const_or("symbolic expected call gas")?;
         if value.is_some_and(|value| !value.is_zero()) {
-            gas = gas.saturating_add(U256::from(CALL_VALUE_STIPEND));
+            gas = gas.saturating_add(U256::from(CALL_STIPEND));
         }
         Ok(self.gas.is_none_or(|expected| gas == U256::from(expected))
             && self.min_gas.is_none_or(|expected| gas >= U256::from(expected)))
@@ -2300,8 +2310,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        let spec_id: SpecId = executor.spec_id().into();
-        if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
+        if is_known_cheatcode(address) {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {

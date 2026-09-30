@@ -157,14 +157,14 @@ impl InMemoryBlockStates {
                         continue;
                     }
 
-                    let state_snapshot = state.0.clear_into_state_snapshot();
+                    let state_snapshot = state.read_as_state_snapshot();
                     if self.disk_cache.write(hash, &state_snapshot) {
+                        state.clear();
                         // Write succeeded, move state to on-disk tracking
                         self.on_disk_states.insert(hash, state);
                         self.oldest_on_disk.push_back(hash);
                     } else {
-                        // Write failed, restore state to memory to avoid data loss
-                        state.init_from_state_snapshot(state_snapshot);
+                        // Write failed, keep state in memory to avoid data loss
                         self.states.insert(hash, state);
                         self.present.push_front(hash);
                         // Increase limit temporarily to prevent infinite retry loop
@@ -596,6 +596,8 @@ pub struct MinedBlockOutcome<T> {
     pub block_number: u64,
     /// All transactions included in the block
     pub included: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions whose nonce was already consumed by the current state.
+    pub stale: Vec<Arc<PoolTransaction<T>>>,
     /// All transactions that were attempted to be included but were invalid at the time of
     /// execution
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
@@ -609,6 +611,7 @@ impl<T> Clone for MinedBlockOutcome<T> {
         Self {
             block_number: self.block_number,
             included: self.included.clone(),
+            stale: self.stale.clone(),
             invalid: self.invalid.clone(),
             not_yet_valid: self.not_yet_valid.clone(),
         }
@@ -620,6 +623,7 @@ impl<T> fmt::Debug for MinedBlockOutcome<T> {
         f.debug_struct("MinedBlockOutcome")
             .field("block_number", &self.block_number)
             .field("included", &self.included.len())
+            .field("stale", &self.stale.len())
             .field("invalid", &self.invalid.len())
             .field("not_yet_valid", &self.not_yet_valid.len())
             .finish()

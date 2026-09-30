@@ -659,10 +659,15 @@ casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 });
 
-// On-chain: key authorization and `keychain set-scope` keep the tuple ABI through T13.
-casttest!(keychain_set_scope_succeeds_through_t13, async |_prj, cmd| {
-    for hardfork in [TempoHardfork::T10, TempoHardfork::T11, TempoHardfork::T12, TempoHardfork::T13]
-    {
+// On-chain: key authorization and `keychain set-scope` keep the tuple ABI through T14.
+casttest!(keychain_set_scope_succeeds_through_t14, async |_prj, cmd| {
+    for hardfork in [
+        TempoHardfork::T10,
+        TempoHardfork::T11,
+        TempoHardfork::T12,
+        TempoHardfork::T13,
+        TempoHardfork::T14,
+    ] {
         let (_, handle) =
             anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
         let rpc = handle.http_endpoint();

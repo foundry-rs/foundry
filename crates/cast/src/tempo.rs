@@ -360,12 +360,27 @@ mod tests {
     use alloy_rpc_client::RpcClient;
 
     #[tokio::test]
-    async fn tempo_fork_schedule_detects_t13_as_t3_active() {
+    async fn tempo_fork_schedule_detects_t3_activation() {
+        for (active, expected) in [("T2", false), ("T3", true), ("T13", true), ("T14", true)] {
+            let asserter = Asserter::new();
+            asserter.push_success(&serde_json::json!({ "active": active, "schedule": [] }));
+            let provider = AlloyProviderBuilder::new()
+                .network::<TempoNetwork>()
+                .connect_mocked_client(asserter);
+            assert_eq!(
+                is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tempo_fork_schedule_rejects_unknown_hardfork() {
         let asserter = Asserter::new();
-        asserter.push_success(&serde_json::json!({ "active": "T13" }));
+        asserter.push_success(&serde_json::json!({ "active": "FutureFork", "schedule": [] }));
         let provider =
             AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
-        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap());
+        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.is_err());
     }
 
     #[test]
