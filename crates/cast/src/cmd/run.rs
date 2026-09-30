@@ -621,9 +621,13 @@ impl RunArgs {
         // A block access list (BAL) records every state write of the block by transaction index,
         // so the target's prestate can be read from it instead of replaying the earlier
         // transactions. Before Cancun, SELFDESTRUCT wipes storage the list does not enumerate.
+        // Explicit execution rules must replay the prefix: canonical writes may differ under
+        // the requested EVM version or hardfork.
         let block_access_list = if !self.quick
             && !self.no_bal
             && !prestate_applied
+            && self.evm_version.is_none()
+            && config.hardfork.is_none()
             && spec_id.is_enabled_in(SpecId::CANCUN)
             && let Some(block) = &block
         {
