@@ -6225,6 +6225,7 @@ dependencies = [
  "alloy-sol-types",
  "async-trait",
  "base-common-precompiles",
+ "ciborium",
  "eyre",
  "foundry-block-explorers",
  "foundry-common",

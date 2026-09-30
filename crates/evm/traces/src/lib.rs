@@ -111,6 +111,8 @@ pub mod folded_stack_trace;
 pub mod backtrace;
 pub mod speedscope;
 
+pub mod erc8021;
+
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
 /// Presentation-only detail for an otherwise empty EVM revert.
