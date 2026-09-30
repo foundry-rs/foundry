@@ -48,7 +48,7 @@ use alloy_sol_types::SolCall;
 use eyre::{Result, eyre};
 use foundry_cheatcodes::Vm::{
     revertToAndDeleteCall, revertToCall, revertToStateAndDeleteCall, revertToStateCall, rollCall,
-    warpCall,
+    setEvmVersionCall, warpCall,
 };
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
@@ -1211,12 +1211,18 @@ impl WorkerCorpus {
                     .as_ref()
                     .and_then(|cheatcodes| cheatcodes.block.as_ref())
                     .unwrap_or(&executor.evm_env().block_env);
+                let spec_id = executor
+                    .inspector()
+                    .cheatcodes
+                    .as_ref()
+                    .and_then(|cheatcodes| cheatcodes.execution_evm_version)
+                    .unwrap_or_else(|| executor.spec_id());
                 sequence_from_test_trace(
                     &observed,
                     &targets,
                     block.timestamp(),
                     block.number(),
-                    executor.spec_id().into(),
+                    spec_id.into(),
                 )
             }) else {
                 continue;
@@ -1788,7 +1794,8 @@ fn sequence_from_test_trace(
                 revertToCall::SELECTOR
                 | revertToStateCall::SELECTOR
                 | revertToAndDeleteCall::SELECTOR
-                | revertToStateAndDeleteCall::SELECTOR => return None,
+                | revertToStateAndDeleteCall::SELECTOR
+                | setEvmVersionCall::SELECTOR => return None,
                 _ => {}
             }
             continue;
@@ -3099,6 +3106,7 @@ mod tests {
             revertToStateCall { snapshotId: U256::from(1) }.abi_encode(),
             revertToAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
             revertToStateAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+            setEvmVersionCall { evm: "prague".to_string() }.abi_encode(),
         ] {
             let restored = [
                 cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),

@@ -3092,7 +3092,7 @@ contract InvariantStorageHooks is Test {
 
 forgetest_init!(invariant_test_trace_seed_preserves_time_advances, |prj, cmd| {
     prj.update_config(|config| {
-        config.evm_version = EvmVersion::Cancun;
+        config.evm_version = EvmVersion::Prague;
         config.isolate = true;
         config.invariant.runs = 1;
         config.invariant.depth = 2;
@@ -3143,6 +3143,7 @@ contract TimedTraceSeedTest is Test {
     TimedHandler handler;
 
     function setUp() public {
+        vm.setEvmVersion("cancun");
         vm.warp(block.timestamp + 30 days);
         vm.roll(block.number + 100);
         handler = new TimedHandler(block.timestamp, block.number);
