@@ -709,6 +709,7 @@ fmt_tests! {
     IfStatementLongCondition,
     IfStatementMultilineCall,
     ImportDirective,
+    IndexedAssignment,
     InlineDisable,
     IntTypes,
     LineComments,
