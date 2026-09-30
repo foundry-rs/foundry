@@ -35,7 +35,8 @@ pub struct TempoOpts {
     /// Fee token address, numeric TIP-20 token id, or known symbol for Tempo transactions.
     ///
     /// When set, builds a Tempo (type 0x76) transaction that pays gas fees
-    /// in the specified token. Known symbols are PathUSD, AlphaUSD, BetaUSD, and ThetaUSD.
+    /// in the specified token. Known symbols are PathUSD, AlphaUSD, BetaUSD, ThetaUSD,
+    /// and OUSD.
     ///
     /// If this is not set, the fee token is chosen according to network rules. See the Tempo docs
     /// for more information.
@@ -322,7 +323,7 @@ fn parse_expires_seconds(s: &str) -> Result<u64, String> {
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use foundry_common::tempo::{BETA_USD_ADDRESS, PATH_USD_ADDRESS};
+    use foundry_common::tempo::{BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS};
 
     #[test]
     fn parses_lane_arg() {
@@ -410,10 +411,13 @@ mod tests {
             TempoOpts::try_parse_from(["", "--tempo.fee-token", "bEtAuSd"]).unwrap();
         assert_eq!(opts_with_mixed_case_symbol.fee_token, Some(BETA_USD_ADDRESS));
 
+        let opts_with_ousd = TempoOpts::try_parse_from(["", "--tempo.fee-token", "OUSD"]).unwrap();
+        assert_eq!(opts_with_ousd.fee_token, Some(OUSD_ADDRESS));
+
         let err = TempoOpts::try_parse_from(["", "--tempo.fee-token", "unknownusd"]).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("expected address, numeric TIP-20 token id"));
-        assert!(msg.contains("PathUSD, AlphaUSD, BetaUSD, ThetaUSD"));
+        assert!(msg.contains("PathUSD, AlphaUSD, BetaUSD, ThetaUSD, OUSD"));
     }
 
     #[test]

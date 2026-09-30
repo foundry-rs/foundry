@@ -15,7 +15,7 @@ use alloy_primitives::{
 use alloy_sol_types::SolValue;
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
-    get_contract_name, selectors::SelectorKind,
+    get_contract_name, selectors::SelectorKind, tempo::OUSD_ADDRESS,
 };
 use foundry_config::TracingConfig;
 use foundry_evm_core::{
@@ -459,6 +459,7 @@ impl CallTraceDecoder {
             (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
             (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
+            (OUSD_ADDRESS, "OUSD".to_string()),
         ]);
 
         let functions = console::hh::abi::functions()
@@ -3265,6 +3266,26 @@ mod tests {
 
         let decoded = decoder.decode_function(&trace).await;
         assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+    }
+
+    #[tokio::test]
+    async fn test_tempo_decode_labels_ousd() {
+        let decoder = CallTraceDecoder::new();
+        let transfer = ITIP20::transferCall {
+            to: address!("0x0000000000000000000000000000000000000def"),
+            amount: U256::from(1_000_000u64),
+        };
+        let trace = CallTrace {
+            address: OUSD_ADDRESS,
+            data: transfer.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("OUSD"));
+        let call_data = decoded.call_data.expect("OUSD transfer should decode");
+        assert_eq!(call_data.signature, "transfer(address,uint256)");
     }
 
     #[tokio::test]
