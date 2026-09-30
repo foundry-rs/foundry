@@ -109,19 +109,22 @@ macro_rules! with_network_provider {
 pub fn run() -> Result<()> {
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
-    setup()?;
+    let warnings = setup()?;
 
     let args = CastArgs::parse();
     args.global.init()?;
+    for warning in warnings {
+        let _ = foundry_common::sh_warn!("{warning}");
+    }
     args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
-pub fn setup() -> Result<()> {
-    utils::common_setup();
+pub fn setup() -> Result<Vec<String>> {
+    let warnings = utils::common_setup();
     utils::subscriber();
 
-    Ok(())
+    Ok(warnings)
 }
 
 /// Run the subcommand.
@@ -1534,10 +1537,10 @@ pub(super) fn format_units(value: &str, unit: u8) -> Result<String> {
 fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String> {
     let base_in = Base::unwrap_or_detect(base_in, value)?;
     let base_out = base_out.parse()?;
+    let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
     if base_in == base_out {
         return Ok(value.to_string());
     }
-    let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
     Ok(format!("{n:#?}"))
 }
 

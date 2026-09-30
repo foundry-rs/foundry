@@ -191,7 +191,7 @@ pub trait NestedEvm {
         tx: Self::Tx,
         is_system: bool,
     ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
-        if is_system {
+        if is_system && !tx.is_deposit() {
             return Ok(None);
         }
         self.transact_raw(tx).map(Some)

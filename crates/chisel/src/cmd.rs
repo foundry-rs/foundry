@@ -35,6 +35,8 @@ pub enum ChiselCommand {
     Source,
 
     /// Save the current session to the cache.
+    ///
+    /// RPC endpoints and credentials are excluded from saved sessions.
     #[command(visible_alias = "s")]
     Save {
         /// Optional session ID.
@@ -44,6 +46,9 @@ pub enum ChiselCommand {
     /// Load a previous session from cache.
     /// WARNING: This will overwrite the current session (though the current session will be
     /// optimistically cached).
+    ///
+    /// Credentials come from this invocation. Use `!fork <url>` or start Chisel with `--fork-url`
+    /// to restore a forked session.
     #[command(visible_alias = "l")]
     Load {
         /// Session ID to load.

@@ -17,7 +17,7 @@ use anvil_core::eth::{
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
-    StateSnapshot,
+    StateSnapshot, existing_account,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
@@ -26,7 +26,7 @@ use revm::{
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
     database::{AccountState, CacheDB, DatabaseRef, DbAccount, bal::BalState},
-    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId},
     state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
@@ -180,13 +180,13 @@ pub trait MaybeForkedDatabase {
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
 
-/// A wrapper around [`CacheDB`].
+/// A wrapper around [`CacheDB`] that executes transactions at `spec`.
 #[derive(Debug)]
-pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState);
+pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState, SpecId);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
-    pub fn new(inner: T) -> Self {
-        Self(CacheDB::new(inner), BalState::default())
+    pub fn new(inner: T, spec: SpecId) -> Self {
+        Self(CacheDB::new(inner), BalState::default(), spec)
     }
 
     /// Enables EIP-7928 block access list recording.
@@ -217,7 +217,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> Database for AnvilCache
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.0.basic(address)
+        Ok(existing_account(self.2, self.0.basic(address)?))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {

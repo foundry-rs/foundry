@@ -60,7 +60,7 @@ impl ListArgs {
         // list local accounts as files in keystore dir, no need to unlock / provide password
         if self.dir.is_some()
             || self.all
-            || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
+            || (!self.ledger && !self.trezor && !self.aws && !self.gcp && !self.turnkey)
         {
             match self.list_local_senders() {
                 Ok(local) => accounts.extend(local),
@@ -115,6 +115,7 @@ impl ListArgs {
         list_senders!(list_opts.trezors(), "Trezor");
         list_senders!(list_opts.aws_signers(), "AWS");
         list_senders!(list_opts.gcp_signers(), "GCP");
+        list_senders!(async { list_opts.turnkey_signers() }, "Turnkey");
 
         if format_json {
             print_json_success(accounts)?;

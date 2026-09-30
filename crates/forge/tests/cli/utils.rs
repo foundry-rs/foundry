@@ -3,7 +3,12 @@
 use alloy_chains::NamedChain;
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
-use std::path::Path;
+use std::{
+    io::Read,
+    path::Path,
+    process::{Child, Command, Output, Stdio},
+    thread::{self, JoinHandle},
+};
 
 /// Returns the current millis since unix epoch.
 ///
@@ -295,4 +300,46 @@ contract LargeRuntime {{
 }}
 "
     )
+}
+
+/// A spawned child process that is killed when dropped.
+pub struct KillOnDrop {
+    child: Option<Child>,
+    stderr: Option<JoinHandle<Vec<u8>>>,
+}
+
+impl KillOnDrop {
+    pub fn spawn(command: &mut Command) -> Self {
+        let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+        let mut child_stderr = child.stderr.take().unwrap();
+        let stderr = thread::spawn(move || {
+            let mut stderr = Vec::new();
+            child_stderr.read_to_end(&mut stderr).unwrap();
+            stderr
+        });
+        Self { child: Some(child), stderr: Some(stderr) }
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
+    }
+
+    pub fn kill_and_wait(mut self) -> Output {
+        let mut child = self.child.take().unwrap();
+        child.kill().unwrap();
+        let status = child.wait().unwrap();
+        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(stderr) = self.stderr.take() {
+            let _ = stderr.join();
+        }
+    }
 }

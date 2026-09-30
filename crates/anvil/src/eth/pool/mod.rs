@@ -247,14 +247,16 @@ impl<T: Transaction> Pool<T> {
     ///
     /// This will remove the transactions from the pool.
     pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
-        let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
+        let MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid } = outcome;
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
-        // prune all the markers the mined transactions provide
-        let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+        // Prune mined and stale markers; both are satisfied by the resulting state.
+        let res = self.prune_markers(
+            block_number,
+            included.into_iter().chain(stale).flat_map(|tx| tx.provides.clone()),
+        );
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
 
         // Re-notify the miner about not-yet-valid transactions so they'll be retried.

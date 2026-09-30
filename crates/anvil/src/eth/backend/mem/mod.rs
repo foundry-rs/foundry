@@ -1041,6 +1041,8 @@ struct StateSnapshot {
     block_hash: B256,
     fees: FeeSnapshot,
     time_offset: i128,
+    next_block_timestamp: Option<u64>,
+    next_block_prevrandao: Option<B256>,
 }
 
 #[cfg(test)]
@@ -1347,6 +1349,13 @@ impl<N: Network> Backend<N> {
     /// Sets the balance of the given address
     pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
         self.db.write().await.set_balance(address, balance)
+    }
+
+    /// Increases the balance of the given address, saturating at `U256::MAX`.
+    pub(crate) async fn add_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
+        let mut db = self.db.write().await;
+        let current_balance = db.basic(address)?.unwrap_or_default().balance;
+        db.set_balance(address, current_balance.saturating_add(balance))
     }
 
     /// Sets the code of the given address
@@ -1892,6 +1901,7 @@ impl<N: Network> Backend<N> {
         let num = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
+        let (time_offset, next_block_timestamp) = self.time.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
@@ -1899,7 +1909,9 @@ impl<N: Network> Backend<N> {
                 block_number: num,
                 block_hash: hash,
                 fees: self.fees.snapshot(),
-                time_offset: self.time.offset(),
+                time_offset,
+                next_block_timestamp,
+                next_block_prevrandao: self.cheats.next_block_prevrandao(),
             },
         );
         id
@@ -1992,8 +2004,8 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef<Error = DatabaseError> + Debug,
     {
-        let mut cache_db = AnvilCacheDB::new(db);
         let (evm_env, hardfork) = self.tx_replay_evm_env(block);
+        let mut cache_db = AnvilCacheDB::new(db, *evm_env.spec_id());
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
 
@@ -5291,9 +5303,16 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
-                (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
+                (
+                    snapshot.block_number,
+                    snapshot.block_hash,
+                    snapshot.fees,
+                    snapshot.time_offset,
+                    snapshot.next_block_timestamp,
+                    snapshot.next_block_prevrandao,
+                )
             })
         else {
             return Ok(false);
@@ -5309,15 +5328,20 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+        self.states.write().remove_block_states(&removed_hashes);
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
 
         let reset_time = block.header.timestamp();
-        self.time.reset_with_offset(reset_time, time_offset);
-        // drop any pending next-block prevrandao override so it does not leak into a block
-        self.cheats.clear_next_block_prevrandao();
+        self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
+        if let Some(prevrandao) = next_block_prevrandao {
+            self.cheats.set_next_block_prevrandao(prevrandao);
+        } else {
+            self.cheats.clear_next_block_prevrandao();
+        }
 
         {
             let mut env = self.evm_env.write();
@@ -5675,7 +5699,7 @@ where
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
-            let mut overlay = AnvilCacheDB::new(&**db);
+            let mut overlay = AnvilCacheDB::new(&**db, *replay_env.spec_id());
             let ExecutedHistoricalReplay {
                 block_result,
                 transactions,
@@ -6021,6 +6045,7 @@ where
                 db_guard,
                 block_info,
                 included,
+                stale,
                 invalid,
                 not_yet_valid,
                 block_hash,
@@ -6050,7 +6075,7 @@ where
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
 
-                let mut candidate_db = AnvilCacheDB::new(&**db);
+                let mut candidate_db = AnvilCacheDB::new(&**db, *mining_evm_env.spec_id());
                 if matches!(
                     hardfork,
                     FoundryHardfork::Ethereum(hardfork) if hardfork >= EthereumHardfork::Amsterdam
@@ -6076,6 +6101,7 @@ where
                 let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
+                let stale = pool_result.stale;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
@@ -6123,6 +6149,7 @@ where
                     db,
                     block_info,
                     included,
+                    stale,
                     invalid,
                     not_yet_valid,
                     block_hash,
@@ -6252,7 +6279,8 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome = MinedBlockOutcome { block_number, included, invalid, not_yet_valid };
+            let outcome =
+                MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid };
 
             (outcome, header, block_hash)
         };
@@ -6310,7 +6338,7 @@ where
         let db = self.db.read().await;
         let evm_env = self.next_evm_env();
 
-        let mut cache_db = AnvilCacheDB::new(&*db);
+        let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
 
@@ -8011,6 +8039,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        // Keep account state and head metadata coherent across mining and state replacement.
+        let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
         let mut monad_block_participants = BTreeMap::new();
@@ -10641,6 +10671,9 @@ mod tests {
         let mut pending_block = Box::pin(api.backend.pending_block(Vec::new()));
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
 
+        let mut state = Box::pin(api.serialized_state(false));
+        assert!(futures::poll!(state.as_mut()).is_pending());
+
         // Pause mining after the database commit but before canonical publication without locking
         // storage, so an incorrectly unblocked pending reader can observe the old parent.
         let hook =
@@ -10654,12 +10687,18 @@ mod tests {
         // neither a live call nor a pending block can observe the partially published snapshot.
         assert!(futures::poll!(call.as_mut()).is_pending());
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
+        assert!(futures::poll!(state.as_mut()).is_pending());
 
         hook.resume.notify_one();
         mining.await.unwrap().unwrap();
 
         let (exit, output, _, _) = call.await.unwrap();
         let pending_block = pending_block.await.unwrap();
+        let state = state.await.unwrap();
+
+        assert_eq!(state.accounts[&recipient].balance, U256::from(1));
+        assert_eq!(state.block.unwrap().number, U256::from(1));
+        assert_eq!(state.best_block_number, Some(1));
 
         assert_eq!(exit, InstructionResult::Return);
         let Some(Output::Call(output)) = output else { panic!("call did not return data") };

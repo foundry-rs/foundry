@@ -1,5 +1,6 @@
 //! Regression tests for specific GitHub issues
 
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::str;
 
 // https://github.com/foundry-rs/foundry/issues/3055
@@ -1174,6 +1175,64 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 ...
 "#
     ]]);
+});
+
+forgetest_async!(revert_in_memory_snapshot_clears_active_fork, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(4242u64))).await;
+    let rpc = handle.http_endpoint();
+
+    prj.add_test(
+        "RevertInMemorySnapshot.t.sol",
+        &r#"
+interface Vm {
+    function activeFork() external view returns (uint256);
+    function chainId(uint256) external;
+    function createSelectFork(string calldata) external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+}
+
+contract RevertInMemorySnapshotTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant ANVIL_DEFAULT_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function test_revertInMemorySnapshotClearsActiveFork() public {
+        vm.chainId(7777);
+        uint256 snapshotId = vm.snapshotState();
+
+        uint256 forkId = vm.createSelectFork("<rpc>");
+        require(vm.activeFork() == forkId, "fork was not selected");
+        require(block.chainid == 4242, "fork chain ID was not installed");
+        require(ANVIL_DEFAULT_ACCOUNT.balance > 0, "fork account was not funded");
+
+        require(vm.revertToState(snapshotId), "snapshot revert failed");
+        require(block.chainid == 7777, "local chain ID was not restored");
+        (bool hasActiveFork,) = address(vm).call(abi.encodeWithSignature("activeFork()"));
+        require(!hasActiveFork, "fork remained active");
+        require(ANVIL_DEFAULT_ACCOUNT.balance == 0, "read still used fork database");
+
+        vm.selectFork(forkId);
+        require(vm.activeFork() == forkId, "fork could not be reselected");
+        require(ANVIL_DEFAULT_ACCOUNT.balance > 0, "reselected fork lost state");
+    }
+}
+"#
+        .replace("<rpc>", &rpc),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/RevertInMemorySnapshot.t.sol:RevertInMemorySnapshotTest
+[PASS] test_revertInMemorySnapshotClearsActiveFork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // Regression: `revertToState` / `revertToStateAndDelete` taken before any

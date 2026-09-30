@@ -1506,12 +1506,13 @@ impl TestArgs {
                 test_files().filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
             )
             .collect::<BTreeSet<_>>();
+        // ABI discovery does not need dynamic linking, whose job-specific cache prevents
+        // incremental ABI compilation after edits.
         let output = compile_abi_project_cached(
             &mut project,
             ProjectCompiler::new()
                 .external_compilers(config)
                 .files(sources.iter().cloned())
-                .dynamic_test_linking(config.dynamic_test_linking)
                 .quiet(true),
         )?;
         if output.has_compiler_errors() {
@@ -2355,6 +2356,17 @@ impl TestArgs {
                 junit_xml_report(&results, verbosity).to_string()?
             };
             sh_println!("{rendered}")?;
+
+            let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+            for result in results.values().flat_map(|suite| suite.test_results.values()) {
+                for (group, new_snapshots) in &result.gas_snapshots {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+            if !gas_snapshots.is_empty() {
+                self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
+            }
+
             return Ok(TestOutcome::new(
                 Some(runner.known_contracts),
                 results,

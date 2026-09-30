@@ -162,6 +162,24 @@ impl CreateArgs {
         }
         let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain.id()).await?;
 
+        // Never deploy from an account other than the one explicitly selected by the user. Unlocked
+        // and browser deployments do not use the resolved signer.
+        let deployer = signer
+            .as_ref()
+            .map(|signer| signer.address())
+            .or_else(|| tempo_access_key.as_ref().map(|ak| ak.account()));
+        if !self.unlocked
+            && !self.browser.browser
+            && let Some(from) = self.eth.wallet.from
+            && let Some(deployer) = deployer
+            && from != deployer
+        {
+            eyre::bail!(
+                "the sender specified via `--from`/`ETH_FROM` ({from}) does not match the \
+                 signer address ({deployer})"
+            );
+        }
+
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {

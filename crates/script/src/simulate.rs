@@ -871,15 +871,21 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         }
 
         let sequence = if sequences.len() == 1 {
-            ScriptSequenceKind::Single(sequences.pop().expect("empty sequences"))
+            ScriptSequenceKind::new_single(
+                sequences.pop().expect("empty sequences"),
+                self.args.batch,
+            )?
         } else {
-            ScriptSequenceKind::Multi(MultiChainSequence::new(
-                sequences,
-                &self.args.sig,
-                &self.build_data.build_data.target,
-                &self.script_config.config,
-                !self.args.broadcast,
-            )?)
+            ScriptSequenceKind::new_multi(
+                MultiChainSequence::new(
+                    sequences,
+                    &self.args.sig,
+                    &self.build_data.build_data.target,
+                    &self.script_config.config,
+                    !self.args.broadcast,
+                )?,
+                self.args.batch,
+            )?
         };
 
         Ok(BundledState {
@@ -945,6 +951,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             libraries,
             chain,
             commit,
+            recovery_generation: None,
         };
         Ok(sequence)
     }

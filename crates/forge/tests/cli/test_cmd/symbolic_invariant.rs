@@ -536,6 +536,8 @@ forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
     prj.add_test(
         "SymbolicInvariantHandlerFailure.t.sol",
         r#"
+pragma solidity ^0.8.20;
+
 import "forge-std/Test.sol";
 
 interface ArbitraryStorageVm {
@@ -546,18 +548,26 @@ contract HandlerStore {
     uint256 public value;
 }
 
+contract NestedHandlerAssertion {
+    function boom() external pure {
+        assert(false);
+    }
+}
+
 contract SymbolicInvariantHandlerFailureTarget {
     HandlerStore store;
+    NestedHandlerAssertion nested;
     uint256 sink;
 
     constructor(HandlerStore store_) {
         store = store_;
+        nested = new NestedHandlerAssertion();
     }
 
     function boom(uint8 x) external {
         sink = x;
         if (x == 7 && store.value() == 42) {
-            assert(false);
+            nested.boom();
         }
     }
 }
@@ -669,6 +679,65 @@ contract SymbolicInvariantHandlerFailure is Test {
         replay_result["invariant_handler_failures"].as_array().expect("replay handler failures");
     assert_eq!(replay_handler_failures.len(), 1);
     assert_eq!(replay_handler_failures[0]["kind"], "handler");
+
+    // Artifacts produced before handler identities were canonicalized stored the innermost
+    // reverter. They remain replayable when that exact legacy reverter is observed again.
+    let mut legacy_artifact = artifact;
+    let outer: alloy_primitives::Address = legacy_artifact["calls"][0]["target"]
+        .as_str()
+        .expect("outer handler target")
+        .parse()
+        .unwrap();
+    let selector: alloy_primitives::Selector =
+        legacy_artifact["invariant_failure"]["selector"].as_str().unwrap().parse().unwrap();
+    let legacy_reverter = outer.create(1);
+    let mut identity = [0u8; 24];
+    identity[..20].copy_from_slice(legacy_reverter.as_slice());
+    identity[20..].copy_from_slice(selector.as_slice());
+    legacy_artifact["invariant_failure"]["reverter"] =
+        serde_json::Value::String(legacy_reverter.to_string());
+    legacy_artifact["invariant_failure"]["fingerprint"] =
+        serde_json::Value::String(format!("{:#x}", alloy_primitives::keccak256(identity)));
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&legacy_artifact).unwrap()).unwrap();
+
+    let legacy_replay_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let legacy_replay_result = json_test_result(&legacy_replay_output, "invariant_ok()");
+    let legacy_handler_failures = legacy_replay_result["invariant_handler_failures"]
+        .as_array()
+        .expect("legacy handler failures");
+    assert_eq!(legacy_handler_failures.len(), 1);
+    assert!(
+        legacy_handler_failures[0]["name"]
+            .as_str()
+            .expect("legacy handler name")
+            .ends_with("SymbolicInvariantHandlerFailureTarget::boom")
+    );
+
+    let unrelated_reverter = outer.create(2);
+    identity[..20].copy_from_slice(unrelated_reverter.as_slice());
+    legacy_artifact["invariant_failure"]["reverter"] =
+        serde_json::Value::String(unrelated_reverter.to_string());
+    legacy_artifact["invariant_failure"]["fingerprint"] =
+        serde_json::Value::String(format!("{:#x}", alloy_primitives::keccak256(identity)));
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&legacy_artifact).unwrap()).unwrap();
+    let unrelated_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let unrelated_result = json_test_result(&unrelated_output, "invariant_ok()");
+    assert!(
+        unrelated_result["reason"].as_str().unwrap().contains("different handler failure site"),
+        "{unrelated_result}"
+    );
 });
 
 forgetest_init!(symbolic_invariant_omits_unchecked_predicate_pass_rows, |prj, cmd| {
@@ -1953,5 +2022,234 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
+"#]]);
+});
+
+forgetest_init!(symbolic_predicate_assumptions_report_incomplete, |prj, cmd| {
+    skip_unless_z3!("symbolic_predicate_assumptions_report_incomplete");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 1;
+    });
+
+    prj.add_test(
+        "SymbolicPredicateAssumptions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AssumptionTarget {
+    bool public value;
+
+    function set(bool next) external {
+        value = next;
+    }
+}
+
+abstract contract PredicateAssumptionBase is Test {
+    AssumptionTarget internal target;
+
+    function setUp() public {
+        target = new AssumptionTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+}
+
+contract ConstantPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public {
+        vm.assume(false);
+    }
+}
+
+contract MixedPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public {
+        vm.assume(!target.value());
+    }
+}
+
+contract BranchedPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public {
+        if (target.value()) vm.assume(false);
+    }
+}
+
+contract CaughtPredicateAssumption is PredicateAssumptionBase {
+    function reject() external {
+        vm.assume(false);
+    }
+
+    function invariant_condition() public {
+        try this.reject() {} catch {}
+    }
+}
+
+contract AfterPredicateAssumption is PredicateAssumptionBase {
+    function invariant_condition() public pure {}
+
+    function afterInvariant() public {
+        vm.assume(!target.value());
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-test", "invariant_condition"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/SymbolicPredicateAssumptions.t.sol:ConstantPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Failure",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:MixedPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:BranchedPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:CaughtPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/SymbolicPredicateAssumptions.t.sol:AfterPredicateAssumption": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "incomplete",
+          "incomplete": {
+            "kind": "stuck",
+            "reason": "unsupported symbolic execution feature: vm.assume may reject an invariant predicate"
+          },
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+});
+
+forgetest_init!(symbolic_predicate_assumptions_preserve_handler_filtering, |prj, cmd| {
+    skip_unless_z3!("symbolic_predicate_assumptions_preserve_handler_filtering");
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+        config.symbolic.invariant_depth = 2;
+    });
+
+    prj.add_test(
+        "SymbolicHandlerAssumptions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FilteredAssumptionTarget is Test {
+    uint256 public value;
+
+    function set(uint256 next) external {
+        vm.assume(next < 10);
+        value = next;
+    }
+}
+
+contract SymbolicHandlerAssumptions is Test {
+    FilteredAssumptionTarget internal target;
+
+    function setUp() public {
+        target = new FilteredAssumptionTarget();
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function acceptBound() external {
+        vm.assume(target.value() < 10);
+    }
+
+    function invariant_condition() public {
+        this.acceptBound();
+    }
+
+    function afterInvariant() public {
+        this.acceptBound();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--json", "--match-test", "invariant_condition"])
+        .assert_json_stdout(str![[r#"
+{
+  "test/SymbolicHandlerAssumptions.t.sol:SymbolicHandlerAssumptions": {
+    "test_results": {
+      "invariant_condition()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "incomplete": null,
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
 "#]]);
 });
