@@ -138,6 +138,21 @@ jobs:
           key: ${{ runner.os }}-foundry-${{ matrix.name }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-foundry-${{ matrix.name }}-
+      - name: Seed signatures used by trace snapshots
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+
+          path = Path.home() / ".foundry/cache/signatures"
+          cache = json.loads(path.read_text()) if path.exists() else {}
+          fixtures = json.loads(Path("testdata/fixtures/trace-signatures.json").read_text())
+          for kind, signatures in fixtures.items():
+              cache.setdefault(kind, {}).update(signatures)
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(cache))
+          PYTHON
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
