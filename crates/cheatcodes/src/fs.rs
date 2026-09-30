@@ -288,6 +288,7 @@ impl Cheatcode for readLineCall {
 impl Cheatcode for readLinkCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { linkPath: path } = self;
+        // Validate the resolved target, but keep the link itself for read_link.
         state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
         let target = fs::read_link(state.config.root.join(path))?;
         Ok(target.display().to_string().abi_encode())
