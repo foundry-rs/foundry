@@ -198,15 +198,16 @@ pub fn now() -> Duration {
 }
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
-pub fn common_setup() {
+pub fn common_setup() -> Vec<String> {
     install_crypto_provider();
     crate::handler::install();
-    load_dotenv();
+    let warnings = load_dotenv();
     enable_paint();
+    warnings
 }
 
-/// Loads dotenv files from the cwd and project root, ignoring parse failures.
-pub fn load_dotenv() {
+/// Loads dotenv files from the cwd and project root, deferring diagnostics until shell setup.
+pub fn load_dotenv() -> Vec<String> {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
@@ -225,6 +226,7 @@ pub fn load_dotenv() {
         }
     }
 
+    let mut warnings = Vec::new();
     for path in paths {
         if let Err(err) = dotenvy::from_path(&path) {
             // Parse errors contain the source line, which may include secrets.
@@ -234,14 +236,10 @@ pub fn load_dotenv() {
                 }
                 _ => err.to_string(),
             };
-            let _ = foundry_common::sh_warn!(
-                &mut foundry_common::Shell::new(),
-                "Failed to load {}: {}",
-                path.display(),
-                reason
-            );
+            warnings.push(format!("Failed to load {}: {}", path.display(), reason));
         }
     }
+    warnings
 }
 
 /// Sets the default [`yansi`] color output condition.

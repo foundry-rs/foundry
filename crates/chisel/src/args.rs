@@ -30,19 +30,22 @@ use foundry_evm::core::evm::OpEvmNetwork;
 pub fn run() -> Result<()> {
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 
-    setup()?;
+    let warnings = setup()?;
 
     let args = Chisel::parse();
     args.global.init()?;
+    for warning in warnings {
+        let _ = foundry_common::sh_warn!("{warning}");
+    }
     args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
-pub fn setup() -> Result<()> {
-    utils::common_setup();
+pub fn setup() -> Result<Vec<String>> {
+    let warnings = utils::common_setup();
     utils::subscriber();
 
-    Ok(())
+    Ok(warnings)
 }
 
 macro_rules! try_cf {

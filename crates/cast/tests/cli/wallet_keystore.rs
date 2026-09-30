@@ -895,3 +895,17 @@ Warning: Failed to load [..]/.env: invalid syntax; remaining variables were not 
 
 "#]]);
 });
+
+casttest!(malformed_dotenv_quiet_suppresses_warning, |prj, cmd| {
+    fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
+    cmd.args([
+        "--quiet",
+        "wallet",
+        "address",
+        "--private-key",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq("")
+    .stderr_eq("");
+});
