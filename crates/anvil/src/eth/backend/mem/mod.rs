@@ -1024,6 +1024,7 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time_offset: i128,
     next_block_timestamp: Option<u64>,
+    next_block_prevrandao: Option<B256>,
 }
 
 #[cfg(test)]
@@ -1892,6 +1893,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time_offset,
                 next_block_timestamp,
+                next_block_prevrandao: self.cheats.next_block_prevrandao(),
             },
         );
         id
@@ -5297,7 +5299,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset, next_block_timestamp)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5305,6 +5307,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time_offset,
                     snapshot.next_block_timestamp,
+                    snapshot.next_block_prevrandao,
                 )
             })
         else {
@@ -5321,15 +5324,20 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+        self.states.write().remove_block_states(&removed_hashes);
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
-        // drop any pending next-block prevrandao override so it does not leak into a block
-        self.cheats.clear_next_block_prevrandao();
+        if let Some(prevrandao) = next_block_prevrandao {
+            self.cheats.set_next_block_prevrandao(prevrandao);
+        } else {
+            self.cheats.clear_next_block_prevrandao();
+        }
 
         {
             let mut env = self.evm_env.write();
@@ -6033,6 +6041,7 @@ where
                 db_guard,
                 block_info,
                 included,
+                stale,
                 invalid,
                 not_yet_valid,
                 block_hash,
@@ -6088,6 +6097,7 @@ where
                 let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
+                let stale = pool_result.stale;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
@@ -6135,6 +6145,7 @@ where
                     db,
                     block_info,
                     included,
+                    stale,
                     invalid,
                     not_yet_valid,
                     block_hash,
@@ -6264,7 +6275,8 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome = MinedBlockOutcome { block_number, included, invalid, not_yet_valid };
+            let outcome =
+                MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid };
 
             (outcome, header, block_hash)
         };
@@ -8023,6 +8035,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        // Keep account state and head metadata coherent across mining and state replacement.
+        let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
         let mut monad_block_participants = BTreeMap::new();
@@ -10653,6 +10667,9 @@ mod tests {
         let mut pending_block = Box::pin(api.backend.pending_block(Vec::new()));
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
 
+        let mut state = Box::pin(api.serialized_state(false));
+        assert!(futures::poll!(state.as_mut()).is_pending());
+
         // Pause mining after the database commit but before canonical publication without locking
         // storage, so an incorrectly unblocked pending reader can observe the old parent.
         let hook =
@@ -10666,12 +10683,18 @@ mod tests {
         // neither a live call nor a pending block can observe the partially published snapshot.
         assert!(futures::poll!(call.as_mut()).is_pending());
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
+        assert!(futures::poll!(state.as_mut()).is_pending());
 
         hook.resume.notify_one();
         mining.await.unwrap().unwrap();
 
         let (exit, output, _, _) = call.await.unwrap();
         let pending_block = pending_block.await.unwrap();
+        let state = state.await.unwrap();
+
+        assert_eq!(state.accounts[&recipient].balance, U256::from(1));
+        assert_eq!(state.block.unwrap().number, U256::from(1));
+        assert_eq!(state.best_block_number, Some(1));
 
         assert_eq!(exit, InstructionResult::Return);
         let Some(Output::Call(output)) = output else { panic!("call did not return data") };

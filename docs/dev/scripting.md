@@ -1,8 +1,8 @@
 # Forge scripting internals
 
 This guide describes the current contributor-facing `forge script` lifecycle, persisted resume
-state and known limitations, followed by a proposed recovery contract. User-facing CLI instructions
-belong in the [Foundry Book](https://getfoundry.sh).
+state, recovery contract, and known limitations. User-facing CLI instructions belong in the
+[Foundry Book](https://getfoundry.sh).
 
 ## Ownership
 
@@ -90,9 +90,9 @@ The generated nonce is part of the operation plan. During sequential broadcastin
 the provider has already advanced past it. Resume must reconcile the saved operation rather than
 silently assigning the provider's next nonce, because changing a CREATE nonce changes its address.
 
-## Current sequence model
+## Compatibility sequence model
 
-A `ScriptSequence` currently stores:
+A `ScriptSequence` compatibility artifact stores:
 
 - an ordered `transactions` queue containing requests or pre-signed envelopes plus display and
   verification metadata;
@@ -100,10 +100,11 @@ A `ScriptSequence` currently stores:
 - chain ID, libraries, script returns, source commit, and timestamp;
 - each transaction's RPC URL in a separate sensitive-cache file.
 
-Each `TransactionWithMetadata` has an optional transaction hash, but there is no stable operation
-ID, attempt history, or per-operation outcome. Broadcasting uses `receipts.len()` as the start of
-the remaining transaction suffix. That is correct only when successful receipts form a complete
-prefix. A receipt hole can make resume skip an unfinished earlier operation and resend a later one.
+Each `TransactionWithMetadata` has an optional transaction hash. The authoritative recovery plan
+wraps these transactions with stable operation IDs, immutable attempt records, and recovery state.
+Ordinary recovery selects incomplete operations by their own hash associations. Batch recovery
+advances only across a validated contiguous prefix whose transaction hashes have matching receipts,
+so a receipt hole cannot skip an unfinished earlier batch operation.
 
 During a new run, `FilledTransactionsState::bundle` creates one sequence for each consecutive run of
 transactions using the same RPC. An A -> B -> A RPC order therefore produces three sequences, not
@@ -115,27 +116,27 @@ sequences are wrapped in one `MultiChainSequence`; only the multichain container
 Before `SendTransactionKind::prepare`, broadcasting selects the chain-specific transaction kind,
 estimates fees, and applies general Tempo options. `prepare` may then synchronize the sender nonce,
 re-estimate gas, resolve the Tempo fee token, convert Tempo account-abstraction creates, and attach
-sponsorship. In-process retries reuse the request populated by broadcasting but run `prepare` again;
-a fresh resume can repeat both stages. Final values can therefore differ from the request produced
-during simulation.
+sponsorship. Those final values can differ from the request produced during simulation, so recovery
+persists the fully prepared attempt before submission. A new operation may run preparation, but
+resume does not prepare a replacement for an existing attempt.
 
-| Mode                                | Submission                               | When the current implementation learns the hash   |
-| ----------------------------------- | ---------------------------------------- | ------------------------------------------------- |
-| Pre-signed envelope                 | `eth_sendRawTransaction`                 | From the RPC response, although locally derivable |
-| Local Ethereum wallet               | Sign, then `eth_sendRawTransaction`      | From the RPC response, although locally derivable |
-| Tempo account or session access key | Sign, then `eth_sendRawTransaction`      | From the RPC response, although locally derivable |
-| Browser wallet                      | Wallet-controlled signing and submission | When the wallet returns a hash                    |
-| Unlocked RPC account                | `eth_sendTransaction`                    | When the RPC returns a hash                       |
+| Mode                                | Submission                               | Durable checkpoint before submission   |
+| ----------------------------------- | ---------------------------------------- | -------------------------------------- |
+| Pre-signed envelope                 | `eth_sendRawTransaction`                 | Final encoded bytes and derived hash   |
+| Local Ethereum wallet               | Sign, then `eth_sendRawTransaction`      | Final encoded bytes and derived hash   |
+| Tempo account or session access key | Sign, then `eth_sendRawTransaction`      | Final encoded bytes and derived hash   |
+| Browser wallet                      | Wallet-controlled signing and submission | Delegated request with no assumed hash |
+| Unlocked RPC account                | `eth_sendTransaction`                    | Delegated request with no assumed hash |
 
-The broadcaster records the returned hash in the transaction and `pending`, then saves the
-sequence. For non-sequential chains it submits up to 100 transactions concurrently. Completion
-order is not necessarily plan order; the transaction index carried through each future associates a
-successful response with its transaction.
+The broadcaster persists each attempt before invoking its submission API. It records a definitive
+hash in the transaction and `pending` afterward. For non-sequential chains it submits up to 100
+transactions concurrently. Completion order is not necessarily plan order; stable operation IDs
+associate attempts and responses with their planned transactions.
 
-On send errors, the current implementation can prepare and submit again. This is not a recovery
-guarantee: a transport error can occur after acceptance, and repeated preparation can change gas,
-sponsorship, a delegated signature, or other preparation-derived fields. A fresh resume can also
-repeat earlier fee and network-specific filling.
+A signed send error leaves identical encoded bytes available for replay. An ambiguous browser or
+unlocked error marks the delegated attempt `outcome unknown` and blocks automatic replacement;
+only a definite local rejection clears that request. Resume never repeats preparation for an
+existing attempt.
 
 ## Pending reconciliation and receipts
 
@@ -143,13 +144,15 @@ Before sending new work, `BundledState::wait_for_pending` checks each hash in `p
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash and returns an error without appending
 the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction. A hash becomes
-eligible for another submission when that endpoint returns no transaction.
+consuming the retry budget while the selected RPC still returns the transaction. If that endpoint
+returns no transaction, the durable attempt remains the source of identity: signed bytes may be
+replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
+while unknown outcomes remain blocked until explicitly resolved.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
-also remove the hash from `pending`. Neither that incomplete receipt nor one endpoint returning no
-transaction proves that a submission never reached the network. Treat those states as known
-limitations, not as general evidence that automatic replacement is safe.
+also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint
+returning no transaction proves that a submission never reached the network, so neither condition
+permits the recovery store to infer a replacement attempt.
 
 Receipts are sorted by block number and transaction index before persistence. Their order is not an
 operation identity. Associate a receipt with a transaction by hash, as `BroadcastReader` does,
@@ -168,46 +171,46 @@ Multichain runs use corresponding files under `broadcast/multi` and `cache/multi
 copies are created at selected saves. The cache contains RPC URLs and has owner-only permissions on
 Unix; private keys are not persisted.
 
-These files are both compatibility artifacts and current resume state. They are written by
-truncating the destination and serializing directly, public state before sensitive state. There is
-no atomic publication of the pair, schema version, checksum, or process-level writer lock. Loading
-rejects mismatched transaction and sensitive-metadata counts, but a crash or competing writer can
-still leave malformed or semantically mixed state. `ScriptSequenceKind::drop` performs a final
-best-effort save, which does not close those windows.
+The authoritative state is a versioned owner-only `.recovery.json` snapshot beside the sensitive
+cache file. Complete snapshots are atomically promoted, and a process-lifetime file lock excludes a
+second writer. The public and sensitive JSON files are compatibility exports generated from that
+snapshot; failure between their writes cannot roll authoritative recovery backward.
 
-Resume obtains the current chain ID for a single-chain run and attempts to load the latest broadcast
-and cache files, restoring sensitive RPC URLs by transaction position during loading. Any load
-error, including missing or malformed JSON and mismatched sensitive metadata, falls back to the
-dry-run sequence. The fallback retargets that sequence to the broadcast paths and immediately saves
-it, potentially replacing the previous recovery files with an older simulation plan. It then:
+Resume obtains the current chain ID for a single-chain run and loads the authoritative snapshot,
+restoring sensitive RPC URLs by stable operation position. Corrupt, inconsistent, or unsupported
+generation-tagged state fails closed. A generationless legacy public/sensitive pair may be imported
+after its pair-consistency checks pass. Batch import additionally validates transaction-hash,
+pending, and receipt associations. Resume then:
 
 1. reuses available signers or re-executes only to collect missing script-provided signers;
 2. reconciles hashes currently listed in `pending`;
-3. derives remaining work from the receipt-count suffix;
+3. derives remaining ordinary work by operation hash and batch work by a validated contiguous
+   prefix;
 4. prepares and submits that remaining work.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
-endpoint. The proposed recovery contract requires endpoint rebinding to verify the expected chain
-identity before reconciliation or submission.
+endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
 
 ## Tempo and multichain behavior
 
 Regular Tempo transactions use the normal sequence path and populate network-specific fields across
-the stages described in [Preparation and signer modes](#preparation-and-signer-modes). The sequence
-does not preserve an immutable copy of the final signed payload or every submission attempt.
+the stages described in [Preparation and signer modes](#preparation-and-signer-modes). Their
+recovery attempts preserve the final signed payload or delegated request before submission.
 
 `--batch` is a separate, single-chain path. It converts all remaining operations into one Tempo type
-`0x76` transaction, requires one sender, and preserves operation order as batch calls. After the RPC
-returns, the batch hash is stamped onto every remaining transaction and saved once in `pending`.
-One network receipt is copied per operation so existing artifact and verification consumers retain
-their expected shape.
+`0x76` transaction, requires one sender, and preserves operation order as batch calls. The
+authoritative recovery snapshot records one attempt shared by every operation in the batch before
+submission. For locally signed and Tempo keychain submissions, it stores the final encoded payload
+and derived hash; resume replays exactly those bytes without reacquiring the signer. For unlocked
+submission, it stores the delegated request before calling the RPC. An ambiguous delegated outcome
+is marked unknown and blocks automatic resubmission.
 
-The batch-specific recovery path checks an already stamped hash before resolving the batch signer
-or sponsorship. End-to-end resume can nevertheless re-execute the script earlier to recover missing
-script-provided signers. If recovery cannot find the transaction, it clears the checkpoint and
-submits again in the same invocation. A recovery timeout clears the checkpoint and returns an error,
-while a timeout immediately after a new submission retains the checkpoint for the next resume.
-These ambiguous outcomes do not satisfy the proposed recovery contract below.
+After a definitive hash is known, it is stamped onto every remaining transaction and saved once in
+`pending`. One network receipt is copied per operation so existing artifact and verification
+consumers retain their expected shape. A missing transaction or receipt timeout preserves the
+durable attempt: signed attempts remain replayable, delegated attempts with a known hash are
+reconciled by a later plain `--resume`, and unknown delegated outcomes require explicit operator
+resolution. Delegated attempts are never replaced automatically.
 
 Multichain mode stores per-chain sequences in one `MultiChainSequence`. Pending hashes are
 reconciled per chain, while new sequences are broadcast in container order. There is no cross-chain
@@ -216,23 +219,22 @@ completion permits skipping an operation on another.
 
 ## Known failure windows
 
-| Window                                                                    | Current consequence                                                |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| A node accepts a transaction but its response is lost                     | No hash is checkpointed; generic retry can submit again            |
-| The RPC returns a hash but the process exits before save                  | The network has an attempt absent from durable state               |
-| A receipt is observed but the process exits before save                   | Resume sees old pending state and must rediscover it               |
-| Concurrent operations confirm around an earlier receipt hole              | Receipt-count resume can select the wrong suffix                   |
-| One RPC forgets a transaction or repeatedly returns an incomplete receipt | Current code can remove the hash and permit replacement            |
-| The process exits during either JSON write                                | A file can be truncated or the two files can diverge               |
-| Two processes resume the same sequence                                    | Both can reconcile and submit because there is no writer exclusion |
+| Window                                                                    | Recovery behavior or remaining limitation                                  |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| A node accepts a transaction but its response is lost                     | A signed attempt is reconciled by hash; a delegated attempt fails closed   |
+| The RPC returns a hash but the process exits before save                  | The pre-submission attempt remains durable and is reconciled conservatively |
+| A receipt is observed but the process exits before save                   | Resume sees old pending state and rediscovers the receipt                   |
+| A batch receipt hole precedes later confirmations                         | Batch resume advances only across a contiguous completed prefix            |
+| One RPC forgets a transaction or repeatedly returns an incomplete receipt | The attempt remains durable and replacement is not inferred                |
+| The process exits during a snapshot write                                 | Atomic replacement retains either the previous or new complete snapshot    |
+| Two processes resume the same sequence                                    | The recovery lock excludes a competing writer                              |
 
 ## Recovery contract
 
-The following contract is a proposed, currently unimplemented architecture for durable recovery.
-Stable operation and attempt IDs, authoritative recovery storage, signer-free reconciliation, and
-fail-closed delegation are requirements for that implementation, not guarantees of the current
-broadcaster. Legacy broadcast and cache JSON should remain useful to downstream consumers, but they
-need not remain the authoritative recovery state.
+The current broadcaster implements the following recovery contract for its authoritative snapshot.
+Legacy broadcast and cache JSON remain compatibility exports for downstream consumers rather than
+the source of recovery truth. The limitations and deferred work called out below remain outside the
+implemented guarantee.
 
 ### Stable plan
 
@@ -274,7 +276,10 @@ need not remain the authoritative recovery state.
   failure to update an export must not roll recovery state backward.
 - Import generationless legacy artifacts only after validating the public/sensitive pair, then
   publish their recovery generation through the same recoverable replacement protocol. Missing,
-  mixed, corrupt, or conflicting generation-tagged recovery state fails closed.
+  mixed, corrupt, or conflicting generation-tagged recovery state fails closed. Legacy batch
+  hashes are imported only when every remaining operation and the pending set identify one hash;
+  generation-tagged batch recovery never infers an attempt from incomplete mutable submission
+  progress, so incomplete progress without a durable batch attempt is intentionally unsupported.
 
 ### Conservative reconciliation
 
@@ -283,11 +288,11 @@ need not remain the authoritative recovery state.
 - A known hash can become confirmed, reverted, still pending, explicitly replaced, or unresolved.
   Absence from one RPC is not proof that it was never accepted.
 - An unknown outcome remains unresolved until an operator or supported chain query establishes its
-  result. Resume reports affected operations and conservatively blocks later submissions in saved
+  result. Resume reports the attempt ID and conservatively blocks later submissions in saved
   sequence and multichain-container order until the unresolved outcome is resolved. Operations in
-  the same batch remain ordered together. Once established, the operator records a discovered hash
-  with `--resume-tx-hash`, or explicitly permits a retry with `--resume-retry` only after proving
-  non-submission. Either option resolves the first blocked operation reported by resume.
+  the same batch remain ordered together. Once established, the operator targets that attempt with
+  `--resume-attempt <ID>` and records a discovered hash with `--resume-tx-hash <HASH>`, or explicitly
+  permits a retry with `--resume-retry` only after proving non-submission.
 - Apply the configured confirmation count independently while reconciling each chain; this does not
   introduce separate per-chain policies. Revalidation of already persisted confirmations across a
   later reorg is outside this contract. Concurrent reconciliation must preserve each chain's state.
@@ -314,13 +319,13 @@ fees or validity fields. Replacement workflows are deferred to deployment plans 
   attempt remains blocked.
 - The initial recovery implementation retains the saved endpoint. Validated endpoint rebinding is
   deferred to deployment plans and handoff.
-- Legacy import validates transaction, hash, pending, receipt, and sensitive-metadata associations.
-  If it cannot prove a safe state, it imports the operation as unresolved rather than guessing.
+- Legacy batch-attempt import validates transaction, hash, pending, receipt, and sensitive-metadata
+  associations. If it cannot prove a safe batch state, it fails closed rather than guessing.
 
-## Proposed failure-injection coverage
+## Further failure-injection coverage
 
-Tests for the proposed recovery contract belong around the real Forge executable, local nodes, and
-a controlled RPC proxy. At minimum, inject process exit or transport failure:
+Recovery tests belong around the real Forge executable, local nodes, and a controlled RPC proxy.
+Additional coverage should inject process exit or transport failure:
 
 - before forwarding a submission, after forwarding but before returning its response, after the
   response, and after each durable checkpoint;
