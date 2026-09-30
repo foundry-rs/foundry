@@ -1591,6 +1591,16 @@ impl<'ast> State<'_, 'ast> {
 
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
+        // Normalize only indexes that the existing layout keeps together. Longer indexes keep
+        // their own breaks, so their source delimiter padding remains relevant to that layout.
+        let lhs_size = if matches!(lhs.kind, ast::ExprKind::Index(..))
+            && lhs_size + 2 <= space_left
+            && !self.has_comment_between(lhs.span.lo(), rhs.span.lo())
+        {
+            self.estimate_assignment_size(lhs.span)
+        } else {
+            lhs_size
+        };
         self.print_expr(lhs);
         self.word(" =");
         self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
