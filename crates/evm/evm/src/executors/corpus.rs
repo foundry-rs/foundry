@@ -65,7 +65,7 @@ use foundry_evm_fuzz::{
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
 use proptest::test_runner::TestRunner;
-use revm::context::Block;
+use revm::{context::Block, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -1211,7 +1211,13 @@ impl WorkerCorpus {
                     .as_ref()
                     .and_then(|cheatcodes| cheatcodes.block.as_ref())
                     .unwrap_or(&executor.evm_env().block_env);
-                sequence_from_test_trace(&observed, &targets, block.timestamp(), block.number())
+                sequence_from_test_trace(
+                    &observed,
+                    &targets,
+                    block.timestamp(),
+                    block.number(),
+                    executor.spec_id().into(),
+                )
             }) else {
                 continue;
             };
@@ -1750,6 +1756,7 @@ fn sequence_from_test_trace(
     targets: &TargetedContracts,
     mut timestamp: U256,
     mut block_number: U256,
+    spec_id: SpecId,
 ) -> Option<Vec<BasicTxDetails>> {
     let mut next_timestamp = timestamp;
     let mut next_block_number = block_number;
@@ -1768,7 +1775,13 @@ fn sequence_from_test_trace(
                     if call.depth != 1 {
                         return None;
                     }
-                    next_block_number = rollCall::abi_decode(&call.calldata).ok()?.newHeight;
+                    let new_height = rollCall::abi_decode(&call.calldata).ok()?.newHeight;
+                    // Prague rolls also write EIP-2935 history, which replaying a block-number
+                    // delta cannot reproduce. Reject the entire seed, including earlier calls.
+                    if spec_id >= SpecId::PRAGUE && new_height > next_block_number {
+                        return None;
+                    }
+                    next_block_number = new_height;
                 }
                 // Snapshot restoration can undo target calls and environment changes, but the
                 // observed trace does not retain enough snapshot state to reproduce that exactly.
@@ -3018,8 +3031,14 @@ mod tests {
             target_call(),
         ];
 
-        let sequence =
-            sequence_from_test_trace(&observed, &targets, U256::from(100), U256::from(10)).unwrap();
+        let sequence = sequence_from_test_trace(
+            &observed,
+            &targets,
+            U256::from(100),
+            U256::from(10),
+            SpecId::CANCUN,
+        )
+        .unwrap();
 
         assert_eq!(sequence.len(), 2);
         assert_eq!(sequence[0].warp, Some(U256::from(5)));
@@ -3032,11 +3051,47 @@ mod tests {
                 && tx.call_details.value == Some(U256::from(7))
         }));
 
+        for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
+            assert!(
+                sequence_from_test_trace(
+                    &observed,
+                    &targets,
+                    U256::from(100),
+                    U256::from(10),
+                    spec_id,
+                )
+                .is_none()
+            );
+
+            let unchanged_block = [
+                cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+                cheatcode_call(rollCall { newHeight: U256::from(10) }.abi_encode()),
+                target_call(),
+            ];
+            let sequence = sequence_from_test_trace(
+                &unchanged_block,
+                &targets,
+                U256::from(100),
+                U256::from(10),
+                spec_id,
+            )
+            .unwrap();
+            assert_eq!(sequence.len(), 1);
+            assert_eq!(sequence[0].warp, Some(U256::from(5)));
+            assert_eq!(sequence[0].roll, None);
+        }
+
         let backwards =
             [cheatcode_call(warpCall { newTimestamp: U256::from(99) }.abi_encode()), target_call()];
         assert!(
-            sequence_from_test_trace(&backwards, &targets, U256::from(100), U256::from(10))
-                .is_none()
+            sequence_from_test_trace(
+                &backwards,
+                &targets,
+                U256::from(100),
+                U256::from(10),
+                SpecId::CANCUN
+            )
+            .is_none()
         );
 
         for calldata in [
@@ -3052,8 +3107,14 @@ mod tests {
                 target_call(),
             ];
             assert!(
-                sequence_from_test_trace(&restored, &targets, U256::from(100), U256::from(10))
-                    .is_none()
+                sequence_from_test_trace(
+                    &restored,
+                    &targets,
+                    U256::from(100),
+                    U256::from(10),
+                    SpecId::CANCUN
+                )
+                .is_none()
             );
         }
     }
