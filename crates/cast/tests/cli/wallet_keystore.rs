@@ -879,3 +879,19 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     assert_eq!(decrypted_private_key, test_private_key);
 });
+
+casttest!(malformed_dotenv_warns_without_exposing_values, |prj, cmd| {
+    fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
+    cmd.args([
+        "wallet",
+        "address",
+        "--private-key",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf\n")
+    .stderr_eq(str![[r#"
+Warning: Failed to load [..]/.env: invalid syntax; remaining variables were not loaded
+
+"#]]);
+});

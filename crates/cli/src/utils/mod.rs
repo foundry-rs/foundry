@@ -226,7 +226,16 @@ pub fn load_dotenv() {
     }
 
     for path in paths {
-        dotenvy::from_path(path).ok();
+        if let Err(err) = dotenvy::from_path(&path) {
+            // Parse errors contain the source line, which may include secrets.
+            let reason = match err {
+                dotenvy::Error::LineParse(..) => {
+                    "invalid syntax; remaining variables were not loaded".to_string()
+                }
+                _ => err.to_string(),
+            };
+            let _ = foundry_common::sh_warn!("Failed to load {}: {}", path.display(), reason);
+        }
     }
 }
 
