@@ -2288,11 +2288,7 @@ impl TestArgs {
                     }
                 }
             }
-            if !has_tests {
-                sh_warn!(
-                    "No tests found in project! Forge looks for functions that start with `test`"
-                )?;
-            } else {
+            if has_tests {
                 let mut msg = format!("no tests match the provided pattern:\n{filter}");
                 // Try to suggest a test when there's no match.
                 if let Some(test_pattern) = &filter.args().test_pattern
@@ -2302,6 +2298,10 @@ impl TestArgs {
                     write!(msg, "\nDid you mean `{suggestion}`?")?;
                 }
                 sh_warn!("{msg}")?;
+            } else {
+                sh_warn!(
+                    "No tests found in project! Forge looks for functions that start with `test`"
+                )?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
