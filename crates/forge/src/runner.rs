@@ -5762,12 +5762,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> EvmFuzzState {
         let literals =
             if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
-        if let Some(db) = self.executor.backend().active_fork_db() {
+        let mut state = if let Some(db) = self.executor.backend().active_fork_db() {
             EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         } else {
             let db = self.executor.backend().mem_db();
             EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
+        };
+        let guidance = &self.cr.mcr.fuzz_guidance;
+        if !guidance.is_empty() {
+            state.set_guidance(Arc::clone(guidance));
         }
+        state
     }
 }
 

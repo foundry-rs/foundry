@@ -12,12 +12,43 @@ use alloy_primitives::{Address, U256};
 use eyre::{Result, eyre};
 use foundry_config::InvariantConfig;
 use proptest::{prelude::*, test_runner::TestRunner};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Default)]
 struct PlannedCalls {
     generation: u64,
     calls: Vec<BoxedStrategy<CallDetails>>,
+    /// Cumulative guidance selector weights of `calls`, empty without selector guidance.
+    cumulative_weights: Vec<u64>,
+}
+
+impl PlannedCalls {
+    /// Picks a call using the drawn random choice.
+    fn select(&self, choice: CallChoice) -> &BoxedStrategy<CallDetails> {
+        match choice {
+            CallChoice::Uniform(selector) => selector.select(self.calls.iter()),
+            CallChoice::Weighted(index) => match self.cumulative_weights.last() {
+                Some(&total) if total > 0 => {
+                    let point = index.index(total as usize) as u64;
+                    let call = self.cumulative_weights.partition_point(|&weight| weight <= point);
+                    &self.calls[call]
+                }
+                // Every function has weight 0: ignore the weights rather than generating nothing.
+                _ => index.get(&self.calls),
+            },
+        }
+    }
+}
+
+/// Random choice used to pick the next invariant call.
+///
+/// Values are drawn and consumed once per generated call, so boxing the selector would only add
+/// an allocation.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+enum CallChoice {
+    Uniform(prop::sample::Selector),
+    Weighted(prop::sample::Index),
 }
 
 /// Concrete generator for stateless and invariant transactions.
@@ -73,15 +104,23 @@ impl TxGenerator {
         let dictionary_weight = config.dictionary.dictionary_weight;
         let payable_value_weight = config.corpus.payable_value_weight;
         let planned = Rc::new(RefCell::new(PlannedCalls::default()));
-        let strategy = any::<prop::sample::Selector>()
-            .prop_flat_map(move |selector| {
+        let guidance = state.with_dictionary(|dict| Arc::clone(dict.guidance()));
+        // Only draw a weighted index when selector guidance is present, so unguided runs stay
+        // reproducible.
+        let choice = if guidance.selector_weights().is_empty() {
+            any::<prop::sample::Selector>().prop_map(CallChoice::Uniform).boxed()
+        } else {
+            any::<prop::sample::Index>().prop_map(CallChoice::Weighted).boxed()
+        };
+        let strategy = choice
+            .prop_flat_map(move |choice| {
                 let sender = select_sender(&state, senders.clone(), dictionary_weight);
                 let call = {
                     let generation = contracts.fuzzed_functions_generation();
                     let mut planned = planned.borrow_mut();
                     if planned.generation != generation || planned.calls.is_empty() {
-                        planned.calls = contracts
-                            .fuzzed_functions()
+                        let fuzzed_functions = contracts.fuzzed_functions();
+                        planned.calls = fuzzed_functions
                             .iter()
                             .map(|(target, function)| {
                                 Self::call_strategy(
@@ -94,9 +133,24 @@ impl TxGenerator {
                                 )
                             })
                             .collect();
+                        planned.cumulative_weights.clear();
+                        if !guidance.selector_weights().is_empty() {
+                            let targets = contracts.targets();
+                            let mut total = 0u64;
+                            for (target, function) in fuzzed_functions.iter() {
+                                let weight = targets
+                                    .get(target)
+                                    .and_then(|contract| {
+                                        guidance.selector_weight(&contract.identifier, function)
+                                    })
+                                    .unwrap_or(1);
+                                total += u64::from(weight);
+                                planned.cumulative_weights.push(total);
+                            }
+                        }
                         planned.generation = generation;
                     }
-                    selector.select(planned.calls.iter()).clone()
+                    planned.select(choice).clone()
                 };
                 let warp = optional_delay(config.max_time_delay);
                 let roll = optional_delay(config.max_block_delay);
@@ -175,7 +229,10 @@ fn select_sender(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::invariant::{TargetedContract, TargetedContracts};
+    use crate::{
+        FuzzGuidance,
+        invariant::{TargetedContract, TargetedContracts},
+    };
     use alloy_json_abi::JsonAbi;
     use foundry_config::FuzzDictionaryConfig;
     use revm::database::{CacheDB, EmptyDB};
@@ -245,6 +302,40 @@ mod tests {
         identified.clear_created_contracts(vec![removed]);
         for _ in 0..32 {
             assert_eq!(generator.next_tx(&mut runner).unwrap().call_details.target, retained);
+        }
+    }
+
+    #[test]
+    fn invariant_generator_skips_zero_weight_functions() {
+        let target = Address::with_last_byte(1);
+        let keep = Function::parse("keep(uint256)").unwrap();
+        let skip = Function::parse("skip(uint256)").unwrap();
+        let keep_selector = keep.selector();
+        let mut abi = JsonAbi::new();
+        for function in [keep, skip] {
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+        }
+        let mut targets = TargetedContracts::new();
+        targets.insert(target, TargetedContract::new("src/Target.sol:Target".into(), abi));
+        let mut state = EvmFuzzState::test();
+        state.set_guidance(Arc::new(
+            FuzzGuidance::from_json(
+                r#"{"version": 1, "selector_weights": {"Target.skip(uint256)": 0}}"#,
+            )
+            .unwrap(),
+        ));
+        let generator = TxGenerator::invariant(
+            state.into_invariant(),
+            SenderFilters::default(),
+            FuzzRunIdentifiedContracts::new(targets, false),
+            InvariantConfig::default(),
+            FuzzFixtures::default(),
+        );
+        let mut runner = TestRunner::deterministic();
+
+        for _ in 0..64 {
+            let tx = generator.next_tx(&mut runner).unwrap();
+            assert_eq!(tx.call_details.calldata[..4], keep_selector[..]);
         }
     }
 }

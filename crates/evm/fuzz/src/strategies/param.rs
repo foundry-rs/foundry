@@ -1,4 +1,7 @@
-use super::{UintStrategy, state::DictionaryRead};
+use super::{
+    UintStrategy,
+    state::{DictionaryRead, FuzzDictionary},
+};
 use crate::{
     invariant::SenderFilters,
     strategies::mutators::{
@@ -137,14 +140,34 @@ pub(crate) fn fuzz_param_from_state(
         // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
         // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
         // entire dictionary.
-        any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
-            state.with_dictionary(|dict| {
-                let values = if bias { dict.samples(&param) } else { None }
-                    .unwrap_or_else(|| dict.values())
-                    .as_slice();
-                values[index.index(values.len())]
-            })
-        })
+        let select = move |dict: &FuzzDictionary, bias: bool, index: prop::sample::Index| {
+            let values =
+                if bias { dict.samples(&param) } else { None }.unwrap_or_else(|| dict.values());
+            let values = values.as_slice();
+            values[index.index(values.len())]
+        };
+        // With external guidance, half of the dictionary picks use guidance words. The extra
+        // random draw only happens when guidance is present, so unguided runs stay reproducible.
+        if state.with_dictionary(|dict| dict.guidance().dictionary().is_empty()) {
+            any::<(bool, prop::sample::Index)>()
+                .prop_map(move |(bias, index)| {
+                    state.with_dictionary(|dict| select(dict, bias, index))
+                })
+                .boxed()
+        } else {
+            any::<(bool, bool, prop::sample::Index)>()
+                .prop_map(move |(guided, bias, index)| {
+                    state.with_dictionary(|dict| {
+                        let guidance = dict.guidance().dictionary();
+                        if guided {
+                            guidance[index.index(guidance.len())]
+                        } else {
+                            select(dict, bias, index)
+                        }
+                    })
+                })
+                .boxed()
+        }
     };
 
     // Convert the value based on the parameter type
@@ -550,7 +573,7 @@ pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        FuzzFixtures,
+        FuzzFixtures, FuzzGuidance,
         strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
     use alloy_dyn_abi::{DynSolType, DynSolValue};
@@ -562,7 +585,7 @@ mod tests {
         test_runner::TestRunner,
     };
     use revm::database::{CacheDB, EmptyDB};
-    use std::collections::HashSet;
+    use std::{collections::HashSet, sync::Arc};
 
     #[test]
     fn payable_value_weight_controls_non_zero_msg_value() {
@@ -828,5 +851,25 @@ mod tests {
 
         assert!(!got_excluded, "select_random_address should not select excluded addresses");
         assert!(got_valid, "select_random_address should select valid (non-excluded) addresses");
+    }
+
+    #[test]
+    fn guidance_dictionary_values_are_sampled_after_revert() {
+        let magic = U256::from(0xdeadbeefcafe1234_u64);
+        let mut state = EvmFuzzState::test();
+        state.set_guidance(Arc::new(
+            FuzzGuidance::from_json(r#"{"version": 1, "dictionary": ["0xdeadbeefcafe1234"]}"#)
+                .unwrap(),
+        ));
+        let state = state.into_invariant();
+        state.collect_values([B256::repeat_byte(0x11)]);
+        state.revert();
+
+        let strategy = super::fuzz_param_from_state(&DynSolType::Uint(256), &state);
+        let mut runner = TestRunner::deterministic();
+        let found = (0..64).any(|_| {
+            strategy.new_tree(&mut runner).unwrap().current() == DynSolValue::Uint(magic, 256)
+        });
+        assert!(found, "guidance value should be sampled from the dictionary");
     }
 }

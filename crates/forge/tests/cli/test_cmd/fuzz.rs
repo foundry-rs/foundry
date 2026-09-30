@@ -6146,6 +6146,116 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 });
 
+forgetest_init!(fuzz_guidance_dictionary_finds_magic_value, |prj, cmd| {
+    prj.add_test(
+        "FuzzGuidance.t.sol",
+        r#"
+contract FuzzGuidanceTest {
+    // keccak256(abi.encode(uint256(0xdeadbeefcafe1234))), so the magic value is not a literal.
+    bytes32 constant MAGIC_HASH =
+        0xbb99c66306f201effa2f94df8e07fb28f41aa450530f91a5bb0a8d0611f9217d;
+
+    function testFuzz_magic(uint256 x) public pure {
+        require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
+    }
+}
+   "#,
+    );
+    prj.create_file("guidance.json", r#"{ "version": 1, "dictionary": ["0xdeadbeefcafe1234"] }"#);
+
+    let args = ["test", "--mc", "FuzzGuidanceTest", "--fuzz-seed", "1", "--fuzz-runs", "64", "-j1"];
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testFuzz_magic(uint256) (runs: 64, [AVG_GAS])
+...
+"#]]);
+
+    cmd.forge_fuse().args(args).args(["--fuzz-guidance", "guidance.json"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: magic value found; counterexample: calldata=0xb6755d45000000000000000000000000000000000000000000000000deadbeefcafe1234 args=[16045690984503054900 [1.604e19]]] testFuzz_magic(uint256) (runs: 9, [AVG_GAS])
+...
+"#]],
+    );
+});
+
+forgetest_init!(fuzz_guidance_zero_selector_weight_excludes_function, |prj, cmd| {
+    prj.add_test(
+        "FuzzGuidanceSelectors.t.sol",
+        r#"
+contract GuidedTarget {
+    bool public poked;
+
+    function safe(uint256) public {}
+
+    function poke() public {
+        poked = true;
+    }
+}
+
+contract FuzzGuidanceSelectorsTest {
+    GuidedTarget target;
+
+    function setUp() public {
+        target = new GuidedTarget();
+    }
+
+    function invariant_notPoked() public view {
+        require(!target.poked(), "poked");
+    }
+}
+   "#,
+    );
+    prj.create_file(
+        "guidance.json",
+        r#"{ "version": 1, "selector_weights": { "GuidedTarget.poke()": 0 } }"#,
+    );
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 10;
+        config.invariant.show_metrics = false;
+    });
+
+    // Run the guided campaign first so the unguided failure is not persisted and replayed.
+    let args = ["test", "--mc", "FuzzGuidanceSelectorsTest", "--fuzz-seed", "1"];
+    cmd.args(args).args(["--fuzz-guidance", "guidance.json"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_notPoked() (runs: 10, calls: 100, reverts: 0)
+...
+"#
+    ]]);
+
+    cmd.forge_fuse().args(args).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: poked]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[test/FuzzGuidanceSelectors.t.sol:GuidedTarget][..] calldata=poke() args=[]
+ invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
+...
+"#]]);
+});
+
+forgetest_init!(fuzz_guidance_rejects_unsupported_version, |prj, cmd| {
+    prj.add_test(
+        "FuzzGuidanceVersion.t.sol",
+        r#"
+contract FuzzGuidanceVersionTest {
+    function testFuzz_value(uint256) public pure {}
+}
+   "#,
+    );
+    prj.create_file("guidance.json", r#"{ "version": 2 }"#);
+
+    cmd.args(["test", "--fuzz-guidance", "guidance.json"]).assert_failure().stderr_eq(str![[r#"
+Error: invalid fuzz guidance file [..]guidance.json
+
+Context:
+- unsupported fuzz guidance version 2, expected 1
+
+"#]]);
+});
+
 fn random_failure_reason(stdout: &str) -> String {
     Regex::new(r"\[FAIL: (Random\([^)]+\))")
         .unwrap()

@@ -2232,7 +2232,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
-    "timeout": null
+    "timeout": null,
+    "guidance": null
   },
   "invariant": {
     "runs": 256,

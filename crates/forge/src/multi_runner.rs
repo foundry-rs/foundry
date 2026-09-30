@@ -30,7 +30,7 @@ use foundry_evm::{
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fork::CreateFork,
     fuzz::{
-        BaseCounterExample, BasicTxDetails,
+        BaseCounterExample, BasicTxDetails, FuzzGuidance,
         strategies::{EnumBounds, LiteralsDictionary},
     },
     inspectors::{CheatsConfig, EdgeIndexMap},
@@ -86,6 +86,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub invariant_literals: LiteralsDictionary,
     /// Variant counts for project enums, used to constrain fuzzed enum inputs.
     pub enum_bounds: EnumBounds,
+    /// External guidance for fuzz and invariant campaigns.
+    pub fuzz_guidance: Arc<FuzzGuidance>,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -917,6 +919,11 @@ impl MultiContractRunnerBuilder {
             literals(invariant_max_literals)
         };
 
+        let fuzz_guidance = match &self.config.fuzz.guidance {
+            Some(path) => Arc::new(FuzzGuidance::load(&self.config.root.join(path))?),
+            None => Default::default(),
+        };
+
         let fork_chain_id = self.fork_chain_id.or_else(|| {
             (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)
         });
@@ -941,6 +948,7 @@ impl MultiContractRunnerBuilder {
             fuzz_literals,
             invariant_literals,
             enum_bounds,
+            fuzz_guidance,
 
             tcfg: TestRunnerConfig {
                 evm_opts,
