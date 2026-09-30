@@ -400,6 +400,7 @@ async fn base_standalone_denim_initializes_base_time() {
                 .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode())
                 .into(),
         )
+        .block(BlockId::latest())
         .await
         .unwrap();
     assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(), 0);
@@ -415,6 +416,7 @@ async fn base_standalone_denim_initializes_base_time() {
                 .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode())
                 .into(),
         )
+        .block(BlockId::latest())
         .await
         .unwrap();
     assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(), 200);
@@ -426,6 +428,7 @@ async fn base_standalone_denim_initializes_base_time() {
                 .with_input(IBaseTime::timestampMsCall {}.abi_encode())
                 .into(),
         )
+        .block(BlockId::latest())
         .await
         .unwrap();
     let timestamp_ms = IBaseTime::timestampMsCall::abi_decode_returns(&timestamp_ms).unwrap();
@@ -448,6 +451,7 @@ async fn base_standalone_denim_mines_base_time_updates() {
                     .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode())
                     .into(),
             )
+            .block(BlockId::latest())
             .await
             .unwrap();
         assert_eq!(
@@ -493,6 +497,102 @@ async fn base_standalone_denim_system_transactions_are_valid() {
         base_time.source_hash,
         DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number: block.header.number })
             .source_hash()
+    );
+
+    // Block hashes are canonical deposit hashes and resolve through the transaction APIs.
+    for hash in hashes {
+        let raw = api.raw_transaction(hash).await.unwrap().unwrap();
+        assert_eq!(keccak256(&raw), hash);
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert_eq!(receipt.transaction_hash, hash);
+        assert!(receipt.status());
+        assert!(provider.get_transaction_by_hash(hash).await.unwrap().is_some());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_standalone_denim_pending_state_includes_system_transactions() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let call = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_to(Predeploys::BASE_TIME)
+            .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode()),
+    );
+
+    for _ in 0..4 {
+        api.mine_one().await.unwrap();
+    }
+    let latest = provider.call(call.clone()).block(BlockId::latest()).await.unwrap();
+    assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&latest).unwrap(), 800);
+
+    // Block 5 rolls over to a new second; pending state must already reflect its deposit.
+    let pending = provider.call(call.clone()).block(BlockId::pending()).await.unwrap();
+    assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&pending).unwrap(), 0);
+
+    api.mine_one().await.unwrap();
+    let mined = provider.call(call).block(BlockId::latest()).await.unwrap();
+    assert_eq!(mined, pending);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_fork_denim_preserves_l1_fee_state() {
+    let source_config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
+    let (source_api, source_handle) = spawn(source_config).await;
+    // Give the source chain L1 fee parameters that differ from the standalone defaults.
+    for slot in 0..8u64 {
+        source_api
+            .anvil_set_storage_at(
+                Predeploys::L1_BLOCK_INFO,
+                U256::from(slot),
+                B256::from(U256::from(0x1234_5678_u64 + slot)),
+            )
+            .await
+            .unwrap();
+    }
+    source_api.mine_one().await.unwrap();
+    assert!(
+        source_handle.http_provider().get_code_at(Predeploys::BASE_TIME).await.unwrap().is_empty()
+    );
+
+    let target_config = NodeConfig::test_base()
+        .with_hardfork(Some(BaseUpgrade::Denim.into()))
+        .with_eth_rpc_url(Some(source_handle.http_endpoint()));
+    let (target_api, target_handle) = spawn(target_config).await;
+    let provider = target_handle.http_provider();
+
+    let l1_block_state = async || {
+        let mut slots = Vec::new();
+        for slot in 0..8u64 {
+            slots.push(
+                provider.get_storage_at(Predeploys::L1_BLOCK_INFO, U256::from(slot)).await.unwrap(),
+            );
+        }
+        slots
+    };
+    let before = l1_block_state().await;
+    target_api.mine_one().await.unwrap();
+    assert_eq!(l1_block_state().await, before, "fork L1Block state must not be overwritten");
+
+    // Only the BaseTime deposit prefixes forked Denim blocks, and it succeeds.
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let hashes = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(hashes.len(), 1);
+    let receipt = provider.get_transaction_receipt(hashes[0]).await.unwrap().unwrap();
+    assert!(receipt.status());
+    let millis_part = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(Predeploys::BASE_TIME)
+                .with_input(IBaseTime::timestampMillisPartCall {}.abi_encode()),
+        ))
+        .block(BlockId::latest())
+        .await
+        .unwrap();
+    assert_eq!(
+        IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(),
+        u16::try_from(block.header.number % 5).unwrap() * 200
     );
 }
 

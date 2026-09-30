@@ -895,6 +895,35 @@ const DEFAULT_BASE_L1_BASE_FEE: u64 = 1_000_000_000;
 #[cfg(feature = "base")]
 const DEFAULT_BASE_L1_FEE_SCALAR: u32 = 1_000_000;
 
+/// Installs the BaseTime proxy and links its Denim implementation.
+///
+/// Standalone genesis owns the proxy admin and always resets it. A fork must not rewrite an
+/// inherited deployment, so the proxy code and admin are only seeded when the account has no code.
+#[cfg(feature = "base")]
+fn ensure_base_time_predeploy(
+    mut db: &mut dyn crate::eth::backend::db::Db,
+    reset_admin: bool,
+) -> Result<(), DatabaseError> {
+    let mut proxy = db.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
+    let missing_code = proxy.code.as_ref().is_none_or(|code| code.is_empty());
+    if missing_code {
+        let code = revm::state::Bytecode::new_raw(BaseTime::proxy_bytecode());
+        proxy.code_hash = code.hash_slow();
+        proxy.code = Some(code);
+        db.insert_account(Predeploys::BASE_TIME, proxy);
+    }
+    if reset_admin || missing_code {
+        db.set_storage_at(
+            Predeploys::BASE_TIME,
+            B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            B256::from(U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()).to_be_bytes::<32>()),
+        )?;
+    }
+    let upgrades = ChainUpgrades::new([(BaseUpgrade::Denim, ForkCondition::Timestamp(1))]);
+    BaseTime::ensure_predeploy(upgrades, 1, &mut db)
+        .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!(err))))
+}
+
 fn tempo_nonce(
     state: &dyn DatabaseRef,
     caller: Address,
@@ -1550,11 +1579,7 @@ impl<N: Network> Backend<N> {
             is_system_transaction: false,
             input: input.into(),
         }));
-        let pending = anvil_core::eth::transaction::PendingTransaction::with_impersonated(
-            transaction,
-            SystemAddresses::DEPOSITOR_ACCOUNT,
-        );
-        Some(Arc::new(PoolTransaction::new(pending)))
+        Some(Self::system_deposit(transaction))
     }
 
     /// Builds a deterministic L1-info deposit for a local Denim block.
@@ -1570,7 +1595,9 @@ impl<N: Network> Backend<N> {
         timestamp: u64,
         l1_block_hash: B256,
     ) -> Option<Arc<PoolTransaction<FoundryTxEnvelope>>> {
-        if !self.is_base() || self.base_upgrade() < BaseUpgrade::Denim {
+        // Forks inherit live `L1Block` fee parameters; writing the standalone defaults over them
+        // would change L1 fees for every later transaction.
+        if !self.is_base() || self.is_fork() || self.base_upgrade() < BaseUpgrade::Denim {
             return None;
         }
 
@@ -1601,11 +1628,34 @@ impl<N: Network> Backend<N> {
             is_system_transaction: false,
             input: input.into(),
         }));
-        let pending = anvil_core::eth::transaction::PendingTransaction::with_impersonated(
-            transaction,
-            SystemAddresses::DEPOSITOR_ACCOUNT,
-        );
-        Some(Arc::new(PoolTransaction::new(pending)))
+        Some(Self::system_deposit(transaction))
+    }
+
+    /// Wraps a protocol deposit for block execution.
+    ///
+    /// Deposits carry their sender explicitly, so recovery keeps the canonical transaction hash
+    /// instead of the synthetic hash Anvil assigns to impersonated transactions.
+    #[cfg(feature = "base")]
+    fn system_deposit(transaction: FoundryTxEnvelope) -> Arc<PoolTransaction<FoundryTxEnvelope>> {
+        let pending = anvil_core::eth::transaction::PendingTransaction::new(transaction)
+            .expect("deposit sender is explicit");
+        Arc::new(PoolTransaction::new(pending))
+    }
+
+    /// Returns the protocol deposits that prefix a local Base block, in canonical order.
+    ///
+    /// Mined and pending blocks share this prefix so pending calls observe the same BaseTime and
+    /// L1-info state the next mined block will.
+    #[cfg(feature = "base")]
+    fn base_system_transactions(
+        &self,
+        block_number: u64,
+        timestamp: u64,
+        parent_hash: B256,
+    ) -> impl Iterator<Item = Arc<PoolTransaction<FoundryTxEnvelope>>> {
+        self.l1_info_update_transaction(block_number, timestamp, parent_hash)
+            .into_iter()
+            .chain(self.base_time_update_transaction(block_number))
     }
 
     /// Returns the timestamp for the next block after applying Base's 200 ms cadence.
@@ -4724,25 +4774,7 @@ impl<N: Network> Backend<N> {
                 ensure_create2_deployer(upgrades, 1, &mut erased)?;
             }
             if upgrade >= BaseUpgrade::Denim {
-                let mut proxy = erased.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
-                if proxy.code.as_ref().is_none_or(|code| code.is_empty()) {
-                    let code = revm::state::Bytecode::new_raw(BaseTime::proxy_bytecode());
-                    proxy.code_hash = code.hash_slow();
-                    proxy.code = Some(code);
-                    erased.insert_account(Predeploys::BASE_TIME, proxy);
-                }
-
-                erased.set_storage_at(
-                    Predeploys::BASE_TIME,
-                    B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
-                    B256::from(
-                        U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()).to_be_bytes::<32>(),
-                    ),
-                )?;
-                let upgrades =
-                    ChainUpgrades::new([(BaseUpgrade::Denim, ForkCondition::Timestamp(1))]);
-                BaseTime::ensure_predeploy(upgrades, 1, &mut erased)
-                    .map_err(|err| DatabaseError::AnyRequest(Arc::new(eyre::eyre!(err))))?;
+                ensure_base_time_predeploy(erased, true)?;
             }
             if upgrade >= BaseUpgrade::Zenith {
                 // Zenith is genesis-only and is not stored by ChainUpgrades.
@@ -4838,6 +4870,13 @@ impl<N: Network> Backend<N> {
             db_guard.insert_account(address, info);
         }
         self.genesis.apply_genesis_json_alloc(&mut **db_guard)?;
+        // A fork taken before the remote chain activated Denim has no BaseTime deployment, but
+        // Denim blocks mined locally still send the BaseTime deposit. Existing deployments and
+        // their admin are preserved.
+        #[cfg(feature = "base")]
+        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+            ensure_base_time_predeploy(&mut **db_guard, false)?;
+        }
         drop(db_guard);
         self.apply_funded_accounts(user.db()).await
     }
@@ -6187,9 +6226,7 @@ where
 
                 #[cfg(feature = "base")]
                 let protocol_transactions = self
-                    .l1_info_update_transaction(block_number, block_timestamp, best_hash)
-                    .into_iter()
-                    .chain(self.base_time_update_transaction(block_number))
+                    .base_system_transactions(block_number, block_timestamp, best_hash)
                     .chain(pool_transactions.iter().cloned())
                     .collect::<Vec<_>>();
                 #[cfg(not(feature = "base"))]
@@ -6471,6 +6508,17 @@ where
         let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
+        let block_number = self.best_number().saturating_add(1);
+
+        #[cfg(feature = "base")]
+        let pool_transactions = self
+            .base_system_transactions(
+                block_number,
+                evm_env.block_env.timestamp.saturating_to(),
+                parent_hash,
+            )
+            .chain(pool_transactions)
+            .collect::<Vec<_>>();
 
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
@@ -6494,7 +6542,6 @@ where
         let cache_db = cache_db.0;
 
         let state_root = cache_db.maybe_state_root().unwrap_or_default();
-        let block_number = self.best_number().saturating_add(1);
         let block_info = self.build_block_info(
             &evm_env,
             parent_hash,
