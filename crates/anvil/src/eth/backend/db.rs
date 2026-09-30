@@ -290,7 +290,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
 /// pre-state lookup treat both as absent. An account that already exists while empty, from genesis
 /// or before Spurious Dragon, is also reported as absent.
 #[derive(Debug)]
-pub struct EmptyAsAbsentDb<T>(pub T);
+pub(super) struct EmptyAsAbsentDb<T>(pub(super) T);
 
 impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
     type Error = T::Error;

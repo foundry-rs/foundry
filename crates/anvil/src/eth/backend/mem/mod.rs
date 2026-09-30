@@ -998,11 +998,10 @@ fn parity_trace_results(
     trace_types: &HashSet<TraceType>,
     db: impl revm::DatabaseRef<Error = DatabaseError>,
 ) -> Result<TraceResults, BlockchainError> {
-    Ok(inspector.into_parity_builder().into_trace_results_with_state(
-        result,
-        trace_types,
-        EmptyAsAbsentDb(db),
-    )?)
+    inspector
+        .into_parity_builder()
+        .into_trace_results_with_state(result, trace_types, EmptyAsAbsentDb(db))
+        .map_err(Into::into)
 }
 
 pub type State = foundry_evm::utils::StateChangeset;

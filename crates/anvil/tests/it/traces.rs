@@ -441,15 +441,28 @@ fn added_account(balance: &str, nonce: &str, code: &str) -> serde_json::Value {
     json!({"balance": {"+": balance}, "nonce": {"+": nonce}, "code": {"+": code}, "storage": {}})
 }
 
+/// Returns the `stateDiff` entry of an otherwise unchanged account whose balance changed.
+fn changed_balance(from: &str, to: &str) -> serde_json::Value {
+    json!({
+        "balance": {"*": {"from": from, "to": to}},
+        "nonce": "=",
+        "code": "=",
+        "storage": {},
+    })
+}
+
 /// PUSH1 0x2a PUSH1 0 MSTORE8 PUSH1 1 PUSH1 0 RETURN: deploys the runtime code `0x2a`.
 const INIT_RETURNING_2A: &str = "0x602a60005360016000f3";
+/// Stores 0x2a at slot zero, then deploys the runtime code `0x2a`.
+const INIT_STORING_AND_RETURNING_2A: &str = "0x602a600055602a60005360016000f3";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_call_state_diff_created_account() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
-    let created = from.create(provider.get_transaction_count(from).await.unwrap());
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let created = from.create(nonce);
 
     // PUSH1 0 PUSH1 0 RETURN deploys empty code, which is still marked as added.
     for (init, code) in [("0x60006000f3", "0x"), (INIT_RETURNING_2A, "0x2a")] {
@@ -459,6 +472,35 @@ async fn test_trace_call_state_diff_created_account() {
         let traces = trace_call_state_diff(&provider, tx).await;
         assert_eq!(state_diff_entry(&traces, created), Some(added_account("0x0", "0x1", code)));
     }
+
+    // A successful CREATE at a prefunded address changes the existing account, including storage.
+    let prefunded = from.create(nonce + 1);
+    let fund = TransactionRequest::default().from(from).to(prefunded).value(U256::from(7));
+    provider
+        .send_transaction(WithOtherFields::new(fund))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let tx = TransactionRequest::default()
+        .from(from)
+        .with_deploy_code(Bytes::from_hex(INIT_STORING_AND_RETURNING_2A).unwrap());
+    let traces = trace_call_state_diff(&provider, tx).await;
+    assert_eq!(
+        state_diff_entry(&traces, prefunded),
+        Some(json!({
+            "balance": "=",
+            "nonce": {"*": {"from": "0x0", "to": "0x1"}},
+            "code": {"*": {"from": "0x", "to": "0x2a"}},
+            "storage": {
+                (B256::ZERO.to_string()): {"*": {
+                    "from": B256::ZERO.to_string(),
+                    "to": B256::from(U256::from(42)).to_string(),
+                }},
+            },
+        }))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -480,12 +522,13 @@ async fn test_trace_call_state_diff_funded_account() {
 
     // An account that already exists is changed, not added.
     let funded = accounts[1].address();
+    let before = provider.get_balance(funded).await.unwrap();
     let tx = TransactionRequest::default().from(from).to(funded).value(U256::from(7));
     let traces = trace_call_state_diff(&provider, tx).await;
-    let entry = state_diff_entry(&traces, funded).unwrap();
-    assert!(entry["balance"].get("*").is_some(), "{entry}");
-    assert_eq!(entry["nonce"], "=");
-    assert_eq!(entry["code"], "=");
+    assert_eq!(
+        state_diff_entry(&traces, funded),
+        Some(changed_balance(&format!("{before:#x}"), &format!("{:#x}", before + U256::from(7)),))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -576,15 +619,38 @@ async fn test_trace_call_many_state_diff_funded_account() {
 
     assert_eq!(state_diff_entry(&traces[0], fresh), Some(added_account("0x7", "0x0", "0x")));
     // The second call sees the account the first one created.
-    assert_eq!(
-        state_diff_entry(&traces[1], fresh),
-        Some(json!({
-            "balance": {"*": {"from": "0x7", "to": "0xe"}},
-            "nonce": "=",
-            "code": "=",
-            "storage": {},
-        }))
-    );
+    assert_eq!(state_diff_entry(&traces[1], fresh), Some(changed_balance("0x7", "0xe")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_state_diff_selfdestruct_hardfork() {
+    let contract = Address::repeat_byte(0x55);
+
+    for (hardfork, expected) in [
+        (
+            EthereumHardfork::Shanghai,
+            json!({
+                "balance": {"-": "0x7"},
+                "nonce": {"-": "0x0"},
+                "code": {"-": "0x33ff"},
+                "storage": {},
+            }),
+        ),
+        (EthereumHardfork::Cancun, changed_balance("0x7", "0x0")),
+    ] {
+        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_wallets().next().unwrap().address();
+        api.anvil_set_code(contract, Bytes::from_hex("0x33ff").unwrap()).await.unwrap();
+        api.anvil_set_balance(contract, U256::from(7)).await.unwrap();
+        api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+
+        let traces =
+            trace_call_state_diff(&provider, TransactionRequest::default().from(from).to(contract))
+                .await;
+        assert!(traces.trace.iter().any(|trace| trace.action.is_selfdestruct()));
+        assert_eq!(state_diff_entry(&traces, contract), Some(expected), "{hardfork}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2435,39 +2501,56 @@ async fn test_trace_replay_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_trace_replay_state_diff_created_account() {
+async fn test_trace_replay_state_diff_account_lifecycle() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
+    let fresh = Address::repeat_byte(0x66);
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
 
-    let tx = TransactionRequest::default()
+    let create = TransactionRequest::default()
         .from(from)
+        .nonce(nonce)
         .with_deploy_code(Bytes::from_hex(INIT_RETURNING_2A).unwrap());
-    let receipt = provider
-        .send_transaction(WithOtherFields::new(tx))
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-    let created = receipt.contract_address.unwrap();
-    let expected = Some(added_account("0x0", "0x1", "0x2a"));
+    let create = provider.send_transaction(WithOtherFields::new(create)).await.unwrap();
+    let fund =
+        TransactionRequest::default().from(from).to(fresh).nonce(nonce + 1).value(U256::from(7));
+    let fund = provider.send_transaction(WithOtherFields::new(fund)).await.unwrap();
+    let update =
+        TransactionRequest::default().from(from).to(fresh).nonce(nonce + 2).value(U256::from(7));
+    let update = provider.send_transaction(WithOtherFields::new(update)).await.unwrap();
+    api.mine_one().await.unwrap();
 
-    let traces: TraceResults = provider
-        .client()
-        .request("trace_replayTransaction", (receipt.transaction_hash, vec![TraceType::StateDiff]))
-        .await
-        .unwrap();
-    assert_eq!(state_diff_entry(&traces, created), expected);
+    let create = create.get_receipt().await.unwrap();
+    let fund = fund.get_receipt().await.unwrap();
+    let update = update.get_receipt().await.unwrap();
+    let created = create.contract_address.unwrap();
+    let expected = [
+        (create.transaction_hash, created, added_account("0x0", "0x1", "0x2a")),
+        (fund.transaction_hash, fresh, added_account("0x7", "0x0", "0x")),
+        (update.transaction_hash, fresh, changed_balance("0x7", "0xe")),
+    ];
 
     let block = api
         .trace_replay_block_transactions(
-            receipt.block_number.unwrap().into(),
+            create.block_number.unwrap().into(),
             [TraceType::StateDiff].into_iter().collect(),
         )
         .await
         .unwrap();
-    assert_eq!(state_diff_entry(&block[0].full_trace, created), expected);
+    assert_eq!(block.len(), expected.len());
+
+    for (index, (hash, address, diff)) in expected.into_iter().enumerate() {
+        let traces: TraceResults = provider
+            .client()
+            .request("trace_replayTransaction", (hash, vec![TraceType::StateDiff]))
+            .await
+            .unwrap();
+        assert_eq!(state_diff_entry(&traces, address), Some(diff.clone()));
+        assert_eq!(block[index].transaction_hash, hash);
+        assert_eq!(state_diff_entry(&block[index].full_trace, address), Some(diff));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
