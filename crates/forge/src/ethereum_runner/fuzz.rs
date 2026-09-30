@@ -8,14 +8,12 @@ use evm2::{ethereum::intrinsic_gas, evm::Database};
 use eyre::{Result, ensure};
 use foundry_config::FuzzConfig;
 use foundry_evm::{
-    core::{
-        constants::{CALLER, MAGIC_ASSUME},
-        decode::RevertDecoder,
-    },
+    core::{constants::CALLER, decode::RevertDecoder},
     fuzz::{
         BaseCounterExample, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
         strategies::fuzz_calldata,
     },
+    session::CallStatus,
 };
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestError, TestRng, TestRunner};
 use std::{cell::RefCell, time::Instant};
@@ -59,7 +57,7 @@ pub(super) fn run<D: Database + Clone + 'static>(
         let mut execution = runner
             .run_test(calldata.clone(), U256::ZERO)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
-        if !execution.result.status && execution.result.output.as_ref() == MAGIC_ASSUME {
+        if execution.result.assumption_rejected() {
             return Err(TestCaseError::reject("vm.assume"));
         }
         if let Some(reason) = execution.skip_reason {
@@ -67,14 +65,14 @@ pub(super) fn run<D: Database + Clone + 'static>(
             return Err(TestCaseError::fail("skipped"));
         }
         HitMaps::merge_opt(&mut cases.borrow_mut().coverage, execution.line_coverage.take());
-        if !execution.result.status || execution.assertion_failed {
+        if execution.result.status() != CallStatus::Success || execution.assertion_failed {
             cases.borrow_mut().logs = execution.logs;
             let reason = if execution.assertion_failed {
                 "assertion failed".to_string()
             } else {
                 decoder
-                    .maybe_decode(&execution.result.output, None)
-                    .unwrap_or_else(|| format!("{:?}", execution.result.stop))
+                    .maybe_decode(execution.result.output(), None)
+                    .unwrap_or_else(|| execution.result.exit_reason())
             };
             return Err(TestCaseError::fail(reason));
         }
@@ -87,7 +85,7 @@ pub(super) fn run<D: Database + Clone + 'static>(
             0,
             U256::ZERO,
         );
-        let gas = execution.result.tx_gas_used();
+        let gas = execution.result.gas_used();
         let mut cases = cases.borrow_mut();
         cases.first.get_or_insert(FuzzCase { gas, stipend });
         cases.gas.push((gas, stipend));

@@ -27,6 +27,7 @@ use foundry_evm::{
     coverage::HitMaps,
     ethereum::{EthereumExecutor, EthereumInspectorStack},
     opts::EvmOpts,
+    session::{CallReport, CallRequest, CallStatus, ExecutionSession},
 };
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
@@ -178,7 +179,8 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                 let input: Bytes = function.selector().to_vec().into();
                 let execution = runner.run_test(input.clone(), U256::ZERO)?;
                 let result = &execution.result;
-                let raw_success = result.status && !execution.assertion_failed;
+                let raw_success =
+                    result.status() == CallStatus::Success && !execution.assertion_failed;
                 let success = raw_success;
                 let stipend = intrinsic_gas(
                     &self.env.version,
@@ -197,11 +199,11 @@ impl<D: Database + Clone + 'static> EthereumMultiContractRunner<D> {
                         } else {
                             self.prepared
                                 .revert_decoder
-                                .maybe_decode(&result.output, None)
-                                .unwrap_or_else(|| format!("{:?}", result.stop))
+                                .maybe_decode(result.output(), None)
+                                .unwrap_or_else(|| result.exit_reason())
                         }
                     }),
-                    kind: TestKind::Unit { gas: result.tx_gas_used().saturating_sub(stipend) },
+                    kind: TestKind::Unit { gas: result.gas_used().saturating_sub(stipend) },
                     logs: execution.logs,
                     duration: start.elapsed(),
                     line_coverage: runner.setup_coverage().cloned(),
@@ -253,10 +255,10 @@ pub(crate) struct EthereumTestConfig<'a> {
     coverage: bool,
 }
 
-/// One test transaction and the assertion status observed after it commits.
+/// One isolated test transaction and the assertion status of its prospective state.
 #[derive(Debug)]
 pub(crate) struct EthereumTestExecution {
-    pub result: TxResult,
+    pub result: CallReport,
     pub logs: Vec<Log>,
     pub assertion_failed: bool,
     pub skip_reason: Option<SkipReason>,
@@ -440,49 +442,60 @@ impl<D: Database + Clone + 'static> EthereumContractRunner<D> {
 
     /// Executes one test against an isolated copy of the state after `setUp`.
     pub(crate) fn run_test(&self, calldata: Bytes, value: U256) -> Result<EthereumTestExecution> {
-        let mut executor = self.executor.clone();
+        let mut session = ExecutionSession::from_ethereum(self.executor.clone());
         let mut logs = self.setup_logs.clone();
+        let mut line_coverage = None;
         if self.has_before_test_setup
             && let Some(selector) = calldata.get(..4)
         {
             let hook = EthereumTestHooks::beforeTestSetupCall {
                 testSelector: selector.try_into().expect("four-byte selector"),
             };
-            let preparatory = executor
-                .call_raw(CALLER, self.address, hook.abi_encode().into(), U256::ZERO)
+            let preparatory = session
+                .execute(CallRequest::new(
+                    CALLER,
+                    self.address.into(),
+                    hook.abi_encode().into(),
+                    U256::ZERO,
+                ))
+                .map(|pending| pending.discard())
                 .ok()
-                .filter(|result| result.status)
+                .filter(|result| result.status() == CallStatus::Success)
                 .and_then(|result| {
-                    EthereumTestHooks::beforeTestSetupCall::abi_decode_returns(&result.output).ok()
+                    EthereumTestHooks::beforeTestSetupCall::abi_decode_returns(result.output()).ok()
                 })
                 .unwrap_or_default();
             for input in preparatory {
-                let result = executor.transact_raw(CALLER, self.address, input, U256::ZERO)?;
-                logs.extend(executor.inspector_mut().take_logs());
-                if !result.status {
-                    let skip_reason = Self::take_skip_reason(&mut executor, &result);
+                let mut result = session
+                    .execute(CallRequest::new(CALLER, self.address.into(), input, U256::ZERO))?
+                    .accept();
+                logs.extend(result.take_logs());
+                HitMaps::merge_opt(&mut line_coverage, result.take_coverage());
+                if result.status() != CallStatus::Success {
+                    let skip_reason = result.skip_reason().cloned();
                     return Ok(EthereumTestExecution {
                         result,
                         logs,
                         assertion_failed: false,
                         skip_reason,
-                        line_coverage: executor.inspector_mut().take_line_coverage(),
+                        line_coverage,
                     });
                 }
             }
         }
-        let result = executor.transact_raw(CALLER, self.address, calldata, value)?;
-        logs.extend(executor.inspector_mut().take_logs());
-        let skip_reason = Self::take_skip_reason(&mut executor, &result);
-        let assertion_failed = result.status
-            && Self::assertion_failed(&mut executor, self.address, self.legacy_assertions)?;
-        Ok(EthereumTestExecution {
-            result,
-            logs,
-            assertion_failed,
-            skip_reason,
-            line_coverage: executor.inspector_mut().take_line_coverage(),
-        })
+        let mut pending =
+            session.execute(CallRequest::new(CALLER, self.address.into(), calldata, value))?;
+        let assertion_failed = if pending.report().status() == CallStatus::Success {
+            let facts = pending.test_facts(self.address, self.legacy_assertions)?;
+            facts.global_failure || facts.legacy_failure
+        } else {
+            false
+        };
+        let mut result = pending.discard();
+        logs.extend(result.take_logs());
+        let skip_reason = result.skip_reason().cloned();
+        HitMaps::merge_opt(&mut line_coverage, result.take_coverage());
+        Ok(EthereumTestExecution { result, logs, assertion_failed, skip_reason, line_coverage })
     }
 
     fn take_skip_reason(
@@ -571,8 +584,8 @@ mod tests {
         assert_eq!(runner.address(), sender.create(1));
         for _ in 0..2 {
             let execution = runner.run_test(test.selector().to_vec().into(), U256::ZERO).unwrap();
-            assert!(execution.result.status, "{:?}", execution.result);
-            assert_eq!(U256::from_be_slice(&execution.result.output), U256::from(2));
+            assert_eq!(execution.result.status(), CallStatus::Success);
+            assert_eq!(U256::from_be_slice(execution.result.output()), U256::from(2));
             assert!(execution.logs.is_empty());
             assert!(!execution.assertion_failed);
         }

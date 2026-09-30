@@ -1,11 +1,11 @@
 //! Executable campaign requirements for the evm2 foundation, without a second campaign runner.
 //!
-//! The executor probes stage a copy-on-write successor and publish it only after inspecting the
-//! result. The engine probes distinguish observation, acceptance, and backend export. These tests
+//! The session probes inspect a pending call and explicitly accept or discard its effects.
+//! The engine probes distinguish observation, acceptance, and backend export. These tests
 //! use the workspace's pinned evm2 fork; they do not establish mainline or full Forge parity.
 
 use alloy_consensus::{TxLegacy, transaction::Recovered};
-use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, TxKind, U256, hex};
 use alloy_sol_types::SolCall;
 use evm2::{
     SpecId,
@@ -20,11 +20,12 @@ use evm2::{
 use foundry_cheatcodes::{Vm, ethereum::CheatcodeAccessMode};
 use foundry_evm::{
     core::{
-        constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
+        constants::{CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, MAGIC_ASSUME},
         ethereum::{EthereumEnv, ForkState, LocalState, fork_db},
         opts::EvmOpts,
     },
     ethereum::{EthereumExecutor, EthereumFactory, EthereumInspectorStack},
+    session::{CallRequest, CallStatus, ExecutionSession, StateObservation},
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tiny_http::{Response, Server};
@@ -75,34 +76,21 @@ async fn fork_sequence_acceptance_and_reset_preserve_remote_state() {
 
 #[test]
 fn assumption_rejection_discards_delays_environment_and_retained_cheatcodes() {
-    let mut session = campaign_executor(true);
-    let original_nonce =
-        Database::get_account(session.state_mut(), &CALLER).unwrap().unwrap().nonce;
-    let mut candidate = session.clone();
-    candidate.env_mut().block.number += U256::from(3);
-    let result = candidate.transact_raw(CALLER, CONTRACT, Bytes::new(), U256::ZERO).unwrap();
-    assert!(!result.status);
-    assert_eq!(result.output.as_ref(), MAGIC_ASSUME);
-    // EVM rollback does not roll back the host's warp or diagnostic recording.
-    assert_eq!(candidate.env().block.timestamp, U256::from(999));
-    assert_eq!(recorded_logs(&candidate), 1);
-    assert_eq!(candidate.inspector_mut().take_logs().len(), 1);
-    assert_eq!(slot(candidate.state_mut()), U256::from(7));
-    assert_eq!(
-        Database::get_account(candidate.state_mut(), &CALLER).unwrap().unwrap().nonce,
-        original_nonce + 1,
-    );
-    drop(candidate);
-
-    assert_eq!(slot(session.state_mut()), U256::from(7));
-    assert_eq!(session.env().block.number, U256::ONE);
-    assert_eq!(session.env().block.timestamp, U256::from(123));
-    assert_eq!(recorded_logs(&session), 0);
-    assert!(session.inspector_mut().take_logs().is_empty());
-    assert_eq!(
-        Database::get_account(session.state_mut(), &CALLER).unwrap().unwrap().nonce,
-        original_nonce,
-    );
+    let mut session = ExecutionSession::from_ethereum(campaign_executor(true));
+    let original_nonce = session.nonce(CALLER).unwrap();
+    let mut request = CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO);
+    request.block_delay = U256::from(3);
+    let pending = session.execute(request).unwrap();
+    assert!(pending.report().assumption_rejected());
+    assert_eq!(pending.report().logs().len(), 1);
+    let report = pending.discard();
+    assert_eq!(report.output().as_ref(), MAGIC_ASSUME);
+    assert_eq!(report.logs().len(), 1);
+    assert_eq!(session.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(7));
+    assert_eq!(session.block_number(), U256::ONE);
+    assert_eq!(session.block_timestamp(), U256::from(123));
+    assert_eq!(recorded_logs(&mut session), 0);
+    assert_eq!(session.nonce(CALLER).unwrap(), original_nonce);
 }
 
 #[test]
@@ -112,15 +100,151 @@ fn ordinary_revert_can_be_accepted_without_accepting_its_storage_writes() {
         &CONTRACT,
         AccountInfo::default().with_code(Bytecode::new_legacy(hex!("5f546001015f555f5ffd").into())),
     );
-    let mut session = EthereumExecutor::new(environment(), state);
-    let mut candidate = session.clone();
-    let result = candidate.transact_raw(CALLER, CONTRACT, Bytes::new(), U256::ZERO).unwrap();
-    assert!(!result.status);
-    assert_ne!(result.output.as_ref(), MAGIC_ASSUME);
+    let mut session =
+        ExecutionSession::from_ethereum(recording_executor(state, CheatcodeAccessMode::Local));
+    let original_nonce = session.nonce(CALLER).unwrap();
+    let pending = session
+        .execute(CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO))
+        .unwrap();
+    assert_eq!(pending.report().status(), CallStatus::Revert);
+    assert!(!pending.report().assumption_rejected());
     // The campaign may retain this step even though execution reverted.
-    session = candidate;
-    assert_eq!(slot(session.state_mut()), U256::from(7));
-    assert_eq!(Database::get_account(session.state_mut(), &CALLER).unwrap().unwrap().nonce, 1);
+    let _ = pending.accept();
+    assert_eq!(session.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(7));
+    assert_eq!(session.nonce(CALLER).unwrap(), original_nonce + 1);
+}
+
+#[test]
+fn deployment_is_staged_and_can_be_repeated_after_discard() {
+    let mut session = ExecutionSession::from_ethereum(campaign_executor(false));
+    let nonce = session.nonce(CALLER).unwrap();
+    let address = CALLER.create(nonce);
+    // Initcode returning a one-byte STOP runtime.
+    let request =
+        CallRequest::new(CALLER, TxKind::Create, hex!("60005f5360015ff3").into(), U256::ZERO);
+    let pending = session.execute(request.clone()).unwrap();
+    assert_eq!(pending.report().status(), CallStatus::Success);
+    assert_eq!(pending.report().created_address(), Some(address));
+    let mut created = false;
+    pending.visit_state(|observation| {
+        if let StateObservation::Account(account) = observation
+            && account.address == address
+        {
+            created = account.created;
+        }
+    });
+    assert!(created);
+    let _ = pending.discard();
+    assert_eq!(session.nonce(address).unwrap(), 0);
+    let report = session.execute(request).unwrap().accept();
+    assert_eq!(report.created_address(), Some(address));
+    assert_eq!(session.nonce(address).unwrap(), 1);
+    assert_eq!(session.nonce(CALLER).unwrap(), nonce + 1);
+}
+
+#[test]
+fn dropped_calls_and_execution_errors_leave_the_whole_session_unchanged() {
+    let mut session = ExecutionSession::from_ethereum(campaign_executor(false));
+    let nonce = session.nonce(CALLER).unwrap();
+    let mut request = CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO);
+    request.block_delay = U256::from(3);
+    request.time_delay = U256::from(5);
+    drop(session.execute(request.clone()).unwrap());
+    request.gas_limit = Some(1);
+    assert!(session.execute(request).is_err());
+    assert_eq!(session.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(7));
+    assert_eq!(session.nonce(CALLER).unwrap(), nonce);
+    assert_eq!(session.block_number(), U256::ONE);
+    assert_eq!(session.block_timestamp(), U256::from(123));
+    assert_eq!(recorded_logs(&mut session), 0);
+}
+
+#[test]
+fn shared_feedback_includes_unchanged_reads_and_resolves_backing_bytecode() {
+    let executor = recording_executor(counter_state(false), CheatcodeAccessMode::Local);
+    let mut session = ExecutionSession::from_ethereum(executor);
+    let mut pending = session
+        .execute(CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO))
+        .unwrap();
+    let mut reads = Vec::new();
+    let mut code_hash = None;
+    pending.visit_state(|observation| match observation {
+        StateObservation::Storage(slot) if slot.address == CONTRACT => {
+            reads.push((slot.key, slot.original, slot.current));
+        }
+        StateObservation::Account(account) if account.address == CONTRACT => {
+            code_hash = account.code_hash;
+        }
+        _ => {}
+    });
+    assert_eq!(reads, [(U256::ZERO, U256::from(7), U256::from(7))]);
+    assert_eq!(pending.bytecode(code_hash.unwrap()).unwrap().as_ref(), hex!("5f545f5260205ff3"));
+    let report = pending.discard();
+    assert_eq!(U256::from_be_slice(report.output()), U256::from(7));
+}
+
+#[test]
+fn legacy_assertion_probe_sees_staged_state_without_publishing_its_own_writes() {
+    // Every selector increments storage and returns it, including the synthetic failed() probe.
+    let executor = recording_executor(counter_state(true), CheatcodeAccessMode::Local);
+    let mut session = ExecutionSession::from_ethereum(executor);
+    let mut pending = session
+        .execute(CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO))
+        .unwrap();
+    let facts = pending.test_facts(CONTRACT, true).unwrap();
+    assert!(facts.legacy_failure);
+    assert!(!facts.global_failure);
+    assert!(!facts.call_global_failure);
+    let report = pending.accept();
+    assert_eq!(U256::from_be_slice(report.output()), U256::from(8));
+    assert_eq!(session.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(8));
+}
+
+#[test]
+fn global_failure_facts_distinguish_this_call_from_preexisting_failure() {
+    let mut session = ExecutionSession::from_ethereum(campaign_executor(false));
+    let input = Vm::storeCall {
+        target: CHEATCODE_ADDRESS,
+        slot: GLOBAL_FAIL_SLOT.into(),
+        value: U256::ONE.into(),
+    }
+    .abi_encode()
+    .into();
+    let mut pending = session
+        .execute(CallRequest::new(CALLER, CHEATCODE_ADDRESS.into(), input, U256::ZERO))
+        .unwrap();
+    let facts = pending.test_facts(CONTRACT, false).unwrap();
+    assert!(facts.global_failure);
+    assert!(facts.call_global_failure);
+    let _ = pending.accept();
+    let mut pending = session
+        .execute(CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO))
+        .unwrap();
+    let facts = pending.test_facts(CONTRACT, false).unwrap();
+    assert!(facts.global_failure);
+    assert!(!facts.call_global_failure);
+    let _ = pending.discard();
+}
+
+#[test]
+fn discarded_reports_retain_coverage_without_leaking_it_into_the_next_call() {
+    let mut executor = campaign_executor(false);
+    executor.inspector_mut().enable_line_coverage();
+    let mut session = ExecutionSession::from_ethereum(executor);
+    let mut report = session
+        .execute(CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO))
+        .unwrap()
+        .discard();
+    assert!(!report.take_coverage().unwrap().is_empty());
+    assert_eq!(report.logs().len(), 1);
+    let mut report = session
+        .execute(CallRequest::new(CALLER, Address::ZERO.into(), Bytes::new(), U256::ZERO))
+        .unwrap()
+        .accept();
+    // The collector may record an empty-code entry for the EOA call.
+    assert!(report.take_coverage().unwrap().values().all(|map| map.bytecode().is_empty()));
+    assert!(report.logs().is_empty());
+    assert_eq!(recorded_logs(&mut session), 0);
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -323,50 +447,64 @@ fn recording_executor<D: Database + Clone + 'static>(
     executor
 }
 
-fn recorded_logs<D: Database + Clone + 'static>(
-    executor: &EthereumExecutor<D, EthereumInspectorStack>,
-) -> usize {
-    let result = executor
-        .call_raw(
+fn recorded_logs<D: Database + Clone + 'static>(session: &mut ExecutionSession<D>) -> usize {
+    let result = session
+        .execute(CallRequest::new(
             CALLER,
-            CHEATCODE_ADDRESS,
+            CHEATCODE_ADDRESS.into(),
             Vm::getRecordedLogsCall {}.abi_encode().into(),
             U256::ZERO,
-        )
-        .unwrap();
-    assert!(result.status);
-    Vm::getRecordedLogsCall::abi_decode_returns(&result.output).unwrap().len()
+        ))
+        .unwrap()
+        .discard();
+    assert_eq!(result.status(), CallStatus::Success);
+    Vm::getRecordedLogsCall::abi_decode_returns(result.output()).unwrap().len()
 }
 
 fn assert_sequence_isolation<D: Database + Clone + 'static>(
     baseline: EthereumExecutor<D, EthereumInspectorStack>,
 ) {
+    let mut baseline = ExecutionSession::from_ethereum(baseline);
+    let checkpoint = baseline.checkpoint();
+    let mut session = checkpoint.spawn();
     for _ in 0..2 {
-        let mut session = baseline.clone();
+        session.restore(&checkpoint);
         for expected in 8..=10 {
-            let mut candidate = session.clone();
-            candidate.env_mut().block.number += U256::ONE;
-            let result =
-                candidate.transact_raw(CALLER, CONTRACT, Bytes::new(), U256::ZERO).unwrap();
-            assert!(result.status);
-            assert_eq!(slot(candidate.state_mut()), U256::from(expected));
-            assert_eq!(candidate.env().block.timestamp, U256::from(999));
-            assert_eq!(recorded_logs(&candidate), expected - 7);
-            assert_eq!(slot(session.state_mut()), U256::from(expected - 1));
-
-            // Publish state, environment, and retained cheatcodes together after classification.
-            session = candidate;
+            let mut request = CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO);
+            request.block_delay = U256::ONE;
+            let pending = session.execute(request).unwrap();
+            assert_eq!(pending.report().status(), CallStatus::Success);
+            let mut observed = None;
+            pending.visit_state(|observation| {
+                if let StateObservation::Storage(slot) = observation
+                    && slot.address == CONTRACT
+                    && slot.key == U256::ZERO
+                {
+                    observed = Some(slot.current);
+                }
+            });
+            assert_eq!(observed, Some(U256::from(expected)));
+            let report = pending.accept();
+            assert_eq!(report.logs().len(), 1);
+            assert_eq!(session.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(expected));
+            assert_eq!(session.block_timestamp(), U256::from(999));
+            assert_eq!(recorded_logs(&mut session), expected - 7);
 
             // A predicate sees accepted state, but its writes and inspector changes are discarded.
-            let result = session.call_raw(CALLER, CONTRACT, Bytes::new(), U256::ZERO).unwrap();
-            assert!(result.status);
-            assert_eq!(slot(session.state_mut()), U256::from(expected));
-            assert_eq!(recorded_logs(&session), expected - 7);
+            let result = session
+                .execute(CallRequest::new(CALLER, CONTRACT.into(), Bytes::new(), U256::ZERO))
+                .unwrap()
+                .discard();
+            assert_eq!(result.status(), CallStatus::Success);
+            assert_eq!(result.logs().len(), 1);
+            assert_eq!(session.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(expected));
+            assert_eq!(recorded_logs(&mut session), expected - 7);
         }
-        assert_eq!(session.env().block.number, U256::from(4));
+        assert_eq!(session.block_number(), U256::from(4));
     }
-    assert_eq!(baseline.env().block.timestamp, U256::from(123));
-    assert_eq!(recorded_logs(&baseline), 0);
+    assert_eq!(baseline.block_timestamp(), U256::from(123));
+    assert_eq!(baseline.storage(CONTRACT, U256::ZERO).unwrap(), U256::from(7));
+    assert_eq!(recorded_logs(&mut baseline), 0);
 }
 
 fn handler_code(reject: bool) -> Bytes {

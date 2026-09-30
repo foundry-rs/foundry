@@ -6,7 +6,7 @@ use evm2::{
     Evm, ExecutionConfig, Inspector, NoopInspector, Precompiles, SpecId, TxResult,
     ethereum::{TxEnvelope, ethereum_tx_registry},
     evm::{
-        Database, Db, DynDatabase, EmptyDB,
+        Database, Db, DynDatabase, EmptyDB, TxResultWithState,
         registry::{HandlerError, HandlerResult},
     },
 };
@@ -253,6 +253,34 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
         tx: &Recovered<TxEnvelope>,
         synthetic: bool,
     ) -> HandlerResult<TxResult> {
+        self.transact_with_state(env, tx, synthetic).map(|outcome| outcome.result)
+    }
+
+    /// Executes a synthetic operation while retaining loaded state for session feedback.
+    pub(crate) fn transact_raw_with_state(
+        &mut self,
+        caller: Address,
+        target: TxKind,
+        input: Bytes,
+        value: U256,
+        gas_limit: Option<u64>,
+    ) -> HandlerResult<TxResultWithState<FoundryEvmTypes>> {
+        let tx = self.synthetic_tx_with_gas_limit(
+            caller,
+            target,
+            input,
+            value,
+            gas_limit.unwrap_or_else(|| self.env.block.gas_limit.saturating_to()),
+        )?;
+        self.transact_with_state(self.synthetic_env(), &tx, true)
+    }
+
+    fn transact_with_state(
+        &mut self,
+        env: EthereumEnv,
+        tx: &Recovered<TxEnvelope>,
+        synthetic: bool,
+    ) -> HandlerResult<TxResultWithState<FoundryEvmTypes>> {
         let mut inspector = self.inspector.clone();
         let (outcome, mut block, basefee_override, gas_price_override) = {
             let mut evm = EthereumFactory.create(env, Db::new(&mut self.state));
@@ -274,7 +302,7 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
             self.env.gas_price = gas_price;
         }
         self.inspector = inspector;
-        Ok(outcome.result)
+        Ok(outcome)
     }
 
     const fn synthetic_env(&self) -> EthereumEnv {
