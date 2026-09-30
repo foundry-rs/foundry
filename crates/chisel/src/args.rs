@@ -167,6 +167,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         cached_backend: None,
         calldata: None,
         ir_minimum: args.ir_minimum,
+        fork_url_required: false,
     })?;
 
     // Execute prelude Solidity source files
@@ -274,11 +275,8 @@ async fn handle_cli_command<FEN: FoundryEvmNetwork>(
         ChiselSubcommand::List => d.dispatch_command(ChiselCommand::ListSessions).await,
         ChiselSubcommand::Load { id } => d.dispatch_command(ChiselCommand::Load { id }).await,
         ChiselSubcommand::View { id } => {
-            let ControlFlow::Continue(()) = d.dispatch_command(ChiselCommand::Load { id }).await?
-            else {
-                return Ok(ControlFlow::Break(()));
-            };
-            d.dispatch_command(ChiselCommand::Source).await
+            d.view_session(&id)?;
+            Ok(ControlFlow::Continue(()))
         }
         ChiselSubcommand::ClearCache => d.dispatch_command(ChiselCommand::ClearCache).await,
         ChiselSubcommand::Eval { command } => d.dispatch(&command).await,

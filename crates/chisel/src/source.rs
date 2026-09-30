@@ -21,7 +21,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use solar::{
     ast::{ItemKind, StmtKind as AstStmtKind, yul},
     interface::{Span, diagnostics::EmittedDiagnostics},
@@ -282,7 +282,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 }
 
 /// Configuration for the [SessionSource]
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(bound = "")]
 pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// Foundry configuration
@@ -324,6 +324,9 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// This can fix most of the "stack too deep" errors while resulting a
     /// relatively accurate source map.
     pub ir_minimum: bool,
+    /// Whether a cached session needs the current invocation's fork endpoint.
+    #[serde(default)]
+    pub(crate) fork_url_required: bool,
 }
 
 impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
@@ -353,6 +356,99 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
         }
         Ok(())
     }
+
+    /// Removes credentials from legacy caches while retaining whether the session was forked.
+    pub(crate) fn clear_credentials(&mut self) {
+        self.fork_url_required |= self.evm_opts.fork_url.is_some();
+        copy_credentials(
+            &mut self.foundry_config,
+            &mut self.evm_opts,
+            &Config::default(),
+            &EvmOpts::default(),
+        );
+    }
+
+    /// Uses credentials from this invocation, never values persisted by an older Chisel version.
+    pub(crate) fn restore_credentials(&mut self, current: &Self) -> Result<()> {
+        let forked = self.fork_url_required || self.evm_opts.fork_url.is_some();
+        if forked && current.evm_opts.fork_url.is_none() {
+            eyre::bail!(
+                "this saved Chisel session requires a fork endpoint; use !fork <url> or restart Chisel with --fork-url to load it"
+            );
+        }
+        copy_credentials(
+            &mut self.foundry_config,
+            &mut self.evm_opts,
+            &current.foundry_config,
+            &current.evm_opts,
+        );
+        self.foundry_config.eth_rpc_timeout = current.foundry_config.eth_rpc_timeout;
+        self.foundry_config.eth_rpc_accept_invalid_certs =
+            current.foundry_config.eth_rpc_accept_invalid_certs;
+        self.foundry_config.eth_rpc_no_proxy = current.foundry_config.eth_rpc_no_proxy;
+        self.evm_opts.rpc_timeout = current.evm_opts.rpc_timeout;
+        self.evm_opts.rpc_accept_invalid_certs = current.evm_opts.rpc_accept_invalid_certs;
+        self.evm_opts.rpc_no_proxy = current.evm_opts.rpc_no_proxy;
+        if !forked {
+            self.evm_opts.fork_url = None;
+        }
+        self.fork_url_required = false;
+        self.evm_opts.fork_endpoint = None;
+        self.evm_opts.expected_fork_endpoint = None;
+        self.resolved_hardfork = None;
+        self.source_chain_id = None;
+        self.cached_backend = None;
+        Ok(())
+    }
+}
+
+impl<FEN: FoundryEvmNetwork> Serialize for SessionSourceConfig<FEN> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut foundry_config = self.foundry_config.clone();
+        let mut evm_opts = self.evm_opts.clone();
+        copy_credentials(
+            &mut foundry_config,
+            &mut evm_opts,
+            &Config::default(),
+            &EvmOpts::default(),
+        );
+        let mut state = serializer.serialize_struct("SessionSourceConfig", 11)?;
+        state.serialize_field("foundry_config", &foundry_config)?;
+        state.serialize_field("evm_opts", &evm_opts)?;
+        state.serialize_field("local_networks", &self.local_networks)?;
+        state.serialize_field("local_chain_id", &self.local_chain_id)?;
+        state.serialize_field("fork_network_is_inferred", &self.fork_network_is_inferred)?;
+        state.serialize_field("fork_chain_id_is_inferred", &self.fork_chain_id_is_inferred)?;
+        state.serialize_field("no_vm", &self.no_vm)?;
+        state.serialize_field("traces", &self.traces)?;
+        state.serialize_field("calldata", &self.calldata)?;
+        state.serialize_field("ir_minimum", &self.ir_minimum)?;
+        state.serialize_field(
+            "fork_url_required",
+            &(self.fork_url_required || self.evm_opts.fork_url.is_some()),
+        )?;
+        state.end()
+    }
+}
+
+/// Copies only configuration that can contain RPC or explorer credentials.
+fn copy_credentials(
+    config: &mut Config,
+    evm_opts: &mut EvmOpts,
+    current_config: &Config,
+    current_opts: &EvmOpts,
+) {
+    config.eth_rpc_url.clone_from(&current_config.eth_rpc_url);
+    config.eth_rpc_jwt.clone_from(&current_config.eth_rpc_jwt);
+    config.eth_rpc_headers.clone_from(&current_config.eth_rpc_headers);
+    config.etherscan_api_key.clone_from(&current_config.etherscan_api_key);
+    config.etherscan.clone_from(&current_config.etherscan);
+    config.rpc_endpoints.clone_from(&current_config.rpc_endpoints);
+    config.rpc_storage_caching.endpoints.clone_from(&current_config.rpc_storage_caching.endpoints);
+    evm_opts.fork_url.clone_from(&current_opts.fork_url);
+    evm_opts.fork_headers.clone_from(&current_opts.fork_headers);
+    evm_opts.rpc_jwt.clone_from(&current_opts.rpc_jwt);
+    evm_opts.rpc_headers.clone_from(&current_opts.rpc_headers);
 }
 
 /// REPL Session Source wrapper
@@ -766,5 +862,169 @@ mod tests {
             "Vm import path must not contain backslashes, got: {import_line}"
         );
         assert!(import_line.contains('/'), "Vm import path must use forward slashes");
+    }
+
+    #[test]
+    fn session_serialization_omits_credentials() {
+        let mut config = SessionSourceConfig::<EthEvmNetwork>::default();
+        config.foundry_config.eth_rpc_url =
+            Some("https://user:synthetic-password@rpc.invalid/key".into());
+        config.foundry_config.eth_rpc_jwt = Some("synthetic-jwt".into());
+        config.foundry_config.eth_rpc_headers =
+            Some(vec!["Authorization: synthetic-header".into()]);
+        config.foundry_config.etherscan_api_key = Some("synthetic-api-key".into());
+        config.foundry_config.etherscan = serde_json::from_value(serde_json::json!({
+            "mainnet": { "key": "synthetic-explorer-key", "chain": 1 }
+        }))
+        .unwrap();
+        config.foundry_config.rpc_endpoints = serde_json::from_value(serde_json::json!({
+            "mainnet": "https://rpc.invalid/synthetic-endpoint-key"
+        }))
+        .unwrap();
+        config.foundry_config.rpc_storage_caching.endpoints =
+            "synthetic-cache-endpoint-key".parse().unwrap();
+        config.evm_opts.fork_url = config.foundry_config.eth_rpc_url.clone();
+        config.evm_opts.rpc_jwt = config.foundry_config.eth_rpc_jwt.clone();
+        config.evm_opts.rpc_headers = config.foundry_config.eth_rpc_headers.clone();
+        config.evm_opts.fork_headers = Some(vec!["Authorization: synthetic-fork-header".into()]);
+        config.evm_opts.fork_block_number = Some(42);
+        config.calldata = Some(vec![0xde, 0xad, 0xbe, 0xef]);
+        config.traces = true;
+
+        let encoded = serde_json::to_string(&config).unwrap();
+        let decoded: SessionSourceConfig<EthEvmNetwork> = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.foundry_config.eth_rpc_url, None);
+        assert_eq!(decoded.foundry_config.eth_rpc_jwt, None);
+        assert_eq!(decoded.foundry_config.eth_rpc_headers, None);
+        assert_eq!(decoded.foundry_config.etherscan_api_key, None);
+        assert!(decoded.foundry_config.etherscan.is_empty());
+        assert!(decoded.foundry_config.rpc_endpoints.is_empty());
+        assert_eq!(decoded.foundry_config.rpc_storage_caching.endpoints.to_string(), "all");
+        assert_eq!(decoded.evm_opts.fork_url, None);
+        assert_eq!(decoded.evm_opts.rpc_jwt, None);
+        assert_eq!(decoded.evm_opts.rpc_headers, None);
+        assert_eq!(decoded.evm_opts.fork_headers, None);
+        assert_eq!(decoded.evm_opts.fork_block_number, Some(42));
+        assert_eq!(decoded.calldata, Some(vec![0xde, 0xad, 0xbe, 0xef]));
+        assert!(decoded.traces);
+        assert!(decoded.fork_url_required);
+        assert_eq!(config.foundry_config.eth_rpc_jwt.as_deref(), Some("synthetic-jwt"));
+        assert_eq!(config.evm_opts.fork_url, config.foundry_config.eth_rpc_url);
+    }
+
+    #[test]
+    fn saved_fork_restores_current_credentials_and_execution_settings() {
+        let mut saved = SessionSourceConfig::<EthEvmNetwork>::default();
+        saved.evm_opts.fork_url = Some("https://rpc.invalid/old-token".into());
+        saved.evm_opts.fork_block_number = Some(42);
+        saved.evm_opts.env.chain_id = Some(1);
+        saved.foundry_config.optimizer_runs = Some(500);
+        saved.foundry_config.eth_rpc_accept_invalid_certs = true;
+        saved.foundry_config.eth_rpc_no_proxy = true;
+        saved.evm_opts.rpc_accept_invalid_certs = true;
+        saved.evm_opts.rpc_no_proxy = true;
+        saved.calldata = Some(vec![1, 2, 3]);
+        saved.ir_minimum = true;
+        let encoded = serde_json::to_string(&saved).unwrap();
+        let mut saved =
+            serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
+        let mut current = SessionSourceConfig::<EthEvmNetwork>::default();
+        current.foundry_config.eth_rpc_url = Some("https://rpc.invalid/new-token".into());
+        current.foundry_config.eth_rpc_jwt = Some("current-jwt".into());
+        current.foundry_config.eth_rpc_headers = Some(vec!["Authorization: current-header".into()]);
+        current.foundry_config.etherscan_api_key = Some("current-api-key".into());
+        current.foundry_config.rpc_endpoints = serde_json::from_value(serde_json::json!({
+            "mainnet": "https://rpc.invalid/current-endpoint-token"
+        }))
+        .unwrap();
+        current.foundry_config.etherscan = serde_json::from_value(serde_json::json!({
+            "mainnet": { "key": "current-explorer-key", "chain": 1 }
+        }))
+        .unwrap();
+        current.foundry_config.rpc_storage_caching.endpoints =
+            "current-cache-endpoint-token".parse().unwrap();
+        current.evm_opts.fork_url = current.foundry_config.eth_rpc_url.clone();
+        current.evm_opts.rpc_jwt = current.foundry_config.eth_rpc_jwt.clone();
+        current.evm_opts.rpc_headers = current.foundry_config.eth_rpc_headers.clone();
+        current.evm_opts.fork_headers = Some(vec!["Authorization: current-fork-header".into()]);
+        current.evm_opts.fork_block_number = Some(100);
+        current.evm_opts.env.chain_id = Some(10);
+        current.foundry_config.eth_rpc_timeout = Some(30);
+        current.evm_opts.rpc_timeout = Some(30);
+
+        saved.restore_credentials(&current).unwrap();
+
+        assert_eq!(saved.foundry_config.eth_rpc_url, current.foundry_config.eth_rpc_url);
+        assert_eq!(saved.foundry_config.eth_rpc_jwt, current.foundry_config.eth_rpc_jwt);
+        assert_eq!(saved.foundry_config.eth_rpc_headers, current.foundry_config.eth_rpc_headers);
+        assert_eq!(
+            saved.foundry_config.etherscan_api_key,
+            current.foundry_config.etherscan_api_key
+        );
+        assert_eq!(saved.foundry_config.etherscan, current.foundry_config.etherscan);
+        assert_eq!(saved.foundry_config.rpc_endpoints, current.foundry_config.rpc_endpoints);
+        assert_eq!(
+            saved.foundry_config.rpc_storage_caching.endpoints,
+            current.foundry_config.rpc_storage_caching.endpoints
+        );
+        assert_eq!(saved.evm_opts.fork_url, current.evm_opts.fork_url);
+        assert_eq!(saved.evm_opts.rpc_jwt, current.evm_opts.rpc_jwt);
+        assert_eq!(saved.evm_opts.rpc_headers, current.evm_opts.rpc_headers);
+        assert_eq!(saved.evm_opts.fork_headers, current.evm_opts.fork_headers);
+        assert!(!saved.foundry_config.eth_rpc_accept_invalid_certs);
+        assert!(!saved.foundry_config.eth_rpc_no_proxy);
+        assert!(!saved.evm_opts.rpc_accept_invalid_certs);
+        assert!(!saved.evm_opts.rpc_no_proxy);
+        assert_eq!(saved.foundry_config.eth_rpc_timeout, Some(30));
+        assert_eq!(saved.evm_opts.rpc_timeout, Some(30));
+        assert_eq!(saved.evm_opts.fork_block_number, Some(42));
+        assert_eq!(saved.evm_opts.env.chain_id, Some(1));
+        assert_eq!(saved.foundry_config.optimizer_runs, Some(500));
+        assert_eq!(saved.calldata, Some(vec![1, 2, 3]));
+        assert!(saved.ir_minimum);
+    }
+
+    #[test]
+    fn legacy_session_credentials_are_not_reused() {
+        let mut legacy = SessionSourceConfig::<EthEvmNetwork>::default();
+        legacy.foundry_config.eth_rpc_jwt = Some("legacy-jwt".into());
+        legacy.foundry_config.etherscan_api_key = Some("legacy-key".into());
+        legacy.evm_opts.rpc_headers = Some(vec!["Authorization: legacy-header".into()]);
+        legacy.evm_opts.fork_headers = Some(vec!["Authorization: legacy-fork-header".into()]);
+        legacy.restore_credentials(&SessionSourceConfig::default()).unwrap();
+
+        assert_eq!(legacy.foundry_config.eth_rpc_jwt, None);
+        assert_eq!(legacy.foundry_config.etherscan_api_key, None);
+        assert_eq!(legacy.evm_opts.rpc_headers, None);
+        assert_eq!(legacy.evm_opts.fork_headers, None);
+    }
+
+    #[test]
+    fn saved_fork_requires_current_endpoint() {
+        let mut saved = SessionSourceConfig::<EthEvmNetwork>::default();
+        saved.evm_opts.fork_url = Some("https://rpc.invalid/legacy-token".into());
+        saved.clear_credentials();
+        assert_eq!(saved.evm_opts.fork_url, None);
+        assert!(saved.fork_url_required);
+
+        let error = saved.restore_credentials(&SessionSourceConfig::default()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "this saved Chisel session requires a fork endpoint; use !fork <url> or restart Chisel with --fork-url to load it"
+        );
+    }
+
+    #[test]
+    fn saved_local_session_stays_local_with_current_fork_endpoint() {
+        let mut saved = SessionSourceConfig::<EthEvmNetwork>::default();
+        let mut current = SessionSourceConfig::default();
+        current.evm_opts.fork_url = Some("https://rpc.invalid/current-token".into());
+
+        saved.restore_credentials(&current).unwrap();
+
+        assert_eq!(saved.evm_opts.fork_url, None);
+        assert!(!saved.fork_url_required);
     }
 }
