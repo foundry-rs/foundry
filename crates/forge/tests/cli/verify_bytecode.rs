@@ -876,3 +876,77 @@ contract LinkedContract {
     assert!(stdout.contains("Runtime code matched with status full"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
 });
+
+forgetest_async!(can_verify_bytecode_tempo_nonce_lane_deployments, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let deployer = wallet.address().to_string();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Advance the protocol nonce so it differs from the nonce of each nonce lane below.
+    let lanes: [&[&str]; 3] =
+        [&[], &["--tempo.nonce-key", "5", "--nonce", "0"], &["--tempo.expires", "30"]];
+    for (index, lane) in lanes.into_iter().enumerate() {
+        cmd.forge_fuse()
+            .args([
+                "create",
+                "./src/Counter.sol:Counter",
+                "--rpc-url",
+                rpc.as_str(),
+                "--private-key",
+                pk.as_str(),
+                "--broadcast",
+            ])
+            .args(lane);
+        let output = cmd.assert_success().get_output().stdout_lossy();
+        if index == 0 {
+            continue;
+        }
+        let field =
+            |prefix| output.lines().find_map(|line| line.strip_prefix(prefix)).unwrap().to_string();
+        let address = field("Deployed to: ");
+        let creation_data = serde_json::json!({"status":"1", "message":"OK", "result":[{
+            "contractAddress": address,
+            "contractCreator": deployer,
+            "txHash": field("Transaction hash: "),
+        }]});
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api", listener.local_addr().unwrap());
+        let app = Router::new().fallback(move |Query(query): Query<HashMap<String, String>>| {
+            let response =
+                if query.get("action").is_some_and(|action| action == "getcontractcreation") {
+                    creation_data.clone()
+                } else {
+                    serde_json::json!({"status":"1", "message":"OK", "result":[]})
+                };
+            async move { Json(response) }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        // The runtime replay must keep the lane's own nonce instead of the account nonce. AA
+        // creation code is not read from the batched calls yet, so only runtime is compared.
+        cmd.forge_fuse()
+            .args([
+                "verify-bytecode",
+                &address,
+                "src/Counter.sol:Counter",
+                "--rpc-url",
+                &rpc,
+                "--verifier",
+                "etherscan",
+                "--verifier-url",
+                &url,
+                "--etherscan-api-key",
+                "test",
+                "--ignore",
+                "creation",
+                "--json",
+            ])
+            .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
+        server.abort();
+    }
+});

@@ -879,15 +879,6 @@ impl VerifyBytecodeArgs {
             .await?;
             Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
 
-            // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
-            // block.
-            let prev_block_id = BlockId::number(simulation_block - 1);
-
-            // Use `transaction.from` instead of `creation_data.contract_creator` to resolve
-            // blockscout creation data discrepancy in case of CREATE2.
-            let prev_block_nonce =
-                provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
-
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
             return Ok(Some(RuntimeVerification {
                 address: self.address,
@@ -899,7 +890,6 @@ impl VerifyBytecodeArgs {
                 block,
                 simulation_block,
                 transaction,
-                prev_block_nonce,
                 local_bytecode_vec,
                 constructor_args,
                 json_results,
@@ -924,7 +914,6 @@ struct RuntimeVerification<FEN: FoundryEvmNetwork> {
     block: Option<AnyRpcBlock>,
     simulation_block: u64,
     transaction: AnyRpcTransaction,
-    prev_block_nonce: u64,
     local_bytecode_vec: Vec<u8>,
     constructor_args: Bytes,
     json_results: Vec<JsonResult>,
@@ -942,7 +931,6 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
             evm_env,
             simulation_block,
             transaction,
-            prev_block_nonce,
             local_bytecode_vec,
             constructor_args,
             mut json_results,
@@ -952,7 +940,6 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
         let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&transaction)?;
         // Only the creation call is redeployed; batched follow-up calls cannot change its code.
         tx_env.truncate_to_first_call();
-        tx_env.set_nonce(prev_block_nonce);
         // Read the call from the decoded env: batched transactions have no top-level `to`/`input`.
         let kind = tx_env.kind();
         let target_context =
