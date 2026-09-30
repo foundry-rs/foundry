@@ -329,30 +329,30 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
-        if !quiet {
-            if !shell::is_json() {
-                if output.is_unchanged() {
-                    sh_println!("No files changed, compilation skipped")?;
-                } else {
-                    // print the compiler output / warnings
-                    sh_println!("{output}")?;
-                }
+        if !quiet && !shell::is_json() {
+            if output.is_unchanged() {
+                sh_println!("No files changed, compilation skipped")?;
+            } else {
+                // print the compiler output / warnings
+                sh_println!("{output}")?;
             }
+        }
 
-            if !(shell::is_json() && output.has_compiler_errors()) {
-                self.handle_output(&output)?;
-            }
+        // Quiet mode suppresses reports, but size limits still apply.
+        if !(shell::is_json() && output.has_compiler_errors()) {
+            self.handle_output(&output)?;
         }
 
         Ok(output)
     }
 
-    /// If configured, this will print sizes or names
+    /// Prints requested reports and checks contract size limits.
     fn handle_output<C: Compiler<CompilerContract = Contract>>(
         &self,
         output: &ProjectCompileOutput<C>,
     ) -> Result<()> {
-        let print_names = self.print_names.unwrap_or(false);
+        let quiet = self.quiet.unwrap_or(false);
+        let print_names = self.print_names.unwrap_or(false) && !quiet;
         let print_sizes = self.print_sizes.unwrap_or(false);
 
         // print any sizes or names
@@ -461,7 +461,9 @@ impl ProjectCompiler {
                 }
             }
 
-            sh_println!("{size_report}")?;
+            if !quiet {
+                sh_println!("{size_report}")?;
+            }
 
             let runtime_eip = match size_report.limits.runtime {
                 CONTRACT_RUNTIME_SIZE_LIMIT => "EIP-170: ",
