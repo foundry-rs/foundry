@@ -903,7 +903,7 @@ contract EmptyTest {}
     // Ambiguous source-unit references stay native and are invalidated after a body-only edit.
     prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
     cmd.forge_fuse().arg("test").with_no_redact().assert_failure().stdout_eq(str![[r#"
-Compiling 3 files with [..]
+Compiling 2 files with [..]
 [..]
 Compiler run successful!
 

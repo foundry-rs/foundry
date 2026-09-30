@@ -33,7 +33,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        7
+        8
     }
 
     fn preprocess(
@@ -82,6 +82,15 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
         };
         let original_sources = input.input.sources.clone();
         let mut parser_paths = paths.clone();
+        // Match the compiler input's source-unit names, including the trailing slashes restored
+        // when remappings are serialized after stripping the project root.
+        parser_paths.remappings = input
+            .input
+            .settings
+            .remappings
+            .iter()
+            .map(|remapping| remapping.to_string().parse().expect("valid serialized remapping"))
+            .collect();
         parser_paths.include_paths.extend(input.cli_settings.include_paths.iter().cloned());
         let mut compiler =
             foundry_compilers::resolver::parse::SolParser::new(parser_paths.with_language_ref())
@@ -162,7 +171,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        7
+        8
     }
 
     fn preprocess(
@@ -236,8 +245,13 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::{CompilerInput, artifacts::Source, solc::SolcSettings};
+    use foundry_compilers::{
+        CompilerInput,
+        artifacts::{Source, remappings::Remapping},
+        solc::SolcSettings,
+    };
     use semver::Version;
+    use std::fs;
 
     fn input() -> (tempfile::TempDir, ProjectPathsConfig<SolcLanguage>, SolcVersionedInput) {
         let root = tempfile::tempdir().unwrap();
@@ -292,6 +306,39 @@ mod tests {
     #[test]
     fn direct_solc_preprocess_tracks_mocks_without_cache_context() {
         let (_root, paths, mut input) = input();
+        let mut mocks = HashSet::new();
+        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &SolcCompiler::default(),
+            &mut input,
+            &paths,
+            &mut mocks,
+        )
+        .unwrap();
+        assert_preprocessed(&paths, &input, &mocks);
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/17219>
+    #[test]
+    fn preprocess_uses_compiler_input_remappings() {
+        let (_root, mut paths, mut input) = input();
+        paths.remappings =
+            vec![format!("dep/={}/src/", paths.root.display()).parse::<Remapping>().unwrap()];
+        input.input.settings.remappings.clone_from(&paths.remappings);
+        input.strip_prefix(&paths.root);
+        input.input.sources.insert(
+            PathBuf::from("test/Mock.sol"),
+            Source::new("import 'dep/Dep.sol'; contract Mock is Dep {}"),
+        );
+        let deploy = input.input.sources.get_mut(&PathBuf::from("test/Deploy.sol")).unwrap();
+        deploy.content = format!("import './Mock.sol'; {}", deploy.content).into();
+
+        // Both imports must reuse the same source unit, even when it also exists on disk.
+        for (path, source) in &input.input.sources {
+            let path = paths.root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, source.content.as_str()).unwrap();
+        }
         let mut mocks = HashSet::new();
         <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
             &DynamicTestLinkingPreprocessor,
