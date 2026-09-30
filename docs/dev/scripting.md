@@ -255,8 +255,15 @@ implemented guarantee.
 
 - Model attempts separately from planned operations. Once prepared, an attempt's chain, sender,
   nonce, payload, fee fields, and signer mode are immutable.
-- For locally signed submissions, persist final encoded bytes and the derived hash before sending.
-  A retry sends exactly those bytes.
+- For locally signed submissions, persist the final prepared request, encoded bytes, and derived
+  hash before sending. Validate the complete typed transaction against that request before saving
+  and when loading recovery state. Gas and fees may differ from the earlier simulation request.
+  A retry sends exactly the saved bytes without preparing or signing again.
+- Older ordinary signed attempts have no prepared request. They retain plan identity checks and
+  exact-byte replay, but cannot retroactively validate gas, fees, envelope type, or network-specific
+  fields against the original prepared request. Pre-signed plans remain bound by their exact hash.
+  Snapshots with prepared ordinary requests require a supporting Forge version; older versions
+  reject them. Preserve the snapshot rather than deleting it to downgrade.
 - For browser or unlocked signing, persist the delegation intent before invoking the external
   signer or RPC. If control returns without a definitive hash, or the process exits before recording
   one, preserve the intent as `outcome unknown` and stop; do not request another attempt

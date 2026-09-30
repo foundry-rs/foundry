@@ -73,7 +73,7 @@ pub enum SendTransactionKind<'a, N: Network> {
     Browser(N::TransactionRequest, &'a BrowserSigner<N>),
     Signed(N::TxEnvelope),
     AccessKey(N::TransactionRequest, Box<TempoAccountsWallet>),
-    PreparedRaw(Bytes, TxHash),
+    PreparedRaw(Bytes, TxHash, Option<N::TransactionRequest>),
 }
 
 impl<'a, N: Network> SendTransactionKind<'a, N>
@@ -239,7 +239,7 @@ where
                 let pending = provider.send_raw_transaction(&raw_tx).await?;
                 Ok(*pending.tx_hash())
             }
-            Self::PreparedRaw(payload, _) => {
+            Self::PreparedRaw(payload, _, _) => {
                 let pending = provider.send_raw_transaction(&payload).await?;
                 Ok(*pending.tx_hash())
             }
@@ -272,17 +272,17 @@ where
         }
         Ok(match self {
             Self::Raw(tx, signer) => {
-                let signed = tx.build(signer).await?;
-                Self::PreparedRaw(Bytes::from(signed.encoded_2718()), signed.trie_hash())
+                let signed = tx.clone().build(signer).await?;
+                Self::PreparedRaw(Bytes::from(signed.encoded_2718()), signed.trie_hash(), Some(tx))
             }
             Self::Signed(tx) => {
                 let hash = tx.trie_hash();
-                Self::PreparedRaw(Bytes::from(tx.encoded_2718()), hash)
+                Self::PreparedRaw(Bytes::from(tx.encoded_2718()), hash, None)
             }
             Self::AccessKey(tx, wallet) => {
-                let payload = Bytes::from(tx.sign_with_tempo_wallet(&wallet).await?);
+                let payload = Bytes::from(tx.clone().sign_with_tempo_wallet(&wallet).await?);
                 let envelope = N::TxEnvelope::decode_2718_exact(&payload)?;
-                Self::PreparedRaw(payload, envelope.trie_hash())
+                Self::PreparedRaw(payload, envelope.trie_hash(), Some(tx))
             }
             kind => kind,
         })
@@ -813,7 +813,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                     let kind = match (&signed_payloads[index], tx_with_metadata.tx().clone()) {
                         (Some((payload, hash)), _) => {
-                            SendTransactionKind::PreparedRaw(payload.clone(), *hash)
+                            SendTransactionKind::PreparedRaw(payload.clone(), *hash, None)
                         }
                         (None, TransactionMaybeSigned::Signed { tx, .. }) => {
                             if tempo_sponsor.is_some() {
@@ -901,11 +901,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     Some(sequence_chain.into()),
                                 )
                                 .await?;
-                            if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
+                            if let SendTransactionKind::PreparedRaw(payload, hash, request) =
+                                &mut kind
+                            {
                                 *hash = self.sequence.persist_signed_payload(
                                     i,
                                     *index,
                                     payload.clone(),
+                                    request.clone(),
                                 )?;
                             }
                             prepared.push((kind, *is_fixed_gas_limit, *index));
@@ -948,7 +951,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         )) = buffer.next().await
                         {
                             if res.is_err()
-                                && let SendTransactionKind::PreparedRaw(_, hash) = kind
+                                && let SendTransactionKind::PreparedRaw(_, hash, _) = kind
                                 && provider
                                     .get_transaction_by_hash(hash)
                                     .await
@@ -1015,7 +1018,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "Failed to send transaction".to_string()
                                 }
                             })?;
-                            if let SendTransactionKind::PreparedRaw(_, expected) = kind
+                            if let SendTransactionKind::PreparedRaw(_, expected, _) = kind
                                 && expected != tx_hash
                             {
                                 bail!("RPC returned hash {tx_hash} for signed payload {expected}");
@@ -1930,7 +1933,7 @@ mod tests {
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
         let payload = Bytes::from_static(SIGNED_TX);
-        sequence.persist_signed_payload(0, 0, payload).unwrap();
+        sequence.persist_signed_payload(0, 0, payload, Some(prepared_request(SIGNED_TX))).unwrap();
 
         assert!(remaining_unsigned_transactions_for_recovery(&sequence).is_empty());
     }
@@ -1986,7 +1989,14 @@ mod tests {
         };
         sequence.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(sequence, false).unwrap();
-        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+        sequence
+            .persist_signed_payload(
+                0,
+                0,
+                Bytes::from_static(SIGNED_TX),
+                Some(prepared_request(SIGNED_TX)),
+            )
+            .unwrap();
 
         let required = remaining_unsigned_transactions_for_recovery(&sequence);
         assert_eq!(required.iter().map(|tx| tx.from).collect::<Vec<_>>(), [unsigned]);
@@ -2037,9 +2047,22 @@ mod tests {
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
-        sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
-        let second_hash =
-            sequence.persist_signed_payload(0, 1, Bytes::from_static(OTHER_SIGNED_TX)).unwrap();
+        sequence
+            .persist_signed_payload(
+                0,
+                0,
+                Bytes::from_static(SIGNED_TX),
+                Some(prepared_request(SIGNED_TX)),
+            )
+            .unwrap();
+        let second_hash = sequence
+            .persist_signed_payload(
+                0,
+                1,
+                Bytes::from_static(OTHER_SIGNED_TX),
+                Some(prepared_request(OTHER_SIGNED_TX)),
+            )
+            .unwrap();
         let mut second_receipt = receipt();
         second_receipt.transaction_hash = second_hash;
         sequence.sequences_mut()[0].receipts.push(second_receipt);
@@ -2074,8 +2097,14 @@ mod tests {
         };
         deployment.paths = Some((dir.path().join("broadcast.json"), dir.path().join("cache.json")));
         let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
-        let first_hash =
-            sequence.persist_signed_payload(0, 0, Bytes::from_static(SIGNED_TX)).unwrap();
+        let first_hash = sequence
+            .persist_signed_payload(
+                0,
+                0,
+                Bytes::from_static(SIGNED_TX),
+                Some(prepared_request(SIGNED_TX)),
+            )
+            .unwrap();
         let mut first_receipt = receipt();
         first_receipt.transaction_hash = first_hash;
         sequence.sequences_mut()[0].receipts = vec![first_receipt.clone(), first_receipt];
@@ -2249,5 +2278,13 @@ mod tests {
             to: None,
             contract_address: None,
         }
+    }
+
+    fn prepared_request(payload: &[u8]) -> TransactionRequest {
+        let envelope = TxEnvelope::decode_2718_exact(payload).unwrap();
+        let from = envelope.recover_signer().unwrap();
+        let mut request: TransactionRequest = envelope.into();
+        request.from = Some(from);
+        request
     }
 }

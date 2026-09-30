@@ -1,7 +1,7 @@
 use crate::sequence::{SequenceData, completed_transaction_prefix};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_network::{Network, TransactionBuilder, TransactionResponse};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
@@ -270,6 +270,7 @@ where
         sequence: usize,
         index: usize,
         payload: Bytes,
+        request: Option<N::TransactionRequest>,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
@@ -285,12 +286,16 @@ where
             .get(index)
             .context("signed payload operation is not in the recovery snapshot")?;
         let transaction = &self.plan.data.sequences()[sequence].transactions[index];
-        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain)?;
+        let signed =
+            validate_signed_payload::<N>(payload, transaction, deployment.chain, request.as_ref())?;
         if let Some(existing) = self.signed_payload(sequence, index) {
             if existing != &signed {
                 bail!("refusing to replace an existing signed payload");
             }
             return Ok(existing.hash);
+        }
+        if transaction.tx().is_unsigned() && request.is_none() {
+            bail!("new signed attempt is missing its prepared request");
         }
         let id = operation.id;
         if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
@@ -302,7 +307,7 @@ where
             SubmissionAttempt {
                 id: B256::random(),
                 members: vec![id],
-                kind: AttemptKind::Signed { request: None, payload: signed },
+                kind: AttemptKind::Signed { request, payload: signed },
             },
         )?;
         Ok(hash)
@@ -796,7 +801,7 @@ where
                 claimed[start..end].fill(true);
                 match &attempt.kind {
                     AttemptKind::Signed { request, payload } => {
-                        if request.is_some() != self.batch {
+                        if self.batch && request.is_none() {
                             bail!("recovery snapshot signed attempt has an invalid request");
                         }
                         let validated = if let [operation] = operations
@@ -806,6 +811,7 @@ where
                                 payload.payload.clone(),
                                 &data.transactions[operation.id.index as usize],
                                 deployment.chain,
+                                request.as_ref(),
                             )?
                         } else {
                             SignedPayload {
@@ -915,6 +921,7 @@ fn validate_signed_payload<N: Network>(
     payload: Bytes,
     planned: &TransactionWithMetadata<N>,
     chain: u64,
+    prepared: Option<&N::TransactionRequest>,
 ) -> Result<SignedPayload>
 where
     N::TxEnvelope: SignerRecoverable,
@@ -942,6 +949,26 @@ where
             != envelope.authorization_list().unwrap_or_default()
     {
         bail!("signed payload does not match its planned transaction");
+    }
+    if let Some(prepared) = prepared {
+        let mut request = prepared.clone();
+        // JSON encodes CREATE as null, which deserializes as an absent destination.
+        if request.kind().is_none() && !request.is_tempo_aa() {
+            request.set_create();
+        }
+        let expected = request.build_unsigned().map_err(|error| {
+            eyre::eyre!("signed attempt has an invalid prepared request: {}", error.error)
+        })?;
+        // Normalize through the typed transaction so defaults and builder-only fields agree.
+        // Compare the full transaction: Tempo signing hashes omit sponsor-related fields.
+        let expected =
+            serde_json::to_value(<N::TransactionRequest as From<N::UnsignedTx>>::from(expected))?;
+        let actual = serde_json::to_value(<N::TransactionRequest as From<N::UnsignedTx>>::from(
+            N::UnsignedTx::from(envelope.clone()),
+        ))?;
+        if prepared.from() != Some(signer) || expected != actual {
+            bail!("signed payload does not match its prepared request");
+        }
     }
     Ok(SignedPayload { hash: envelope.trie_hash(), payload })
 }
@@ -1070,14 +1097,21 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::{
-        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, transaction::Recovered,
+        BlobTransactionSidecar, Eip658Value, EthereumTypedTransaction, Receipt, ReceiptEnvelope,
+        ReceiptWithBloom, SidecarBuilder, SignableTransaction, SimpleCoder, TxEnvelope,
+        transaction::Recovered,
     };
+    use alloy_eips::eip7702::Authorization;
     use alloy_network::Ethereum;
     use alloy_primitives::{Bloom, TxKind, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
+    use foundry_wallets::TempoAccountsWallet;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{
+        AASigned, SignatureType, TempoSignature, TempoTxEnvelope,
+        transaction::{Call, KeyAuthorization, PrimitiveSignature, TempoSignedAuthorization},
+    };
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1108,6 +1142,19 @@ mod tests {
         let mut sequence = forge_script_sequence::ScriptSequence {
             chain: 1,
             transactions: transactions.into(),
+            ..Default::default()
+        };
+        sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
+        SequenceData::Single(sequence)
+    }
+
+    fn tempo_sequence(dir: &Path, request: TempoTransactionRequest) -> SequenceData<TempoNetwork> {
+        let mut transaction =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Unsigned(request));
+        transaction.rpc = "http://localhost:8545".to_string();
+        let mut sequence = forge_script_sequence::ScriptSequence {
+            chain: 4217,
+            transactions: [transaction].into(),
             ..Default::default()
         };
         sequence.paths = Some((dir.join("broadcast.json"), dir.join("cache.json")));
@@ -1161,6 +1208,11 @@ mod tests {
     fn load(paths: &(PathBuf, PathBuf), batch: bool) -> Result<RecoveryStore<Ethereum>> {
         let lock = RecoveryLock::acquire(paths)?;
         RecoveryStore::load(paths, batch, lock)?.context("missing recovery snapshot")
+    }
+
+    fn load_tempo(paths: &(PathBuf, PathBuf)) -> Result<RecoveryStore<TempoNetwork>> {
+        let lock = RecoveryLock::acquire(paths)?;
+        RecoveryStore::load(paths, false, lock)?.context("missing recovery snapshot")
     }
 
     #[test]
@@ -1289,8 +1341,24 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let hash = store
+                .persist_signed_payload(
+                    0,
+                    0,
+                    SIGNED_TX.to_vec().into(),
+                    Some(prepared_request(SIGNED_TX)),
+                )
+                .unwrap();
+            assert!(
+                store
+                    .persist_signed_payload(
+                        0,
+                        0,
+                        OTHER_SIGNED_TX.to_vec().into(),
+                        Some(prepared_request(OTHER_SIGNED_TX))
+                    )
+                    .is_err()
+            );
             hash
         };
 
@@ -1305,8 +1373,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(
+            store
+                .persist_signed_payload(
+                    1,
+                    0,
+                    SIGNED_TX.to_vec().into(),
+                    Some(prepared_request(SIGNED_TX))
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .persist_signed_payload(
+                    0,
+                    1,
+                    SIGNED_TX.to_vec().into(),
+                    Some(prepared_request(SIGNED_TX))
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -1520,7 +1606,16 @@ mod tests {
             store
                 .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
                 .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            assert!(
+                store
+                    .persist_signed_payload(
+                        0,
+                        1,
+                        OTHER_SIGNED_TX.to_vec().into(),
+                        Some(prepared_request(OTHER_SIGNED_TX))
+                    )
+                    .is_err()
+            );
         }
 
         let store = load(&paths, true).unwrap();
@@ -1650,5 +1745,445 @@ mod tests {
 
         assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
         assert!(!snapshot.exists());
+    }
+
+    fn prepared_request(payload: &[u8]) -> TransactionRequest {
+        let envelope = TxEnvelope::decode_2718_exact(payload).unwrap();
+        let from = envelope.recover_signer().unwrap();
+        let mut request: TransactionRequest = envelope.into();
+        request.from = Some(from);
+        request
+    }
+
+    #[test]
+    fn prepared_signed_request_binds_consensus_fields_and_survives_reload() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        for (ty, create) in [(0, false), (1, false), (2, false), (3, false), (4, false), (2, true)]
+        {
+            let mut fields = serde_json::json!({
+                "from": signer.address(), "chainId": "0x1", "nonce": "0x0",
+                "to": if create { None } else { Some(Address::with_last_byte(1)) }, "value": "0x64", "input": "0x",
+                "gas": "0x5208", "type": ty,
+            });
+            let mut mutations = vec![
+                ("from", serde_json::json!(Address::with_last_byte(2))),
+                ("chainId", serde_json::json!("0x2")),
+                ("nonce", serde_json::json!("0x1")),
+                ("to", serde_json::json!(Address::with_last_byte(2))),
+                ("value", serde_json::json!("0x65")),
+                ("input", serde_json::json!("0x01")),
+                ("gas", serde_json::json!("0x5209")),
+                ("envelope", serde_json::Value::Null),
+            ];
+            if ty < 2 {
+                fields["gasPrice"] = serde_json::json!("0x1");
+                mutations.push(("gasPrice", serde_json::json!("0x2")));
+            } else {
+                fields["maxFeePerGas"] = serde_json::json!("0x3");
+                fields["maxPriorityFeePerGas"] = serde_json::json!("0x1");
+                mutations.extend([
+                    ("maxFeePerGas", serde_json::json!("0x4")),
+                    ("maxPriorityFeePerGas", serde_json::json!("0x2")),
+                ]);
+            }
+            if ty != 0 {
+                fields["accessList"] = serde_json::json!([]);
+                mutations.push((
+                    "accessList",
+                    serde_json::json!([
+                        {"address": Address::with_last_byte(1), "storageKeys": [B256::ZERO]}
+                    ]),
+                ));
+            }
+            if ty == 3 {
+                fields["maxFeePerBlobGas"] = serde_json::json!("0x1");
+                fields["blobs"] = serde_json::json!([]);
+                fields["commitments"] = serde_json::json!([]);
+                fields["proofs"] = serde_json::json!([]);
+                mutations.extend([
+                    ("maxFeePerBlobGas", serde_json::json!("0x2")),
+                    ("commitments", serde_json::json!([format!("0x{}", "01".repeat(48))])),
+                ]);
+            }
+            if ty == 4 {
+                fields["authorizationList"] = serde_json::json!([]);
+                mutations.push((
+                    "authorizationList",
+                    serde_json::json!([{
+                        "chainId": "0x1", "address": Address::with_last_byte(2), "nonce": "0x0",
+                        "yParity": "0x0", "r": "0x1", "s": "0x1"
+                    }]),
+                ));
+            }
+            let changed_fields = |field: &str, value: &serde_json::Value| {
+                let mut changed = fields.clone();
+                if field == "envelope" {
+                    // Alloy chooses the envelope from its fields, not the RPC type hint.
+                    changed["gasPrice"] = serde_json::json!("0x1");
+                    for key in [
+                        "maxFeePerGas",
+                        "maxPriorityFeePerGas",
+                        "maxFeePerBlobGas",
+                        "blobVersionedHashes",
+                        "blobs",
+                        "commitments",
+                        "proofs",
+                        "authorizationList",
+                        "accessList",
+                    ] {
+                        changed[key] = serde_json::Value::Null;
+                    }
+                    if ty == 0 {
+                        changed["accessList"] = serde_json::json!([]);
+                    }
+                } else {
+                    changed[field] = value.clone();
+                }
+                changed
+            };
+            let mut request = serde_json::from_value::<TransactionRequest>(fields.clone()).unwrap();
+            if create {
+                request.set_create();
+            }
+            let unsigned = request.clone().build_unsigned().unwrap();
+            let signature = signer.sign_hash_sync(&unsigned.signature_hash()).unwrap();
+            let payload = Bytes::from(unsigned.into_envelope(signature).encoded_2718());
+            let dir = tempfile::tempdir().unwrap();
+            let mut data = sequence(dir.path());
+            data.sequences_mut()[0].chain = 1;
+            data.sequences_mut()[0].transactions[0] = TransactionWithMetadata::from_tx_request(
+                TransactionMaybeSigned::Unsigned(request.clone()),
+            );
+            // Fees and gas need not equal the earlier simulation request.
+            let planned =
+                data.sequences_mut()[0].transactions[0].tx_mut().as_unsigned_mut().unwrap();
+            planned.gas = Some(1);
+            planned.gas_price = planned.gas_price.map(|_| 100);
+            planned.max_fee_per_gas = planned.max_fee_per_gas.map(|_| 100);
+            let paths = data.paths();
+            let mut store = RecoveryStore::create(data, false).unwrap();
+            for (field, value) in &mutations {
+                let changed = serde_json::from_value(changed_fields(field, value)).unwrap();
+                assert!(
+                    store.persist_signed_payload(0, 0, payload.clone(), Some(changed)).is_err(),
+                    "accepted {field} for type {ty}"
+                );
+                assert!(store.signed_payload(0, 0).is_none());
+            }
+            store.persist_signed_payload(0, 0, payload.clone(), Some(request)).unwrap();
+            let mut plan = store.plan.clone();
+            let path = store.path.clone();
+            drop(store);
+            let store = load(&paths, false).unwrap();
+            assert_eq!(store.signed_payload(0, 0).unwrap().payload, payload);
+            drop(store);
+            for (field, value) in mutations {
+                let changed = changed_fields(field, &value);
+                let AttemptKind::Signed { request, .. } = &mut plan.deployments[0].attempts[0].kind
+                else {
+                    unreachable!()
+                };
+                *request = Some(serde_json::from_value(changed).unwrap());
+                write_snapshot(&path, &plan).unwrap();
+                assert!(load(&paths, false).is_err(), "reloaded {field} for type {ty}");
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_blob_request_binds_hashes_independently_of_its_sidecar() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let sidecar: BlobTransactionSidecar =
+            SidecarBuilder::<SimpleCoder>::from_slice(b"signed recovery blob").build().unwrap();
+        let mut request = TransactionRequest {
+            from: Some(signer.address()),
+            to: Some(TxKind::Call(Address::with_last_byte(1))),
+            gas: Some(100_000),
+            max_fee_per_gas: Some(3),
+            max_priority_fee_per_gas: Some(1),
+            max_fee_per_blob_gas: Some(1),
+            nonce: Some(0),
+            chain_id: Some(1),
+            transaction_type: Some(3),
+            ..Default::default()
+        };
+        request.set_blob_sidecar_4844(sidecar);
+        let unsigned = request.clone().build_unsigned().unwrap();
+        let signature = signer.sign_hash_sync(&unsigned.signature_hash()).unwrap();
+        let payload = Bytes::from(unsigned.into_envelope(signature).encoded_2718());
+
+        let mut changed = request.clone().build_unsigned().unwrap();
+        let EthereumTypedTransaction::Eip4844(transaction) = &mut changed else { unreachable!() };
+        transaction.as_mut().blob_versioned_hashes[0] = B256::repeat_byte(0x42);
+        let signature = signer.sign_hash_sync(&changed.signature_hash()).unwrap();
+        let changed_payload = Bytes::from(changed.into_envelope(signature).encoded_2718());
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = sequence(dir.path());
+        data.sequences_mut()[0].chain = 1;
+        data.sequences_mut()[0].transactions[0] = TransactionWithMetadata::from_tx_request(
+            TransactionMaybeSigned::Unsigned(request.clone()),
+        );
+        let paths = data.paths();
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        assert!(
+            store
+                .persist_signed_payload(0, 0, changed_payload.clone(), Some(request.clone()))
+                .is_err()
+        );
+        store.persist_signed_payload(0, 0, payload, Some(request)).unwrap();
+
+        let AttemptKind::Signed { payload, .. } = &mut store.plan.deployments[0].attempts[0].kind
+        else {
+            unreachable!()
+        };
+        payload.hash = TxEnvelope::decode_2718_exact(&changed_payload).unwrap().trie_hash();
+        payload.payload = changed_payload;
+        write_snapshot(&store.path, &store.plan).unwrap();
+        drop(store);
+
+        assert!(load(&paths, false).is_err());
+    }
+
+    #[test]
+    fn legacy_signed_attempt_keeps_exact_bytes_without_a_prepared_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = signed_sequence(dir.path());
+        let paths = data.paths();
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        assert!(store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into(), None).is_err());
+        store
+            .persist_signed_payload(
+                0,
+                0,
+                SIGNED_TX.to_vec().into(),
+                Some(prepared_request(SIGNED_TX)),
+            )
+            .unwrap();
+        let AttemptKind::Signed { request, .. } = &mut store.plan.deployments[0].attempts[0].kind
+        else {
+            unreachable!()
+        };
+        *request = None;
+        write_snapshot(&store.path, &store.plan).unwrap();
+        drop(store);
+        let mut store = load(&paths, false).unwrap();
+        let hash = store.signed_payload(0, 0).unwrap().hash;
+        assert_eq!(
+            store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into(), None).unwrap(),
+            hash
+        );
+        assert_eq!(store.signed_payload(0, 0).unwrap().payload.as_ref(), SIGNED_TX);
+    }
+
+    #[test]
+    fn ordinary_tempo_signed_request_binds_execution_and_sponsor_fields() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let from = signer.address();
+        let mut request = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(from),
+                to: Some(TxKind::Call(Address::with_last_byte(1))),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                nonce: Some(0),
+                chain_id: Some(4217),
+                ..Default::default()
+            },
+            nonce_key: Some(U256::from(7)),
+            fee_token: Some(Address::with_last_byte(2)),
+            ..Default::default()
+        };
+        sign_tempo_sponsor(&mut request, from, &signer);
+        let unsigned = request.clone().build_aa().unwrap();
+        let signature = signer.sign_hash_sync(&unsigned.signature_hash()).unwrap();
+        let envelope = TempoTxEnvelope::AA(unsigned.into_signed(signature.into()));
+        let payload = Bytes::from(envelope.encoded_2718());
+        let planned = TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<
+            TempoNetwork,
+        >::Unsigned(request.clone()));
+        validate_signed_payload::<TempoNetwork>(payload.clone(), &planned, 4217, Some(&request))
+            .unwrap();
+        let fields = serde_json::to_value(&request).unwrap();
+        let key_authorization = KeyAuthorization::unrestricted(
+            4217,
+            SignatureType::Secp256k1,
+            Address::with_last_byte(3),
+        )
+        .into_signed(PrimitiveSignature::Secp256k1(signature));
+        let authorization = TempoSignedAuthorization::new_unchecked(
+            Authorization {
+                chain_id: U256::from(4217),
+                address: Address::with_last_byte(3),
+                nonce: 0,
+            },
+            signature.into(),
+        );
+        for (field, value) in [
+            ("nonceKey", serde_json::json!("0x8")),
+            ("feeToken", serde_json::json!(Address::with_last_byte(3))),
+            ("validBefore", serde_json::json!("0x64")),
+            ("validAfter", serde_json::json!("0x1")),
+            (
+                "calls",
+                serde_json::json!([Call {
+                    to: TxKind::Call(Address::with_last_byte(3)),
+                    value: U256::ZERO,
+                    input: Bytes::new()
+                }]),
+            ),
+            ("keyAuthorization", serde_json::to_value(key_authorization).unwrap()),
+            ("aaAuthorizationList", serde_json::json!([authorization])),
+            ("feePayerSignature", serde_json::Value::Null),
+        ] {
+            let mut changed = fields.clone();
+            changed[field] = value;
+            let changed: TempoTransactionRequest = serde_json::from_value(changed).unwrap();
+            if field == "feeToken" {
+                assert_eq!(
+                    changed.clone().build_aa().unwrap().signature_hash(),
+                    request.clone().build_aa().unwrap().signature_hash()
+                );
+            }
+            assert!(
+                validate_signed_payload::<TempoNetwork>(
+                    payload.clone(),
+                    &planned,
+                    4217,
+                    Some(&changed)
+                )
+                .is_err(),
+                "accepted {field}"
+            );
+        }
+        // Equivalent call placement is normalized through the typed transaction.
+        let mut normalized: TempoTransactionRequest = envelope.into();
+        normalized.from = Some(from);
+        validate_signed_payload::<TempoNetwork>(payload, &planned, 4217, Some(&normalized))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn tempo_access_key_request_with_authorization_survives_reload() {
+        let root = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let access_key = foundry_wallets::utils::create_local_signer(
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+        )
+        .unwrap();
+        let authorization =
+            KeyAuthorization::unrestricted(4217, SignatureType::Secp256k1, access_key.address());
+        let signature = root.sign_hash_sync(&authorization.signature_hash()).unwrap();
+        let authorization = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
+        let wallet = TempoAccountsWallet::from_secp256k1(
+            root.address(),
+            access_key.clone(),
+            Some(authorization.clone()),
+        )
+        .with_chain_id(4217);
+        let request = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(root.address()),
+                to: Some(TxKind::Call(Address::with_last_byte(1))),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                nonce: Some(0),
+                chain_id: Some(4217),
+                ..Default::default()
+            },
+            key_id: Some(access_key.address()),
+            key_type: Some(SignatureType::Secp256k1),
+            key_authorization: Some(authorization),
+            ..Default::default()
+        };
+        let payload = Bytes::from(request.clone().sign_with_tempo_wallet(&wallet).await.unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let data = tempo_sequence(dir.path(), request.clone());
+        let paths = data.paths();
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        store.persist_signed_payload(0, 0, payload.clone(), Some(request)).unwrap();
+        drop(store);
+
+        assert_eq!(load_tempo(&paths).unwrap().signed_payload(0, 0).unwrap().payload, payload);
+    }
+
+    #[test]
+    fn tempo_root_signed_create_request_survives_reload() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let planned = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(signer.address()),
+                to: Some(TxKind::Create),
+                value: Some(U256::from(1)),
+                input: Bytes::from_static(&[0x60, 0x00]).into(),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                nonce: Some(0),
+                chain_id: Some(4217),
+                ..Default::default()
+            },
+            fee_token: Some(Address::with_last_byte(2)),
+            ..Default::default()
+        };
+        let mut request = planned.clone();
+        request.inner.to = None;
+        request.inner.value = None;
+        request.inner.input = Default::default();
+        request.calls = vec![Call {
+            to: TxKind::Create,
+            value: U256::from(1),
+            input: Bytes::from_static(&[0x60, 0x00]),
+        }];
+        let unsigned = request.clone().build_aa().unwrap();
+        let signature = signer.sign_hash_sync(&unsigned.signature_hash()).unwrap();
+        let envelope = TempoTxEnvelope::AA(unsigned.into_signed(signature.into()));
+        let payload = Bytes::from(envelope.encoded_2718());
+        let dir = tempfile::tempdir().unwrap();
+        let data = tempo_sequence(dir.path(), planned);
+        let paths = data.paths();
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        store.persist_signed_payload(0, 0, payload.clone(), Some(request)).unwrap();
+        drop(store);
+
+        assert_eq!(load_tempo(&paths).unwrap().signed_payload(0, 0).unwrap().payload, payload);
+    }
+
+    #[test]
+    fn presigned_plan_keeps_exact_hash_binding_without_a_prepared_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = signed_sequence(dir.path());
+        let envelope = TxEnvelope::decode_2718_exact(SIGNED_TX).unwrap();
+        let from = envelope.recover_signer().unwrap();
+        data.sequences_mut()[0].transactions[0] =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Signed {
+                tx: envelope,
+                from,
+            });
+        let paths = data.paths();
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into(), None).is_err());
+        store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into(), None).unwrap();
+        drop(store);
+        assert_eq!(
+            load(&paths, false).unwrap().signed_payload(0, 0).unwrap().payload.as_ref(),
+            SIGNED_TX
+        );
     }
 }

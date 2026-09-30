@@ -285,12 +285,13 @@ where
         sequence: usize,
         index: usize,
         payload: Bytes,
+        request: Option<N::TransactionRequest>,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        self.recovery.persist_signed_payload(sequence, index, payload)
+        self.recovery.persist_signed_payload(sequence, index, payload, request)
     }
 
     pub(crate) fn delegated_status(

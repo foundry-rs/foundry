@@ -1310,6 +1310,12 @@ contract InterruptedResume is Script {
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "forge was not terminated by SIGKILL");
     assert!(recovery_path.exists(), "authoritative recovery snapshot was not checkpointed");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let prepared = &recovery["deployments"][0]["attempts"][0]["kind"]["request"];
+    assert_eq!(prepared["from"], serde_json::to_value(sender).unwrap());
+    assert_eq!(prepared["chainId"], "0x7a69");
+    assert!(prepared["gas"].is_string());
+    assert!(prepared["maxFeePerGas"].is_string());
     std::fs::remove_file(&path).unwrap();
     std::fs::remove_file(&sensitive_path).unwrap();
 
