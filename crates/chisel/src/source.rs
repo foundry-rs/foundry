@@ -11,7 +11,9 @@ use foundry_compilers::{
     project::ProjectCompiler,
     solc::Solc,
 };
-use foundry_config::{Config, FoundryHardfork, SolcReq};
+use foundry_config::{
+    Config, EtherscanConfigs, FoundryHardfork, RpcEndpoints, SolcReq, cache::CachedEndpoints,
+};
 use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
@@ -21,7 +23,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use semver::Version;
-use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use solar::{
     ast::{ItemKind, StmtKind as AstStmtKind, yul},
     interface::{Span, diagnostics::EmittedDiagnostics},
@@ -282,12 +284,17 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 }
 
 /// Configuration for the [SessionSource]
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(bound = "")]
+///
+/// Serialization is derived, but credential-bearing fields are always written through sanitizing
+/// getters, so every serialization path omits RPC and explorer credentials.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(remote = "Self", bound = "")]
 pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// Foundry configuration
+    #[serde(getter = "Self::persisted_foundry_config")]
     pub foundry_config: Config,
     /// EVM Options
+    #[serde(getter = "Self::persisted_evm_opts")]
     pub evm_opts: EvmOpts,
     /// Executor tooling selected by the concrete network dispatch.
     #[serde(skip)]
@@ -325,7 +332,7 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// relatively accurate source map.
     pub ir_minimum: bool,
     /// Whether a cached session needs the current invocation's fork endpoint.
-    #[serde(default)]
+    #[serde(default, getter = "Self::persisted_fork_url_required")]
     pub(crate) fork_url_required: bool,
 }
 
@@ -360,35 +367,22 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
     /// Removes credentials from legacy caches while retaining whether the session was forked.
     pub(crate) fn clear_credentials(&mut self) {
         self.fork_url_required |= self.evm_opts.fork_url.is_some();
-        copy_credentials(
-            &mut self.foundry_config,
-            &mut self.evm_opts,
-            &Config::default(),
-            &EvmOpts::default(),
-        );
+        let none = InvocationRpc::default();
+        none.apply_config_credentials(&mut self.foundry_config);
+        none.apply_evm_credentials(&mut self.evm_opts);
     }
 
     /// Uses credentials from this invocation, never values persisted by an older Chisel version.
-    pub(crate) fn restore_credentials(&mut self, current: &Self) -> Result<()> {
+    pub(crate) fn restore_credentials(&mut self, current: &InvocationRpc) -> Result<()> {
         let forked = self.fork_url_required || self.evm_opts.fork_url.is_some();
-        if forked && current.evm_opts.fork_url.is_none() {
+        if forked && current.fork_url.is_none() {
             eyre::bail!(
                 "this saved Chisel session requires a fork endpoint; use !fork <url> or restart Chisel with --fork-url to load it"
             );
         }
-        copy_credentials(
-            &mut self.foundry_config,
-            &mut self.evm_opts,
-            &current.foundry_config,
-            &current.evm_opts,
-        );
-        self.foundry_config.eth_rpc_timeout = current.foundry_config.eth_rpc_timeout;
-        self.foundry_config.eth_rpc_accept_invalid_certs =
-            current.foundry_config.eth_rpc_accept_invalid_certs;
-        self.foundry_config.eth_rpc_no_proxy = current.foundry_config.eth_rpc_no_proxy;
-        self.evm_opts.rpc_timeout = current.evm_opts.rpc_timeout;
-        self.evm_opts.rpc_accept_invalid_certs = current.evm_opts.rpc_accept_invalid_certs;
-        self.evm_opts.rpc_no_proxy = current.evm_opts.rpc_no_proxy;
+        current.apply_config_credentials(&mut self.foundry_config);
+        current.apply_evm_credentials(&mut self.evm_opts);
+        current.apply_transport(&mut self.foundry_config, &mut self.evm_opts);
         if !forked {
             self.evm_opts.fork_url = None;
         }
@@ -400,55 +394,118 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
         self.cached_backend = None;
         Ok(())
     }
+
+    fn persisted_foundry_config(&self) -> Config {
+        let mut config = self.foundry_config.clone();
+        InvocationRpc::default().apply_config_credentials(&mut config);
+        config
+    }
+
+    fn persisted_evm_opts(&self) -> EvmOpts {
+        let mut evm_opts = self.evm_opts.clone();
+        InvocationRpc::default().apply_evm_credentials(&mut evm_opts);
+        evm_opts
+    }
+
+    /// Records that the session was forked even though its endpoint is not persisted.
+    const fn persisted_fork_url_required(&self) -> bool {
+        self.fork_url_required || self.evm_opts.fork_url.is_some()
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Serialize for SessionSourceConfig<FEN> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut foundry_config = self.foundry_config.clone();
-        let mut evm_opts = self.evm_opts.clone();
-        copy_credentials(
-            &mut foundry_config,
-            &mut evm_opts,
-            &Config::default(),
-            &EvmOpts::default(),
-        );
-        let mut state = serializer.serialize_struct("SessionSourceConfig", 11)?;
-        state.serialize_field("foundry_config", &foundry_config)?;
-        state.serialize_field("evm_opts", &evm_opts)?;
-        state.serialize_field("local_networks", &self.local_networks)?;
-        state.serialize_field("local_chain_id", &self.local_chain_id)?;
-        state.serialize_field("fork_network_is_inferred", &self.fork_network_is_inferred)?;
-        state.serialize_field("fork_chain_id_is_inferred", &self.fork_chain_id_is_inferred)?;
-        state.serialize_field("no_vm", &self.no_vm)?;
-        state.serialize_field("traces", &self.traces)?;
-        state.serialize_field("calldata", &self.calldata)?;
-        state.serialize_field("ir_minimum", &self.ir_minimum)?;
-        state.serialize_field(
-            "fork_url_required",
-            &(self.fork_url_required || self.evm_opts.fork_url.is_some()),
-        )?;
-        state.end()
+        Self::serialize(self, serializer)
     }
 }
 
-/// Copies only configuration that can contain RPC or explorer credentials.
-fn copy_credentials(
-    config: &mut Config,
-    evm_opts: &mut EvmOpts,
-    current_config: &Config,
-    current_opts: &EvmOpts,
-) {
-    config.eth_rpc_url.clone_from(&current_config.eth_rpc_url);
-    config.eth_rpc_jwt.clone_from(&current_config.eth_rpc_jwt);
-    config.eth_rpc_headers.clone_from(&current_config.eth_rpc_headers);
-    config.etherscan_api_key.clone_from(&current_config.etherscan_api_key);
-    config.etherscan.clone_from(&current_config.etherscan);
-    config.rpc_endpoints.clone_from(&current_config.rpc_endpoints);
-    config.rpc_storage_caching.endpoints.clone_from(&current_config.rpc_storage_caching.endpoints);
-    evm_opts.fork_url.clone_from(&current_opts.fork_url);
-    evm_opts.fork_headers.clone_from(&current_opts.fork_headers);
-    evm_opts.rpc_jwt.clone_from(&current_opts.rpc_jwt);
-    evm_opts.rpc_headers.clone_from(&current_opts.rpc_headers);
+impl<'de, FEN: FoundryEvmNetwork> Deserialize<'de> for SessionSourceConfig<FEN> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::deserialize(deserializer)
+    }
+}
+
+/// RPC and explorer settings owned by the current Chisel invocation.
+///
+/// Loading a session restores credentials and transport settings from this invocation.
+/// The default value holds no credentials and is used to strip them from persisted sessions.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct InvocationRpc {
+    eth_rpc_url: Option<String>,
+    eth_rpc_jwt: Option<String>,
+    eth_rpc_headers: Option<Vec<String>>,
+    etherscan_api_key: Option<String>,
+    etherscan: EtherscanConfigs,
+    rpc_endpoints: RpcEndpoints,
+    cached_endpoints: CachedEndpoints,
+    eth_rpc_timeout: Option<u64>,
+    eth_rpc_accept_invalid_certs: bool,
+    eth_rpc_no_proxy: bool,
+    fork_url: Option<String>,
+    fork_headers: Option<Vec<String>>,
+    rpc_jwt: Option<String>,
+    rpc_headers: Option<Vec<String>>,
+    rpc_timeout: Option<u64>,
+    rpc_accept_invalid_certs: bool,
+    rpc_no_proxy: bool,
+}
+
+impl InvocationRpc {
+    /// Captures the RPC settings resolved for this invocation.
+    pub(crate) fn capture(config: &Config, evm_opts: &EvmOpts) -> Self {
+        Self {
+            eth_rpc_url: config.eth_rpc_url.clone(),
+            eth_rpc_jwt: config.eth_rpc_jwt.clone(),
+            eth_rpc_headers: config.eth_rpc_headers.clone(),
+            etherscan_api_key: config.etherscan_api_key.clone(),
+            etherscan: config.etherscan.clone(),
+            rpc_endpoints: config.rpc_endpoints.clone(),
+            cached_endpoints: config.rpc_storage_caching.endpoints.clone(),
+            eth_rpc_timeout: config.eth_rpc_timeout,
+            eth_rpc_accept_invalid_certs: config.eth_rpc_accept_invalid_certs,
+            eth_rpc_no_proxy: config.eth_rpc_no_proxy,
+            fork_url: evm_opts.fork_url.clone(),
+            fork_headers: evm_opts.fork_headers.clone(),
+            rpc_jwt: evm_opts.rpc_jwt.clone(),
+            rpc_headers: evm_opts.rpc_headers.clone(),
+            rpc_timeout: evm_opts.rpc_timeout,
+            rpc_accept_invalid_certs: evm_opts.rpc_accept_invalid_certs,
+            rpc_no_proxy: evm_opts.rpc_no_proxy,
+        }
+    }
+
+    /// Replaces the fork endpoint and its endpoint-specific headers after `!fork <url>`.
+    pub(crate) fn set_fork(&mut self, url: String, headers: Option<Vec<String>>) {
+        self.eth_rpc_url = Some(url.clone());
+        self.fork_url = Some(url);
+        self.fork_headers = headers;
+    }
+
+    fn apply_config_credentials(&self, config: &mut Config) {
+        config.eth_rpc_url.clone_from(&self.eth_rpc_url);
+        config.eth_rpc_jwt.clone_from(&self.eth_rpc_jwt);
+        config.eth_rpc_headers.clone_from(&self.eth_rpc_headers);
+        config.etherscan_api_key.clone_from(&self.etherscan_api_key);
+        config.etherscan.clone_from(&self.etherscan);
+        config.rpc_endpoints.clone_from(&self.rpc_endpoints);
+        config.rpc_storage_caching.endpoints.clone_from(&self.cached_endpoints);
+    }
+
+    fn apply_evm_credentials(&self, evm_opts: &mut EvmOpts) {
+        evm_opts.fork_url.clone_from(&self.fork_url);
+        evm_opts.fork_headers.clone_from(&self.fork_headers);
+        evm_opts.rpc_jwt.clone_from(&self.rpc_jwt);
+        evm_opts.rpc_headers.clone_from(&self.rpc_headers);
+    }
+
+    const fn apply_transport(&self, config: &mut Config, evm_opts: &mut EvmOpts) {
+        config.eth_rpc_timeout = self.eth_rpc_timeout;
+        config.eth_rpc_accept_invalid_certs = self.eth_rpc_accept_invalid_certs;
+        config.eth_rpc_no_proxy = self.eth_rpc_no_proxy;
+        evm_opts.rpc_timeout = self.rpc_timeout;
+        evm_opts.rpc_accept_invalid_certs = self.rpc_accept_invalid_certs;
+        evm_opts.rpc_no_proxy = self.rpc_no_proxy;
+    }
 }
 
 /// REPL Session Source wrapper
@@ -913,6 +970,61 @@ mod tests {
         assert_eq!(config.evm_opts.fork_url, config.foundry_config.eth_rpc_url);
     }
 
+    /// Pins the persisted schema so that a new field is a deliberate decision to cache or skip it.
+    #[test]
+    fn session_serialization_round_trips_persisted_fields() {
+        let config = SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config { optimizer_runs: Some(500), ..Default::default() },
+            evm_opts: EvmOpts { fork_block_number: Some(42), ..Default::default() },
+            local_networks: Some(NetworkConfigs::with_tempo()),
+            local_chain_id: Some(4217),
+            fork_network_is_inferred: true,
+            fork_chain_id_is_inferred: true,
+            no_vm: true,
+            traces: true,
+            calldata: Some(vec![1, 2, 3]),
+            ir_minimum: true,
+            fork_url_required: true,
+            source_chain_id: Some(1),
+            ..Default::default()
+        };
+
+        let encoded = serde_json::to_value(&config).unwrap();
+        let mut keys = encoded.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "calldata",
+                "evm_opts",
+                "fork_chain_id_is_inferred",
+                "fork_network_is_inferred",
+                "fork_url_required",
+                "foundry_config",
+                "ir_minimum",
+                "local_chain_id",
+                "local_networks",
+                "no_vm",
+                "traces",
+            ]
+        );
+
+        let decoded =
+            serde_json::from_value::<SessionSourceConfig<EthEvmNetwork>>(encoded).unwrap();
+        assert_eq!(decoded.foundry_config.optimizer_runs, Some(500));
+        assert_eq!(decoded.evm_opts.fork_block_number, Some(42));
+        assert!(decoded.local_networks.is_some_and(|networks| networks.is_tempo()));
+        assert_eq!(decoded.local_chain_id, Some(4217));
+        assert!(decoded.fork_network_is_inferred);
+        assert!(decoded.fork_chain_id_is_inferred);
+        assert!(decoded.no_vm);
+        assert!(decoded.traces);
+        assert_eq!(decoded.calldata, Some(vec![1, 2, 3]));
+        assert!(decoded.ir_minimum);
+        assert!(decoded.fork_url_required);
+        assert_eq!(decoded.source_chain_id, None);
+    }
+
     #[test]
     fn saved_fork_restores_current_credentials_and_execution_settings() {
         let mut saved = SessionSourceConfig::<EthEvmNetwork>::default();
@@ -953,7 +1065,12 @@ mod tests {
         current.foundry_config.eth_rpc_timeout = Some(30);
         current.evm_opts.rpc_timeout = Some(30);
 
-        saved.restore_credentials(&current).unwrap();
+        saved
+            .restore_credentials(&InvocationRpc::capture(
+                &current.foundry_config,
+                &current.evm_opts,
+            ))
+            .unwrap();
 
         assert_eq!(saved.foundry_config.eth_rpc_url, current.foundry_config.eth_rpc_url);
         assert_eq!(saved.foundry_config.eth_rpc_jwt, current.foundry_config.eth_rpc_jwt);
@@ -992,7 +1109,7 @@ mod tests {
         legacy.foundry_config.etherscan_api_key = Some("legacy-key".into());
         legacy.evm_opts.rpc_headers = Some(vec!["Authorization: legacy-header".into()]);
         legacy.evm_opts.fork_headers = Some(vec!["Authorization: legacy-fork-header".into()]);
-        legacy.restore_credentials(&SessionSourceConfig::default()).unwrap();
+        legacy.restore_credentials(&InvocationRpc::default()).unwrap();
 
         assert_eq!(legacy.foundry_config.eth_rpc_jwt, None);
         assert_eq!(legacy.foundry_config.etherscan_api_key, None);
@@ -1008,7 +1125,7 @@ mod tests {
         assert_eq!(saved.evm_opts.fork_url, None);
         assert!(saved.fork_url_required);
 
-        let error = saved.restore_credentials(&SessionSourceConfig::default()).unwrap_err();
+        let error = saved.restore_credentials(&InvocationRpc::default()).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -1019,10 +1136,15 @@ mod tests {
     #[test]
     fn saved_local_session_stays_local_with_current_fork_endpoint() {
         let mut saved = SessionSourceConfig::<EthEvmNetwork>::default();
-        let mut current = SessionSourceConfig::default();
+        let mut current = SessionSourceConfig::<EthEvmNetwork>::default();
         current.evm_opts.fork_url = Some("https://rpc.invalid/current-token".into());
 
-        saved.restore_credentials(&current).unwrap();
+        saved
+            .restore_credentials(&InvocationRpc::capture(
+                &current.foundry_config,
+                &current.evm_opts,
+            ))
+            .unwrap();
 
         assert_eq!(saved.evm_opts.fork_url, None);
         assert!(!saved.fork_url_required);
