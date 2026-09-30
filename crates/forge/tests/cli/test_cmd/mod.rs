@@ -3,7 +3,7 @@
 use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
-use anvil::{NodeConfig, spawn};
+use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand,
@@ -1982,6 +1982,183 @@ contract EIP2935Test is Test {
     );
 
     cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
+});
+
+// Replacing the history contract clears its ring buffer; reverts must restore that storage.
+forgetest_init!(eip2935_history_storage_etch_rollback, |prj, cmd| {
+    prj.add_test(
+        "EIP2935EtchRollback.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract EIP2935EtchRollbackTest is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+    // Seeded ring slot that is read before the etch.
+    bytes32 constant LOADED = bytes32(uint256(1));
+    // Seeded ring slot that is never read before the etch.
+    bytes32 constant UNLOADED = bytes32(uint256(50));
+    // Ring slot written by the test.
+    bytes32 constant WRITTEN = bytes32(uint256(7000));
+    // Slot outside the ring buffer.
+    bytes32 constant OUTSIDE = bytes32(uint256(9000));
+
+    bytes original;
+    bytes32 loadedValue;
+    uint64 nonce;
+
+    function setUp() public {
+        original = HISTORY.code;
+        nonce = vm.getNonce(HISTORY);
+        loadedValue = vm.load(HISTORY, LOADED);
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(17)));
+        vm.store(HISTORY, OUTSIDE, bytes32(uint256(18)));
+    }
+
+    function child(bool fail) external {
+        vm.etch(HISTORY, hex"00");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "loaded slot not cleared");
+        assertEq(vm.load(HISTORY, UNLOADED), bytes32(0), "unloaded slot not cleared");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "written slot not cleared");
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x22)));
+        if (fail) revert("child");
+    }
+
+    function parent(bool childFail, bool parentFail) external {
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x44)));
+        if (childFail) {
+            try this.child(true) {
+                revert("child did not revert");
+            } catch Error(string memory reason) {
+                assertEq(reason, "child");
+            }
+        } else {
+            this.child(false);
+        }
+        if (parentFail) revert("parent");
+    }
+
+    function assertRestored() internal view {
+        assertEq(keccak256(HISTORY.code), keccak256(original), "code not restored");
+        assertEq(vm.getNonce(HISTORY), nonce, "nonce changed");
+        assertNotEq(loadedValue, bytes32(0), "loaded slot not seeded");
+        assertEq(vm.load(HISTORY, LOADED), loadedValue, "loaded slot not restored");
+        assertEq(vm.load(HISTORY, UNLOADED), blockhash(50), "unloaded slot not restored");
+        assertEq(vm.load(HISTORY, OUTSIDE), bytes32(uint256(18)), "outside slot changed");
+    }
+
+    function testChildRevertRestoresHistoryStorage() public {
+        this.parent(true, false);
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x44)), "parent write lost");
+    }
+
+    function testParentRevertRestoresHistoryStorage() public {
+        try this.parent(false, true) {
+            revert("parent did not revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "parent");
+        }
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(17)), "written slot not restored");
+    }
+
+    function testSuccessfulEtchClearsHistoryStorage() public {
+        this.parent(false, false);
+        assertEq(HISTORY.code, hex"00", "code not replaced");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "loaded slot not cleared");
+        assertEq(vm.load(HISTORY, UNLOADED), bytes32(0), "unloaded slot not cleared");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x22)), "child write lost");
+        assertEq(vm.load(HISTORY, OUTSIDE), bytes32(uint256(18)), "outside slot changed");
+
+        // Replacing a replacement keeps its storage.
+        vm.etch(HISTORY, hex"01");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x22)), "replacement storage lost");
+
+        // Reinstalling the history contract and replacing it again clears the ring buffer again.
+        vm.etch(HISTORY, original);
+        vm.store(HISTORY, LOADED, bytes32(uint256(0x55)));
+        vm.etch(HISTORY, hex"00");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "ring buffer not cleared again");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "written slot not cleared again");
+    }
+
+    function testStateSnapshotsAroundHistoryEtch() public {
+        uint256 beforeEtch = vm.snapshotState();
+        vm.etch(HISTORY, hex"00");
+        uint256 afterEtch = vm.snapshotState();
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x22)));
+
+        vm.revertToState(afterEtch);
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "post-etch snapshot not restored");
+
+        vm.revertToState(beforeEtch);
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(17)), "pre-etch snapshot not restored");
+    }
+}
+
+contract EIP2935EtchInSetUpTest is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+
+    function setUp() public {
+        vm.etch(HISTORY, hex"00");
+        vm.store(HISTORY, bytes32(uint256(7000)), bytes32(uint256(0x22)));
+    }
+
+    function testHistoryEtchInSetUpPersists() public view {
+        assertEq(HISTORY.code, hex"00", "code not replaced");
+        assertEq(vm.load(HISTORY, bytes32(uint256(50))), bytes32(0), "seeded slot exposed");
+        assertEq(vm.load(HISTORY, bytes32(uint256(7000))), bytes32(uint256(0x22)), "write lost");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
+});
+
+// Same rollback guarantee when the history storage is served by a fork RPC.
+forgetest_async!(eip2935_history_storage_etch_rollback_fork, |prj, cmd| {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+    let endpoint = handle.http_endpoint();
+
+    prj.add_test(
+        "EIP2935EtchRollbackFork.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function load(address target, bytes32 slot) external view returns (bytes32 data);
+}
+
+contract EIP2935EtchRollbackForkTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+    bytes32 constant SLOT = bytes32(uint256(5));
+
+    function child() external {
+        vm.etch(HISTORY, hex"00");
+        require(vm.load(HISTORY, SLOT) == bytes32(0), "slot not cleared");
+        revert("child");
+    }
+
+    function testForkHistoryEtchRevertRestoresStorage() public {
+        bytes32 codehash = HISTORY.codehash;
+        require(blockhash(5) != bytes32(0), "block hash unavailable");
+        try this.child() {
+            revert("child did not revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("child"), reason);
+        }
+        require(HISTORY.codehash == codehash, "code not restored");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot not restored");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--evm-version", "prague"]).assert_success();
 });
 
 forgetest_init!(eip2935_history_storage_not_deployed_before_prague, |prj, cmd| {
