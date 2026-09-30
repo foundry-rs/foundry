@@ -242,6 +242,92 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     ]]);
 });
 
+forgetest_init!(broadcast_deploy_code_cleans_up_after_revert, |prj, cmd| {
+    prj.add_source(
+        "DeployCodeCleanup.sol",
+        r#"
+contract DeployCodeCleanup {
+    address public caller;
+
+    constructor(bool shouldRevert) {
+        require(!shouldRevert, "constructor reverted");
+        caller = msg.sender;
+    }
+
+    function recordCaller() external {
+        caller = msg.sender;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "DeployCodeCleanup.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {DeployCodeCleanup} from "../src/DeployCodeCleanup.sol";
+
+contract DeployCodeCleanupTest is Test {
+    function testBroadcastCleanupAfterRevert() public {
+        DeployCodeCleanup local = new DeployCodeCleanup(false);
+
+        vm.broadcast(address(0xA11CE));
+        try vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(true),
+            bytes32(uint256(1))
+        ) returns (address) {
+            fail();
+        } catch {}
+
+        local.recordCaller();
+        assertEq(local.caller(), address(this));
+
+        vm.broadcast(address(0xB0B));
+        address deployed = vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(2))
+        );
+        assertGt(deployed.code.length, 0);
+
+        vm.broadcast(address(0xB0B));
+        try vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(2))
+        ) returns (address) {
+            fail();
+        } catch {}
+
+        local.recordCaller();
+        assertEq(local.caller(), address(this));
+
+        vm.broadcast(address(0xCAFE));
+        address finalDeployment = vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(3))
+        );
+        assertGt(finalDeployment.code.length, 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "DeployCodeCleanupTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/DeployCodeCleanup.t.sol:DeployCodeCleanupTest
+[PASS] testBroadcastCleanupAfterRevert() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});
+
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj, cmd| {
     let patt = regex::Regex::new("test*").unwrap();
@@ -6595,10 +6681,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
