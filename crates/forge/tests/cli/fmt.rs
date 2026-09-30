@@ -279,3 +279,46 @@ forgetest!(fmt_keeps_disable_directive_in_every_file, |prj, cmd| {
         );
     }
 });
+
+// Symlinks found while walking directories must not make `forge fmt` write outside of the project.
+#[cfg(unix)]
+forgetest!(fmt_skips_symlinks_outside_project, |prj, cmd| {
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("Outside.sol");
+    let outside_dir_file = outside.path().join("dir/Dir.sol");
+    std::fs::create_dir(outside.path().join("dir")).unwrap();
+    std::fs::write(&outside_file, UNFORMATTED).unwrap();
+    std::fs::write(&outside_dir_file, UNFORMATTED).unwrap();
+
+    let own = prj.add_raw_source("Own.sol", UNFORMATTED);
+    std::os::unix::fs::symlink(&outside_file, prj.root().join("src/Link.sol")).unwrap();
+    std::fs::create_dir_all(prj.root().join("test")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("dir"), prj.root().join("test/linked")).unwrap();
+
+    cmd.arg("fmt").assert_success().stderr_eq(str![[r#"
+Warning: Skipping [..]/src/Link.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/linked/Dir.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Formatted [..]/src/Own.sol
+
+"#]]);
+    assert_data_eq!(std::fs::read_to_string(own).unwrap(), FORMATTED);
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+    assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), UNFORMATTED);
+
+    // Walking an explicit project directory applies the same rule.
+    cmd.forge_fuse().args(["fmt", "test"]).assert_success().stderr_eq(str![[r#"
+Warning: Skipping test/linked/Dir.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]);
+    assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), UNFORMATTED);
+
+    // Explicit paths remain an opt-in.
+    cmd.forge_fuse().args(["fmt", "src/Link.sol", "test/linked"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), FORMATTED);
+    assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), FORMATTED);
+});

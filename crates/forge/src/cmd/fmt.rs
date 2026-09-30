@@ -96,6 +96,22 @@ impl FmtArgs {
             dirs.iter().any(check_against_dir)
         };
 
+        // Directory walks follow symlinks, so only keep discovered files that resolve inside the
+        // project root or the walked directory. Explicit file paths are always included.
+        let root = fs::canonicalize_path(&config.root).unwrap_or_else(|_| config.root.clone());
+        let is_contained = |file_path: &Path, dir: Option<&Path>| -> bool {
+            let Ok(resolved) = fs::canonicalize_path(file_path) else { return false };
+            if resolved.starts_with(&root) || dir.is_some_and(|dir| resolved.starts_with(dir)) {
+                return true;
+            }
+            let _ = sh_warn!(
+                "Skipping {}: it resolves outside of the project root.\n\
+                 HINT: Pass the path explicitly to format it: `forge fmt <paths>`",
+                file_path.display()
+            );
+            false
+        };
+
         let mut input = match &self.paths[..] {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones and libs.
@@ -109,6 +125,7 @@ impl FmtArgs {
                                 || is_under_dir(p, &ignored)))
                             || is_under_dir(p, &libs))
                     })
+                    .filter(|p| is_contained(p, None))
                     .collect();
                 Input::Paths(project_paths)
             }
@@ -128,6 +145,7 @@ impl FmtArgs {
                     if path.is_dir() {
                         // If the input directory is not a lib directory, make sure to ignore libs.
                         let exclude_libs = !is_under_dir(path, &libs);
+                        let dir = fs::canonicalize_path(path)?;
                         inputs.extend(
                             foundry_compilers::utils::source_files_iter(path, SOLC_EXTENSIONS)
                                 .filter(|p| {
@@ -136,7 +154,8 @@ impl FmtArgs {
                                             || ignored.contains(&cwd.join(p))
                                             || is_under_dir(p, &ignored)))
                                         || (exclude_libs && is_under_dir(p, &libs)))
-                                }),
+                                })
+                                .filter(|p| is_contained(p, Some(&dir))),
                         );
                     } else if path.is_sol() {
                         // Explicit file paths are always included, even if in a lib
