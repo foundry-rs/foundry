@@ -5,7 +5,7 @@ use crate::{
     Vm::*,
     json::{
         check_json_key_exists, parse_json, parse_json_coerce, parse_json_coerce_default,
-        parse_json_keys, resolve_type, upsert_json_value,
+        parse_json_keys, resolve_type, split_value_key,
     },
 };
 use alloy_dyn_abi::DynSolType;
@@ -15,6 +15,7 @@ use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
+use toml_edit::{DocumentMut, Item};
 
 impl Cheatcode for keyExistsTomlCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
@@ -169,20 +170,17 @@ impl Cheatcode for writeToml_1Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { json: value, path, valueKey } = self;
 
-        // Read and parse the TOML file.
-        // If the file doesn't exist, start with an empty object so the file is created.
+        // Read and parse the TOML file, keeping its formatting and comments.
+        // If the file doesn't exist, start with an empty document so the file is created.
         let data_path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let mut json_data: JsonValue = if data_path.exists() {
-            let toml_data = fs::locked_read_to_string(&data_path)?;
-            toml::from_str(&toml_data).map_err(|e| fmt_err!("failed parsing TOML: {e}"))?
+        let mut document = if data_path.exists() {
+            parse_toml_document(&fs::locked_read_to_string(&data_path)?)?
         } else {
-            JsonValue::Object(Default::default())
+            DocumentMut::new()
         };
-        upsert_json_value(&mut json_data, value, valueKey)?;
+        upsert_toml_value(&mut document, value, valueKey)?;
 
-        // Serialize back to TOML and write the updated content back to the file
-        let toml_string = format_json_to_toml(json_data)?;
-        super::fs::write_file(state, path.as_ref(), toml_string.as_bytes())
+        super::fs::write_file(state, path.as_ref(), document.to_string().as_bytes())
     }
 }
 
@@ -268,5 +266,201 @@ fn json_to_toml_value(json: JsonValue) -> TomlValue {
             TomlValue::Table(o.into_iter().map(|(k, v)| (k, json_to_toml_value(v))).collect())
         }
         JsonValue::Null => TomlValue::String("null".to_string()),
+    }
+}
+
+/// Parses a TOML string into a document that keeps its formatting and comments.
+fn parse_toml_document(toml: &str) -> Result<DocumentMut> {
+    toml.parse().map_err(|e| fmt_err!("failed parsing TOML: {e}"))
+}
+
+/// Inserts or replaces the value at `key` in a TOML document, creating intermediate tables if
+/// necessary.
+///
+/// Only the item at `key` is rewritten, so comments and formatting elsewhere in the document are
+/// kept, as are the comments and whitespace around a replaced value.
+fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Result<()> {
+    let parts = split_value_key(key)?;
+
+    // Separate the final key from the path.
+    // Traverse the tables, creating implicit intermediary ones if necessary.
+    if let Some((key_to_insert, path_to_parent)) = parts.split_last() {
+        let mut current_level = document.as_item_mut();
+
+        for segment in path_to_parent {
+            let Some(table) = current_level.as_table_like_mut() else {
+                return Err(fmt_err!("path segment '{segment}' does not resolve to an object."));
+            };
+            if !table.contains_key(segment) {
+                let mut intermediary = toml_edit::Table::new();
+                intermediary.set_implicit(true);
+                table.insert(segment, Item::Table(intermediary));
+            }
+            current_level = table.get_mut(segment).unwrap();
+        }
+
+        let is_inline = current_level.is_inline_table();
+        let Some(parent) = current_level.as_table_like_mut() else {
+            return Err(fmt_err!("final destination is not an object, cannot insert key."));
+        };
+
+        let value =
+            serde_json::from_str(value).unwrap_or_else(|_| JsonValue::String(value.to_owned()));
+        let mut item = json_to_toml_item(value)?;
+        if is_inline {
+            // Inline tables can only hold values.
+            item = item.into_value().map_or_else(|item| item, Item::Value);
+        }
+
+        // Replace an existing item in place: `insert` would reset the key's formatting, which holds
+        // the comments above it.
+        match parent.get_mut(key_to_insert) {
+            Some(existing) if !existing.is_none() => {
+                if let (Some(old), Some(new)) = (existing.as_value(), item.as_value_mut()) {
+                    *new.decor_mut() = old.decor().clone();
+                } else if let (Some(old), Some(new)) = (existing.as_table(), item.as_table_mut()) {
+                    *new.decor_mut() = old.decor().clone();
+                    new.set_position(old.position());
+                }
+                *existing = item;
+            }
+            _ => {
+                parent.insert(key_to_insert, item);
+                if is_inline {
+                    // Respace the inline table so the new key is separated like the others.
+                    parent.fmt();
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Converts a JSON value to a TOML item, formatted the same way as [`format_json_to_toml`].
+fn json_to_toml_item(value: JsonValue) -> Result<Item> {
+    const KEY: &str = "value";
+
+    let wrapper = JsonValue::Object([(KEY.to_string(), value)].into_iter().collect());
+    let mut item = parse_toml_document(&format_json_to_toml(wrapper)?)?
+        .remove(KEY)
+        .ok_or_else(|| fmt_err!("failed to serialize TOML value"))?;
+    // Drop the layout of the temporary document so new tables are placed after their parent.
+    reset_table_layout(&mut item);
+    Ok(item)
+}
+
+/// Recursively clears the document position and header whitespace of all tables in `item`.
+fn reset_table_layout(item: &mut Item) {
+    let tables: Vec<&mut toml_edit::Table> = match item {
+        Item::Table(table) => vec![table],
+        Item::ArrayOfTables(array) => array.iter_mut().collect(),
+        _ => return,
+    };
+    for table in tables {
+        table.set_position(None);
+        table.decor_mut().clear();
+        for (_, item) in table.iter_mut() {
+            reset_table_layout(item);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFIG: &str = r#"# Deployment config.
+
+owner = "0x000000000000000000000000000000000000dEaD" # multisig
+deployed_at = 2024-04-27T11:57:21Z
+max_supply = 0xffff_ffff
+salt = 'literal-string'
+
+# Mainnet settings.
+[mainnet]
+token = "0x0000000000000000000000000000000000000000" # filled by script
+limits = { daily = 1_000, weekly = 5_000 }
+
+# Base settings.
+[base]
+chain_id = 8453
+"#;
+
+    fn upsert(toml: &str, value: &str, key: &str) -> Result<String> {
+        let mut document = parse_toml_document(toml)?;
+        upsert_toml_value(&mut document, value, key)?;
+        Ok(document.to_string())
+    }
+
+    #[test]
+    fn upsert_toml_keeps_comment_above_key() {
+        let toml = "key1 = \"1\"\n\n# this is key2\nkey2 = \"2\"\n";
+        assert_eq!(
+            upsert(toml, "abcd", ".key2").unwrap(),
+            "key1 = \"1\"\n\n# this is key2\nkey2 = \"abcd\"\n"
+        );
+    }
+
+    #[test]
+    fn upsert_toml_replaces_only_the_value() {
+        let address = "0x000000000000000000000000000000000000bEEF";
+        assert_eq!(
+            upsert(CONFIG, address, ".mainnet.token").unwrap(),
+            CONFIG.replace(
+                r#"token = "0x0000000000000000000000000000000000000000""#,
+                &format!(r#"token = "{address}""#)
+            )
+        );
+        assert_eq!(
+            upsert(CONFIG, "2000", ".mainnet.limits.daily").unwrap(),
+            CONFIG.replace("daily = 1_000", "daily = 2000")
+        );
+        assert_eq!(
+            upsert(CONFIG, "{\"chain_id\": 10}", "base").unwrap(),
+            CONFIG.replace("chain_id = 8453", "chain_id = 10")
+        );
+    }
+
+    #[test]
+    fn upsert_toml_adds_keys() {
+        assert_eq!(
+            upsert(CONFIG, "30000000", ".base.gas_limit").unwrap(),
+            format!("{CONFIG}gas_limit = 30000000\n")
+        );
+        assert_eq!(
+            upsert(CONFIG, "{\"block\": 123}", ".optimism.contracts").unwrap(),
+            format!("{CONFIG}\n[optimism.contracts]\nblock = 123\n")
+        );
+        assert_eq!(
+            upsert(CONFIG, "{\"monthly\": 9}", ".mainnet.limits.extra").unwrap(),
+            CONFIG.replace("weekly = 5_000 }", "weekly = 5_000, extra = { monthly = 9 } }")
+        );
+    }
+
+    #[test]
+    fn upsert_toml_formats_new_values_like_write_toml() {
+        let value = r#"{"list": ["0x01", "0x02"], "empty": {}, "nested": {"a": {"b": 1}}}"#;
+        let expected = format_json_to_toml(
+            serde_json::json!({ "new": serde_json::from_str::<JsonValue>(value).unwrap() }),
+        )
+        .unwrap();
+        assert_eq!(upsert("", value, ".new").unwrap(), expected);
+    }
+
+    #[test]
+    fn upsert_toml_errors() {
+        assert_eq!(
+            upsert(CONFIG, "1", ".owner.x").unwrap_err().to_string(),
+            "final destination is not an object, cannot insert key."
+        );
+        assert_eq!(
+            upsert(CONFIG, "1", ".owner.x.y").unwrap_err().to_string(),
+            "path segment 'x' does not resolve to an object."
+        );
+        assert_eq!(
+            upsert(CONFIG, "1", "$.").unwrap_err().to_string(),
+            "'valueKey' cannot be empty or just '$'"
+        );
     }
 }
