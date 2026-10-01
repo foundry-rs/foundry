@@ -354,12 +354,28 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 )?
                 .build()?;
                 // A saved signed attempt with an included receipt was mined before its response
-                // was recorded; reconcile it before requesting signers. A saved attempt that is not
+                // was recorded; reconcile it before requesting signers, and stop on a mined revert
+                // before anything is rebroadcast. Only then is a saved attempt that is not
                 // currently visible to the endpoint but precedes a pending nonce from the same
-                // sender is rebroadcast with its identical bytes before waiting, so that pending
-                // nonce cannot wait forever behind a predecessor lost before reaching the node. All
-                // other attempts are left for the identical-bytes rebroadcast during broadcast.
+                // sender rebroadcast with its identical bytes, so that pending nonce cannot wait
+                // forever behind a predecessor lost before reaching the node. All other attempts
+                // are left for the identical-bytes rebroadcast during broadcast.
+                let mut unseen = Vec::new();
                 for (operation, signed) in sequence.unreceipted_signed_attempts(index) {
+                    if let Some(receipt) = provider.get_transaction_receipt(signed.hash).await?
+                        && receipt.block_number().is_some()
+                        && receipt.block_hash().is_some()
+                        && receipt.transaction_index().is_some()
+                    {
+                        if !receipt.status() {
+                            eyre::bail!("Transaction Failure: {:?}", signed.hash);
+                        }
+                        sequence.sequences_mut()[index].add_pending(operation, signed.hash);
+                    } else {
+                        unseen.push((operation, signed));
+                    }
+                }
+                for (operation, signed) in unseen {
                     let hash = signed.hash;
                     let deployment = &sequence.sequences()[index];
                     let planned = deployment.transactions[operation].tx();
@@ -368,20 +384,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                             && transaction.tx().from() == planned.from()
                             && transaction.tx().nonce() > planned.nonce()
                     });
-                    if let Some(receipt) = provider.get_transaction_receipt(hash).await?
-                        && receipt.block_number().is_some()
-                        && receipt.block_hash().is_some()
-                        && receipt.transaction_index().is_some()
-                    {
-                        // Attempts are visited in nonce order, so a mined revert stops resume
-                        // before any later attempt is rebroadcast.
-                        if !receipt.status() {
-                            eyre::bail!("Transaction Failure: {hash:?}");
-                        }
-                        sequence.sequences_mut()[index].add_pending(operation, hash);
-                    } else if precedes_pending
-                        && provider.get_transaction_by_hash(hash).await?.is_none()
-                    {
+                    if precedes_pending && provider.get_transaction_by_hash(hash).await?.is_none() {
                         match provider.send_raw_transaction(&signed.payload).await {
                             Ok(pending) if *pending.tx_hash() == hash => {}
                             Ok(pending) => eyre::bail!(

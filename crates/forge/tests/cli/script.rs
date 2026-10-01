@@ -1936,10 +1936,15 @@ contract Later {}
 
 contract RevertedPredecessor is Script {
     function run() external {
-        vm.startBroadcast();
+        address sender = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+        vm.startBroadcast(sender);
+        // Collect transactions in nonce order [1, 0, 2].
+        vm.setNonceUnsafe(sender, 1);
+        new Later();
+        vm.setNonceUnsafe(sender, 0);
         (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
         require(success);
-        new Later();
+        vm.setNonceUnsafe(sender, 2);
         new Later();
         vm.stopBroadcast();
     }
@@ -1996,7 +2001,7 @@ contract RevertedPredecessor is Script {
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
 
     // The mined revert stops resume before the unseen nonce-1 attempt is rebroadcast, even
-    // though it precedes the queued nonce 2.
+    // though it precedes the queued nonce 2 and is collected before nonce 0.
     prj.update_config(|config| config.transaction_timeout = 1);
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
