@@ -1940,6 +1940,7 @@ contract RevertedPredecessor is Script {
         (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
         require(success);
         new Later();
+        new Later();
         vm.stopBroadcast();
     }
 }
@@ -1954,7 +1955,7 @@ contract RevertedPredecessor is Script {
     let sender = handle.dev_accounts().next().unwrap();
     let path = prj.root().join("broadcast/RevertedPredecessor.s.sol/31337/run-latest.json");
 
-    // Both concurrent submissions are accepted and recorded, then Forge exits before mining.
+    // All concurrent submissions are accepted and recorded, then Forge exits before mining.
     cmd.arg("script").arg(&script).args([
         "--tc",
         "RevertedPredecessor",
@@ -1968,7 +1969,7 @@ contract RevertedPredecessor is Script {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
-                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 2)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 3)
             {
                 break;
             }
@@ -1976,27 +1977,26 @@ contract RevertedPredecessor is Script {
         }
     })
     .await
-    .expect("forge did not record both submissions");
+    .expect("forge did not record all submissions");
     child.kill_and_wait();
 
-    // Nonce 0 is mined but reverts, and the node drops nonce 1.
-    let successor = submissions
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|params| raw_nonce(params[0].as_str().unwrap()) == 1)
-        .unwrap()[0]
-        .clone();
-    api.anvil_drop_transaction(keccak256(hex::decode(successor.as_str().unwrap()).unwrap()))
-        .await
-        .unwrap();
+    // Nonce 0 is mined but reverts, the node drops nonce 1, and nonce 2 stays queued behind it.
+    let raw = |nonce| {
+        let submissions = submissions.lock().unwrap();
+        let params =
+            submissions.iter().find(|params| raw_nonce(params[0].as_str().unwrap()) == nonce);
+        hex::decode(params.unwrap()[0].as_str().unwrap()).unwrap()
+    };
+    api.anvil_drop_transaction(keccak256(raw(1))).await.unwrap();
+    let provider = handle.http_provider();
+    let _ = provider.send_raw_transaction(&raw(2)).await.unwrap();
     api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
     api.mine_one().await.unwrap();
-    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(true).await.unwrap();
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
 
-    // Nothing pending depends on the unseen nonce-1 attempt, so resume reports the revert
-    // without submitting it.
+    // The mined revert stops resume before the unseen nonce-1 attempt is rebroadcast, even
+    // though it precedes the queued nonce 2.
     prj.update_config(|config| config.transaction_timeout = 1);
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
@@ -2017,7 +2017,7 @@ contract RevertedPredecessor is Script {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "{stderr}");
     assert!(stderr.contains("Transaction Failure"), "{stderr}");
-    assert_eq!(submissions.lock().unwrap().len(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 3);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
 });
 

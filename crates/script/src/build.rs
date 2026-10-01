@@ -373,6 +373,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         && receipt.block_hash().is_some()
                         && receipt.transaction_index().is_some()
                     {
+                        // Attempts are visited in nonce order, so a mined revert stops resume
+                        // before any later attempt is rebroadcast.
+                        if !receipt.status() {
+                            eyre::bail!("Transaction Failure: {hash:?}");
+                        }
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     } else if precedes_pending
                         && provider.get_transaction_by_hash(hash).await?.is_none()
