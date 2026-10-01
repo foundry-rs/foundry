@@ -275,9 +275,6 @@ pub trait FoundryTransaction: Transaction {
 
     /// Sets the fee payer for this transaction.
     fn set_fee_payer(&mut self, _payer: Option<Option<Address>>) {}
-
-    /// Drops every batched call after the first one, which is the only call that may create.
-    fn truncate_to_first_call(&mut self) {}
 }
 
 impl FoundryTransaction for TxEnv {
@@ -424,12 +421,6 @@ impl FoundryTransaction for TempoTxEnv {
 
     fn set_fee_payer(&mut self, payer: Option<Option<Address>>) {
         self.fee_payer = payer;
-    }
-
-    fn truncate_to_first_call(&mut self) {
-        if let Some(env) = self.tempo_tx_env.as_deref_mut() {
-            env.aa_calls.truncate(1);
-        }
     }
 }
 
@@ -1126,7 +1117,7 @@ mod tests {
     use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
-    use alloy_primitives::Signature;
+    use alloy_primitives::{Signature, address, b256, bytes};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
     use alloy_signer::SignerSync;
@@ -1529,27 +1520,189 @@ mod tests {
         assert_eq!(aa.valid_after, Some(1800000000));
         assert_eq!(aa.valid_before, Some(1900000000));
         assert_eq!(aa.tx_hash, tx_hash);
+    }
 
-        let mut first_call_env = tx_env.clone();
-        first_call_env.truncate_to_first_call();
-        assert_eq!(first_call_env.tempo_tx_env.unwrap().aa_calls, calls[..1]);
+    /// Decodes a captured Tempo `eth_getTransactionByHash` result.
+    fn captured_tempo_aa(json: &str) -> TempoTxEnv {
+        let any_tx: AnyRpcTransaction = serde_json::from_str(json).unwrap();
+        let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
+        let aa = tx_env.tempo_tx_env.as_deref().unwrap();
+        // Recovery over the recomputed signing hash only succeeds if every signed field decoded.
+        assert_eq!(aa.signature.recover_signer(&aa.signature_hash).unwrap(), tx_env.inner.caller);
+        assert_eq!(tx_env.inner.tx_type, TEMPO_TX_TYPE_ID);
+        tx_env
+    }
+
+    #[test]
+    fn from_any_rpc_transaction_for_captured_sponsored_tempo_aa_batch() {
+        let tx_env = captured_tempo_aa(include_str!("../test-data/tempo-aa-sponsored-batch.json"));
+        assert_eq!(tx_env.inner.caller, address!("0x0a0d9bc4dda3a659699ce05153ffe9298f99ce89"));
+        assert_eq!(tx_env.inner.nonce, 0);
+        assert_eq!(tx_env.inner.gas_limit, 1403789);
+        assert_eq!(tx_env.inner.chain_id, Some(4217));
+        assert_eq!(tx_env.fee_token, Some(address!("0x20c0000000000000000000006a37da5c996874be")));
+        assert_eq!(
+            tx_env.fee_payer,
+            Some(Some(address!("0x58aa7ce42e1d13b2919e2ac7e006c4fbc171442c")))
+        );
+        assert_eq!(
+            tx_env.execution_context(),
+            ExecutionContext::Transaction {
+                tx_hash: b256!(
+                    "0xbb23551c35bc2c2539ac3637c7464a22b5fb38bbb9cf39fa1f533ca6c2c981a3"
+                )
+            }
+        );
+        // Expiring nonces are replay-protected by this sender-scoped identifier.
+        assert_eq!(
+            tx_env.unique_tx_identifier(),
+            Some(b256!("0xadb35ee9830a691a8dbd8f42208a1553d9a242b8750a218d841cc78a0dea20ca"))
+        );
+
+        let aa = tx_env.tempo_tx_env.as_deref().unwrap();
+        assert_eq!(
+            aa.aa_calls,
+            [
+                Call {
+                    to: TxKind::Call(address!("0x20c0000000000000000000000000000000000000")),
+                    value: U256::ZERO,
+                    input: bytes!(
+                        "0x095ea7b300000000000000000000000083a1491f3e7f8daab8f787a631334b9ca7a870230000000000000000000000000000000000000000000000000000000077359400"
+                    ),
+                },
+                Call {
+                    to: TxKind::Call(address!("0x83a1491f3e7f8daab8f787a631334b9ca7a87023")),
+                    value: U256::ZERO,
+                    input: bytes!(
+                        "0x6e553f6500000000000000000000000000000000000000000000000000000000773594000000000000000000000000000a0d9bc4dda3a659699ce05153ffe9298f99ce89"
+                    ),
+                },
+            ]
+        );
+        assert_eq!(aa.nonce_key, U256::MAX);
+        assert_eq!(aa.valid_after, Some(542204929));
+        assert_eq!(aa.valid_before, Some(1790813692));
+    }
+
+    #[test]
+    fn from_any_rpc_transaction_for_captured_nonce_lane_tempo_aa() {
+        let tx_env = captured_tempo_aa(include_str!("../test-data/tempo-aa-nonce-lane.json"));
+        assert_eq!(tx_env.inner.caller, address!("0xfdd1c606b498f5fcaaf27bd318b14caf52e8f6c2"));
+        assert_eq!(tx_env.inner.nonce, 22496);
+        assert_eq!(tx_env.inner.gas_limit, 99408);
+        assert_eq!(tx_env.inner.chain_id, Some(42431));
+        assert_eq!(tx_env.fee_token, None);
+        assert_eq!(tx_env.fee_payer, None);
+        assert_eq!(
+            tx_env.execution_context(),
+            ExecutionContext::Transaction {
+                tx_hash: b256!(
+                    "0x4df0a9b9e859be6c91c00edf8478939d0b91f6f9eb39dd9c8a93946ac70ff740"
+                )
+            }
+        );
+
+        let aa = tx_env.tempo_tx_env.as_deref().unwrap();
+        let [call] = aa.aa_calls.as_slice() else { panic!("expected one call") };
+        assert_eq!(call.to, TxKind::Call(address!("0x5ad0000000000000000000000000000000000003")));
+        assert_eq!(call.value, U256::ZERO);
+        assert_eq!(call.input.len(), 868);
+        assert_eq!(aa.nonce_key, U256::from(1));
+        assert_eq!(aa.valid_after, None);
+        assert_eq!(aa.valid_before, None);
+    }
+
+    #[test]
+    fn from_any_rpc_transaction_for_captured_keychain_tempo_aa() {
+        let tx_env = captured_tempo_aa(include_str!("../test-data/tempo-aa-keychain.json"));
+        let sender = address!("0x5f704c6c7075acd14ee36527f03b5b5dcb4a966f");
+        let key_id = address!("0x240a31713e851acdc0c590fe45ef72baeff55f91");
+        assert_eq!(tx_env.inner.caller, sender);
+        assert_eq!(tx_env.inner.nonce, 0);
+        assert_eq!(tx_env.inner.gas_limit, 322821);
+        assert_eq!(tx_env.inner.chain_id, Some(42431));
+        assert_eq!(tx_env.fee_token, None);
+        assert_eq!(
+            tx_env.fee_payer,
+            Some(Some(address!("0x133d7736f290fa2758cf0d1e0862f5a93ae1dcbf")))
+        );
+        assert_eq!(
+            tx_env.execution_context(),
+            ExecutionContext::Transaction {
+                tx_hash: b256!(
+                    "0xd4d372ad5cfa4cdf476aeb25d4a76fb80fe2d6169eb9354c544500c0496a19d6"
+                )
+            }
+        );
+        // Expiring nonces are replay-protected by this sender-scoped identifier.
+        assert_eq!(
+            tx_env.unique_tx_identifier(),
+            Some(b256!("0xdb2722c83d8893c1637bbabfe2ad924bcc044653f6c9fa91d472d70ddfa97de3"))
+        );
+
+        let aa = tx_env.tempo_tx_env.as_deref().unwrap();
+        assert_eq!(
+            aa.aa_calls,
+            [Call { to: TxKind::Call(Address::ZERO), value: U256::ZERO, input: Bytes::new() }]
+        );
+        assert_eq!(aa.nonce_key, U256::MAX);
+        assert_eq!(aa.valid_after, Some(949691873));
+        assert_eq!(aa.valid_before, Some(1790811579));
+        let TempoSignature::Keychain(keychain) = &aa.signature else { panic!("expected keychain") };
+        assert_eq!(keychain.user_address, sender);
+        assert_eq!(keychain.key_id(&aa.signature_hash).unwrap(), key_id);
+        let key_authorization = aa.key_authorization.as_ref().unwrap();
+        assert_eq!(key_authorization.key_id, key_id);
+        assert_eq!(key_authorization.recover_signer().unwrap(), sender);
+    }
+
+    #[test]
+    fn from_any_rpc_transaction_for_captured_authorization_list_tempo_aa() {
+        let tx_env =
+            captured_tempo_aa(include_str!("../test-data/tempo-aa-authorization-list.json"));
+        assert_eq!(tx_env.inner.caller, address!("0xd410bcea80de9214e0e49df7d19c4c5e3db60f2a"));
+        assert_eq!(tx_env.inner.nonce, 0);
+        assert_eq!(tx_env.inner.gas_limit, 2000000);
+        assert_eq!(tx_env.inner.chain_id, Some(42431));
+        assert_eq!(tx_env.fee_token, Some(address!("0x20c0000000000000000000000000000000000000")));
+        assert_eq!(tx_env.fee_payer, None);
+        assert_eq!(
+            tx_env.execution_context(),
+            ExecutionContext::Transaction {
+                tx_hash: b256!(
+                    "0xfff5a6fa344fa9d6d7410374f40b6f711735500892cccdf480670fd7c5adcf93"
+                )
+            }
+        );
+
+        let aa = tx_env.tempo_tx_env.as_deref().unwrap();
+        let call = Call {
+            to: TxKind::Call(address!("0xa98d41b22c17ae4f4a94420a29a3095464c037e3")),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        };
+        assert_eq!(aa.aa_calls, [call.clone(), call]);
+        assert_eq!(aa.nonce_key, U256::ZERO);
+        // Secp256k1, P256 and WebAuthn authorizations, in that order.
+        let delegate = address!("0xaaaaaaaa00000000000000000000000000000000");
+        assert_eq!(
+            aa.tempo_authorization_list
+                .iter()
+                .map(|auth| (auth.address, auth.authority()))
+                .collect::<Vec<_>>(),
+            [
+                (delegate, Some(address!("0xd9aa283bc5643587f9623a0e9683df78588404a8"))),
+                (delegate, Some(address!("0x883b644ccaa219845187fd0932a8ef6e7d484bd6"))),
+                (delegate, Some(address!("0x732c32ec8e029d8989b9d1db9914376b17e20676"))),
+            ]
+        );
     }
 
     #[test]
     fn from_any_rpc_transaction_for_tempo_aa_without_signature_errors() {
-        let aa_signed = AASigned::new_unhashed(
-            TempoTransaction::default(),
-            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::new(
-                U256::ZERO,
-                U256::ZERO,
-                false,
-            ))),
-        );
-        let rpc_tx = RpcTransaction::from_transaction(
-            Recovered::new_unchecked(TempoTxEnvelope::AA(aa_signed), Address::random()),
-            TransactionInfo::default(),
-        );
-        let mut json = serde_json::to_value(&rpc_tx).unwrap();
+        let mut json: serde_json::Value =
+            serde_json::from_str(include_str!("../test-data/tempo-aa-sponsored-batch.json"))
+                .unwrap();
         json.as_object_mut().unwrap().remove("signature");
         let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
 

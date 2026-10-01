@@ -938,8 +938,6 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
             ..
         } = self;
         let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&transaction)?;
-        // Only the creation call is redeployed; batched follow-up calls cannot change its code.
-        tx_env.truncate_to_first_call();
         // Read the call from the decoded env: batched transactions have no top-level `to`/`input`.
         let kind = tx_env.kind();
         let target_context =

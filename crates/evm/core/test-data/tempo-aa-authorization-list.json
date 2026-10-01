@@ -1,0 +1,83 @@
+{
+  "type": "0x76",
+  "chainId": "0xa5bf",
+  "feeToken": "0x20c0000000000000000000000000000000000000",
+  "maxPriorityFeePerGas": "0x4a817c800",
+  "maxFeePerGas": "0x4a817c800",
+  "gas": "0x1e8480",
+  "calls": [
+    {
+      "to": "0xa98d41b22c17ae4f4a94420a29a3095464c037e3",
+      "value": "0x0",
+      "input": "0x",
+      "data": null
+    },
+    {
+      "to": "0xa98d41b22c17ae4f4a94420a29a3095464c037e3",
+      "value": "0x0",
+      "input": "0x",
+      "data": null
+    }
+  ],
+  "accessList": [],
+  "nonceKey": "0x0",
+  "nonce": "0x0",
+  "feePayerSignature": null,
+  "validBefore": null,
+  "validAfter": null,
+  "keyAuthorization": null,
+  "aaAuthorizationList": [
+    {
+      "chainId": "0xa5bf",
+      "address": "0xaaaaaaaa00000000000000000000000000000000",
+      "nonce": "0x0",
+      "signature": {
+        "type": "secp256k1",
+        "r": "0x815456e1d5bbef2a8b8aec3198a16862aaa7e6e6d840ebf038e6a9935c1b01bd",
+        "s": "0x3b1ed1a1e4950bf4a3060427808658414f067ac92364770f0f5aae26cb2e522a",
+        "yParity": "0x0",
+        "v": "0x0"
+      }
+    },
+    {
+      "chainId": "0xa5bf",
+      "address": "0xaaaaaaaa00000000000000000000000000000000",
+      "nonce": "0x0",
+      "signature": {
+        "type": "p256",
+        "r": "0x1ee7a33aac8f04f5ca81cce2d5a0186bf30a329685845328481560c7e76c48b7",
+        "s": "0x353cb7093466e6ed4975a1dc5bc01684ee76dc76ca92f137a5324c5a8dad15ea",
+        "pubKeyX": "0x228ab707cb6251aea5f7f698b08e605432e1f0f153ad0e28920e8152209cf7a1",
+        "pubKeyY": "0x7d208dcf2cc10fcf49a56fd9ebf48c216dbe2c3a0c10e5d037b8a12881e95556",
+        "preHash": true
+      }
+    },
+    {
+      "chainId": "0xa5bf",
+      "address": "0xaaaaaaaa00000000000000000000000000000000",
+      "nonce": "0x0",
+      "signature": {
+        "type": "webAuthn",
+        "r": "0x41586c5805ef938001260596aabb378110cfb827ae09fd1cb371ef705d3deffd",
+        "s": "0x24e4c741dc9063d0f011352cef35a4bd73c385f86ee493f7fc7dbb557daf7dea",
+        "pubKeyX": "0xa818c5868176c58b1b21d6343edafb5a95dd8538fbe75b43d26c01f658505e85",
+        "pubKeyY": "0xcab60c6fe071869447e4ee1ba7dbb7b340bda33c0efa4126abc8007cf6b449f8",
+        "webauthnData": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01000000007b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22465f7274624a525335576b704a7442376b2d5532725765594c56775476556f6d38637164423873535f6267222c226f726967696e223a2268747470733a2f2f6578616d706c652e636f6d222c2263726f73734f726967696e223a66616c73657d"
+      }
+    }
+  ],
+  "signature": {
+    "type": "secp256k1",
+    "r": "0x14d2be61cd10b19ea2057c18288389e67c84c286358a9d6e3a3dc56ac0ef1118",
+    "s": "0x74d8eed27a25071266dbd6fd4281c474e2d0d63f49d7714aaca5512f07d77d7",
+    "yParity": "0x1",
+    "v": "0x1"
+  },
+  "hash": "0xfff5a6fa344fa9d6d7410374f40b6f711735500892cccdf480670fd7c5adcf93",
+  "blockHash": "0x1545dbb05d4f58e77b82b26c5bc5d875b76f745306abeec617ef9c25840ca102",
+  "blockNumber": "0x23df1a9",
+  "transactionIndex": "0x0",
+  "from": "0xd410bcea80de9214e0e49df7d19c4c5e3db60f2a",
+  "gasPrice": "0x4a817c800",
+  "blockTimestamp": "0x6abd8288"
+}
