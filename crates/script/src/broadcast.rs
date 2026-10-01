@@ -1056,8 +1056,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         result?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
                     }
-                    // Checkpoint save
-                    self.sequence.save(true, false)?;
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }

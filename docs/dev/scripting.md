@@ -184,12 +184,18 @@ generation-tagged state fails closed. A generationless legacy public/sensitive p
 after its pair-consistency checks pass. Batch import additionally validates transaction-hash,
 pending, and receipt associations. Resume then:
 
-1. reconciles hashes currently listed in `pending`;
+1. reconciles hashes currently listed in `pending`, plus mined ordinary signed attempts that lack a
+   pending hash or receipt;
 2. stops if any persisted receipt reverted;
 3. reuses available signers or re-executes only to collect missing script-provided signers;
 4. derives remaining ordinary work by operation hash and batch work by a validated contiguous
    prefix;
 5. prepares and submits that remaining work.
+
+A reverted receipt is terminal but unsuccessful. Resume may still reconcile already-submitted
+hashes, but it never submits remaining operations after a revert, including later operations on
+other chains. `--resume-retry` resolves only an unknown delegated outcome and cannot override a
+confirmed revert.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
 endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.

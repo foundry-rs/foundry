@@ -1218,7 +1218,7 @@ where
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Address, address, b256};
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
@@ -1775,6 +1775,36 @@ mod tests {
             deployment.contractAddress,
             address!("20c0000000000000000000000000000000000000")
         );
+
+        let mut cheats = Cheatcodes::<TempoEvmNetwork>::new(Arc::new(CheatsConfig {
+            broadcast: broadcast_path.clone(),
+            ..Default::default()
+        }));
+        let mut outcomes = || {
+            let deployments = getDeploymentsCall { contractName: "Counter".into(), chainId: 31337 }
+                .apply(&mut cheats)
+                .unwrap();
+            let broadcasts = getBroadcasts_1Call { contractName: "Counter".into(), chainId: 31337 }
+                .apply(&mut cheats)
+                .unwrap();
+            (
+                Vec::<Address>::abi_decode(&deployments).unwrap(),
+                Vec::<BroadcastTxSummary>::abi_decode(&broadcasts)
+                    .unwrap()
+                    .into_iter()
+                    .map(|summary| summary.success)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            outcomes(),
+            (vec![address!("20c0000000000000000000000000000000000000")], vec![false, true])
+        );
+
+        // When every deployment reverted, broadcasts still expose the failed outcomes.
+        sequence["receipts"][0]["status"] = "0x0".into();
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+        assert_eq!(outcomes(), (vec![], vec![false, false]));
 
         stdfs::remove_dir_all(root).unwrap();
     }

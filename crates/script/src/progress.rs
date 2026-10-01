@@ -221,6 +221,7 @@ impl ScriptProgress {
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
+        let mut reverted = false;
 
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
@@ -267,8 +268,16 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                 }
-                Ok(TxStatus::Success(receipt)) => {
-                    trace!(tx_hash=?tx_hash, "received tx receipt");
+                // A reverted receipt is the operation's terminal outcome too; resume must not
+                // resubmit it.
+                Ok(TxStatus::Success(receipt) | TxStatus::Revert(receipt)) => {
+                    if receipt.status() {
+                        trace!(tx_hash=?tx_hash, "received tx receipt");
+                    } else {
+                        warn!(tx_hash=?tx_hash, "Transaction Failure");
+                        errors.push(format!("Transaction Failure: {tx_hash:?}"));
+                        reverted = true;
+                    }
 
                     let msg = format_receipt(
                         deployment_sequence.chain.into(),
@@ -279,21 +288,6 @@ impl ScriptProgress {
 
                     deployment_sequence.remove_pending(receipt.transaction_hash());
                     deployment_sequence.add_receipt(receipt);
-                }
-                Ok(TxStatus::Revert(receipt)) => {
-                    warn!(tx_hash=?tx_hash, "Transaction Failure");
-
-                    let msg = format_receipt(
-                        deployment_sequence.chain.into(),
-                        &receipt,
-                        Some(deployment_sequence),
-                    );
-                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
-                    // The failed receipt is the operation's terminal outcome; resume must not
-                    // resubmit it.
-                    deployment_sequence.remove_pending(receipt.transaction_hash());
-                    deployment_sequence.add_receipt(receipt);
-                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                 }
             }
         }
@@ -302,8 +296,9 @@ impl ScriptProgress {
         if !errors.is_empty() {
             let mut error_msg = errors.join("\n");
 
-            // Add information about using --resume if necessary
-            if !deployment_sequence.pending.is_empty() || discarded_transactions {
+            // Add information about using --resume if necessary; resume refuses to continue after a
+            // revert.
+            if !reverted && (!deployment_sequence.pending.is_empty() || discarded_transactions) {
                 error_msg += r#"
 
 Add `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC."#;

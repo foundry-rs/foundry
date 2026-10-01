@@ -1353,9 +1353,9 @@ contract Reverter {
     function fail() external pure {
         revert("reverted on chain");
     }
-}
 
-contract Later {}
+    function later() external {}
+}
 
 contract RevertedResume is Script {
     function run() external {
@@ -1364,7 +1364,7 @@ contract RevertedResume is Script {
         // A fixed gas limit skips estimation, so the call is submitted and reverts on chain.
         (bool success,) = address(reverter).call{gas: 100_000}(abi.encodeCall(Reverter.fail, ()));
         require(!success);
-        new Later();
+        reverter.later{gas: 100_000}();
         vm.stopBroadcast();
     }
 }
@@ -1405,6 +1405,38 @@ Error: Transaction Failure: 0x[..]
     assert_eq!(reverted.unwrap()["status"], "0x0");
     assert!(sequence["pending"].as_array().unwrap().is_empty());
     assert_eq!(submissions.lock().unwrap().len(), 2);
+
+    // Older snapshots dropped the reverted hash from pending without its receipt, and an
+    // interrupted checkpoint can also lose its operation hash. A fresh, non-sequential resume must
+    // reconcile that signed attempt instead of replaying it alongside the unsigned successor.
+    let recovery_path =
+        prj.root().join("cache/RevertedResume.s.sol/31337/run-latest.json.recovery.json");
+    let mut recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let data = &mut recovery["data"]["sequence"];
+    data["receipts"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|receipt| receipt["transactionHash"] != reverted_hash);
+    data["transactions"][1]["hash"] = Value::Null;
+    foundry_common::fs::write_json_file(&recovery_path, &recovery).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_failure().stderr_eq(format!("Error: Transaction Failure: {reverted_hash}\n"));
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let reverted = sequence["receipts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|receipt| receipt["transactionHash"] == reverted_hash);
+    assert_eq!(reverted.unwrap()["status"], "0x0");
 
     // Resume stops at the reverted operation before requesting a signer or submitting anything.
     cmd.forge_fuse().arg("script").arg(&script).args([

@@ -10,7 +10,7 @@ use crate::{
         RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
     },
 };
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{ContextCompat, OptionExt, Result};
@@ -348,15 +348,27 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
             let progress = ScriptProgress::default();
             for index in 0..sequence.sequences().len() {
-                if sequence.sequences()[index].pending.is_empty() {
-                    continue;
-                }
-                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
                 let provider = ProviderBuilder::from_config_with_url(
                     &self.script_config.config,
                     sequence.sequences()[index].rpc_url(),
                 )?
                 .build()?;
+                // A mined signed attempt can lack a pending hash and receipt, for example when an
+                // older snapshot dropped a revert, so reconcile it before replaying anything.
+                for operation in 0..sequence.sequences()[index].transactions.len() {
+                    let deployment = &sequence.sequences()[index];
+                    if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
+                        && !deployment.pending.contains(&hash)
+                        && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
+                        && provider.get_transaction_receipt(hash).await?.is_some()
+                    {
+                        sequence.sequences_mut()[index].add_pending(operation, hash);
+                    }
+                }
+                if sequence.sequences()[index].pending.is_empty() {
+                    continue;
+                }
+                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
                 let result = progress
                     .wait_for_pending(
                         index,
