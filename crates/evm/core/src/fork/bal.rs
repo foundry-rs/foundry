@@ -4,8 +4,9 @@ use super::ResolvedFork;
 use crate::opts::ForkContext;
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip7928::{
-    BlockAccessList, compute_block_access_list_hash, validate_block_access_list,
+use alloy_eips::{
+    BlockId,
+    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{AnyNetwork, AnyRpcBlock};
@@ -44,14 +45,7 @@ pub(super) async fn prepare<P: Provider<AnyNetwork>>(
         if !immutable_source(provider).await {
             return None;
         }
-        let bal =
-            match provider.raw_request("eth_getBlockAccessList".into(), (resolved.hash(),)).await {
-                Err(error) if is_rpc_method_not_found(&error) => {
-                    provider.get_block_access_list_by_hash(resolved.hash()).await
-                }
-                response => response,
-            }
-            .ok()??;
+        let bal = provider.get_block_access_list(BlockId::hash(resolved.hash())).await.ok()??;
         if let Err(err) =
             validate_bal(&bal, block.transactions.len(), block.header.block_access_list_hash())
         {

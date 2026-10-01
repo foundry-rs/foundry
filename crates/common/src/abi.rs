@@ -165,7 +165,11 @@ pub async fn get_func_etherscan(
     etherscan_api_url: Option<&str>,
 ) -> Result<Function> {
     let client = if let Some(api_url) = etherscan_api_url {
-        Client::builder().with_api_key(etherscan_api_key).with_api_url(api_url)?.build()?
+        Client::builder()
+            .with_api_key(etherscan_api_key)
+            .with_api_url(api_url)?
+            .with_url(api_url)?
+            .build()?
     } else {
         Client::new(chain, etherscan_api_key)?
     };
@@ -203,15 +207,16 @@ pub fn find_source(
             )?;
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
-                Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
-                    if e.to_string() == err {
-                        error!(%err);
-                        Ok(source)
-                    } else {
-                        Err(e)
-                    }
+                Err(e)
+                    if matches!(
+                        e.downcast_ref::<EtherscanError>(),
+                        Some(EtherscanError::ContractCodeNotVerified(address)) if *address == implementation
+                    ) =>
+                {
+                    error!(%e);
+                    Ok(source)
                 }
+                Err(e) => Err(e),
             }
         } else {
             if metadata.proxy != 0 {

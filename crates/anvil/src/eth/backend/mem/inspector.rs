@@ -125,8 +125,6 @@ pub struct InspectorTxConfig {
     pub print_traces: bool,
     /// Whether to print logs to stdout.
     pub print_logs: bool,
-    /// Whether to enable step-level tracing (with state diffs).
-    pub enable_steps_tracing: bool,
     /// Decoder for populating trace labels.
     pub call_trace_decoder: Arc<CallTraceDecoder>,
 }
@@ -157,12 +155,7 @@ impl AnvilInspector {
     /// Resets per-transaction collectors for the next transaction.
     fn reset_transaction(&mut self, config: &InspectorTxConfig) {
         // Reinstall tracer for next tx.
-        let tracing_config = if config.enable_steps_tracing {
-            TracingInspectorConfig::all().with_state_diffs()
-        } else {
-            TracingInspectorConfig::all().set_steps(false)
-        };
-        self.tracer = Some(TracingInspector::new(tracing_config));
+        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().set_steps(false)));
 
         // Reset log collector for next tx.
         self.log_collector = config.print_logs.then(|| LogCollector::Capture { logs: Vec::new() });
@@ -201,12 +194,6 @@ impl AnvilInspector {
     /// Configures the `TracingInspector` [`revm::Inspector`]
     pub fn with_tracing_config(mut self, config: TracingInspectorConfig) -> Self {
         self.tracer = Some(TracingInspector::new(config));
-        self
-    }
-
-    /// Enables steps recording for `Tracer`.
-    pub fn with_steps_tracing(mut self) -> Self {
-        self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
 

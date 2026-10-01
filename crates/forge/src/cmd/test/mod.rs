@@ -40,6 +40,7 @@ use foundry_cli::{
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
     compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
+    external_compiler::is_external_artifact,
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
@@ -83,6 +84,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
+use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -1475,6 +1477,43 @@ impl TestArgs {
         }))
     }
 
+    /// Discovers test ABIs before contract and function filters select compilation roots.
+    fn compile_test_abis(
+        &self,
+        config: &Config,
+        test_filter: &ProjectPathsAwareFilter,
+    ) -> Result<(BTreeSet<PathBuf>, ProjectCompileOutput)> {
+        let mut project = config.create_project(config.cache, true)?;
+        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .chain(
+                // Preserve path-filter behavior for conventional test files while still
+                // scanning non-test fixtures under the test root.
+                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+            )
+            .collect::<BTreeSet<_>>();
+        // ABI discovery does not need dynamic linking, whose job-specific cache prevents
+        // incremental ABI compilation after edits.
+        let output = compile_abi_project_cached(
+            &mut project,
+            ProjectCompiler::new()
+                .external_compilers(config)
+                .files(sources.iter().cloned())
+                .source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+                .quiet(true),
+        )?;
+        if output.has_compiler_errors() {
+            sh_println!("{output}")?;
+            bail!("Compilation failed");
+        }
+
+        Ok((sources, output))
+    }
+
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter, and the inline config parsed from the ABI-only compilation when one was
     /// needed.
@@ -1498,26 +1537,7 @@ impl TestArgs {
             return Ok((src_files().chain(test_files()).collect(), None));
         }
 
-        let mut project = config.create_project(config.cache, true)?;
-        let sources = src_files()
-            .chain(
-                // Preserve path-filter behavior for conventional test files while still
-                // scanning non-test fixtures under the test root.
-                test_files().filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
-            )
-            .collect::<BTreeSet<_>>();
-        let output = compile_abi_project_cached(
-            &mut project,
-            ProjectCompiler::new()
-                .external_compilers(config)
-                .files(sources.iter().cloned())
-                .dynamic_test_linking(config.dynamic_test_linking)
-                .quiet(true),
-        )?;
-        if output.has_compiler_errors() {
-            sh_println!("{output}")?;
-            bail!("Compilation failed");
-        }
+        let (sources, output) = self.compile_test_abis(config, test_filter)?;
 
         let inline_config = Arc::new(InlineConfig::new_parsed(&output, config)?);
         let test_matcher =
@@ -1682,6 +1702,15 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
+            let compiler = if filter.is_empty() {
+                compiler
+            } else {
+                compiler.source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+            };
             let output = compiler.files(files.clone()).compile(&project);
             let output = if should_mutate {
                 output.wrap_err(
@@ -2241,28 +2270,52 @@ impl TestArgs {
         }
 
         if num_filtered == 0 {
-            let total_tests = if filter.is_empty() {
-                num_filtered
+            let empty_filter = EmptyTestFilter::default();
+            let mut has_tests = runner.matching_test_functions(&empty_filter).next().is_some();
+            // Selective compilation omits unmatched contracts. Consult ABI discovery only
+            // when diagnostics need the tests that the runner cannot see.
+            let discovery = if filter.is_empty() {
+                None
             } else {
-                runner.matching_test_functions(&EmptyTestFilter::default()).count()
+                Some(self.compile_test_abis(&config, filter)?.1)
             };
-            if total_tests == 0 {
+            let mut candidates =
+                runner.all_test_functions(filter).map(|f| &f.name).collect::<Vec<_>>();
+            if let Some(output) = &discovery {
+                let matcher = runner.test_function_matcher();
+                for (id, artifact) in output.artifact_ids() {
+                    let id = id.with_stripped_file_prefixes(&config.root);
+                    if let Some(abi) = &artifact.abi
+                        && matcher.matches_contract(&empty_filter, &id, abi)
+                        && is_runnable_test_contract(output, &config, &id, artifact, abi)
+                    {
+                        has_tests = true;
+                        if filter.matches_path(&id.source) && filter.matches_contract(&id.name) {
+                            candidates.extend(
+                                matcher
+                                    .test_functions(id.identifier(), abi, |_, _, kind| {
+                                        kind.is_any_test()
+                                    })
+                                    .map(|function| &function.name),
+                            );
+                        }
+                    }
+                }
+            }
+            if has_tests {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern
+                    && let Some(suggestion) =
+                        utils::did_you_mean(test_pattern.as_str(), candidates).pop()
+                {
+                    write!(msg, "\nDid you mean `{suggestion}`?")?;
+                }
+                sh_warn!("{msg}")?;
+            } else {
                 sh_warn!(
                     "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
-            } else {
-                let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                // Try to suggest a test when there's no match.
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                    if let Some(suggestion) =
-                        utils::did_you_mean(test_pattern.as_str(), candidates).pop()
-                    {
-                        write!(msg, "\nDid you mean `{suggestion}`?")?;
-                    }
-                }
-                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -2355,6 +2408,17 @@ impl TestArgs {
                 junit_xml_report(&results, verbosity).to_string()?
             };
             sh_println!("{rendered}")?;
+
+            let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+            for result in results.values().flat_map(|suite| suite.test_results.values()) {
+                for (group, new_snapshots) in &result.gas_snapshots {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+            if !gas_snapshots.is_empty() {
+                self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
+            }
+
             return Ok(TestOutcome::new(
                 Some(runner.known_contracts),
                 results,
@@ -3100,6 +3164,43 @@ const fn apply_mutation_compiler_overrides(config: &mut Config) {
     if let Some(via_ir) = config.mutation.via_ir {
         config.via_ir = via_ir;
     }
+}
+
+/// Returns whether an ABI-discovered contract could be included in the test runner.
+fn is_runnable_test_contract(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    id: &ArtifactId,
+    artifact: &ConfigurableContractArtifact,
+    abi: &JsonAbi,
+) -> bool {
+    if abi.constructor.as_ref().is_some_and(|constructor| !constructor.inputs.is_empty())
+        || is_external_artifact(&id.build_id)
+            && artifact.get_bytecode_bytes().is_none_or(|bytecode| bytecode.is_empty())
+    {
+        return false;
+    }
+
+    let contract_name = id.name.split('.').next().unwrap_or(&id.name);
+    let path = config.root.join(&id.source);
+    let compiler = output.parser().solc().compiler();
+    compiler.enter_sequential(|compiler| {
+        if let Some((_, source)) = compiler.gcx().get_ast_source(&path)
+            && let Some(ast) = &source.ast
+            && let Some(contract) = ast.items.iter().find_map(|item| match &item.kind {
+                ItemKind::Contract(contract) if contract.name.as_str() == contract_name => {
+                    Some(contract)
+                }
+                _ => None,
+            })
+        {
+            return matches!(
+                contract.kind,
+                SolarContractKind::Contract | SolarContractKind::Library
+            );
+        }
+        true
+    })
 }
 
 /// Returns the deployable contracts in `output` that match `filter`, with project-relative ids.

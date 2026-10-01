@@ -17,6 +17,8 @@ use std::{
 mod data;
 use data::{collect_preprocessor_data, create_deploy_helpers};
 
+pub use data::is_deploy_helper_path;
+
 mod deps;
 use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_dependencies};
 
@@ -380,6 +382,31 @@ mod tests {
                 "ordinary parameterless CREATE was not rewritten"
             );
         }
+    }
+
+    #[test]
+    fn constructor_call_options_are_preserved() {
+        let (_root, paths, mut input) = input();
+        input.input.sources.insert(
+            PathBuf::from("src/Dep.sol"),
+            Source::new("contract Dep { constructor() payable {} }"),
+        );
+        input.input.sources.insert(
+            PathBuf::from("test/Deploy.sol"),
+            Source::new("import '../src/Dep.sol'; contract Deploy { function deploy() public { new Dep{value: 1, salt: bytes32(7)}(); } }"),
+        );
+        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &SolcCompiler::default(),
+            &mut input,
+            &paths,
+            &mut HashSet::new(),
+        )
+        .unwrap();
+        let source = &input.input.sources[&PathBuf::from("test/Deploy.sol")].content;
+        assert!(!source.contains("new Dep{value:"), "deployment was not rewritten");
+        assert!(source.contains("_value: 1"), "value option was not preserved");
+        assert!(source.contains("_salt: bytes32(7)"), "salt option was not preserved");
     }
 
     #[test]

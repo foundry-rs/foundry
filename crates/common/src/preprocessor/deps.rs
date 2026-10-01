@@ -702,14 +702,15 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                     }
                 }
             }
-            ExprKind::Call(call_expr, call_args, named_args) => {
+            ExprKind::Call(callee, call_args) => {
+                let (call_expr, named_args) = callee.split_call_options();
                 if let Some(dependency) = handle_call_expr(
                     self.gcx,
                     self.constructor_context,
                     expr,
                     call_expr,
                     call_args,
-                    named_args,
+                    &named_args,
                 ) {
                     self.collect_dependency(dependency);
                     // Call options are copied into the replacement expression. Keep their
@@ -767,7 +768,8 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
 
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(stmt_try) = stmt.kind
-            && let ExprKind::Call(call_expr, ..) = &stmt_try.expr.kind
+            && let ExprKind::Call(callee, ..) = &stmt_try.expr.kind
+            && let (call_expr, _) = callee.split_call_options()
             && matches!(call_expr.kind, ExprKind::New(_))
         {
             // Keep try deployments native: a static-context violation halts the current frame,
@@ -1245,7 +1247,8 @@ impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
                     }
                 }
             }
-            ExprKind::Call(callee, _, _) => {
+            ExprKind::Call(callee, _) => {
+                let (callee, _) = callee.split_call_options();
                 if let Some(id) = self.gcx.resolved_function(callee) {
                     self.visit_nested_function(id)?;
                 }

@@ -5,7 +5,7 @@ use crate::{
     FoundryInspectorExt,
     backend::{
         Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
-        RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
+        RevertStateSnapshotAction, diagnostic::RevertDiagnostic, existing_account,
     },
     evm::{
         ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
@@ -418,7 +418,8 @@ impl<FEN: FoundryEvmNetwork> Database for CowBackend<'_, FEN> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        DatabaseRef::basic_ref(self, address)
+        let spec = self.pending_init.map_or(self.backend.inner.spec_id, |(spec, ..)| spec);
+        Ok(existing_account(spec, DatabaseRef::basic_ref(self, address)?))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {

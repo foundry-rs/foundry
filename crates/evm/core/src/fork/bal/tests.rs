@@ -296,7 +296,7 @@ async fn fork_bal_prepare_requires_immutable_source_before_and_after_bal() {
 }
 
 #[tokio::test]
-async fn fork_bal_prepare_uses_legacy_rpc_only_for_method_not_found() {
+async fn fork_bal_prepare_ends_on_bal_errors() {
     let resolved = resolved(context());
     let block = block(&resolved, 0);
     for code in [-32601, -32603] {
@@ -304,13 +304,11 @@ async fn fork_bal_prepare_uses_legacy_rpc_only_for_method_not_found() {
         rpc_error(&asserter, -32601);
         rpc_error(&asserter, code);
         asserter.push_success(&BlockAccessList::new());
-        rpc_error(&asserter, -32601);
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
 
-        let bal = prepare(&provider, &resolved, &block).await;
-        assert_eq!(bal.is_some(), code == -32601);
-        assert_eq!(asserter.read_q().len(), if code == -32601 { 0 } else { 2 });
+        assert!(prepare(&provider, &resolved, &block).await.is_none());
+        assert_eq!(asserter.read_q().len(), 1, "code: {code}");
     }
 }
 

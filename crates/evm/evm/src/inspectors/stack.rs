@@ -523,10 +523,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let previous = self.synthetic_create_depth;
+        let create2_redirects = self.pending_create2_redirects.len();
         self.synthetic_create_depth = (ecx.journal().depth() == 1).then_some(2);
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let result = with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f);
         self.synthetic_create_depth = previous;
+        // Drop redirects left behind if nested execution aborted before their frames ended.
+        self.pending_create2_redirects.truncate(create2_redirects);
         result
     }
 
@@ -1275,6 +1278,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.locally_created_accounts.clear();
         self.top_level_frame_failed_before_rewrite = false;
+        warm_arbitrum_system_contract::<FEN>(ecx);
         if let Some(cheatcodes) = &mut self.cheatcodes {
             cheatcodes.clear_storage_hook_mapping_slots();
         }
@@ -1670,6 +1674,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) -> Option<CallOutcome> {
         if self.is_inner_context_root(ecx.journal().depth()) {
             self.adjust_evm_data_for_inner_context(ecx);
+            warm_arbitrum_system_contract::<FEN>(ecx);
             return None;
         }
 
@@ -1742,7 +1747,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        let isolate = self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1;
+        // Also isolate a synthetic `deployCode` create that was rewritten to a CREATE2 factory
+        // call.
+        let isolate = self.enable_isolation
+            && !self.in_inner_context
+            && (ecx.journal().depth() == 1
+                || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
@@ -1907,6 +1917,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) -> Option<CreateOutcome> {
         if self.is_inner_context_root(ecx.journal().depth()) {
             self.adjust_evm_data_for_inner_context(ecx);
+            warm_arbitrum_system_contract::<FEN>(ecx);
             return None;
         }
 
@@ -2055,6 +2066,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     }
 }
 
+fn warm_arbitrum_system_contract<FEN: FoundryEvmNetwork>(ecx: &mut FoundryContextFor<'_, FEN>) {
+    if !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id()) {
+        return;
+    }
+
+    // Nitro warms ArbSys like a precompile. Use the access list so other selectors can still
+    // execute code at the address.
+    let mut access_list = ecx.journal_inner().warm_addresses.access_list().clone();
+    access_list.entry(arbitrum::ARB_SYS_ADDRESS).or_default();
+    ecx.journal_mut().warm_access_list(access_list);
+}
+
 fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
     call: &CallInputs,
@@ -2071,7 +2094,12 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
         return None;
     }
 
-    let block_number = ecx.db().active_fork_block_number()?;
+    // Forks report their L2 block, which the block env lacks on Arbitrum because `NUMBER` returns
+    // the L1 block there. Without a fork the block env is read here to follow `vm.roll`.
+    let block_number = match ecx.db().active_fork_block_number() {
+        Some(block_number) => block_number,
+        None => ecx.block().number().saturating_to(),
+    };
     let Some((gas_cost, output)) = arbitrum::arb_block_number_call(call.gas_limit, block_number)
     else {
         return Some(arbitrum_call_outcome(

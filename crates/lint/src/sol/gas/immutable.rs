@@ -173,7 +173,8 @@ fn is_compile_time_constant(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
         ExprKind::Binary(lhs, _, rhs) => is_const(lhs) && is_const(rhs),
         ExprKind::Ternary(c, t, f) => is_const(c) && is_const(t) && is_const(f),
         ExprKind::Tuple(exprs) => exprs.iter().flatten().all(|e| is_const(e)),
-        ExprKind::Call(callee, args, opts) => {
+        ExprKind::Call(callee, args) => {
+            let (callee, opts) = callee.split_call_options();
             is_constant_call(gcx, callee)
                 && args.exprs().all(is_const)
                 && opts.is_none_or(|opts| opts.args.iter().all(|arg| is_const(&arg.value)))

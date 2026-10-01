@@ -65,7 +65,7 @@ fn exprs_equal<'gcx>(a: &Expr<'gcx>, b: &Expr<'gcx>) -> bool {
         }
         // Only casts to the *same* elementary type are pure conversions: `uint256(x) == uint8(x)`
         // is not tautological because the narrower cast can truncate.
-        (ExprKind::Call(ca, args_a, _), ExprKind::Call(cb, args_b, _)) => {
+        (ExprKind::Call(ca, args_a), ExprKind::Call(cb, args_b)) => {
             matches!((cast_type(ca), cast_type(cb)), (Some(ea), Some(eb)) if ea == eb)
                 && args_a.len() == 1
                 && args_b.len() == 1

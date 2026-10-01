@@ -680,8 +680,10 @@ fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions,
+    AssignmentMemberChain,
     BlockComments,
     BlockCommentsFunction,
+    CallOptionsAssign,
     CommentEmptyLine,
     ConditionalOperatorExpression,
     ConstructorDefinition,
@@ -694,6 +696,7 @@ fmt_tests! {
     EnumVariants,
     ErrorDefinition,
     EventDefinition,
+    FnAttributeComment,
     ForStatement,
     FunctionCall,
     FunctionCallArgsStatement,
@@ -704,12 +707,17 @@ fmt_tests! {
     IfStatement,
     IfStatement2,
     IfStatement3,
+    IfStatementLongCondition,
+    IfStatementMultilineCall,
     ImportDirective,
+    IndexedAssignment,
     InlineDisable,
     IntTypes,
     LineComments,
     LiteralExpression,
+    MappingNamedParams,
     MappingType,
+    MemberChainIndent,
     MethodChain,
     MethodChainCallOptions,
     MixedBlockComments,
@@ -743,6 +751,7 @@ fmt_tests! {
     VariableDefinition,
     WhileStatement,
     Yul,
+    YulInlineBlock,
     YulStrings,
 }
 
@@ -890,4 +899,70 @@ struct AfterInitializer {
         let formatted = format(source, path, fmt_config.clone());
         assert_eq!(formatted, expected, "{case}");
     }
+}
+
+#[test]
+fn size_estimate_ignores_literal_contents() {
+    for (line_length, bracket_spacing, literal, control) in [
+        (55, true, "{a}{b}{c}{d}", "abcdefghijkl"),
+        (59, false, "uint uint uint uint", "word word word word"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = format!(
+            "contract C {{ function f(uint a) external pure returns (bytes memory) {{ bytes memory encoded = abi.encode(\"{literal}\", a, a, a); return encoded; }} }}\n"
+        );
+        let control_source = source.replace(literal, control);
+        let expected = format(&control_source, Path::new("test.sol"), config.clone())
+            .replace(control, literal);
+        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn brace_spacing_size_estimate_handles_tabs() {
+    let config =
+        Arc::new(FormatterConfig { line_length: 120, bracket_spacing: true, ..Default::default() });
+    let source = r#"contract C {
+    function f() external {
+        executions = factory({	a: assetAddress, b: receiver, c: amountToSend, d: currentNonce, e: expiryTime, f: requiredFee	});
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        executions =
+            factory({ a: assetAddress, b: receiver, c: amountToSend, d: currentNonce, e: expiryTime, f: requiredFee });
+    }
+}
+"#;
+
+    assert_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn concatenated_string_trailing_comment_stays_after_last_literal() {
+    let source = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return bytes.concat(
+            "abc"
+            "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+        );
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return
+            bytes.concat(
+                "abc" "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+            );
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("concatenated-string.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
 }

@@ -3,7 +3,7 @@
 use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
-use anvil::{NodeConfig, spawn};
+use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand,
@@ -240,6 +240,92 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
+});
+
+forgetest_init!(broadcast_deploy_code_cleans_up_after_revert, |prj, cmd| {
+    prj.add_source(
+        "DeployCodeCleanup.sol",
+        r#"
+contract DeployCodeCleanup {
+    address public caller;
+
+    constructor(bool shouldRevert) {
+        require(!shouldRevert, "constructor reverted");
+        caller = msg.sender;
+    }
+
+    function recordCaller() external {
+        caller = msg.sender;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "DeployCodeCleanup.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {DeployCodeCleanup} from "../src/DeployCodeCleanup.sol";
+
+contract DeployCodeCleanupTest is Test {
+    function testBroadcastCleanupAfterRevert() public {
+        DeployCodeCleanup local = new DeployCodeCleanup(false);
+
+        vm.broadcast(address(0xA11CE));
+        try vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(true),
+            bytes32(uint256(1))
+        ) returns (address) {
+            fail();
+        } catch {}
+
+        local.recordCaller();
+        assertEq(local.caller(), address(this));
+
+        vm.broadcast(address(0xB0B));
+        address deployed = vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(2))
+        );
+        assertGt(deployed.code.length, 0);
+
+        vm.broadcast(address(0xB0B));
+        try vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(2))
+        ) returns (address) {
+            fail();
+        } catch {}
+
+        local.recordCaller();
+        assertEq(local.caller(), address(this));
+
+        vm.broadcast(address(0xCAFE));
+        address finalDeployment = vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(3))
+        );
+        assertGt(finalDeployment.code.length, 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "DeployCodeCleanupTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/DeployCodeCleanup.t.sol:DeployCodeCleanupTest
+[PASS] testBroadcastCleanupAfterRevert() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
 });
 
 // tests that test filters are handled correctly
@@ -512,6 +598,62 @@ Warning: no tests match the provided pattern:
 	no-match-path: `*TestF*`
 
 Did you mean `test1`?
+
+"#]]);
+});
+
+// Tests that ABI discovery preserves diagnostics for excluded test contracts.
+forgetest!(warn_when_filtered_tests_are_not_compiled, |prj, cmd| {
+    prj.add_source("Dummy.sol", "contract Dummy {}");
+    prj.add_test("Filtered.t.sol", "contract Filtered { function testFoo(uint256) public {} }");
+
+    for (dynamic_test_linking, cache) in
+        [(false, true), (true, true), (false, false), (true, false)]
+    {
+        prj.update_config(|config| {
+            config.dynamic_test_linking = dynamic_test_linking;
+            config.cache = cache;
+        });
+        cmd.forge_fuse().args(["test", "--mt", "testFoo$"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-test: `testFoo$`
+
+Did you mean `testFoo`?
+
+"#]]);
+        cmd.forge_fuse().args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-contract: `Missing`
+
+
+"#]]);
+    }
+});
+
+forgetest!(do_not_count_non_runnable_tests, |prj, cmd| {
+    prj.add_source("Dummy.sol", "contract Dummy {}");
+    prj.add_test(
+        "NotRunnable.t.sol",
+        r#"
+interface TestInterface { function testInterface() external; }
+abstract contract AbstractTest { function testAbstract() public {} }
+contract ConstructorTest {
+    constructor(uint256) {}
+    function testConstructor() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
+
+"#]]);
+
+    prj.add_test("Library.t.sol", "library LibraryTest { function testLibrary() public pure {} }");
+    cmd.forge_fuse().args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-contract: `Missing`
+
 
 "#]]);
 });
@@ -1982,6 +2124,190 @@ contract EIP2935Test is Test {
     );
 
     cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
+});
+
+// Replacing the history contract clears its ring buffer; reverts must restore that storage.
+forgetest_init!(eip2935_history_storage_etch_rollback, |prj, cmd| {
+    prj.add_test(
+        "EIP2935EtchRollback.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract EIP2935EtchRollbackTest is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+    // Seeded ring slot that is read before the etch.
+    bytes32 constant LOADED = bytes32(uint256(1));
+    // Seeded ring slot that is never read before the etch.
+    bytes32 constant UNLOADED = bytes32(uint256(50));
+    // Ring slot written by the test.
+    bytes32 constant WRITTEN = bytes32(uint256(7000));
+    // Slot outside the ring buffer.
+    bytes32 constant OUTSIDE = bytes32(uint256(9000));
+
+    bytes original;
+    bytes32 loadedValue;
+    uint64 nonce;
+
+    function setUp() public {
+        original = HISTORY.code;
+        nonce = vm.getNonce(HISTORY);
+        loadedValue = vm.load(HISTORY, LOADED);
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(17)));
+        vm.store(HISTORY, OUTSIDE, bytes32(uint256(18)));
+    }
+
+    function child(bool fail) external {
+        vm.etch(HISTORY, hex"00");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "loaded slot not cleared");
+        assertEq(vm.load(HISTORY, UNLOADED), bytes32(0), "unloaded slot not cleared");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "written slot not cleared");
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x22)));
+        if (fail) revert("child");
+    }
+
+    function parent(bool childFail, bool parentFail) external {
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x44)));
+        if (childFail) {
+            try this.child(true) {
+                revert("child did not revert");
+            } catch Error(string memory reason) {
+                assertEq(reason, "child");
+            }
+        } else {
+            this.child(false);
+        }
+        if (parentFail) revert("parent");
+    }
+
+    function assertRestored() internal view {
+        assertEq(keccak256(HISTORY.code), keccak256(original), "code not restored");
+        assertEq(vm.getNonce(HISTORY), nonce, "nonce changed");
+        assertNotEq(loadedValue, bytes32(0), "loaded slot not seeded");
+        assertEq(vm.load(HISTORY, LOADED), loadedValue, "loaded slot not restored");
+        assertEq(vm.load(HISTORY, UNLOADED), blockhash(50), "unloaded slot not restored");
+        assertEq(vm.load(HISTORY, OUTSIDE), bytes32(uint256(18)), "outside slot changed");
+    }
+
+    function testChildRevertRestoresHistoryStorage() public {
+        this.parent(true, false);
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x44)), "parent write lost");
+    }
+
+    function testParentRevertRestoresHistoryStorage() public {
+        try this.parent(false, true) {
+            revert("parent did not revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "parent");
+        }
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(17)), "written slot not restored");
+    }
+
+    function testSuccessfulEtchClearsHistoryStorage() public {
+        this.parent(false, false);
+        assertEq(HISTORY.code, hex"00", "code not replaced");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "loaded slot not cleared");
+        assertEq(vm.load(HISTORY, UNLOADED), bytes32(0), "unloaded slot not cleared");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x22)), "child write lost");
+        assertEq(vm.load(HISTORY, OUTSIDE), bytes32(uint256(18)), "outside slot changed");
+
+        // Replacing a replacement keeps its storage.
+        vm.etch(HISTORY, hex"01");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x22)), "replacement storage lost");
+
+        // Reinstalling the history contract and replacing it again clears the ring buffer again.
+        vm.etch(HISTORY, original);
+        vm.store(HISTORY, LOADED, bytes32(uint256(0x55)));
+        vm.etch(HISTORY, hex"00");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "ring buffer not cleared again");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "written slot not cleared again");
+    }
+
+    function testStateSnapshotsAroundHistoryEtch() public {
+        uint256 beforeEtch = vm.snapshotState();
+        vm.etch(HISTORY, hex"00");
+        uint256 afterEtch = vm.snapshotState();
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x22)));
+
+        vm.revertToState(afterEtch);
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "post-etch snapshot not restored");
+
+        vm.revertToState(beforeEtch);
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(17)), "pre-etch snapshot not restored");
+    }
+}
+
+contract EIP2935EtchInSetUpTest is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+
+    function setUp() public {
+        vm.etch(HISTORY, hex"00");
+        vm.store(HISTORY, bytes32(uint256(7000)), bytes32(uint256(0x22)));
+    }
+
+    function testHistoryEtchInSetUpPersists() public view {
+        assertEq(HISTORY.code, hex"00", "code not replaced");
+        assertEq(vm.load(HISTORY, bytes32(uint256(50))), bytes32(0), "seeded slot exposed");
+        assertEq(vm.load(HISTORY, bytes32(uint256(7000))), bytes32(uint256(0x22)), "write lost");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
+});
+
+// On a fork the history storage is the chain's real storage, so replacing the contract keeps it.
+forgetest_async!(eip2935_history_storage_etch_keeps_fork_storage, |prj, cmd| {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+    let endpoint = handle.http_endpoint();
+
+    prj.add_test(
+        "EIP2935EtchForkStorage.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function load(address target, bytes32 slot) external view returns (bytes32 data);
+}
+
+contract EIP2935EtchForkStorageTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+    bytes32 constant SLOT = bytes32(uint256(5));
+
+    function child() external {
+        vm.etch(HISTORY, hex"00");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot cleared");
+        revert("child");
+    }
+
+    function testForkHistoryEtchKeepsStorage() public {
+        require(blockhash(5) != bytes32(0), "block hash unavailable");
+        vm.etch(HISTORY, hex"00");
+        require(keccak256(HISTORY.code) == keccak256(hex"00"), "code not replaced");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot cleared");
+    }
+
+    function testForkHistoryEtchRevertRestoresCode() public {
+        bytes32 codehash = HISTORY.codehash;
+        require(blockhash(5) != bytes32(0), "block hash unavailable");
+        try this.child() {
+            revert("child did not revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("child"), reason);
+        }
+        require(HISTORY.codehash == codehash, "code not restored");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot changed");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--evm-version", "prague"]).assert_success();
 });
 
 forgetest_init!(eip2935_history_storage_not_deployed_before_prague, |prj, cmd| {
@@ -6595,10 +6921,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
@@ -7069,4 +7395,92 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#
     ]]);
+});
+
+// `eth_getLogs` and `getRawBlockHeader` must reach the fork with its configured auth.
+forgetest_async!(fork_eth_get_logs_and_raw_block_header_with_auth, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let target = Address::repeat_byte(0x42);
+    let topic = B256::repeat_byte(0x11);
+
+    // PUSH32 topic, PUSH1 0, PUSH1 0, LOG1, STOP
+    let code = [&[0x7f][..], topic.as_slice(), &[0x60, 0x00, 0x60, 0x00, 0xa1, 0x00]].concat();
+    api.anvil_set_code(target, Bytes::from(code)).await.unwrap();
+
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let tx_hash: B256 = provider
+        .raw_request(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({ "from": from, "to": target }),),
+        )
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let block =
+        provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap().block_number.unwrap();
+    let block_hash = provider.get_block(block.into()).await.unwrap().unwrap().header.hash;
+
+    let endpoint = rpc::spawn_rpc_proxy_requiring_header(
+        handle.http_endpoint(),
+        "authorization",
+        "Bearer secret",
+    )
+    .await;
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+authenticated = {{ endpoint = "{endpoint}", auth = "Bearer secret" }}
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "ForkAuth.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    struct EthGetLogs {{ address emitter; bytes32[] topics; bytes data; bytes32 blockHash; uint64 blockNumber; bytes32 transactionHash; uint64 transactionIndex; uint256 logIndex; bool removed; }}
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
+}}
+
+contract ForkAuthTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkEthGetLogs() public {{
+        vm.createSelectFork("authenticated");
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = {topic};
+
+        Vm.EthGetLogs[] memory logs = vm.eth_getLogs({block}, {block}, {target}, topics);
+
+        require(logs.length == 1, "logs length");
+        require(logs[0].emitter == {target}, "emitter");
+        require(logs[0].topics[0] == {topic}, "topic");
+        require(logs[0].blockNumber == {block}, "block number");
+    }}
+
+    function testForkGetRawBlockHeader() public {{
+        vm.createSelectFork("authenticated");
+        require(keccak256(vm.getRawBlockHeader({block})) == {block_hash}, "block hash");
+    }}
+}}
+"#
+        ),
+    );
+
+    cmd.args(["test", "--match-contract", "ForkAuthTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/ForkAuth.t.sol:ForkAuthTest
+[PASS] testForkEthGetLogs() ([GAS])
+[PASS] testForkGetRawBlockHeader() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });

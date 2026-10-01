@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use foundry_evm::hardforks::BaseUpgrade;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn inferred_optimism_forks_allow_non_monad_source_resets() {
+async fn inferred_optimism_forks_require_op_stack_source_resets() {
     let (_optimism_api, optimism_handle) = spawn(NodeConfig::test().with_optimism()).await;
     let (ethereum_api, _) = spawn(NodeConfig::test()).await;
 
@@ -44,16 +44,26 @@ async fn inferred_optimism_forks_allow_non_monad_source_resets() {
     )
     .await;
     let (_ethereum_origin_api, ethereum_origin) = spawn(NodeConfig::test()).await;
-    optimism_api
+    let original_node_info = optimism_api.anvil_node_info().await.unwrap();
+    let error = optimism_api
         .anvil_reset(Some(Forking {
             json_rpc_url: Some(ethereum_origin.http_endpoint()),
             block_number: Some(0),
         }))
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "cannot reset Anvil across network families (optimism -> ethereum); start a new instance with matching network configuration"
+    );
     let node_info = optimism_api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("optimism"));
-    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
+    assert_eq!(
+        node_info.fork_config.fork_block_number,
+        original_node_info.fork_config.fork_block_number
+    );
+    optimism_api.mine_one().await.unwrap();
 }
 
 #[cfg(feature = "base")]

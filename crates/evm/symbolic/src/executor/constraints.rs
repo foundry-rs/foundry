@@ -9,6 +9,18 @@ impl SymbolicExecutor {
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let cond = state.memory.load_word(&mut self.cx, condition_offset)?;
         let cond = cond.nonzero_bool(&mut self.cx);
+        if state.invariant_predicate && cond.as_const() != Some(true) {
+            // A predicate must cover every reachable state. Restricting its input domain would
+            // hide rejected states, including when accepted values remain on this same path.
+            let rejected = cond.not(&mut self.cx);
+            let (_, rejected_sat) = self.constraints_with_condition(state, rejected)?;
+            if rejected_sat {
+                return Err(SymbolicError::Unsupported(
+                    "vm.assume may reject an invariant predicate",
+                ));
+            }
+            return Ok(CheatcodeOutcome::Continue(Vec::new()));
+        }
         self.assume_condition(state, cond)
     }
 
