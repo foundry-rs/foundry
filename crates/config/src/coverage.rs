@@ -19,6 +19,8 @@ pub enum CoverageReportKind {
     Bytecode,
     /// JSON report mapping each test to the source items it covers.
     Attribution,
+    /// JSON report listing uncovered source items with their location and context.
+    Gaps,
 }
 
 /// Configuration for `forge coverage`, exposed under `[coverage]` and

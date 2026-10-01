@@ -4,8 +4,8 @@ use super::{
 };
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
-    CoverageSummaryReporter, DebugReporter, ItemAnchors, LcovReporter, ResolvedHitMap,
-    ResolvedHitMaps,
+    CoverageSummaryReporter, DebugReporter, GapsReporter, ItemAnchors, LcovReporter,
+    ResolvedHitMap, ResolvedHitMaps,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::{find_anchors, find_execution_anchors},
 };
@@ -64,8 +64,9 @@ Compatibility:
   `forge coverage` supports test filters and `--watch`, but not test-only output or
   execution modes such as `--json`, `--junit`, `--list`, `--debug`, flame profiles,
   symbolic artifact replay, showmap replay, brutalization, or mutation testing. Use
-  `--report lcov` for interoperable coverage data or `--report attribution` for
-  Foundry's per-test JSON attribution report."#)]
+  `--report lcov` for interoperable coverage data, `--report attribution` for
+  Foundry's per-test JSON attribution report, or `--report gaps` for a JSON list of
+  uncovered source items."#)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
@@ -144,7 +145,8 @@ impl CoverageArgs {
         let has_lcov = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Lcov));
         let has_attribution =
             self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution));
-        usize::from(has_lcov) + usize::from(has_attribution)
+        let has_gaps = self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Gaps));
+        usize::from(has_lcov) + usize::from(has_attribution) + usize::from(has_gaps)
     }
 
     pub(crate) fn ensure_mode_compatible(&self) -> Result<()> {
@@ -240,6 +242,10 @@ impl CoverageArgs {
                 ))),
                 CoverageReportKind::Debug => Some(Box::new(DebugReporter)),
                 CoverageReportKind::Attribution => None,
+                CoverageReportKind::Gaps => {
+                    let path = self.report_path(root, "coverage-gaps.json");
+                    Some(Box::new(GapsReporter::new(root.to_path_buf(), path)))
+                }
             })
             .collect::<Vec<_>>();
     }

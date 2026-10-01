@@ -4372,3 +4372,186 @@ forgetest!(coverage_cache_prunes_obsolete_files, |prj, cmd| {
         assert_eq!(builds.len(), 1);
     }
 });
+
+forgetest!(gaps_report, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    uint256 public value;
+
+    function set(uint256 x) public {
+        if (x > 10) {
+            value = x;
+        } else {
+            value = 0;
+        }
+    }
+
+    function unused() public {
+        value = 42;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    function testSet() public {
+        AContract a = new AContract();
+        a.set(11);
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").args(["--report=gaps", "--no-match-coverage=[Tt]est"]).assert_success();
+
+    let expected = str![[r#"
+{
+  "version": 1,
+  "summary": {
+    "lines": {
+      "total": 6,
+      "covered": 3
+    },
+    "statements": {
+      "total": 4,
+      "covered": 2
+    },
+    "branches": {
+      "total": 2,
+      "covered": 1
+    },
+    "functions": {
+      "total": 2,
+      "covered": 1
+    }
+  },
+  "files": [
+    {
+      "file": "src/AContract.sol",
+      "summary": {
+        "lines": {
+          "total": 6,
+          "covered": 3
+        },
+        "statements": {
+          "total": 4,
+          "covered": 2
+        },
+        "branches": {
+          "total": 2,
+          "covered": 1
+        },
+        "functions": {
+          "total": 2,
+          "covered": 1
+        }
+      },
+      "uncovered": [
+        {
+          "kind": "branch",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "set",
+          "start_line": 8,
+          "end_line": 12,
+          "start_column": 9,
+          "snippet": "if (x > 10) { value = x; } else { value = 0; }",
+          "hits": 0,
+          "branch_id": 0,
+          "path_id": 1,
+          "sibling_paths": [
+            {
+              "path_id": 0,
+              "covered": true
+            }
+          ]
+        },
+        {
+          "kind": "line",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "set",
+          "start_line": 11,
+          "end_line": 11,
+          "start_column": 13,
+          "snippet": "value = 0;",
+          "hits": 0
+        },
+        {
+          "kind": "statement",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "set",
+          "start_line": 11,
+          "end_line": 11,
+          "start_column": 13,
+          "snippet": "value = 0",
+          "hits": 0
+        },
+        {
+          "kind": "line",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "unused",
+          "start_line": 15,
+          "end_line": 15,
+          "start_column": 5,
+          "snippet": "function unused() public {",
+          "hits": 0
+        },
+        {
+          "kind": "function",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "unused",
+          "start_line": 15,
+          "end_line": 17,
+          "start_column": 5,
+          "snippet": "function unused() public { value = 42; }",
+          "hits": 0
+        },
+        {
+          "kind": "line",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "unused",
+          "start_line": 16,
+          "end_line": 16,
+          "start_column": 9,
+          "snippet": "value = 42;",
+          "hits": 0
+        },
+        {
+          "kind": "statement",
+          "file": "src/AContract.sol",
+          "contract": "AContract",
+          "function": "unused",
+          "start_line": 16,
+          "end_line": 16,
+          "start_column": 9,
+          "snippet": "value = 42",
+          "hits": 0
+        }
+      ]
+    }
+  ]
+}
+"#]]
+    .is_json();
+    assert_data_eq!(Data::read_from(&prj.root().join("coverage-gaps.json"), None), expected);
+
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--report=gaps", "--report-file", "custom-gaps.json"])
+        .assert_success();
+    assert!(prj.root().join("custom-gaps.json").exists());
+});
