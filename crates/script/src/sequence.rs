@@ -436,19 +436,20 @@ where
         Ok(pending_resolution)
     }
 
-    /// Returns saved signed attempts that are neither pending nor receipted, such as a submission
-    /// whose response was lost before its hash was recorded.
-    pub(crate) fn unrecorded_signed_attempts(&self, sequence: usize) -> Vec<(usize, B256)> {
+    /// Returns saved signed attempts without a receipt, whether or not their hash is pending.
+    pub(crate) fn unreceipted_signed_attempts(
+        &self,
+        sequence: usize,
+    ) -> Vec<(usize, SignedPayload)> {
         let deployment = &self.sequences()[sequence];
         (0..deployment.transactions.len())
             .filter_map(|index| {
-                let hash = self.signed_payload(sequence, index)?.hash;
-                (!deployment.pending.contains(&hash)
-                    && !deployment
-                        .receipts
-                        .iter()
-                        .any(|receipt| receipt.transaction_hash() == hash))
-                .then_some((index, hash))
+                let signed = self.signed_payload(sequence, index)?;
+                (!deployment
+                    .receipts
+                    .iter()
+                    .any(|receipt| receipt.transaction_hash() == signed.hash))
+                .then(|| (index, signed.clone()))
             })
             .collect()
     }

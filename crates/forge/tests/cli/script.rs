@@ -1680,6 +1680,347 @@ contract InterruptedResume is Script {
     }
 });
 
+forgetest_async!(resume_replays_lost_predecessor_of_recorded_attempt, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "InterruptedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InterruptedResumeTarget {}
+
+contract InterruptedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InterruptedResumeTarget();
+        new InterruptedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let intercept = Arc::new(AtomicBool::new(true));
+    let held = Arc::new(AtomicUsize::new(0));
+    let submissions = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let app = Router::new().fallback({
+        let intercept = intercept.clone();
+        let held = held.clone();
+        let submissions = submissions.clone();
+        move |body: BodyBytes| {
+            let client = client.clone();
+            let upstream = upstream.clone();
+            let intercept = intercept.clone();
+            let held = held.clone();
+            let submissions = submissions.clone();
+            async move {
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                if request["method"] == "eth_sendRawTransaction" {
+                    let raw = request["params"][0].as_str().unwrap().to_string();
+                    submissions.lock().unwrap().push(raw.clone());
+                    // Nonce 0 never reaches the node; nonce 1 is accepted and its response is
+                    // recorded.
+                    if intercept.load(Ordering::SeqCst) && raw_nonce(&raw) == 0 {
+                        held.fetch_add(1, Ordering::SeqCst);
+                        std::future::pending::<()>().await;
+                    }
+                }
+                client
+                    .post(&upstream)
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap()
+                    .into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+    let args =
+        ["--tc", "InterruptedResume", "--rpc-url", rpc.as_str(), "--private-key", private_key];
+
+    // Without `--slow`, a single sender broadcasts both saved attempts concurrently.
+    cmd.arg("script").arg(&script).args(args).arg("--broadcast");
+    let child = KillOnDrop::spawn(cmd.cmd());
+    let recorded = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if held.load(Ordering::SeqCst) == 1
+                && let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 1)
+                && sequence["transactions"][1]["hash"].is_string()
+            {
+                break sequence["transactions"][1]["hash"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not record the accepted nonce-1 submission");
+    child.kill_and_wait();
+    intercept.store(false, Ordering::SeqCst);
+
+    // Only nonce 1 is pending and known to the node; it cannot mine until nonce 0 arrives.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["pending"], serde_json::json!([recorded]));
+    assert!(sequence["transactions"][0]["hash"].is_null());
+    let provider = handle.http_provider();
+    let lost = submissions.lock().unwrap().iter().find(|raw| raw_nonce(raw) == 0).unwrap().clone();
+    let lost_hash = keccak256(hex::decode(&lost).unwrap());
+    assert!(provider.get_transaction_by_hash(lost_hash).await.unwrap().is_none());
+    assert!(
+        provider
+            .get_transaction_by_hash(recorded.as_str().unwrap().parse().unwrap())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+
+    // Both attempts are saved, so resume needs no signer. `transaction_timeout` does not bound
+    // waiting on a queued transaction, so bound the resumed process explicitly.
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("resume did not finish");
+    let output = child.kill_and_wait();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["transactions"][1]["hash"], recorded);
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    // Only the lost nonce-0 attempt is rebroadcast, with its saved bytes.
+    let submissions = submissions.lock().unwrap().clone();
+    assert_eq!(submissions.len(), 3);
+    assert_eq!(submissions.iter().filter(|raw| **raw == lost).count(), 2);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    for transaction in sequence["transactions"].as_array().unwrap() {
+        let address = transaction["contractAddress"].as_str().unwrap().parse().unwrap();
+        assert!(!provider.get_code_at(address).await.unwrap().is_empty());
+    }
+});
+
+forgetest_async!(resume_replays_dropped_predecessor_of_recorded_attempt, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "InterruptedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InterruptedResumeTarget {}
+
+contract InterruptedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InterruptedResumeTarget();
+        new InterruptedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+
+    // Both concurrent submissions are accepted and recorded, then Forge exits before mining.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 2)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not record both submissions");
+    child.kill_and_wait();
+
+    // The node drops nonce 0 but still holds nonce 1, which cannot mine without it.
+    let raw = |nonce| {
+        let submissions = submissions.lock().unwrap();
+        let params =
+            submissions.iter().find(|params| raw_nonce(params[0].as_str().unwrap()) == nonce);
+        params.unwrap()[0].clone()
+    };
+    let (dropped, queued) = (raw(0), raw(1));
+    api.anvil_drop_transaction(keccak256(hex::decode(dropped.as_str().unwrap()).unwrap()))
+        .await
+        .unwrap();
+    let provider = handle.http_provider();
+    let _ = provider
+        .send_raw_transaction(&hex::decode(queued.as_str().unwrap()).unwrap())
+        .await
+        .unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("resume did not finish");
+    let output = child.kill_and_wait();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    // Only the dropped nonce-0 attempt is rebroadcast, with its saved bytes.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let submissions = submissions.lock().unwrap().clone();
+    assert_eq!(submissions.len(), 3);
+    assert_eq!(submissions[2][0], dropped);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+});
+
+forgetest_async!(resume_does_not_replay_successor_of_reverted_attempt, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    // Reverts once storage slot 0 is set and succeeds otherwise.
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    let script = prj.add_script(
+        "RevertedPredecessor.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Later {}
+
+contract RevertedPredecessor is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+        require(success);
+        new Later();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_code(gate, hex!("600054600757005b600080fd").into()).await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/RevertedPredecessor.s.sol/31337/run-latest.json");
+
+    // Both concurrent submissions are accepted and recorded, then Forge exits before mining.
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "RevertedPredecessor",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 2)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not record both submissions");
+    child.kill_and_wait();
+
+    // Nonce 0 is mined but reverts, and the node drops nonce 1.
+    let successor = submissions
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|params| raw_nonce(params[0].as_str().unwrap()) == 1)
+        .unwrap()[0]
+        .clone();
+    api.anvil_drop_transaction(keccak256(hex::decode(successor.as_str().unwrap()).unwrap()))
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+    // Nothing pending depends on the unseen nonce-1 attempt, so resume reports the revert
+    // without submitting it.
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RevertedPredecessor",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("resume did not finish");
+    let output = child.kill_and_wait();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("Transaction Failure"), "{stderr}");
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+});
+
 fn raw_nonce(raw: &str) -> u64 {
     TxEnvelope::decode_2718_exact(&hex::decode(raw).unwrap()).unwrap().nonce()
 }
