@@ -4918,3 +4918,77 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         }
     }
 });
+
+// <https://github.com/foundry-rs/foundry/issues/17220>
+forgetest!(filtered_tests_preserve_cyclic_import_order, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.evm_version = EvmVersion::Cancun;
+    });
+    prj.add_test(
+        "helpers/Base.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Derived.sol";
+contract Base {}
+"#,
+    );
+    prj.add_test(
+        "helpers/Derived.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Base.sol";
+contract Derived is Base {}
+"#,
+    );
+    // This root makes solc visit Derived before Base. Dropping it reverses traversal of the
+    // import cycle and produces error 2449, even though inheritance itself is acyclic.
+    prj.add_test(
+        "Anchor.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./helpers/Derived.sol";
+contract Anchor {
+    function testOther() public pure { revert("must remain filtered out"); }
+}
+"#,
+    );
+    prj.add_test(
+        "Selected.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+contract Selected {
+    function testSelected() public pure {}
+}
+"#,
+    );
+    // Test compilation should continue to omit unrelated scripts, including on retry.
+    prj.add_raw_script("Broken.s.sol", "this is not valid Solidity");
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        for filter in [
+            ["--match-test", "testSelected"],
+            ["--match-contract", "Selected"],
+            ["--match-path", "test/Selected.t.sol"],
+        ] {
+            cmd.forge_fuse().args(["test", "--force"]).args(filter).assert_success().stdout_eq(
+                str![[r#"
+...
+Ran 1 test for test/Selected.t.sol:Selected
+[PASS] testSelected() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+            );
+            // Reusing the artifacts from the retry must preserve the test selection.
+            cmd.forge_fuse().args(["test"]).args(filter).assert_success();
+        }
+
+        cmd.forge_fuse()
+            .args(["test", "--force", "--match-test", "^__nomatch__$", "--json"])
+            .assert_empty_stdout();
+    }
+});
