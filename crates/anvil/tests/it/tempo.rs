@@ -17,9 +17,16 @@ use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, keccak256,
 };
-use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_provider::{
+    Provider,
+    ext::{DebugApi, TraceApi, TxPoolApi},
+};
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionRequest,
+    anvil::Forking,
+    trace::geth::{GethDebugTracingOptions, GethTrace},
+};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
@@ -2001,6 +2008,77 @@ async fn test_tempo_eip1559_sender_without_native_balance_pays_gas_in_fee_token(
     let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
     assert!(receipt.status());
     assert_eq!(IERC20::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap(), amount);
+}
+
+/// Standard envelopes use the same Tempo fee and precompile semantics during replay and mining.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_standard_envelope_replay() {
+    for legacy in [true, false] {
+        let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let recipient = Address::random();
+        api.anvil_set_balance(sender, U256::ZERO).await.unwrap();
+        api.mine_one().await.unwrap();
+
+        let amount = U256::from(1_000_000);
+        let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        // Raw tracing uses the current block fee, while eth_gasPrice estimates the next block.
+        let gas_price = provider
+            .get_gas_price()
+            .await
+            .unwrap()
+            .max(u128::from(block.header.base_fee_per_gas.unwrap()));
+        let request = TransactionRequest::default()
+            .from(sender)
+            .to(PATH_USD)
+            .with_input(IERC20::transferCall { to: recipient, amount }.abi_encode())
+            .with_gas_limit(TIP20_TRANSFER_GAS);
+        let request = if legacy {
+            request.with_gas_price(gas_price)
+        } else {
+            request.max_fee_per_gas(gas_price * 2).max_priority_fee_per_gas(gas_price / 10)
+        };
+        let signed = api.sign_transaction(WithOtherFields::new(request)).await.unwrap();
+        let raw = signed.parse::<Bytes>().unwrap();
+        let envelope = FoundryTxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+        assert_eq!(envelope.ty(), if legacy { 0 } else { 2 });
+
+        let raw_trace = provider.trace_raw_transaction(&raw).trace().await.unwrap();
+        assert_eq!(raw_trace.output.as_ref(), true.abi_encode());
+        assert!(raw_trace.trace.iter().all(|trace| trace.error.is_none()));
+
+        let receipt =
+            provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+        assert!(receipt.status());
+        let replay =
+            provider.trace_replay_transaction(receipt.transaction_hash).trace().await.unwrap();
+        assert_eq!(replay.output, raw_trace.output);
+        assert!(replay.trace.iter().all(|trace| trace.error.is_none()));
+
+        let trace = provider
+            .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())
+            .await
+            .unwrap();
+        let GethTrace::Default(frame) = trace else { panic!("expected default trace") };
+        assert!(!frame.failed);
+        assert_eq!(frame.gas, receipt.gas_used);
+        assert_eq!(frame.return_value, raw_trace.output);
+
+        let block_replay = provider
+            .trace_replay_block_transactions(receipt.block_number.unwrap().into())
+            .trace()
+            .await
+            .unwrap();
+        assert_eq!(block_replay.len(), 1);
+        assert_eq!(block_replay[0].transaction_hash, receipt.transaction_hash);
+        assert_eq!(block_replay[0].full_trace.output, raw_trace.output);
+        assert_eq!(
+            IERC20::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap(),
+            amount
+        );
+        assert!(provider.get_balance(sender).await.unwrap().is_zero());
+    }
 }
 
 /// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,

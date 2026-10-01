@@ -2847,7 +2847,7 @@ impl<N: Network> Backend<N> {
             let result = self.transact_base_with_inspector_ref(db, evm_env, inspector, base_tx)?;
             return Ok((result, base));
         }
-        if tx.is_tempo() {
+        if self.is_tempo() {
             let tx_env: TempoTxEnv =
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
             let base = tx_env.inner.clone();
