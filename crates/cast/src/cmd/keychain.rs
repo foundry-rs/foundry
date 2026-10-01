@@ -6,8 +6,8 @@ use crate::{
         tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
     },
     tempo::{
-        apply_fee_payment, is_tempo_hardfork_active, print_expires, require_hardfork, sponsor_hash,
-        tempo_provider,
+        active_tempo_hardfork, apply_fee_payment, is_tempo_hardfork_active, print_expires,
+        require_hardfork, sponsor_hash, tempo_provider,
     },
     tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
 };
@@ -1522,8 +1522,9 @@ impl Doctor {
         self.check(expiry)?;
 
         // Steps 8-10: hardfork detection, spending limits, allowed calls (TIP-1011, T3+ only).
-        let (step, is_t3) = check_hardfork(&provider).await;
+        let (step, hardfork) = check_hardfork(&provider).await;
         self.steps.push(step);
+        let is_t3 = hardfork.map(|hardfork| hardfork.is_t3());
         let fee_token = self.context.fee_token;
         let (limits, pending) = match &registration {
             KeyRegistration::OnChain(info) => {
@@ -1540,7 +1541,12 @@ impl Doctor {
         );
 
         // Transaction-option diagnostics that affect access-key sends.
-        self.steps.push(check_expiring_nonce(tempo, resolved_expires_at, &chain_timestamp));
+        self.steps.push(check_expiring_nonce(
+            tempo,
+            resolved_expires_at,
+            &chain_timestamp,
+            hardfork,
+        ));
 
         let (sponsorship, fee_payer) = check_sponsorship(tempo, root_account).await;
         let sponsor_failed = sponsorship.status == DoctorStatus::Fail;
@@ -1898,11 +1904,15 @@ fn check_expiry(
     }
 }
 
-async fn check_hardfork<P: Provider<TempoNetwork>>(provider: &P) -> (DoctorStep, Option<bool>) {
-    match is_tempo_hardfork_active(provider, TempoHardfork::T3).await {
-        Ok(true) => (DoctorStep::pass(HARDFORK, "Tempo T3 active"), Some(true)),
-        Ok(false) => {
-            (DoctorStep::pass(HARDFORK, "pre-T3; TIP-1011 scopes not enforced"), Some(false))
+async fn check_hardfork<P: Provider<TempoNetwork>>(
+    provider: &P,
+) -> (DoctorStep, Option<TempoHardfork>) {
+    match active_tempo_hardfork(provider).await {
+        Ok(hardfork) if hardfork.is_t3() => {
+            (DoctorStep::pass(HARDFORK, "Tempo T3 active"), Some(hardfork))
+        }
+        Ok(hardfork) => {
+            (DoctorStep::pass(HARDFORK, "pre-T3; TIP-1011 scopes not enforced"), Some(hardfork))
         }
         Err(err) => (
             DoctorStep::warn(
@@ -2238,20 +2248,24 @@ fn check_expiring_nonce(
     tempo: &TempoOpts,
     resolved_expires_at: Option<u64>,
     chain_timestamp: &ChainTimestamp,
+    hardfork: Option<TempoHardfork>,
 ) -> DoctorStep {
     if !tempo.expiring_nonce && tempo.valid_before.is_none() && tempo.valid_after.is_none() {
         return DoctorStep::pass(EXPIRING_NONCE, "not requested");
     }
     match chain_timestamp.get(EXPIRING_NONCE, "validity window not checked") {
-        Ok(now) => check_expiring_nonce_window(tempo, resolved_expires_at, now),
+        Ok(now) => check_expiring_nonce_window(tempo, resolved_expires_at, now, hardfork),
         Err(step) => step,
     }
 }
 
+/// Checks the validity window against the chain timestamp. The upper bound depends on the active
+/// hardfork and is skipped when it is unknown.
 fn check_expiring_nonce_window(
     tempo: &TempoOpts,
     resolved_expires_at: Option<u64>,
     chain_timestamp: u64,
+    hardfork: Option<TempoHardfork>,
 ) -> DoctorStep {
     let valid_before = tempo.valid_before;
     let valid_after = tempo.valid_after;
@@ -2294,20 +2308,23 @@ fn check_expiring_nonce_window(
                 "use a larger validity window before signing",
             );
         }
-        if ttl > 30 {
+        if let Some(max_expiry_secs) =
+            hardfork.map(|hardfork| hardfork.expiring_nonce_max_expiry_secs())
+            && ttl > max_expiry_secs
+        {
             return if resolved_expires_at.is_some() {
                 DoctorStep::warn(
                     EXPIRING_NONCE,
                     format!(
-                        "--tempo.expires resolved to a deadline {ttl}s ahead of chain timestamp {chain_timestamp}"
+                        "--tempo.expires resolved to a deadline {ttl}s ahead of chain timestamp {chain_timestamp}; the active hardfork allows at most {max_expiry_secs}s"
                     ),
-                    "check local clock/RPC timestamp skew before relying on this deadline",
+                    "use a shorter --tempo.expires or check local clock/RPC timestamp skew",
                 )
             } else {
                 DoctorStep::warn(
                     EXPIRING_NONCE,
                     format!(
-                        "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; --tempo.expires caps this at 30s"
+                        "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; expiring nonce transactions must expire within {max_expiry_secs}s on the active hardfork"
                     ),
                     "prefer --tempo.expires for bounded retry-safe sends",
                 )
@@ -3861,18 +3878,25 @@ mod tests {
             valid_before,
             ..Default::default()
         };
+        let t10 = Some(TempoHardfork::T10);
+        let t11 = Some(TempoHardfork::T11);
         let cases = [
             // Validated even without --tempo.expiring-nonce.
-            (opts(false, Some(20), Some(20)), 10, DoctorStatus::Fail),
-            (opts(false, None, Some(10)), 10, DoctorStatus::Fail),
-            (opts(true, None, Some(103)), 100, DoctorStatus::Fail),
-            (opts(true, None, Some(104)), 100, DoctorStatus::Warn),
-            (opts(true, None, Some(105)), 100, DoctorStatus::Warn),
-            (opts(true, None, Some(131)), 100, DoctorStatus::Warn),
-            (opts(true, None, Some(120)), 100, DoctorStatus::Pass),
+            (opts(false, Some(20), Some(20)), 10, t10, DoctorStatus::Fail),
+            (opts(false, None, Some(10)), 10, t10, DoctorStatus::Fail),
+            (opts(true, None, Some(103)), 100, t10, DoctorStatus::Fail),
+            (opts(true, None, Some(104)), 100, t10, DoctorStatus::Warn),
+            (opts(true, None, Some(105)), 100, t10, DoctorStatus::Warn),
+            (opts(true, None, Some(120)), 100, t10, DoctorStatus::Pass),
+            // The upper bound follows the active hardfork and is skipped when it is unknown.
+            (opts(true, None, Some(131)), 100, t10, DoctorStatus::Warn),
+            (opts(true, None, Some(131)), 100, t11, DoctorStatus::Pass),
+            (opts(true, None, Some(400)), 100, t11, DoctorStatus::Pass),
+            (opts(true, None, Some(401)), 100, t11, DoctorStatus::Warn),
+            (opts(true, None, Some(401)), 100, None, DoctorStatus::Pass),
         ];
-        for (tempo, now, expected) in cases {
-            let step = check_expiring_nonce_window(&tempo, None, now);
+        for (tempo, now, hardfork, expected) in cases {
+            let step = check_expiring_nonce_window(&tempo, None, now, hardfork);
             assert_eq!(step.status, expected, "{step:?}");
         }
     }

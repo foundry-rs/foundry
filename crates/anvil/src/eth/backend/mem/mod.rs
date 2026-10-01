@@ -7,7 +7,8 @@ use crate::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
             db::{
-                AnvilCacheDB, BLOCKHASH_HISTORY, Db, MaybeFullDatabase, SerializableState, StateDb,
+                AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
+                SerializableState, StateDb,
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
@@ -985,6 +986,22 @@ fn call_config_from_tracer_config(
     }
 
     GethDebugTracerConfig(tracer_config).into_call_config()
+}
+
+/// Builds Parity trace results for `result`, with `db` as the state before the transaction.
+///
+/// The state diff treats empty accounts as absent, so created and newly funded accounts are
+/// marked as added.
+fn parity_trace_results(
+    inspector: TracingInspector,
+    result: &ResultAndState<HaltReason>,
+    trace_types: &HashSet<TraceType>,
+    db: impl revm::DatabaseRef<Error = DatabaseError>,
+) -> Result<TraceResults, BlockchainError> {
+    inspector
+        .into_parity_builder()
+        .into_trace_results_with_state(result, trace_types, EmptyAsAbsentDb(db))
+        .map_err(Into::into)
 }
 
 pub type State = foundry_evm::utils::StateChangeset;
@@ -3982,10 +3999,7 @@ impl<N: Network> Backend<N> {
                 monad_context.as_mut().map(next_monad_context),
             )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(Into::into)
+            parity_trace_results(inspector, &result, &trace_types, &cache_db)
         })
         .await
     }
@@ -4033,10 +4047,7 @@ impl<N: Network> Backend<N> {
                 hash,
                 inspector,
                 |result, cache_db, inspector, _, _| {
-                    inspector
-                        .into_parity_builder()
-                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                        .map_err(BlockchainError::from)
+                    parity_trace_results(inspector, &result, &trace_types, &cache_db)
                 },
             )?;
         }
@@ -4075,10 +4086,7 @@ impl<N: Network> Backend<N> {
                 monad_context.as_mut().map(next_monad_context),
             )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(BlockchainError::from)
+            parity_trace_results(inspector, &result, &trace_types, &cache_db)
         })
         .await
     }
@@ -4119,10 +4127,8 @@ impl<N: Network> Backend<N> {
                     monad_context.as_mut().map(next_monad_context),
                 )?;
 
-                let trace_result = inspector
-                    .into_parity_builder()
-                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                    .map_err(BlockchainError::from)?;
+                let trace_result =
+                    parity_trace_results(inspector, &result, &trace_types, &cache_db)?;
                 results.push(trace_result);
 
                 if calls.peek().is_some() {
@@ -4143,6 +4149,11 @@ impl<N: Network> Backend<N> {
     ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
         let Some(block) = self.get_block(block_number) else { return Ok(None) };
 
+        // Blocks without transactions, such as genesis, have nothing to replay.
+        if block.body.transactions.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+
         // Execute this in the context of the parent state
         let parent_hash = block.header.parent_hash;
         let trace_config = TracingInspectorConfig::from_parity_config(trace_types);
@@ -4154,7 +4165,7 @@ impl<N: Network> Backend<N> {
         } else {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let Some(state) = write_guard.get_on_disk_state(&parent_hash) else {
-                return Ok(None);
+                return Err(BlockchainError::HistoricalStateUnavailable(block.header.number()));
             };
             self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
                 .map(Some)
@@ -4193,10 +4204,7 @@ impl<N: Network> Backend<N> {
             )?;
 
             // Build TraceResults from the inspector and execution result
-            let full_trace = inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, trace_types, &cache_db)
-                .map_err(BlockchainError::from)?;
+            let full_trace = parity_trace_results(inspector, &result, trace_types, &cache_db)?;
 
             results.push(TraceResultsWithTransactionHash { transaction_hash: tx_hash, full_trace });
 
@@ -4260,7 +4268,7 @@ impl<N: Network> Backend<N> {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -6639,7 +6647,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7270,7 +7278,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)?
         };
 
@@ -7414,7 +7422,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7611,15 +7619,34 @@ where
         }
 
         // A single transaction has no prefix replay to share.
-        if block.body.transactions.len() > 1
-            && matches!(
-                opts.tracer,
-                Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer))
-            )
-            && let Ok(config) = call_config_from_tracer_config(opts.tracer_config.clone())
-            && let Ok(traces) = self.replay_block_call_traces(block, config)
-        {
-            return traces;
+        if block.body.transactions.len() > 1 {
+            let traces = match &opts.tracer {
+                Some(GethDebugTracerType::BuiltInTracer(
+                    GethDebugBuiltInTracerType::CallTracer,
+                )) => {
+                    call_config_from_tracer_config(opts.tracer_config.clone()).ok().map(|config| {
+                        self.replay_block_geth_traces(
+                            block,
+                            TracingInspectorConfig::from_geth_call_config(&config),
+                            |inspector, gas_used, _| {
+                                inspector.geth_builder().geth_call_traces(config, gas_used).into()
+                            },
+                        )
+                    })
+                }
+                // Without steps tracing, struct logs come from the traces stored while mining.
+                None if self.enable_steps_tracing => Some(self.replay_block_geth_traces(
+                    block,
+                    TracingInspectorConfig::from_geth_config(&opts.config),
+                    |inspector, gas_used, output| {
+                        inspector.geth_builder().geth_traces(gas_used, output, opts.config).into()
+                    },
+                )),
+                _ => None,
+            };
+            if let Some(Ok(traces)) = traces {
+                return traces;
+            }
         }
 
         // Preserve per-transaction errors and fork lookup when sequential replay is unavailable.
@@ -7637,12 +7664,13 @@ where
     }
 
     /// Replays a local block once, keeping each transaction's committed state for the next call.
-    fn replay_block_call_traces(
+    fn replay_block_geth_traces(
         &self,
         block: &Block,
-        config: CallConfig,
+        tracing_config: TracingInspectorConfig,
+        build_trace: impl Fn(&TracingInspector, u64, Bytes) -> GethTrace,
     ) -> Result<Vec<TraceResult>, BlockchainError> {
-        let gas_used = {
+        let outcomes = {
             let storage = self.blockchain.storage.read();
             let block_hash = block.header.hash_slow();
             block
@@ -7662,7 +7690,7 @@ where
                     {
                         return Err(BlockchainError::TransactionNotFound);
                     }
-                    Ok(mined.info.gas_used)
+                    Ok((mined.info.gas_used, mined.info.out.clone().unwrap_or_default()))
                 })
                 .collect::<Result<Vec<_>, BlockchainError>>()?
         };
@@ -7672,10 +7700,10 @@ where
                 self.prepare_block_replay(block, parent_state)?;
             let monad_context = self.active_monad_context_for_mined_block(block)?;
             let mut traces = Vec::with_capacity(block.body.transactions.len());
-            for (index, (tx, gas_used)) in block.body.transactions.iter().zip(&gas_used).enumerate()
+            for (index, (tx, (gas_used, output))) in
+                block.body.transactions.iter().zip(&outcomes).enumerate()
             {
-                let mut inspector =
-                    TracingInspector::new(TracingInspectorConfig::from_geth_call_config(&config));
+                let mut inspector = TracingInspector::new(tracing_config);
                 let pending = self.pending_mined_transaction(tx.clone())?;
                 let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
                 let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
@@ -7686,7 +7714,7 @@ where
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;
                 traces.push(TraceResult::Success {
-                    result: inspector.geth_builder().geth_call_traces(config, *gas_used).into(),
+                    result: build_trace(&inspector, *gas_used, output.clone()),
                     tx_hash: Some(tx.hash()),
                 });
                 cache_db.commit(result.state);
@@ -7701,7 +7729,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -9726,13 +9754,16 @@ where
                 }
             }
 
-            // Reject if valid_after is too far in the future (> 1 hour)
-            const AA_VALID_AFTER_MAX_SECS: u64 = 3600;
+            // Reject if valid_after is too far in the future. Mirrors Tempo's default pool limit
+            // (`DEFAULT_AA_VALID_AFTER_MAX_SECS`), which is aligned with its queued transaction
+            // lifetime.
+            const AA_VALID_AFTER_MAX_SECS: u64 = 120;
             if let Some(valid_after) = tempo_tx.valid_after.map(|v| v.get()) {
                 let max_allowed = current_time.saturating_add(AA_VALID_AFTER_MAX_SECS);
                 if valid_after > max_allowed {
                     return Err(InvalidTransactionError::TempoValidAfterTooFar {
                         valid_after,
+                        max_valid_after_secs: AA_VALID_AFTER_MAX_SECS,
                         max_allowed,
                     }
                     .into());

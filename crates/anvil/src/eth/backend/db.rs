@@ -282,6 +282,36 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
     }
 }
 
+/// A read-only view of a database that reports empty accounts as absent.
+///
+/// Anvil's databases return a default [`AccountInfo`] for an account they don't hold (see
+/// [`EmptyDBWrapper`]), so an absent account can't be told apart from an empty one. Since
+/// EIP-161 an empty account can't be created and is deleted when touched, so this view lets a
+/// pre-state lookup treat both as absent. An account that already exists while empty, from genesis
+/// or before Spurious Dragon, is also reported as absent.
+#[derive(Debug)]
+pub(super) struct EmptyAsAbsentDb<T>(pub(super) T);
+
+impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
+    type Error = T::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(self.0.basic_ref(address)?.filter(|info| !info.is_empty()))
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.0.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.0.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.0.block_hash_ref(number)
+    }
+}
+
 /// This bundles all required revm traits
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
