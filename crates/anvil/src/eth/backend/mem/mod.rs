@@ -4143,6 +4143,11 @@ impl<N: Network> Backend<N> {
     ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
         let Some(block) = self.get_block(block_number) else { return Ok(None) };
 
+        // Blocks without transactions, such as genesis, have nothing to replay.
+        if block.body.transactions.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+
         // Execute this in the context of the parent state
         let parent_hash = block.header.parent_hash;
         let trace_config = TracingInspectorConfig::from_parity_config(trace_types);
@@ -4154,7 +4159,7 @@ impl<N: Network> Backend<N> {
         } else {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let Some(state) = write_guard.get_on_disk_state(&parent_hash) else {
-                return Ok(None);
+                return Err(BlockchainError::HistoricalStateUnavailable(block.header.number()));
             };
             self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
                 .map(Some)
@@ -4260,7 +4265,7 @@ impl<N: Network> Backend<N> {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -6639,7 +6644,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7270,7 +7275,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)?
         };
 
@@ -7414,7 +7419,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7701,7 +7706,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }

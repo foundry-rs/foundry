@@ -1215,6 +1215,57 @@ async fn test_debug_trace_transaction_replays_blob_base_fee() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replays_report_unavailable_historical_state() {
+    let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).to(from).value(U256::from(1));
+    let receipt = handle
+        .http_provider()
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // Restoring without historical states keeps the transaction but not its parent state.
+    let state = api.serialized_state(false).await.unwrap();
+    let (api, handle) =
+        spawn(NodeConfig::test().with_steps_tracing(true).with_init_state(Some(state))).await;
+    let provider = handle.http_provider();
+    let message = "historical state needed to replay block 1 is not available";
+
+    let call_tracer = GethDebugTracingOptions::default()
+        .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer));
+    for opts in [GethDebugTracingOptions::default(), call_tracer] {
+        let error =
+            provider.debug_trace_transaction(receipt.transaction_hash, opts).await.unwrap_err();
+        let error = error.as_error_resp().unwrap();
+        assert_eq!(error.code, -32000);
+        assert_eq!(error.message, message);
+    }
+
+    let error = api
+        .trace_replay_block_transactions(
+            BlockNumberOrTag::Number(1),
+            [TraceType::Trace].into_iter().collect(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), message);
+
+    // Genesis has no transactions to replay.
+    let genesis = api
+        .trace_replay_block_transactions(
+            BlockNumberOrTag::Number(0),
+            [TraceType::Trace].into_iter().collect(),
+        )
+        .await
+        .unwrap();
+    assert!(genesis.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_rejects_unknown_hash() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let error = handle
