@@ -4851,7 +4851,9 @@ forgetest!(preprocess_inline_verbatim_diagnostics, |prj, cmd| {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+        let mut expected = b"Warning: dynamic test linking disabled for 1 files: error: unsupported verbatim builtin\n".to_vec();
+        expected.extend(native);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
     }
 });
 
