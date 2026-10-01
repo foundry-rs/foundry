@@ -2837,8 +2837,8 @@ impl<N: Network> Backend<N> {
         I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let tx = pending.transaction.as_ref();
-        let sender = *pending.sender();
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        let (tx, sender) = (pending.transaction.as_ref(), *pending.sender());
         #[cfg(feature = "base")]
         if self.is_base() {
             let base_tx: BaseTransaction<TxEnv> =
@@ -2848,8 +2848,7 @@ impl<N: Network> Backend<N> {
             return Ok((result, base));
         }
         if self.is_tempo() {
-            let tx_env: TempoTxEnv =
-                FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+            let tx_env: TempoTxEnv = build_tx_env_for_pending(pending, self.cheats());
             let base = tx_env.inner.clone();
             let result = self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)?;
             return Ok((result, base));

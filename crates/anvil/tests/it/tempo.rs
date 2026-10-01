@@ -23,7 +23,7 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, TransactionRequest,
+    Authorization, BlockId, BlockNumberOrTag, TransactionRequest,
     anvil::Forking,
     trace::geth::{GethDebugTracingOptions, GethTrace},
 };
@@ -2079,6 +2079,74 @@ async fn test_tempo_standard_envelope_replay() {
         );
         assert!(provider.get_balance(sender).await.unwrap().is_zero());
     }
+}
+
+/// Standard EIP-7702 replay honors the same local signature overrides as mining.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_eip7702_replay_signature_override() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let authority = accounts.next().unwrap();
+    let sender = accounts.next().unwrap();
+    let implementation = Address::random();
+    // Return a constant word so traces expose whether the delegation was applied.
+    api.anvil_set_code(implementation, "0x602a5f5260205ff3".parse().unwrap()).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let signature = Signature::new(U256::ZERO, U256::ZERO, true);
+    api.anvil_impersonate_signature(signature.as_bytes().into(), authority).await.unwrap();
+    let authorization = Authorization {
+        chain_id: U256::from(provider.get_chain_id().await.unwrap()),
+        address: implementation,
+        nonce: 0,
+    }
+    .into_signed(signature);
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let gas_price = provider
+        .get_gas_price()
+        .await
+        .unwrap()
+        .max(u128::from(block.header.base_fee_per_gas.unwrap()));
+    let request = TransactionRequest::default()
+        .from(sender)
+        .to(authority)
+        .with_authorization_list(vec![authorization])
+        .with_gas_limit(TIP20_TRANSFER_GAS)
+        .max_fee_per_gas(gas_price * 2)
+        .max_priority_fee_per_gas(gas_price / 10);
+    let signed = api.sign_transaction(WithOtherFields::new(request)).await.unwrap();
+    let raw = signed.parse::<Bytes>().unwrap();
+    let envelope = FoundryTxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+    assert_eq!(envelope.ty(), 4);
+
+    let raw_trace = provider.trace_raw_transaction(&raw).trace().await.unwrap();
+    assert_eq!(raw_trace.output.as_ref(), U256::from(42).abi_encode());
+    assert!(raw_trace.trace.iter().all(|trace| trace.error.is_none()));
+
+    let receipt = provider.send_raw_transaction(&raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
+    let replay = provider.trace_replay_transaction(receipt.transaction_hash).trace().await.unwrap();
+    assert_eq!(replay.output, raw_trace.output);
+    assert!(replay.trace.iter().all(|trace| trace.error.is_none()));
+
+    let trace = provider
+        .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())
+        .await
+        .unwrap();
+    let GethTrace::Default(frame) = trace else { panic!("expected default trace") };
+    assert!(!frame.failed);
+    assert_eq!(frame.gas, receipt.gas_used);
+    assert_eq!(frame.return_value, raw_trace.output);
+
+    let block_replay = provider
+        .trace_replay_block_transactions(receipt.block_number.unwrap().into())
+        .trace()
+        .await
+        .unwrap();
+    assert_eq!(block_replay.len(), 1);
+    assert_eq!(block_replay[0].transaction_hash, receipt.transaction_hash);
+    assert_eq!(block_replay[0].full_trace.output, raw_trace.output);
 }
 
 /// The pool admits a Tempo transaction only once the fee payer can cover the maximum fee,
