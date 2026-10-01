@@ -88,6 +88,9 @@ pub enum BlockchainError {
     TransactionNotFound,
     #[error("Required data unavailable")]
     DataUnavailable,
+    /// Thrown when replaying a mined block requires a parent state that is no longer stored.
+    #[error("historical state needed to replay block {0} is not available")]
+    HistoricalStateUnavailable(u64),
     #[error("Trie error: {0}")]
     TrieError(String),
     #[error("{0}")]
@@ -612,6 +615,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 err @ BlockchainError::DataUnavailable => {
                     RpcError::internal_error_with(err.to_string())
                 }
+                err @ BlockchainError::HistoricalStateUnavailable(_) => RpcError {
+                    code: ErrorCode::ServerError(-32000),
+                    message: err.to_string().into(),
+                    data: None,
+                },
                 err @ BlockchainError::TrieError(_) => {
                     RpcError::internal_error_with(err.to_string())
                 }
