@@ -4,8 +4,9 @@ use crate::{
     constants::TEMPLATE_CONTRACT,
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
+use alloy_consensus::{Transaction as _, TxEnvelope};
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, Bytes, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
@@ -1520,6 +1521,126 @@ contract InterruptedResume is Script {
     assert_eq!(submissions.lock().unwrap().len(), 2);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
 });
+
+forgetest_async!(resume_replays_missing_predecessor_of_queued_attempt, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "InterruptedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InterruptedResumeTarget {}
+
+contract InterruptedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InterruptedResumeTarget();
+        new InterruptedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let upstream = handle.http_endpoint();
+    let client = reqwest::Client::new();
+    let intercept = Arc::new(AtomicBool::new(true));
+    let held = Arc::new(AtomicUsize::new(0));
+    let submissions = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let app = Router::new().fallback({
+        let intercept = intercept.clone();
+        let held = held.clone();
+        let submissions = submissions.clone();
+        move |body: BodyBytes| {
+            let client = client.clone();
+            let upstream = upstream.clone();
+            let intercept = intercept.clone();
+            let held = held.clone();
+            let submissions = submissions.clone();
+            async move {
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                let forward = || async {
+                    client
+                        .post(&upstream)
+                        .header("content-type", "application/json")
+                        .body(body.clone())
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap()
+                };
+                if request["method"] == "eth_sendRawTransaction" {
+                    let raw = request["params"][0].as_str().unwrap().to_string();
+                    submissions.lock().unwrap().push(raw.clone());
+                    if intercept.load(Ordering::SeqCst) {
+                        // Nonce 0 never reaches the node; nonce 1 is accepted but both
+                        // responses are lost.
+                        if raw_nonce(&raw) == 1 {
+                            forward().await;
+                        }
+                        held.fetch_add(1, Ordering::SeqCst);
+                        std::future::pending::<()>().await;
+                    }
+                }
+                forward().await.into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let _proxy = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+    let args =
+        ["--tc", "InterruptedResume", "--rpc-url", rpc.as_str(), "--private-key", private_key];
+
+    // Without `--slow`, a single sender broadcasts both saved attempts concurrently.
+    cmd.arg("script").arg(&script).args(args).arg("--broadcast");
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while held.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not submit both transactions");
+    child.kill_and_wait();
+    intercept.store(false, Ordering::SeqCst);
+
+    let provider = handle.http_provider();
+    let hash_of = |nonce| {
+        let submissions = submissions.lock().unwrap();
+        let raw = submissions.iter().find(|raw| raw_nonce(raw) == nonce).unwrap();
+        keccak256(hex::decode(raw).unwrap())
+    };
+    assert!(provider.get_transaction_by_hash(hash_of(0)).await.unwrap().is_none());
+    assert!(provider.get_transaction_by_hash(hash_of(1)).await.unwrap().is_some());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+
+    // The queued nonce-1 attempt must not block replaying its missing nonce-0 predecessor.
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+    cmd.assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    // Any rebroadcast reuses the saved bytes; no attempt is rebuilt.
+    let submissions = submissions.lock().unwrap().clone();
+    assert_eq!(submissions.iter().collect::<std::collections::HashSet<_>>().len(), 2);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+    for transaction in sequence["transactions"].as_array().unwrap() {
+        let address = transaction["contractAddress"].as_str().unwrap().parse().unwrap();
+        assert!(!provider.get_code_at(address).await.unwrap().is_empty());
+    }
+});
+
+fn raw_nonce(raw: &str) -> u64 {
+    TxEnvelope::decode_2718_exact(&hex::decode(raw).unwrap()).unwrap().nonce()
+}
 
 forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;

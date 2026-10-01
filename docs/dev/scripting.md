@@ -142,17 +142,18 @@ existing attempt.
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
 from a multichain deployment are checked concurrently. Resume first looks up each saved signed
-attempt whose hash was never recorded. If the endpoint knows the hash, the submission was accepted
-before its response was lost, so it joins `pending` and is reconciled before signers are requested;
-otherwise its identical bytes are rebroadcast later. A confirmed success removes the hash from
-`pending` and appends its receipt. A revert removes the hash and returns an error without appending
-the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction. If that endpoint
-returns no transaction, the durable attempt remains the source of identity: signed bytes may be
-replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
-while unknown outcomes remain blocked until explicitly resolved. Only a hash with saved signed bytes
-is removed from `pending`; any other hash, including an ordinary legacy hash imported without an
-attempt, fails closed instead of being prepared and signed again.
+attempt whose hash was never recorded. If the endpoint returns its receipt, the submission was
+mined before its response was lost, so it joins `pending` and is reconciled before signers are
+requested; otherwise, including when it is still queued, its identical bytes are rebroadcast later
+so a queued later nonce never waits behind a missing predecessor. A confirmed success removes the
+hash from `pending` and appends its receipt. A revert removes the hash and returns an error without
+appending the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying
+without consuming the retry budget while the selected RPC still returns the transaction. If that
+endpoint returns no transaction, the durable attempt remains the source of identity: signed bytes
+may be replayed; delegated attempts with a known hash remain checkpointed for a later plain
+`--resume`, while unknown outcomes remain blocked until explicitly resolved. Only a hash with saved
+signed bytes is removed from `pending`; any other hash, including an ordinary legacy hash imported
+without an attempt, fails closed instead of being prepared and signed again.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and then
 fails closed, keeping the hash in `pending`. Neither that incomplete receipt nor one endpoint
@@ -188,7 +189,7 @@ after its pair-consistency checks pass. Batch import additionally validates tran
 pending, and receipt associations. Resume then:
 
 1. reuses available signers or re-executes only to collect missing script-provided signers;
-2. adds saved signed attempts the endpoint already knows to `pending` and reconciles that set;
+2. adds saved signed attempts the endpoint has already mined to `pending` and reconciles that set;
 3. derives remaining ordinary work by operation hash and batch work by a validated contiguous
    prefix;
 4. prepares and submits that remaining work.
