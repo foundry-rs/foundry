@@ -4476,6 +4476,60 @@ async fn test_tempo_aa_valid_after_future() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_aa_valid_after_pool_limit() {
+    // Mirrors Tempo's `DEFAULT_AA_VALID_AFTER_MAX_SECS`.
+    const MAX_VALID_AFTER_SECS: u64 = 120;
+
+    let (api, handle) = spawn(NodeConfig::test_tempo().with_no_mining(true)).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let token = IERC20::new(PATH_USD, &provider);
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let pool_time = block.header.timestamp + 1;
+    api.evm_set_next_block_timestamp(pool_time).unwrap();
+    let calldata: Bytes = token.transfer(accounts[1], U256::from(1)).calldata().clone();
+
+    for (offset, accepted) in [(MAX_VALID_AFTER_SECS, true), (MAX_VALID_AFTER_SECS + 1, false)] {
+        let tempo_tx = TempoTransaction {
+            chain_id,
+            fee_token: Some(ALPHA_USD),
+            max_priority_fee_per_gas: base_fee / 10,
+            max_fee_per_gas: base_fee * 2,
+            gas_limit: TIP20_TRANSFER_GAS,
+            calls: vec![Call {
+                to: TxKind::Call(PATH_USD),
+                value: U256::ZERO,
+                input: calldata.clone(),
+            }],
+            access_list: Default::default(),
+            nonce_key: U256::from(offset),
+            nonce: 0,
+            fee_payer_signature: None,
+            valid_before: None,
+            valid_after: NonZeroU64::new(pool_time + offset),
+            key_authorization: None,
+            tempo_authorization_list: vec![],
+        };
+        let signature = dev_key(0).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
+        let signed_tx = AASigned::new_unhashed(
+            tempo_tx,
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+        );
+        let mut encoded = Vec::new();
+        TempoTxEnvelope::AA(signed_tx).encode_2718(&mut encoded);
+
+        let result = provider.send_raw_transaction(&encoded).await;
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "unexpected pool admission with valid_after offset {offset}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_aa_nonce_replay_same_key() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
@@ -5234,6 +5288,31 @@ async fn test_tempo_expiring_nonce_valid_before_pool_limits() {
             );
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_expiring_nonce_at_genesis() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+
+    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    assert_eq!(block.header.number, 0);
+
+    let max_nonce_key = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
+        inner: TransactionRequest::default().from(accounts[0]).to(accounts[1]).with_nonce(0),
+        other: [
+            ("nonceKey".to_string(), serde_json::json!(max_nonce_key)),
+            ("validBefore".to_string(), serde_json::json!(block.header.timestamp + 20)),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    // Before the first mined block, the expiry window must be checked against the genesis
+    // timestamp rather than the EVM's default block timestamp.
+    provider.estimate_gas(tx).block(BlockId::latest()).await.unwrap();
 }
 
 // ============================================================================

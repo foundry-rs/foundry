@@ -11,6 +11,7 @@ use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, str, util::OutputExt};
 use path_slash::PathExt;
+use serde_json::json;
 use std::{
     fs,
     io::{Read, Write},
@@ -719,6 +720,88 @@ casttest!(keychain_set_scope_succeeds_through_t14, async |_prj, cmd| {
             Some(accounts::ADDR3.to_lowercase()),
             "unexpected {hardfork:?} key info: {output}"
         );
+    }
+});
+
+// Scope presence is preserved by both ordinary and witness-based authorization.
+casttest!(keychain_authorize_preserves_empty_scopes, async |_prj, cmd| {
+    for (hardfork, witness) in [(TempoHardfork::T3, false), (TempoHardfork::T5, true)] {
+        for (scope_args, mode) in [(&[][..], "any"), (&["--scopes", "[]"][..], "none")] {
+            let (_, handle) =
+                anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+            let rpc = handle.http_endpoint();
+            let authorize = cmd.cast_fuse();
+            authorize
+                .args([
+                    "keychain",
+                    "authorize",
+                    accounts::ADDR2,
+                    "--private-key",
+                    accounts::PK1,
+                    "--rpc-url",
+                    &rpc,
+                ])
+                .args(scope_args);
+            if witness {
+                authorize.args([
+                    "--witness",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                ]);
+            }
+            authorize.assert_success();
+
+            cmd.cast_fuse()
+                .args([
+                    "keychain",
+                    "inspect",
+                    accounts::ADDR2,
+                    "--root-account",
+                    accounts::ADDR1,
+                    "--rpc-url",
+                    &rpc,
+                    "--json",
+                ])
+                .assert_json_stdout(
+                    json!({
+                        "schema_version": 1,
+                        "success": true,
+                        "data": {
+                            "root_account": accounts::ADDR1.to_lowercase(),
+                            "key_id": accounts::ADDR2.to_lowercase(),
+                            "provisioned": true,
+                            "type": "secp256k1",
+                            "role": "limited",
+                            "is_admin": false,
+                            "expiry": u64::MAX,
+                            "expiry_human": "never",
+                            "enforce_limits": false,
+                            "is_revoked": false,
+                            "limits": [],
+                            "allowed_calls": { "mode": mode, "scopes": [] }
+                        },
+                        "errors": [],
+                        "warnings": []
+                    })
+                    .to_string(),
+                );
+        }
+    }
+});
+
+casttest!(keychain_authorize_rejects_scopes_before_t3, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T2.into()))).await;
+    let rpc = handle.http_endpoint();
+    for scope_args in [["--scopes", "[]"], ["--scope", accounts::ADDR3]] {
+        cmd.cast_fuse()
+            .args(["keychain", "authorize", accounts::ADDR2, "--rpc-url", &rpc])
+            .args(scope_args)
+            .assert_failure()
+            .stderr_eq(str![[r#"
+Error: call scopes (--scope / --scopes) require a Tempo T3-capable chain
+
+"#]])
+            .stdout_eq(str![""]);
     }
 });
 
@@ -1920,6 +2003,40 @@ casttest!(batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata, async |_pr
         stderr.contains("--tempo.root-account is required when --tempo.access-key is set"),
         "raw unsigned must still resolve Tempo access-key metadata, got:\n{stderr}"
     );
+});
+
+casttest!(virtual_master_registration_requires_t3, async |_prj, cmd| {
+    for hardfork in [TempoHardfork::T2, TempoHardfork::T3] {
+        for command in [
+            ["vaddr", "create", "--owner", accounts::ADDR1],
+            ["tip20", "mine", accounts::ADDR1, "--register"],
+        ] {
+            let (_, handle) =
+                anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+            let rpc = handle.http_endpoint();
+            let register = cmd.cast_fuse();
+            register.args(command).args([
+                "--salt",
+                PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
+                "--private-key",
+                accounts::PK1,
+                "--rpc-url",
+                &rpc,
+            ]);
+            if hardfork == TempoHardfork::T2 {
+                register.assert_failure().stderr_eq(str![[r#"
+Error: virtual master registration requires a Tempo T3-capable AddressRegistry RPC
+
+"#]]);
+            } else {
+                register.assert_success();
+            }
+            cmd.cast_fuse()
+                .args(["nonce", accounts::ADDR1, "--rpc-url", &rpc])
+                .assert_success()
+                .stdout_eq(if hardfork == TempoHardfork::T2 { "0\n" } else { "1\n" });
+        }
+    }
 });
 
 casttest!(vaddr_create_sync_json_uses_tempo_session_id_env, async |_prj, cmd| {

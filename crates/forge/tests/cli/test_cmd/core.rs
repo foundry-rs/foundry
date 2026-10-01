@@ -463,3 +463,107 @@ Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
 ...
 "#]]);
 });
+
+forgetest_init!(rerun_cache_tracks_completed_invocation, |prj, cmd| {
+    let failures_file = prj.root().join("cache/test-failures");
+    let recorded_failure = r#"{"version":1,"failures":[{"contract":"test/RerunLifecycle.t.sol:RerunLifecycleTest","test":"testBroken"}]}"#;
+    let passing_test = r#"
+contract RerunLifecycleTest {
+    function testBroken() public {}
+    function testOther() public {}
+}
+"#;
+
+    // A compilation error does not complete a test invocation and must preserve the last record.
+    std::fs::create_dir_all(failures_file.parent().unwrap()).unwrap();
+    std::fs::write(&failures_file, recorded_failure).unwrap();
+    prj.add_test("RerunLifecycle.t.sol", "contract Broken {");
+    cmd.args(["test", "-j1"]).assert_failure();
+    assert_eq!(std::fs::read_to_string(&failures_file).unwrap(), recorded_failure);
+
+    // Passing runs clear the record in both human-readable and serialized output modes.
+    for output_args in
+        [vec![], vec!["--rerun"], vec!["--rerun", "--json"], vec!["--rerun", "--junit"]]
+    {
+        prj.add_test("RerunLifecycle.t.sol", passing_test);
+        std::fs::write(&failures_file, recorded_failure).unwrap();
+        cmd.forge_fuse().args(["test", "-j1"]).args(output_args).assert_success();
+        assert!(!failures_file.exists());
+    }
+
+    // With no recorded failures, rerun falls back to the full test suite.
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/RerunLifecycle.t.sol:RerunLifecycleTest
+[PASS] testBroken() ([GAS])
+[PASS] testOther() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+
+    // A stale recorded identity that no longer matches a renamed test clears the cache.
+    std::fs::write(&failures_file, recorded_failure).unwrap();
+    prj.add_test(
+        "RerunLifecycle.t.sol",
+        r#"
+contract RerunLifecycleTest {
+    function testRenamed() public {}
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_success();
+    assert!(!failures_file.exists());
+});
+
+forgetest_init!(rerun_cache_merges_network_pass_failures, |prj, cmd| {
+    prj.add_test(
+        "RerunNetworks.t.sol",
+        r#"
+contract RerunNetworksTest {
+    function testDefaultFailure() public pure {
+        require(false, "default failure");
+    }
+
+    /// forge-config: default.networks.network = "tempo"
+    function testTempoSuccess() public pure {}
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+    let failures_file = prj.root().join("cache/test-failures");
+    let failures: Value =
+        serde_json::from_str(&std::fs::read_to_string(&failures_file).unwrap()).unwrap();
+    assert_eq!(failures["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(failures["failures"][0]["test"], "testDefaultFailure");
+
+    prj.add_test(
+        "RerunNetworks.t.sol",
+        r#"
+contract RerunNetworksTest {
+    function testDefaultFailure() public pure {
+        require(false, "default failure");
+    }
+
+    /// forge-config: default.networks.network = "tempo"
+    function testTempoFailure() public pure {
+        require(false, "tempo failure");
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "-j1"]).assert_failure();
+    let failures: Value =
+        serde_json::from_str(&std::fs::read_to_string(&failures_file).unwrap()).unwrap();
+    let failed_tests = failures["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|failure| failure["test"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(failed_tests.len(), 2);
+    assert!(failed_tests.contains(&"testDefaultFailure"));
+    assert!(failed_tests.contains(&"testTempoFailure"));
+});

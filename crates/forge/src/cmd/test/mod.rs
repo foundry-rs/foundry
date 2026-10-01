@@ -1499,6 +1499,11 @@ impl TestArgs {
             ProjectCompiler::new()
                 .external_compilers(config)
                 .files(sources.iter().cloned())
+                .source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
                 .quiet(true),
         )?;
         if output.has_compiler_errors() {
@@ -1697,6 +1702,15 @@ impl TestArgs {
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
+            let compiler = if filter.is_empty() {
+                compiler
+            } else {
+                compiler.source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+            };
             let output = compiler.files(files.clone()).compile(&project);
             let output = if should_mutate {
                 output.wrap_err(
@@ -1884,6 +1898,9 @@ impl TestArgs {
             // Per-pass summaries are suppressed in `run_tests_inner`.
             self.print_summary(&outcome, multi_pass_timer.elapsed())?;
         }
+
+        // Record failures once after merging all network passes, including successful runs.
+        persist_run_failures(&config_for_mutation, &outcome);
 
         if let Some(replay) = &execution.replay_symbolic_artifact {
             let target = &replay.artifact.test;
@@ -2748,9 +2765,6 @@ impl TestArgs {
             outcome.json_file_results = Some(results);
         }
 
-        // Persist test run failures to enable replaying.
-        persist_run_failures(&config, &outcome);
-
         Ok(outcome)
     }
 
@@ -3390,9 +3404,11 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
     LastRunFailures { test_pattern, failures: None }
 }
 
-/// Persist filter with last test run failures (only if there's any failure).
+/// Replace the last run failures, clearing the record when the run succeeds.
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
+    if outcome.failed() == 0 {
+        let _ = fs::remove_file(&config.test_failures_file);
+    } else if fs::create_file(&config.test_failures_file).is_ok() {
         let failures = outcome
             .results
             .iter()
