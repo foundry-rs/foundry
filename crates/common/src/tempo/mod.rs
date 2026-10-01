@@ -54,6 +54,7 @@ mod tests;
 pub const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
 pub const BETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000002");
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
+pub const OUSD_ADDRESS: Address = address!("0x20c0000000000000000000006a37DA5C996874BE");
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
@@ -416,6 +417,7 @@ pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> 
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),
         BETA_USD_ADDRESS => Some("BetaUSD"),
         THETA_USD_ADDRESS => Some("ThetaUSD"),
+        OUSD_ADDRESS => Some("OUSD"),
         _ => None,
     }
 }

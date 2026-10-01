@@ -1,6 +1,6 @@
 //! Integration tests for `forge fmt` command
 
-use foundry_test_utils::forgetest;
+use foundry_test_utils::{forgetest, snapbox::IntoData};
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT
 pragma         solidity  =0.8.33    ;
@@ -278,4 +278,156 @@ forgetest!(fmt_keeps_disable_directive_in_every_file, |prj, cmd| {
             SOURCE,
         );
     }
+});
+
+// Symlinks found while walking directories must not make `forge fmt` write outside of the project.
+#[cfg(unix)]
+forgetest!(fmt_skips_symlinks_outside_project, |prj, cmd| {
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("Outside.sol");
+    let outside_dir_file = outside.path().join("dir/Dir.sol");
+    std::fs::create_dir(outside.path().join("dir")).unwrap();
+    std::fs::write(&outside_file, UNFORMATTED).unwrap();
+    std::fs::write(&outside_dir_file, UNFORMATTED).unwrap();
+
+    let own = prj.add_raw_source("Own.sol", UNFORMATTED);
+    std::os::unix::fs::symlink(&outside_file, prj.root().join("src/Link.sol")).unwrap();
+    std::fs::create_dir_all(prj.root().join("test")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("dir"), prj.root().join("test/linked")).unwrap();
+
+    cmd.arg("fmt").assert_success().stderr_eq(str![[r#"
+Warning: Skipping [..]/src/Link.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Skipping [..]/test/linked/Dir.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Formatted [..]/src/Own.sol
+
+"#]]);
+    assert_data_eq!(std::fs::read_to_string(own).unwrap(), FORMATTED);
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), UNFORMATTED);
+    assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), UNFORMATTED);
+
+    // Walking an explicit project directory applies the same rule.
+    cmd.forge_fuse().args(["fmt", "test"]).assert_success().stderr_eq(str![[r#"
+Warning: Skipping test/linked/Dir.sol: it resolves outside of the project root.
+HINT: Pass the path explicitly to format it: `forge fmt <paths>`
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]);
+    assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), UNFORMATTED);
+
+    // Explicit paths remain an opt-in.
+    cmd.forge_fuse().args(["fmt", "src/Link.sol", "test/linked"]).assert_success();
+    assert_data_eq!(std::fs::read_to_string(&outside_file).unwrap(), FORMATTED);
+    assert_data_eq!(std::fs::read_to_string(&outside_dir_file).unwrap(), FORMATTED);
+});
+
+forgetest!(fmt_external_configured_directories, |prj, cmd| {
+    let outside = tempfile::tempdir().unwrap();
+    for name in ["src", "test", "script"] {
+        let dir = outside.path().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("External.sol"), UNFORMATTED).unwrap();
+    }
+    prj.update_config(|config| {
+        config.src = outside.path().join("src");
+        config.test = outside.path().join("test");
+        config.script = outside.path().join("script");
+    });
+
+    cmd.args(["fmt", "--check"]).assert_failure().stderr_eq("");
+    for name in ["src", "test", "script"] {
+        assert_data_eq!(
+            std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
+            UNFORMATTED,
+        );
+    }
+
+    cmd.forge_fuse().arg("fmt").assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Formatted [..]/src/External.sol
+Formatted [..]/test/External.sol
+Formatted [..]/script/External.sol
+
+"#]]
+        .unordered(),
+    );
+    for name in ["src", "test", "script"] {
+        assert_data_eq!(
+            std::fs::read_to_string(outside.path().join(name).join("External.sol")).unwrap(),
+            FORMATTED,
+        );
+    }
+    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
+});
+
+forgetest!(fmt_configured_files_keep_default_filters, |prj, cmd| {
+    for dir in ["lib", "src"] {
+        let files =
+            ["Vendor.sol", "Vendor.t.sol", "Vendor.s.sol"].map(|name| format!("{dir}/{name}"));
+        for file in &files {
+            prj.create_file(file, UNFORMATTED);
+        }
+        prj.update_config(|config| {
+            config.src = files[0].clone().into();
+            config.test = files[1].clone().into();
+            config.script = files[2].clone().into();
+            config.fmt.ignore = vec!["src".to_string()];
+        });
+
+        for args in [vec!["fmt"], vec!["fmt", "--check"]] {
+            cmd.forge_fuse().args(args).assert_success().stdout_eq("").stderr_eq(str![[r#"
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]);
+            for file in &files {
+                assert_data_eq!(
+                    std::fs::read_to_string(prj.root().join(file)).unwrap(),
+                    UNFORMATTED
+                );
+            }
+        }
+
+        // Explicit CLI files still opt in to libraries and ignored directories.
+        cmd.forge_fuse().arg("fmt").args(&files).assert_success().stdout_eq("").stderr_eq(
+            str![[r#"
+Formatted [..]/Vendor.sol
+Formatted [..]/Vendor.t.sol
+Formatted [..]/Vendor.s.sol
+
+"#]]
+            .unordered(),
+        );
+        for file in &files {
+            assert_data_eq!(std::fs::read_to_string(prj.root().join(file)).unwrap(), FORMATTED);
+        }
+    }
+});
+
+forgetest!(fmt_configured_files, |prj, cmd| {
+    let files = ["Source.sol", "Test.sol", "Script.sol"];
+    for file in files {
+        prj.create_file(file, UNFORMATTED);
+    }
+    prj.update_config(|config| {
+        config.src = files[0].into();
+        config.test = files[1].into();
+        config.script = files[2].into();
+    });
+
+    cmd.arg("fmt").assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Formatted [..]/Source.sol
+Formatted [..]/Test.sol
+Formatted [..]/Script.sol
+
+"#]]
+        .unordered(),
+    );
+    for file in files {
+        assert_data_eq!(std::fs::read_to_string(prj.root().join(file)).unwrap(), FORMATTED);
+    }
+    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
 });

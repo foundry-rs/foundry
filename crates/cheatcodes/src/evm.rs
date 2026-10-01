@@ -810,15 +810,16 @@ impl Cheatcode for etchCall {
         ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        // Clear synthetic history only in local mode. On forks, preserve storage as for other
+        // etched accounts; clearing the ring can require one synchronous RPC read per uncached
+        // slot.
         if *target == HISTORY_STORAGE_ADDRESS
+            && !ccx.ecx.db().is_forked_mode()
             && bytecode.hash_slow() != keccak256(&HISTORY_STORAGE_CODE)
+            && ccx.ecx.journal_mut().evm_state()[target].info.code_hash
+                == keccak256(&HISTORY_STORAGE_CODE)
         {
-            let account =
-                ccx.ecx.journal_mut().evm_state_mut().get_mut(target).expect("account is loaded");
-            if account.info.code_hash == keccak256(&HISTORY_STORAGE_CODE) {
-                account.storage.clear();
-                account.mark_created();
-            }
+            clear_eip2935_history_storage(ccx.ecx)?;
         }
         ccx.ecx.journal_mut().set_code(*target, bytecode);
         Ok(Default::default())
@@ -1970,6 +1971,41 @@ fn set_eip2935_blockhash<
         .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?
         .is_cold;
     restore_eip2935_cold_state(ecx, account_was_cold, Some((slot, slot_was_cold)));
+    Ok(())
+}
+
+/// Clears the EIP-2935 history ring buffer with journaled writes, so that reverting the enclosing
+/// frame restores the previous history storage.
+///
+/// Warmth is preserved: slots that were cold stay cold. A database error reverts any partial
+/// clearing.
+fn clear_eip2935_history_storage<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+) -> Result<()> {
+    let checkpoint = ecx.journal_mut().checkpoint();
+    for slot in 0..HISTORY_SERVE_WINDOW {
+        let slot = U256::from(slot);
+        match ecx.journal_mut().sstore(HISTORY_STORAGE_ADDRESS, slot, U256::ZERO) {
+            Ok(result) if result.is_cold => {
+                if let Some(storage_slot) = ecx
+                    .journal_mut()
+                    .evm_state_mut()
+                    .get_mut(&HISTORY_STORAGE_ADDRESS)
+                    .and_then(|account| account.storage.get_mut(&slot))
+                {
+                    storage_slot.is_cold = true;
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                ecx.journal_mut().checkpoint_revert(checkpoint);
+                return Err(fmt_err!("failed to clear EIP-2935 history slot: {e:?}"));
+            }
+        }
+    }
+    ecx.journal_mut().checkpoint_commit();
     Ok(())
 }
 
