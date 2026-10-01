@@ -1922,6 +1922,40 @@ casttest!(batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata, async |_pr
     );
 });
 
+casttest!(virtual_master_registration_requires_t3, async |_prj, cmd| {
+    for hardfork in [TempoHardfork::T2, TempoHardfork::T3] {
+        for command in [
+            ["vaddr", "create", "--owner", accounts::ADDR1],
+            ["tip20", "mine", accounts::ADDR1, "--register"],
+        ] {
+            let (_, handle) =
+                anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+            let rpc = handle.http_endpoint();
+            let register = cmd.cast_fuse();
+            register.args(command).args([
+                "--salt",
+                PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
+                "--private-key",
+                accounts::PK1,
+                "--rpc-url",
+                &rpc,
+            ]);
+            if hardfork == TempoHardfork::T2 {
+                register.assert_failure().stderr_eq(str![[r#"
+Error: virtual master registration requires a Tempo T3-capable AddressRegistry RPC
+
+"#]]);
+            } else {
+                register.assert_success();
+            }
+            cmd.cast_fuse()
+                .args(["nonce", accounts::ADDR1, "--rpc-url", &rpc])
+                .assert_success()
+                .stdout_eq(if hardfork == TempoHardfork::T2 { "0\n" } else { "1\n" });
+        }
+    }
+});
+
 casttest!(vaddr_create_sync_json_uses_tempo_session_id_env, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
