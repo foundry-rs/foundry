@@ -9705,13 +9705,16 @@ where
                 }
             }
 
-            // Reject if valid_after is too far in the future (> 1 hour)
-            const AA_VALID_AFTER_MAX_SECS: u64 = 3600;
+            // Reject if valid_after is too far in the future. Mirrors Tempo's default pool limit
+            // (`DEFAULT_AA_VALID_AFTER_MAX_SECS`), which is aligned with its queued transaction
+            // lifetime.
+            const AA_VALID_AFTER_MAX_SECS: u64 = 120;
             if let Some(valid_after) = tempo_tx.valid_after.map(|v| v.get()) {
                 let max_allowed = current_time.saturating_add(AA_VALID_AFTER_MAX_SECS);
                 if valid_after > max_allowed {
                     return Err(InvalidTransactionError::TempoValidAfterTooFar {
                         valid_after,
+                        max_valid_after_secs: AA_VALID_AFTER_MAX_SECS,
                         max_allowed,
                     }
                     .into());
