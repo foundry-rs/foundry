@@ -142,9 +142,10 @@ existing attempt.
 
 Before sending new work, `BundledState::wait_for_pending` checks each hash in `pending`. Sequences
 from a multichain deployment are checked concurrently. Resume first looks up each saved signed
-attempt whose hash was never recorded. If the endpoint returns its receipt, the submission was
-mined before its response was lost, so it joins `pending` and is reconciled before signers are
-requested; otherwise, including when it is still queued, its identical bytes are rebroadcast later
+attempt whose hash was never recorded. If the endpoint returns its receipt with block number, block
+hash, and transaction index, the submission was mined before its response was lost, so it joins
+`pending` and is reconciled before signers are requested; otherwise, including when it is still
+queued or its receipt lacks that inclusion metadata, its identical bytes are rebroadcast later
 so a queued later nonce never waits behind a missing predecessor. A confirmed success removes the
 hash from `pending` and appends its receipt. A revert removes the hash and returns an error without
 appending the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying
@@ -188,8 +189,8 @@ generation-tagged state fails closed. A generationless legacy public/sensitive p
 after its pair-consistency checks pass. Batch import additionally validates transaction-hash,
 pending, and receipt associations. Resume then:
 
-1. reuses available signers or re-executes only to collect missing script-provided signers;
-2. adds saved signed attempts the endpoint has already mined to `pending` and reconciles that set;
+1. adds saved signed attempts the endpoint has already mined to `pending` and reconciles that set;
+2. reuses available signers or re-executes only to collect missing script-provided signers;
 3. derives remaining ordinary work by operation hash and batch work by a validated contiguous
    prefix;
 4. prepares and submits that remaining work.

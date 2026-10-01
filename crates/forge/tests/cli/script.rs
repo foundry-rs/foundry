@@ -1571,6 +1571,38 @@ contract InterruptedResume is Script {
                         .await
                         .unwrap()
                 };
+                if request["method"] == "eth_getTransactionReceipt" {
+                    // Until it is mined, the queued nonce-1 attempt has a pending receipt
+                    // without inclusion metadata, which must not count as mined.
+                    let mut response: Value = serde_json::from_slice(&forward().await).unwrap();
+                    let queued = submissions
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|raw| raw_nonce(raw) == 1)
+                        .map(|raw| format!("{:?}", keccak256(hex::decode(raw).unwrap())));
+                    if response["result"].is_null()
+                        && queued.is_some_and(|hash| request["params"][0] == hash)
+                    {
+                        response["result"] = serde_json::json!({
+                            "type": "0x2",
+                            "status": "0x1",
+                            "cumulativeGasUsed": "0x0",
+                            "logs": [],
+                            "logsBloom": format!("0x{}", "00".repeat(256)),
+                            "transactionHash": request["params"][0],
+                            "transactionIndex": null,
+                            "blockHash": null,
+                            "blockNumber": null,
+                            "gasUsed": "0x0",
+                            "effectiveGasPrice": "0x0",
+                            "from": Address::ZERO,
+                            "to": null,
+                            "contractAddress": null,
+                        });
+                    }
+                    return axum::Json(response).into_response();
+                }
                 if request["method"] == "eth_sendRawTransaction" {
                     let raw = request["params"][0].as_str().unwrap().to_string();
                     submissions.lock().unwrap().push(raw.clone());
@@ -1621,9 +1653,19 @@ contract InterruptedResume is Script {
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
 
     // The queued nonce-1 attempt must not block replaying its missing nonce-0 predecessor.
+    // `transaction_timeout` does not bound the whole process, so bound resume explicitly.
     prj.update_config(|config| config.transaction_timeout = 1);
     cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
-    cmd.assert_success();
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("resume did not finish");
+    let output = child.kill_and_wait();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);

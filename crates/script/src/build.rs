@@ -10,7 +10,7 @@ use crate::{
         RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
     },
 };
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{ContextCompat, OptionExt, Result};
@@ -353,12 +353,16 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     sequence.sequences()[index].rpc_url(),
                 )?
                 .build()?;
-                // A saved signed attempt with a visible receipt was mined before its response was
-                // recorded; reconcile it before requesting signers. Other attempts, including
-                // queued ones, are left for an identical-bytes rebroadcast, so a queued later
-                // nonce never waits behind a missing predecessor.
+                // A saved signed attempt with an included receipt was mined before its response
+                // was recorded; reconcile it before requesting signers. Other attempts, including
+                // queued ones or those with pending receipts, are left for an identical-bytes
+                // rebroadcast, so a queued later nonce never waits behind a missing predecessor.
                 for (operation, hash) in sequence.unrecorded_signed_attempts(index) {
-                    if provider.get_transaction_receipt(hash).await?.is_some() {
+                    if let Some(receipt) = provider.get_transaction_receipt(hash).await?
+                        && receipt.block_number().is_some()
+                        && receipt.block_hash().is_some()
+                        && receipt.transaction_index().is_some()
+                    {
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     }
                 }

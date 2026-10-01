@@ -268,6 +268,20 @@ forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
     #[cfg(unix)]
     assert_eq!(output.status.signal(), Some(9), "Forge was not terminated by SIGKILL");
     release.notify_one();
+    // Resume reconciles only a mined attempt; a merely queued one is replayed with its bytes.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while handle2
+            .http_provider()
+            .get_transaction_receipt(accepted_hash)
+            .await
+            .unwrap()
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the accepted chain 2 transaction was not mined");
 
     tester.clear();
     tester
