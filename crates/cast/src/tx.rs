@@ -21,6 +21,7 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr,
     provider::fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     shell,
+    tempo::ensure_expiring_nonce_discriminator_active,
 };
 use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_wallets::{BrowserWalletOpts, TempoAccountsWallet, WalletOpts, WalletSigner};
@@ -485,6 +486,11 @@ where
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
         tx_opts.apply::<N>(&mut tx, legacy);
+        // The curl transport answers every request with a placeholder, so there is nothing to
+        // check against.
+        if !config.eth_rpc_curl {
+            ensure_expiring_nonce_discriminator_active(&provider, &tx).await?;
+        }
 
         Ok(Self {
             inner: TxBuilderInner {

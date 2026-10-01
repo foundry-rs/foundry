@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::NamedTempFile;
+use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -285,7 +286,7 @@ where
             .get(index)
             .context("signed payload operation is not in the recovery snapshot")?;
         let transaction = &self.plan.data.sequences()[sequence].transactions[index];
-        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain)?;
+        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain, index)?;
         if let Some(existing) = self.signed_payload(sequence, index) {
             if existing != &signed {
                 bail!("refusing to replace an existing signed payload");
@@ -293,6 +294,18 @@ where
             return Ok(existing.hash);
         }
         let id = operation.id;
+        // Two operations only sign the same transaction when nothing in it is sequential, as
+        // with identical Tempo expiring nonce transactions before T12. The node drops the second
+        // one as a replay, so recording it would report a submission that never executes.
+        if deployment.attempts.iter().any(|attempt| {
+            !attempt.members.contains(&id)
+                && matches!(&attempt.kind, AttemptKind::Signed { payload, .. } if payload.hash == signed.hash)
+        }) {
+            bail!(
+                "transaction {index} is identical to an earlier transaction of this script ({}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)",
+                signed.hash
+            );
+        }
         if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
             bail!("refusing to replace an existing submission attempt");
         }
@@ -806,6 +819,7 @@ where
                                 payload.payload.clone(),
                                 &data.transactions[operation.id.index as usize],
                                 deployment.chain,
+                                operation.id.index as usize,
                             )?
                         } else {
                             SignedPayload {
@@ -915,6 +929,7 @@ fn validate_signed_payload<N: Network>(
     payload: Bytes,
     planned: &TransactionWithMetadata<N>,
     chain: u64,
+    index: usize,
 ) -> Result<SignedPayload>
 where
     N::TxEnvelope: SignerRecoverable,
@@ -932,9 +947,17 @@ where
         }
         TransactionMaybeSigned::Unsigned(_) => envelope.chain_id() == Some(chain),
     };
+    // The planned nonce is the sender's sequential nonce. A Tempo expiring nonce transaction
+    // never reads nonce state and is signed with 0 or, from T12, with its operation index as the
+    // TIP-1106 discriminator.
+    let nonce = envelope.nonce();
+    let nonce_matches = transaction.nonce() == Some(nonce)
+        || ((nonce == 0 || nonce == index as u64)
+            && <N::TransactionRequest as From<N::TxEnvelope>>::from(envelope.clone()).nonce_key()
+                == Some(TEMPO_EXPIRING_NONCE_KEY));
     if transaction.from() != Some(signer)
         || !chain_matches
-        || transaction.nonce() != Some(envelope.nonce())
+        || !nonce_matches
         || transaction.to() != envelope.to()
         || transaction.value().unwrap_or_default() != envelope.value()
         || transaction.input().cloned().unwrap_or_default() != *envelope.input()
