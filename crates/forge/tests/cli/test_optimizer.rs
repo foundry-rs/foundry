@@ -4992,3 +4992,84 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
             .assert_empty_stdout();
     }
 });
+
+// <https://github.com/foundry-rs/foundry/issues/17222>
+forgetest!(preprocess_analysis_fallback_uses_import_invalidation, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));
+        config.evm_version = EvmVersion::Istanbul;
+        config.lint.lint_on_build = false;
+    });
+    let implementation = "pragma solidity 0.6.12; contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_raw_source("Impl.sol", implementation);
+    prj.add_raw_source(
+        "Middle.sol",
+        "pragma solidity 0.6.12; import './Impl.sol'; contract Middle is Impl {}",
+    );
+    prj.add_raw_source("Unrelated.sol", "pragma solidity 0.6.12; contract Unrelated {}");
+    let test = r#"
+pragma solidity 0.6.12;
+import "../src/Middle.sol";
+contract FallbackTest {
+    // Valid in solc 0.6.12, but unavailable in Solar's analysis.
+    uint256 timestamp = now;
+    function test_fallback() public {
+        require(new Middle().value() == 111, "stale fallback bytecode");
+    }
+}
+"#;
+    prj.add_raw_test("Fallback.t.sol", test);
+    prj.add_raw_test(
+        "Independent.t.sol",
+        "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} }",
+    );
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 2 files: error: unresolved symbol `now`
+
+"#]]);
+
+    prj.add_raw_source("Unrelated.sol", "pragma solidity 0.6.12; contract Unrelated {} // edit");
+    cmd.forge_fuse()
+        .arg("build")
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![""]);
+
+    prj.add_raw_test("Independent.t.sol", "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} } // edit");
+    cmd.forge_fuse()
+        .arg("build")
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![""]);
+
+    prj.add_raw_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse()
+        .arg("test")
+        .with_no_redact()
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Compiling 3 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+...
+[FAIL: stale fallback bytecode] test_fallback() ([..])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+
+"#]]);
+});
