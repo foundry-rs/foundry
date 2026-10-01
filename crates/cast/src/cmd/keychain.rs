@@ -173,7 +173,8 @@ pub enum KeychainSubcommand {
         #[arg(long = "scope", value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
-        /// Call scope restrictions as a JSON array.
+        /// Call scope restrictions as a JSON array. An empty array denies all calls.
+        /// Requires a Tempo T3-capable chain.
         /// Format: `[{"target":"0x...","selectors":["transfer"]}]` or
         /// `[{"target":"0x...","selectors":[{"selector":"transfer","recipients":["0x..."]}]}]`
         #[arg(long = "scopes", value_parser = parse_scopes_json_wrapped, conflicts_with = "scope")]
@@ -2506,7 +2507,7 @@ async fn run_authorize(
             expiry,
             enforceLimits: enforce,
             limits,
-            allowAnyCalls: allowed_calls.is_empty(),
+            allowAnyCalls: !scopes_present,
             allowedCalls: allowed_calls,
         };
         match witness {
@@ -2522,6 +2523,10 @@ async fn run_authorize(
         }
     } else {
         // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
+        eyre::ensure!(
+            !scopes_present,
+            "call scopes (--scope / --scopes) require a Tempo T3-capable chain"
+        );
         if let Some(limit) = limits.iter().find(|limit| limit.period != 0) {
             eyre::bail!(
                 "legacy AccountKeychain authorization does not support periodic limits; remove \
