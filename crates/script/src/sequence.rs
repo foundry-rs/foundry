@@ -276,8 +276,8 @@ where
         self.recovery.signed_payload(sequence, index)
     }
 
-    pub(crate) fn submission_hashes(&self, sequence: usize) -> (Vec<B256>, Vec<B256>) {
-        self.recovery.submission_hashes(sequence)
+    pub(crate) fn replayable_hashes(&self, sequence: usize) -> Vec<B256> {
+        self.recovery.replayable_hashes(sequence)
     }
 
     pub(crate) fn persist_signed_payload(
@@ -434,6 +434,23 @@ where
             }
         }
         Ok(pending_resolution)
+    }
+
+    /// Returns saved signed attempts that are neither pending nor receipted, such as a submission
+    /// whose response was lost before its hash was recorded.
+    pub(crate) fn unrecorded_signed_attempts(&self, sequence: usize) -> Vec<(usize, B256)> {
+        let deployment = &self.sequences()[sequence];
+        (0..deployment.transactions.len())
+            .filter_map(|index| {
+                let hash = self.signed_payload(sequence, index)?.hash;
+                (!deployment.pending.contains(&hash)
+                    && !deployment
+                        .receipts
+                        .iter()
+                        .any(|receipt| receipt.transaction_hash() == hash))
+                .then_some((index, hash))
+            })
+            .collect()
     }
 
     pub(crate) fn ensure_delegated_outcomes_known(&mut self, sequence: usize) -> Result<()> {

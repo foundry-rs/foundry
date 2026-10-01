@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, Bytes, U256, address, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
@@ -1340,6 +1340,185 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+});
+
+forgetest_async!(resume_keeps_unseen_legacy_pending_hash, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "InterruptedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InterruptedResumeTarget {}
+
+contract InterruptedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InterruptedResumeTarget();
+        new InterruptedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (submission_rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc, receipt_requests) =
+        spawn_rpc_proxy_recording_method(submission_rpc, "eth_getTransactionReceipt").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+    let sensitive_path = prj.root().join("cache/InterruptedResume.s.sol/31337/run-latest.json");
+    let recovery_path =
+        prj.root().join("cache/InterruptedResume.s.sol/31337/run-latest.json.recovery.json");
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--slow",
+    ]);
+    let child = KillOnDrop::spawn(cmd.cmd());
+    let sequence = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 1)
+                && sequence["transactions"][0]["hash"].is_string()
+            {
+                break sequence;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first transaction was not checkpointed");
+    let pending_hash = sequence["transactions"][0]["hash"].clone();
+    // Polling for the receipt means the checkpoint was published, so killing Forge cannot leave
+    // a partially written export.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !receipt_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|params| params.get(0) == Some(&pending_hash))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not poll for the checkpointed transaction receipt");
+    child.kill_and_wait();
+
+    // Turn the interrupted run into a legacy broadcast: no snapshot and no saved signed bytes.
+    std::fs::remove_file(&recovery_path).unwrap();
+    for path in [&path, &sensitive_path] {
+        let mut sequence: Value = foundry_common::fs::read_json_file(path).unwrap();
+        sequence.as_object_mut().unwrap().remove("recovery_generation").unwrap();
+        foundry_common::fs::write_json_file(path, &sequence).unwrap();
+    }
+    api.anvil_drop_transaction(pending_hash.as_str().unwrap().parse().unwrap()).await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    // The endpoint no longer returns the legacy hash, which does not prove it was never accepted,
+    // so resume fails closed instead of signing a replacement.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "InterruptedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+        "--slow",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Durable submission 0x[..] is not currently visible; refusing to discard its recovery identity
+...
+"#]]);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["pending"], serde_json::json!([pending_hash]));
+    assert_eq!(sequence["transactions"][0]["hash"], pending_hash);
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+});
+
+forgetest_async!(resume_reconciles_receipt_visible_signed_attempt, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "InterruptedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract InterruptedResumeTarget {}
+
+contract InterruptedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new InterruptedResumeTarget();
+        new InterruptedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    // Once enabled, transaction lookups hide the accepted submission while its receipt stays
+    // visible.
+    let hidden = Arc::new(std::sync::Mutex::new(None::<Value>));
+    let lookup_rpc =
+        spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_getTransactionByHash", {
+            let hidden = hidden.clone();
+            move |params, result| {
+                if hidden.lock().unwrap().as_ref() == params.get(0) { Value::Null } else { result }
+            }
+        })
+        .await;
+    let (rpc, submissions, reached, release) =
+        spawn_rpc_proxy_blocking_first_submission(lookup_rpc, "eth_sendRawTransaction", true).await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/InterruptedResume.s.sol/31337/run-latest.json");
+    let args =
+        ["--tc", "InterruptedResume", "--rpc-url", rpc.as_str(), "--private-key", private_key];
+
+    cmd.arg("script").arg(&script).args(args).args(["--broadcast", "--slow"]);
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(30), reached.notified())
+        .await
+        .expect("forge did not submit the first transaction");
+    let accepted = submissions.lock().unwrap()[0][0].clone();
+    let accepted_hash = keccak256(hex::decode(accepted.as_str().unwrap()).unwrap());
+    child.kill_and_wait();
+    release.notify_one();
+    *hidden.lock().unwrap() = Some(format!("{accepted_hash:?}").into());
+    let provider = handle.http_provider();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while provider.get_transaction_receipt(accepted_hash).await.unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the accepted transaction was not mined");
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).args(["--resume", "--slow"]);
+    cmd.assert_success();
+
+    // The accepted submission is reconciled from its receipt instead of being resent.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(
+        sequence["transactions"][0]["hash"].as_str().unwrap().parse::<B256>().unwrap(),
+        accepted_hash
+    );
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
 });
 
 forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {

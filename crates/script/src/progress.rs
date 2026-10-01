@@ -188,9 +188,10 @@ impl ScriptProgress {
     /// confirmed, we push the receipt (if successful) or push an error (if
     /// revert). If the transaction has not confirmed, but can be found in the
     /// node's mempool, we wait for its receipt to be available. If the transaction
-    /// has not confirmed, and cannot be found in the mempool, we remove it from
-    /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
-    /// later steps.
+    /// has not confirmed and cannot be found, we remove it from the
+    /// `deploy_sequence.pending` vector only when its exact signed bytes are saved in
+    /// `replayable_hashes`, so later steps rebroadcast identical bytes. Any other hash is a
+    /// durable submission identity and is never discarded.
     pub async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
@@ -198,9 +199,8 @@ impl ScriptProgress {
         provider: &RootProvider<N>,
         timeout: u64,
         confirmations: u64,
-        submission_hashes: (&[B256], &[B256]),
+        replayable_hashes: &[B256],
     ) -> Result<()> {
-        let (durable_hashes, replayable_hashes) = submission_hashes;
         if deployment_sequence.pending.is_empty() {
             return Ok(());
         }
@@ -229,14 +229,9 @@ impl ScriptProgress {
                     if err.downcast_ref::<PendingReceiptError>().is_some() {
                         // We've already retried several times with sleep, but the receipt is still
                         // pending
-                        if durable_hashes.contains(&tx_hash) {
-                            errors.push(format!(
-                                "Durable submission {tx_hash:?} is still pending; refusing to discard its recovery identity"
-                            ));
-                        } else {
-                            discarded_transactions = true;
-                            deployment_sequence.remove_pending(tx_hash);
-                        }
+                        errors.push(format!(
+                            "Durable submission {tx_hash:?} is still pending; refusing to discard its recovery identity"
+                        ));
                         seq_progress
                             .inner
                             .write()
@@ -249,17 +244,15 @@ impl ScriptProgress {
                     }
                 }
                 Ok(TxStatus::Dropped) => {
+                    // Only identical signed bytes can be safely rebroadcast. Absence from one
+                    // endpoint does not prove any other submission was never accepted.
                     if replayable_hashes.contains(&tx_hash) {
                         deployment_sequence.remove_pending(tx_hash);
                         discarded_transactions = true;
-                    } else if durable_hashes.contains(&tx_hash) {
+                    } else {
                         errors.push(format!(
                             "Durable submission {tx_hash:?} is not currently visible; refusing to discard its recovery identity"
                         ));
-                    } else {
-                        // We want to remove it from pending so it will be re-broadcast.
-                        deployment_sequence.remove_pending(tx_hash);
-                        discarded_transactions = true;
                     }
 
                     let msg = format!(

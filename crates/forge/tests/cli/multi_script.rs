@@ -12,7 +12,7 @@ use foundry_test_utils::{
     },
 };
 use serde_json::Value;
-use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
+use std::{sync::atomic::Ordering, time::Duration};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -279,16 +279,10 @@ forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
         .arg("--resume");
     tester.cmd.assert_success();
 
-    // Chain 1 is not resubmitted, and chain 2 never rebuilds its accepted operation: any replay
-    // uses the accepted bytes, so exactly one distinct payload exists per operation.
+    // Chain 1 is not resubmitted, and chain 2 reconciles its accepted operation before sending
+    // anything, so each chain-2 operation is submitted exactly once.
     assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
-    let chain2_payloads = chain2_submissions
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|params| params[0].as_str().unwrap().to_string())
-        .collect::<HashSet<_>>();
-    assert_eq!(chain2_payloads.len(), 5);
+    assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
     assert_eq!(api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 1);
     assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 1);
     assert_eq!(api2.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 2);

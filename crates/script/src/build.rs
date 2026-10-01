@@ -348,15 +348,25 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
             let progress = ScriptProgress::default();
             for index in 0..sequence.sequences().len() {
-                if sequence.sequences()[index].pending.is_empty() {
-                    continue;
-                }
-                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
-                let provider = ProviderBuilder::from_config_with_url(
+                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
                     &self.script_config.config,
                     sequence.sequences()[index].rpc_url(),
                 )?
                 .build()?;
+                // A saved signed attempt whose receipt or transaction the endpoint returns was
+                // accepted before its response was recorded; reconcile it before requesting
+                // signers or resending. Unknown hashes are left for an identical-bytes rebroadcast.
+                for (operation, hash) in sequence.unrecorded_signed_attempts(index) {
+                    if provider.get_transaction_receipt(hash).await?.is_some()
+                        || provider.get_transaction_by_hash(hash).await?.is_some()
+                    {
+                        sequence.sequences_mut()[index].add_pending(operation, hash);
+                    }
+                }
+                if sequence.sequences()[index].pending.is_empty() {
+                    continue;
+                }
+                let replayable_hashes = sequence.replayable_hashes(index);
                 let result = progress
                     .wait_for_pending(
                         index,
@@ -364,7 +374,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         &provider,
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
-                        (&durable_hashes, &replayable_hashes),
+                        &replayable_hashes,
                     )
                     .await;
                 sequence.save(true, false)?;

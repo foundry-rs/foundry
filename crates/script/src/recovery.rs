@@ -229,29 +229,18 @@ where
         })
     }
 
-    pub(crate) fn submission_hashes(&self, sequence: usize) -> (Vec<B256>, Vec<B256>) {
-        let mut durable = Vec::new();
-        let mut replayable = Vec::new();
-        for attempt in self
-            .plan
+    /// Returns the hashes whose exact signed bytes are saved and can be rebroadcast.
+    pub(crate) fn replayable_hashes(&self, sequence: usize) -> Vec<B256> {
+        self.plan
             .deployments
             .get(sequence)
             .into_iter()
             .flat_map(|deployment| &deployment.attempts)
-        {
-            match &attempt.kind {
-                AttemptKind::Signed { payload, .. } => {
-                    durable.push(payload.hash);
-                    replayable.push(payload.hash);
-                }
-                AttemptKind::Delegated { status: DelegatedStatus::Pending { hash }, .. } => {
-                    durable.push(*hash);
-                }
-                AttemptKind::Legacy { hash } => durable.push(*hash),
-                AttemptKind::Delegated { .. } => {}
-            }
-        }
-        (durable, replayable)
+            .filter_map(|attempt| match &attempt.kind {
+                AttemptKind::Signed { payload, .. } => Some(payload.hash),
+                AttemptKind::Delegated { .. } | AttemptKind::Legacy { .. } => None,
+            })
+            .collect()
     }
 
     pub(crate) fn batch_attempt(
