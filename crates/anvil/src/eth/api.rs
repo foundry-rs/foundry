@@ -4981,7 +4981,9 @@ impl EthApi<FoundryNetwork> {
         let outcome = self.backend.mine_block_locked(transactions).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
-        self.pool.on_mined_block(outcome);
+        if self.pool.on_mined_block(outcome) {
+            self.miner.retry_ready_transactions();
+        }
         Ok(())
     }
 
