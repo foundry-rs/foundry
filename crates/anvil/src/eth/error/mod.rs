@@ -385,8 +385,10 @@ pub enum InvalidTransactionError {
     )]
     TempoValidBeforeTooFar { valid_before: u64, max_expiry_secs: u64, max_allowed: u64 },
     /// Tempo transaction valid_after is too far in the future
-    #[error("Tempo tx valid_after ({valid_after}) must be <= current time + 1h ({max_allowed})")]
-    TempoValidAfterTooFar { valid_after: u64, max_allowed: u64 },
+    #[error(
+        "Tempo tx valid_after ({valid_after}) must be <= current time + {max_valid_after_secs}s ({max_allowed})"
+    )]
+    TempoValidAfterTooFar { valid_after: u64, max_valid_after_secs: u64, max_allowed: u64 },
     /// Tempo transaction has too many authorizations
     #[error("Tempo tx has too many authorizations ({count}), max allowed is {max}")]
     TempoTooManyAuthorizations { count: usize, max: usize },
