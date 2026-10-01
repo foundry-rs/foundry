@@ -235,8 +235,12 @@ network_replay_tests! {
     flaky_run_mainnet => ("ethereum", "https://ethereum-rpc.publicnode.com", Exact),
     flaky_run_optimism => ("optimism", "https://mainnet.optimism.io", Exact),
     flaky_run_base => ("base", "https://mainnet.base.org", Exact),
-    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", Exact),
     flaky_run_linea => ("linea", "https://linea-rpc.publicnode.com", Exact),
+
+    // Disables gas refunds and, since Helicon, charges at least ceil(gas_limit / 2), neither of
+    // which stock revm models.
+    // TODO: Restore exact gas assertions once native Avalanche accounting is implemented.
+    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", ReplaysOnly),
 
     // Blocks carry no `parentBeaconBlockRoot` even though the EVM is Cancun or later.
     flaky_run_scroll => ("scroll", "https://rpc.scroll.io", Exact),
