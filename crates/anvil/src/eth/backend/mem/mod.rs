@@ -7,7 +7,8 @@ use crate::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
             db::{
-                AnvilCacheDB, BLOCKHASH_HISTORY, Db, MaybeFullDatabase, SerializableState, StateDb,
+                AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
+                SerializableState, StateDb,
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
@@ -985,6 +986,22 @@ fn call_config_from_tracer_config(
     }
 
     GethDebugTracerConfig(tracer_config).into_call_config()
+}
+
+/// Builds Parity trace results for `result`, with `db` as the state before the transaction.
+///
+/// The state diff treats empty accounts as absent, so created and newly funded accounts are
+/// marked as added.
+fn parity_trace_results(
+    inspector: TracingInspector,
+    result: &ResultAndState<HaltReason>,
+    trace_types: &HashSet<TraceType>,
+    db: impl revm::DatabaseRef<Error = DatabaseError>,
+) -> Result<TraceResults, BlockchainError> {
+    inspector
+        .into_parity_builder()
+        .into_trace_results_with_state(result, trace_types, EmptyAsAbsentDb(db))
+        .map_err(Into::into)
 }
 
 pub type State = foundry_evm::utils::StateChangeset;
@@ -3982,10 +3999,7 @@ impl<N: Network> Backend<N> {
                 monad_context.as_mut().map(next_monad_context),
             )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(Into::into)
+            parity_trace_results(inspector, &result, &trace_types, &cache_db)
         })
         .await
     }
@@ -4033,10 +4047,7 @@ impl<N: Network> Backend<N> {
                 hash,
                 inspector,
                 |result, cache_db, inspector, _, _| {
-                    inspector
-                        .into_parity_builder()
-                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                        .map_err(BlockchainError::from)
+                    parity_trace_results(inspector, &result, &trace_types, &cache_db)
                 },
             )?;
         }
@@ -4075,10 +4086,7 @@ impl<N: Network> Backend<N> {
                 monad_context.as_mut().map(next_monad_context),
             )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(BlockchainError::from)
+            parity_trace_results(inspector, &result, &trace_types, &cache_db)
         })
         .await
     }
@@ -4119,10 +4127,8 @@ impl<N: Network> Backend<N> {
                     monad_context.as_mut().map(next_monad_context),
                 )?;
 
-                let trace_result = inspector
-                    .into_parity_builder()
-                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                    .map_err(BlockchainError::from)?;
+                let trace_result =
+                    parity_trace_results(inspector, &result, &trace_types, &cache_db)?;
                 results.push(trace_result);
 
                 if calls.peek().is_some() {
@@ -4198,10 +4204,7 @@ impl<N: Network> Backend<N> {
             )?;
 
             // Build TraceResults from the inspector and execution result
-            let full_trace = inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, trace_types, &cache_db)
-                .map_err(BlockchainError::from)?;
+            let full_trace = parity_trace_results(inspector, &result, trace_types, &cache_db)?;
 
             results.push(TraceResultsWithTransactionHash { transaction_hash: tx_hash, full_trace });
 
