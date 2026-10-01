@@ -4422,6 +4422,127 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
 });
 
+// Tests that sponsored EIP-7702 authorities have their nonce bumped after a broadcast
+// transaction consumes their authorization.
+// Bob sponsors two delegations for Alice in separate transactions, then Alice broadcasts herself.
+forgetest_async!(can_broadcast_txes_with_sponsored_auth_nonces, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Implementation.sol",
+        r#"
+contract Implementation {
+    event Called(uint256 id);
+
+    uint256 immutable id;
+
+    constructor(uint256 id_) {
+        id = id_;
+    }
+
+    function ping() external returns (uint256) {
+        emit Called(id);
+        return id;
+    }
+}
+   "#,
+    );
+
+    prj.add_script(
+        "SponsoredDelegationScript.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Implementation} from "../src/Implementation.sol";
+
+contract SponsoredDelegationScript is Script {
+    address constant ALICE_ADDRESS = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+    uint256 constant ALICE_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 constant BOB_PK = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+
+    function run() public {
+        vm.startBroadcast(BOB_PK);
+        Implementation implementation1 = new Implementation(1);
+        Implementation implementation2 = new Implementation(2);
+
+        Vm.SignedDelegation memory first = vm.signAndAttachDelegation(address(implementation1), ALICE_PK);
+        require(first.nonce == 0, "first auth nonce");
+        require(Implementation(ALICE_ADDRESS).ping() == 1, "first local call");
+
+        Vm.SignedDelegation memory second = vm.signAndAttachDelegation(address(implementation2), ALICE_PK);
+        require(second.nonce == 1, "second auth nonce");
+        require(Implementation(ALICE_ADDRESS).ping() == 2, "second local call");
+        vm.stopBroadcast();
+
+        vm.startBroadcast(ALICE_PK);
+        new Implementation(3);
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/SponsoredDelegationScript.s.sol",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--non-interactive",
+        "--slow",
+        "--broadcast",
+        "--evm-version",
+        "prague",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+
+    let alice = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    let bob = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+
+    // Alice should be delegated to the second implementation.
+    let mut expected_code = hex!("ef0100").to_vec();
+    expected_code.extend_from_slice(bob.create(1).as_slice());
+    assert_eq!(api.get_code(alice, None).await.unwrap(), Bytes::from(expected_code));
+
+    // Alice nonce should be 3 (two auths and one tx sent).
+    assert_eq!(api.get_account(alice, None).await.unwrap().nonce, 3);
+    assert!(!api.get_code(alice.create(2), None).await.unwrap().is_empty());
+});
+
 // <https://github.com/foundry-rs/foundry/issues/11159>
 forgetest_async!(check_broadcast_log_with_additional_contracts, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
