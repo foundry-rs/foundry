@@ -1754,7 +1754,6 @@ impl<N: Network> Backend<N> {
         InspectorTxConfig {
             print_traces: self.print_traces,
             print_logs: self.print_logs,
-            enable_steps_tracing: self.enable_steps_tracing,
             call_trace_decoder: self.call_trace_decoder(),
         }
     }
@@ -1917,6 +1916,12 @@ impl<N: Network> Backend<N> {
     fn block_env_from_header(&self, header: &impl BlockHeader) -> BlockEnv {
         let mut block = block_env_from_header::<BlockEnv>(header);
         block.number = self.evm_block_number(header.number());
+        if let Some(excess_blob_gas) = header.excess_blob_gas() {
+            block.set_blob_excess_gas_and_price(
+                excess_blob_gas,
+                self.blob_params().update_fraction as u64,
+            );
+        }
         block
     }
 
@@ -2053,9 +2058,6 @@ impl<N: Network> Backend<N> {
     /// Builds an inspector configured for block mining (tracing always enabled).
     fn build_mining_inspector(&self) -> AnvilInspector {
         let mut inspector = AnvilInspector::default().with_tracing();
-        if self.enable_steps_tracing {
-            inspector = inspector.with_steps_tracing();
-        }
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
@@ -7781,8 +7783,27 @@ where
         }
 
         // default structlog tracer
-        Ok(GethTraceBuilder::new(tx.info.traces.clone())
-            .geth_traces(tx.info.gas_used, tx.info.out.clone().unwrap_or_default(), config)
+        let return_value = tx.info.out.clone().unwrap_or_default();
+
+        // Steps are not recorded when mining because they would be kept for every transaction, so
+        // replay the transaction to record only what this request asks for.
+        if self.enable_steps_tracing {
+            let inspector =
+                TracingInspector::new(TracingInspectorConfig::from_geth_config(&config));
+            return self.replay_tx_with_inspector(
+                tx.info.transaction_hash,
+                inspector,
+                |_, _, inspector, _, _| {
+                    inspector
+                        .geth_builder()
+                        .geth_traces(tx.info.gas_used, return_value, config)
+                        .into()
+                },
+            );
+        }
+
+        Ok(GethTraceBuilder::new_borrowed(&tx.info.traces)
+            .geth_traces(tx.info.gas_used, return_value, config)
             .into())
     }
 

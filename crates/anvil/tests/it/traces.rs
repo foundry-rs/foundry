@@ -23,8 +23,8 @@ use alloy_rpc_types::{
         filter::{TraceFilter, TraceFilterMode},
         geth::{
             AccountState, CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, PreStateConfig,
-            PreStateFrame, TraceResult,
+            GethDebugTracingCallOptions, GethDebugTracingOptions, GethDefaultTracingOptions,
+            GethTrace, PreStateConfig, PreStateFrame, TraceResult,
         },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
         parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
@@ -35,6 +35,7 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -1112,6 +1113,105 @@ async fn test_debug_trace_transaction_reports_transaction_gas() {
         .unwrap();
     let GethTrace::CallTracer(call_frame) = call_trace else { unreachable!("expected call trace") };
     assert_eq!(call_frame.gas_used, U256::from(second_receipt.gas_used));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
+    let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+
+    // Precede the traced transaction so that tracing replays the block prefix.
+    let transfer = TransactionRequest::default()
+        .from(from)
+        .to(accounts[1].address())
+        .value(U256::from(1))
+        .nonce(nonce);
+    let _ = provider.send_transaction(WithOtherFields::new(transfer)).await.unwrap();
+
+    // PUSH1 0x2a PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN
+    let init_code = Bytes::from_hex("602a60005260206000f3").unwrap();
+    let create = TransactionRequest::default()
+        .from(from)
+        .with_deploy_code(init_code)
+        .nonce(nonce + 1)
+        .gas_limit(100_000);
+    let pending = provider.send_transaction(WithOtherFields::new(create)).await.unwrap();
+
+    api.mine_one().await.unwrap();
+    let receipt = pending.get_receipt().await.unwrap();
+    assert_eq!(receipt.transaction_index, Some(1));
+
+    let word = "0x000000000000000000000000000000000000000000000000000000000000002a".to_string();
+    for memory in [false, true] {
+        let config = GethDefaultTracingOptions::default().with_enable_memory(memory);
+        let opts = GethDebugTracingOptions { config, ..Default::default() };
+        let trace = provider.debug_trace_transaction(receipt.transaction_hash, opts).await.unwrap();
+        let GethTrace::Default(frame) = trace else { unreachable!("expected default trace") };
+        assert_eq!(frame.gas, receipt.gas_used);
+        assert!(!frame.failed);
+
+        let steps = frame
+            .struct_logs
+            .into_iter()
+            .map(|log| (log.pc, log.op.into_owned(), log.stack.unwrap(), log.memory))
+            .collect::<Vec<_>>();
+        let empty = memory.then(Vec::new);
+        let stored = memory.then(|| vec![word.clone()]);
+        assert_eq!(
+            steps,
+            [
+                (0, "PUSH1".to_string(), vec![], empty.clone()),
+                (2, "PUSH1".to_string(), vec![U256::from(0x2a)], empty.clone()),
+                (4, "MSTORE".to_string(), vec![U256::from(0x2a), U256::ZERO], empty),
+                (5, "PUSH1".to_string(), vec![], stored.clone()),
+                (7, "PUSH1".to_string(), vec![U256::from(0x20)], stored.clone()),
+                (9, "RETURN".to_string(), vec![U256::from(0x20), U256::ZERO], stored),
+            ]
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_replays_blob_base_fee() {
+    let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
+    let provider = handle.http_provider();
+
+    let blob_update_fraction = u64::try_from(api.backend.blob_params().update_fraction).unwrap();
+    api.backend.fees().set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+        30_000_000,
+        blob_update_fraction,
+    ));
+
+    // BLOBBASEFEE PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
+    let init_code = Bytes::from_hex("4a5f5260205ff3").unwrap();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let create = TransactionRequest::default().from(from).with_deploy_code(init_code);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(create))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    // The deployed code is the blob base fee observed while mining.
+    let code = provider.get_code_at(receipt.contract_address.unwrap()).await.unwrap();
+    let mined_blob_base_fee = U256::from_be_slice(&code);
+    assert!(mined_blob_base_fee > U256::ONE);
+
+    let trace = provider
+        .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())
+        .await
+        .unwrap();
+    let GethTrace::Default(frame) = trace else { unreachable!("expected default trace") };
+    assert_eq!(frame.struct_logs[1].op, "PUSH0");
+    assert_eq!(frame.struct_logs[1].stack, Some(vec![mined_blob_base_fee]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
