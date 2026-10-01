@@ -2359,7 +2359,7 @@ async fn test_trace_replay_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_replay_transaction_preserves_prefix_state() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
     let contract = Address::random();
@@ -2440,6 +2440,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
         serde_json::json!({"tracer": "callTracer", "tracerConfig": {"withLog": "invalid"}}),
         serde_json::json!({"tracer": "noopTracer"}),
         serde_json::json!({}),
+        serde_json::json!({"enableMemory": true, "enableReturnData": true}),
     ] {
         let options = serde_json::from_value::<GethDebugTracingOptions>(options).unwrap();
         let mut expected = Vec::new();
