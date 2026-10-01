@@ -8,6 +8,9 @@ use regex::Regex;
 use serde_json::Value;
 use std::{collections::BTreeSet, path::Path};
 
+#[cfg(unix)]
+use std::{fs, os::unix::fs::PermissionsExt};
+
 const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
 const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
 
@@ -6153,3 +6156,121 @@ fn random_failure_reason(stdout: &str) -> String {
         .unwrap_or_else(|| panic!("{stdout}"))[1]
         .to_string()
 }
+
+#[cfg(unix)]
+forgetest_init!(fuzz_improve_retains_reproducible_property, |prj, cmd| {
+    let assertion_lib = prj.root().join("lib/example");
+    fs::create_dir_all(&assertion_lib).unwrap();
+    fs::write(
+        assertion_lib.join("Assertions.sol"),
+        r#"
+pragma solidity ^0.8.20;
+
+library Assertions {
+    function equal(uint256 left, uint256 right) internal pure {
+        require(left == right);
+    }
+}
+"#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(
+        &generator,
+        r#"#!/bin/sh
+set -eu
+prompt="$1"
+output="$2"
+grep -q '"mutation_gaps"' "$prompt"
+if grep -q '"mutant"' "$prompt"; then exit 1; fi
+if grep -q '"round": 2' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "exercise every range and comparison boundary",
+  "files": [{
+    "path": "test/generated/ArithmeticGenerated.t.sol",
+    "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticGeneratedTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testFuzzBucket(uint256 value) public view {\n        Assertions.equal(arithmetic.bucket(9), 1);\n        Assertions.equal(arithmetic.bucket(10), 2);\n        Assertions.equal(arithmetic.bucket(99), 2);\n        Assertions.equal(arithmetic.bucket(100), 3);\n        uint256 expected = value < 10 ? 1 : value < 100 ? 2 : 3;\n        Assertions.equal(arithmetic.bucket(value), expected);\n    }\n}\n"
+  }],
+  "tests": [{
+    "path": "test/generated/ArithmeticGenerated.t.sol",
+    "contract": "ArithmeticGeneratedTest",
+    "name": "testFuzzBucket"
+  }]
+}
+JSON
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+            "fuzz",
+            "improve",
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--mutate",
+            "src/Arithmetic.sol",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--generator",
+            generator.to_str().unwrap(),
+            "--seed",
+            "0x5eed",
+            "--seed",
+            "0xc0ffee",
+            "--mutation-jobs",
+            "1",
+            "--match-contract",
+            "^ArithmeticTest$",
+            "--rounds",
+            "2",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+accepted candidate: cache/fuzz-improve/0x2fd98a8426d6da6c9c3a5b93b3f9e338c322d9f93baac6b747b0afbca370458f (+10 kills on every seed)
+
+"#]]);
+
+    let rounds = fs::read_to_string(prj.root().join("cache/fuzz-improve/rounds.json")).unwrap();
+    assert!(!rounds.contains("\"mutant\""));
+    let rounds: serde_json::Value = serde_json::from_str(&rounds).unwrap();
+    assert_eq!(rounds.as_array().unwrap().len(), 2);
+    assert_eq!(rounds[0]["accepted"], true);
+    assert!(rounds[0]["minimum_new_kills"].as_i64().unwrap() > 0);
+});

@@ -214,14 +214,14 @@ impl MutationsSummary {
 ///
 /// Uses [`BTreeMap`] for `survived_mutants` so file ordering in the emitted
 /// JSON is deterministic.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MutationJsonOutput {
     pub summary: MutationSummaryJson,
     pub survived_mutants: BTreeMap<String, Vec<SurvivedMutantJson>>,
 }
 
 /// Summary section of JSON output
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MutationSummaryJson {
     pub total: usize,
     pub killed: usize,
@@ -234,7 +234,7 @@ pub struct MutationSummaryJson {
 }
 
 /// Individual survived mutant in JSON output
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SurvivedMutantJson {
     pub line: usize,
     pub column: usize,
