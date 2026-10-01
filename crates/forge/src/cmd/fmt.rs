@@ -154,7 +154,13 @@ impl FmtArgs {
                                 .filter(|p| is_contained(p, &dir)),
                         );
                     } else if path.is_sol() {
-                        // Explicit file paths are always included, even if in a lib
+                        if default_paths
+                            && ((!self.nearest && is_under_dir(path, &ignored))
+                                || is_under_dir(path, &libs))
+                        {
+                            continue;
+                        }
+                        // CLI file paths are always included, even if in a lib.
                         inputs.push(path.clone());
                     } else {
                         warn!("Cannot process path {}", path.display());

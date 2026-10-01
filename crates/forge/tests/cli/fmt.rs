@@ -361,3 +361,73 @@ Formatted [..]/script/External.sol
     }
     cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
 });
+
+forgetest!(fmt_configured_files_keep_default_filters, |prj, cmd| {
+    for dir in ["lib", "src"] {
+        let files =
+            ["Vendor.sol", "Vendor.t.sol", "Vendor.s.sol"].map(|name| format!("{dir}/{name}"));
+        for file in &files {
+            prj.create_file(file, UNFORMATTED);
+        }
+        prj.update_config(|config| {
+            config.src = files[0].clone().into();
+            config.test = files[1].clone().into();
+            config.script = files[2].clone().into();
+            config.fmt.ignore = vec!["src".to_string()];
+        });
+
+        for args in [vec!["fmt"], vec!["fmt", "--check"]] {
+            cmd.forge_fuse().args(args).assert_success().stdout_eq("").stderr_eq(str![[r#"
+Warning: Nothing to format.
+HINT: If you are working outside of the project, try providing paths to your source files: `forge fmt <paths>`
+
+"#]]);
+            for file in &files {
+                assert_data_eq!(
+                    std::fs::read_to_string(prj.root().join(file)).unwrap(),
+                    UNFORMATTED
+                );
+            }
+        }
+
+        // Explicit CLI files still opt in to libraries and ignored directories.
+        cmd.forge_fuse().arg("fmt").args(&files).assert_success().stdout_eq("").stderr_eq(
+            str![[r#"
+Formatted [..]/Vendor.sol
+Formatted [..]/Vendor.t.sol
+Formatted [..]/Vendor.s.sol
+
+"#]]
+            .unordered(),
+        );
+        for file in &files {
+            assert_data_eq!(std::fs::read_to_string(prj.root().join(file)).unwrap(), FORMATTED);
+        }
+    }
+});
+
+forgetest!(fmt_configured_files, |prj, cmd| {
+    let files = ["Source.sol", "Test.sol", "Script.sol"];
+    for file in files {
+        prj.create_file(file, UNFORMATTED);
+    }
+    prj.update_config(|config| {
+        config.src = files[0].into();
+        config.test = files[1].into();
+        config.script = files[2].into();
+    });
+
+    cmd.arg("fmt").assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+Formatted [..]/Source.sol
+Formatted [..]/Test.sol
+Formatted [..]/Script.sol
+
+"#]]
+        .unordered(),
+    );
+    for file in files {
+        assert_data_eq!(std::fs::read_to_string(prj.root().join(file)).unwrap(), FORMATTED);
+    }
+    cmd.forge_fuse().args(["fmt", "--check"]).assert_success().stdout_eq("").stderr_eq("");
+});
