@@ -235,7 +235,6 @@ network_replay_tests! {
     flaky_run_mainnet => ("ethereum", "https://ethereum-rpc.publicnode.com", Exact),
     flaky_run_optimism => ("optimism", "https://mainnet.optimism.io", Exact),
     flaky_run_base => ("base", "https://mainnet.base.org", Exact),
-    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", Exact),
     flaky_run_linea => ("linea", "https://linea-rpc.publicnode.com", Exact),
 
     // Blocks carry no `parentBeaconBlockRoot` even though the EVM is Cancun or later.
@@ -250,6 +249,13 @@ network_replay_tests! {
 
     // Charges 840 gas for each storage slot a transaction creates, which revm does not model.
     flaky_run_polygon => ("polygon", "https://polygon-bor-rpc.publicnode.com", ReplaysOnly),
+
+    // Charges at least half the gas limit and pays no gas refunds, neither of which revm models.
+    flaky_run_avalanche => (
+        "avalanche",
+        "https://avalanche-c-chain-rpc.publicnode.com",
+        ReplaysOnly
+    ),
 
     flaky_run_gnosis => ("gnosis", "https://gnosis-rpc.publicnode.com", Exact),
 
