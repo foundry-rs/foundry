@@ -13,8 +13,8 @@ use crate::{
     test::{
         assume::AssumeNoRevert,
         expect::{
-            self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedCreate,
-            ExpectedEmitTracker, ExpectedRevert, ExpectedRevertKind,
+            self, ExpectedCallTracker, ExpectedCreate, ExpectedEmitTracker, ExpectedRevert,
+            ExpectedRevertKind,
         },
         revert_handlers,
     },
@@ -1550,33 +1550,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // Handle expected calls
-
-        // Grab the different calldatas expected.
-        if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address)
-        {
+        if self.expected_calls.contains_key(&call.bytecode_address) {
             let input = call.input.as_bytes(ecx);
-            let value = call.transfer_value();
-
-            // Match every partial/full calldata
-            for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target
-            {
-                // Increment actual times seen if...
-                // The calldata is at most, as big as this call's input, and
-                if calldata.len() <= input.len() &&
-                    // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
-                    input.get(..calldata.len()) == Some(calldata.as_ref()) &&
-                    // The value matches, if provided
-                    expected.value.is_none_or(|expected_value| Some(expected_value) == value) &&
-                    // The gas matches, if provided
-                    expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
-                    // The minimum gas matches, if provided
-                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit) &&
-                    // The call scheme matches, if provided
-                    expected_scheme.is_none_or(|scheme| scheme == call.scheme)
-                {
-                    *actual_count += 1;
-                }
-            }
+            expect::observe_call(
+                &mut self.expected_calls,
+                call.bytecode_address,
+                &input,
+                call.transfer_value(),
+                call.gas_limit,
+                call.scheme,
+            );
         }
 
         // Apply our prank
@@ -2845,53 +2828,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // cheatcodes.
 
             // Match expected calls
-            for (address, calldatas) in &self.expected_calls {
-                // Loop over each address, and for each address, loop over each calldata it expects.
-                for ((calldata, scheme), (expected, actual_count)) in calldatas {
-                    // Grab the values we expect to see
-                    let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
-
-                    let failed = match call_type {
-                        // If the cheatcode was called with a `count` argument,
-                        // we must check that the EVM performed a CALL with this calldata exactly
-                        // `count` times.
-                        ExpectedCallType::Count => *count != *actual_count,
-                        // If the cheatcode was called without a `count` argument,
-                        // we must check that the EVM performed a CALL with this calldata at least
-                        // `count` times. The amount of times to check was
-                        // the amount of time the cheatcode was called.
-                        ExpectedCallType::NonCount => *count > *actual_count,
-                    };
-                    if failed {
-                        let expected_values = [
-                            Some(format!("data {}", hex::encode_prefixed(calldata))),
-                            value.as_ref().map(|v| format!("value {v}")),
-                            gas.map(|g| format!("gas {g}")),
-                            min_gas.map(|g| format!("minimum gas {g}")),
-                            scheme.map(|scheme| format!("call type {scheme:?}")),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .join(", ");
-                        let but = if outcome.result.is_ok() {
-                            let s = if *actual_count == 1 { "" } else { "s" };
-                            format!("was called {actual_count} time{s}")
-                        } else {
-                            "the call reverted instead; \
-                             ensure you're testing the happy path when using `expectCall`"
-                                .to_string()
-                        };
-                        let s = if *count == 1 { "" } else { "s" };
-                        let msg = format!(
-                            "expected call to {address} with {expected_values} \
-                             to be called {count} time{s}, but {but}"
-                        );
-                        outcome.result.result = InstructionResult::Revert;
-                        outcome.result.output = Error::encode(msg);
-
-                        return;
-                    }
-                }
+            if let Some(msg) =
+                expect::first_unmet_call(&self.expected_calls, !outcome.result.is_ok())
+            {
+                outcome.result.result = InstructionResult::Revert;
+                outcome.result.output = Error::encode(msg);
+                return;
             }
 
             // Check if we have any leftover expected emits
