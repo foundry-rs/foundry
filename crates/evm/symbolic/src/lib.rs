@@ -53,9 +53,8 @@ mod consts;
 mod executor;
 mod runtime;
 
-pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
 pub(crate) use consts::*;
-pub use runtime::{PortfolioDiagnostics, SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
+pub use runtime::{SymbolicBranchTarget, SymbolicError, SymbolicRunInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SymbolicVmCheatcode {
@@ -543,14 +542,4 @@ fn symbolic_create_bytes_selectors() -> &'static [(usize, [u8; 4]); 32] {
         (32, SymbolicVm::createBytes32Call::SELECTOR),
     ];
     &SELECTORS
-}
-
-/// Returns whether `solver` is one of Foundry's semantic symbolic solver names.
-pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
-    BUILTIN_SYMBOLIC_SOLVERS.contains(&solver)
-}
-
-/// Returns a warning when a configured symbolic solver portfolio has unavailable entries.
-pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
-    runtime::solver_portfolio_availability_warning(config)
 }

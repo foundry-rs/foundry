@@ -81,8 +81,6 @@ impl fmt::Display for SolverOutcome {
     }
 }
 
-pub(crate) type QueryObserver = Box<dyn Fn(usize) + Send + Sync + 'static>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BranchFeasibility {
     Sat,
@@ -131,13 +129,9 @@ pub(crate) struct SmtLibSubprocessSolver {
     commands: Result<Vec<SolverCommand>, SolverConfigError>,
     timeout: Option<u32>,
     max_queries: usize,
-    bounded_model_search: bool,
     queries: usize,
-    query_observer: Option<QueryObserver>,
     dump_smt: bool,
     portfolio_scheduler: PortfolioScheduler,
-    portfolio_diagnostics: PortfolioDiagnostics,
-    captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
     normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
@@ -157,23 +151,15 @@ pub(crate) struct SmtLibSubprocessSolver {
 }
 
 impl SmtLibSubprocessSolver {
-    pub(crate) fn new(
-        commands: Result<Vec<SolverCommand>, SolverConfigError>,
-        timeout: Option<u32>,
-        max_queries: usize,
-        dump_smt: bool,
-    ) -> Self {
+    /// Constructs a subprocess solver from Foundry symbolic config.
+    pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
         Self {
-            commands,
-            timeout,
-            max_queries,
-            bounded_model_search: false,
+            commands: solver_commands_for_config(config),
+            timeout: config.timeout,
+            max_queries: config.max_solver_queries as usize,
             queries: 0,
-            query_observer: None,
-            dump_smt,
+            dump_smt: config.dump_smt,
             portfolio_scheduler: PortfolioScheduler::default(),
-            portfolio_diagnostics: PortfolioDiagnostics::default(),
-            captured_diagnostics: None,
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
             normalization_cache: HashMap::default(),
@@ -191,18 +177,6 @@ impl SmtLibSubprocessSolver {
             smt_max_query_time: Duration::ZERO,
             z3_session: None,
         }
-    }
-
-    /// Constructs a subprocess solver from Foundry symbolic config.
-    pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
-        let mut solver = Self::new(
-            solver_commands_for_config(config),
-            config.timeout,
-            config.max_solver_queries as usize,
-            config.dump_smt,
-        );
-        solver.bounded_model_search = true;
-        solver
     }
 
     /// Returns solver counters collected by this backend.
@@ -226,26 +200,6 @@ impl SmtLibSubprocessSolver {
                 .try_into()
                 .unwrap_or(u64::MAX),
         }
-    }
-
-    /// Registers a live query observer for progress rendering.
-    pub(crate) fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
-        self.query_observer = observer;
-    }
-
-    /// Returns staged-portfolio diagnostics collected by this solver.
-    pub(crate) fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
-        (!self.portfolio_diagnostics.is_empty()).then_some(&self.portfolio_diagnostics)
-    }
-
-    /// Enables deferred diagnostic rendering for verbose symbolic solver output.
-    pub(crate) fn capture_diagnostics(&mut self) {
-        self.captured_diagnostics.get_or_insert_with(String::new);
-    }
-
-    /// Returns and clears deferred diagnostic rendering output.
-    pub(crate) fn take_diagnostics(&mut self) -> Option<String> {
-        self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
     /// Clears cached expression keys tied to a previous symbolic context.
@@ -358,7 +312,7 @@ impl SmtLibSubprocessSolver {
         }
 
         self.reserve_query()?;
-        self.record_query();
+        self.queries += 1;
         let _span = trace_span!(
             "solver_query",
             query_id = self.queries,
@@ -374,8 +328,7 @@ impl SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if self.bounded_model_search
-            && let Some(model) = fallback_bounded_model(&smt_constraints)
+        if let Some(model) = fallback_bounded_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key.clone(), true);
@@ -491,7 +444,7 @@ impl SmtLibSubprocessSolver {
         }
 
         self.reserve_query()?;
-        self.record_query();
+        self.queries += 1;
         let _span = trace_span!(
             "solver_query",
             query_id = self.queries,
@@ -523,8 +476,7 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if self.bounded_model_search
-            && let Some(model) = fallback_bounded_model(&smt_constraints)
+        if let Some(model) = fallback_bounded_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key, true);
@@ -598,29 +550,11 @@ impl SmtLibSubprocessSolver {
             .map_err(|err| SymbolicError::Solver(err.to_string()))
     }
 
-    /// Emits one verbose solver diagnostic either live or into the deferred buffer.
-    fn emit_diagnostic(&mut self, diagnostic: fmt::Arguments<'_>) {
-        if let Some(captured_diagnostics) = &mut self.captured_diagnostics {
-            let _ = captured_diagnostics.write_fmt(diagnostic);
-        } else {
-            let mut stderr = std::io::stderr().lock();
-            let _ = stderr.write_fmt(diagnostic);
-        }
-    }
-
     pub(crate) const fn reserve_query(&self) -> Result<(), SymbolicError> {
         if self.queries >= self.max_queries {
             return Err(SymbolicError::SolverQueryLimit(self.max_queries));
         }
         Ok(())
-    }
-
-    /// Records one logical solver query and notifies the live observer, if any.
-    fn record_query(&mut self) {
-        self.queries += 1;
-        if let Some(observer) = &self.query_observer {
-            observer(self.queries);
-        }
     }
 
     /// Caches a definitive normalized satisfiability result if the cache has room.
@@ -700,7 +634,7 @@ impl SmtLibSubprocessSolver {
         self.smt_build_time += build_started.elapsed();
         if self.dump_smt {
             let query = self.queries;
-            self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
+            let _ = writeln!(std::io::stderr(), "--- symbolic SMT query {query} ---\n{smt}");
         }
 
         let started = Instant::now();
@@ -724,14 +658,12 @@ impl SmtLibSubprocessSolver {
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
-        if self.dump_smt {
-            self.portfolio_diagnostics.record(&result.summaries);
-            if !result.summaries.is_empty() {
-                self.emit_diagnostic(format_args!(
-                    "{}",
-                    format_solver_portfolio_summaries(&result.summaries)
-                ));
-            }
+        if self.dump_smt && !result.summaries.is_empty() {
+            let _ = write!(
+                std::io::stderr(),
+                "{}",
+                format_solver_portfolio_summaries(&result.summaries)
+            );
         }
         result.output
     }
@@ -1013,37 +945,6 @@ pub(crate) fn solver_commands_for_config(
     Ok(vec![named_solver_command(&config.solver)?])
 }
 
-/// Returns a warning when a configured portfolio will run with unavailable solver entries.
-pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
-    if config.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty())
-        || config.solver_portfolio.iter().all(|entry| entry.trim().is_empty())
-    {
-        return None;
-    }
-
-    let commands = solver_commands_for_config(config).ok()?;
-    let unavailable = commands
-        .iter()
-        .filter_map(|command| {
-            solver_command_availability_error(command)
-                .map(|err| format!("`{}` ({err})", command.display))
-        })
-        .collect::<Vec<_>>();
-    if unavailable.is_empty() {
-        return None;
-    }
-
-    let suffix = if unavailable.len() == commands.len() {
-        "No configured portfolio entries are currently available."
-    } else {
-        "Available portfolio entries will still be used."
-    };
-    Some(format!(
-        "Symbolic solver portfolio is degraded; unavailable entries: {}. {suffix}",
-        unavailable.join("; ")
-    ))
-}
-
 /// Returns the default command for a known solver name.
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, SolverConfigError> {
     let (parts, smt_timeout) = match solver {
@@ -1099,16 +1000,6 @@ pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, SolverC
     }
 
     Ok(parts)
-}
-
-/// Returns why `command` is not currently executable as an SMT solver.
-fn solver_command_availability_error(command: &SolverCommand) -> Option<String> {
-    let output = match Command::new(&command.program).arg("--version").output() {
-        Ok(output) => output,
-        Err(err) => return Some(format!("failed to execute `{}`: {err}", command.program)),
-    };
-    (!output.status.success())
-        .then(|| format!("`{}` is not a usable SMT solver executable", command.program))
 }
 
 #[derive(Debug)]
@@ -1205,136 +1096,6 @@ impl SolverRunSummary {
     pub(crate) const fn winner(mut self) -> Self {
         self.winner = true;
         self
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PortfolioDiagnostics {
-    queries: usize,
-    solver_runs: usize,
-    rescue_runs: usize,
-    non_primary_wins: usize,
-    rescue_wins: usize,
-    not_started: usize,
-    cancelled_after_winner: usize,
-    invalid_models: usize,
-    solver_errors: usize,
-    winner_counts: HashMap<String, usize>,
-    launch_counts: HashMap<String, usize>,
-    outcome_counts: HashMap<SolverOutcome, usize>,
-}
-
-impl PortfolioDiagnostics {
-    /// Returns whether this diagnostic set is empty.
-    pub const fn is_empty(&self) -> bool {
-        self.queries == 0
-    }
-
-    /// Records one portfolio query's per-solver summaries.
-    pub(crate) fn record(&mut self, summaries: &[SolverRunSummary]) {
-        if summaries.len() <= 1 {
-            return;
-        }
-
-        self.queries += 1;
-        for summary in summaries {
-            *self.outcome_counts.entry(summary.outcome).or_default() += 1;
-            if summary.started_after.is_some() {
-                self.solver_runs += 1;
-                *self.launch_counts.entry(summary.display.clone()).or_default() += 1;
-                if summary.index.is_some_and(|index| index >= 2) {
-                    self.rescue_runs += 1;
-                }
-            }
-
-            match summary.outcome {
-                SolverOutcome::NotStarted => self.not_started += 1,
-                SolverOutcome::Cancelled
-                | SolverOutcome::SatAfterWinner
-                | SolverOutcome::UnsatAfterWinner
-                | SolverOutcome::UnknownAfterWinner => self.cancelled_after_winner += 1,
-                SolverOutcome::SatInvalid => self.invalid_models += 1,
-                SolverOutcome::Error => self.solver_errors += 1,
-                _ => {}
-            }
-
-            if summary.winner {
-                *self.winner_counts.entry(summary.display.clone()).or_default() += 1;
-                if summary.index.is_some_and(|index| index > 0) {
-                    self.non_primary_wins += 1;
-                }
-                if summary.index.is_some_and(|index| index >= 2) {
-                    self.rescue_wins += 1;
-                }
-            }
-        }
-    }
-
-    /// Merges another aggregate portfolio summary into this one.
-    pub fn merge(&mut self, other: &Self) {
-        self.queries += other.queries;
-        self.solver_runs += other.solver_runs;
-        self.rescue_runs += other.rescue_runs;
-        self.non_primary_wins += other.non_primary_wins;
-        self.rescue_wins += other.rescue_wins;
-        self.not_started += other.not_started;
-        self.cancelled_after_winner += other.cancelled_after_winner;
-        self.invalid_models += other.invalid_models;
-        self.solver_errors += other.solver_errors;
-        merge_counts(&mut self.winner_counts, &other.winner_counts);
-        merge_counts(&mut self.launch_counts, &other.launch_counts);
-        merge_counts(&mut self.outcome_counts, &other.outcome_counts);
-    }
-}
-
-impl fmt::Display for PortfolioDiagnostics {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            return Ok(());
-        }
-
-        writeln!(f, "--- symbolic solver portfolio summary ---")?;
-        writeln!(f, "queries: {}", self.queries)?;
-        writeln!(f, "solver runs: {}", self.solver_runs)?;
-        writeln!(f, "rescue solver runs: {}", self.rescue_runs)?;
-        writeln!(f, "not-started solver runs: {}", self.not_started)?;
-        writeln!(f, "non-primary wins: {}", self.non_primary_wins)?;
-        writeln!(f, "rescue wins: {}", self.rescue_wins)?;
-        writeln!(f, "cancelled after winner: {}", self.cancelled_after_winner)?;
-        writeln!(f, "invalid models: {}", self.invalid_models)?;
-        writeln!(f, "solver errors: {}", self.solver_errors)?;
-        if !self.winner_counts.is_empty() {
-            writeln!(f, "winner counts:")?;
-            let mut counts = self.winner_counts.iter().collect::<Vec<_>>();
-            counts.sort_by_key(|(solver, _)| *solver);
-            for (solver, count) in counts {
-                writeln!(f, "  {solver}: {count}")?;
-            }
-        }
-        if !self.launch_counts.is_empty() {
-            writeln!(f, "launch counts:")?;
-            let mut counts = self.launch_counts.iter().collect::<Vec<_>>();
-            counts.sort_by_key(|(solver, _)| *solver);
-            for (solver, count) in counts {
-                writeln!(f, "  {solver}: {count}")?;
-            }
-        }
-        writeln!(f, "outcome counts:")?;
-        let mut counts = self.outcome_counts.iter().collect::<Vec<_>>();
-        counts.sort_by_key(|(outcome, _)| **outcome);
-        for (outcome, count) in counts {
-            writeln!(f, "  {outcome}: {count}")?;
-        }
-        Ok(())
-    }
-}
-
-fn merge_counts<K: Eq + std::hash::Hash + Clone>(
-    base: &mut HashMap<K, usize>,
-    other: &HashMap<K, usize>,
-) {
-    for (key, count) in other {
-        *base.entry(key.clone()).or_default() += count;
     }
 }
 

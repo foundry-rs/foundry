@@ -112,26 +112,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Returns staged solver portfolio diagnostics collected by this executor.
-    pub fn portfolio_diagnostics(&self) -> Option<PortfolioDiagnostics> {
-        self.solver.portfolio_diagnostics().cloned()
-    }
-
-    /// Defers verbose solver diagnostics until the caller explicitly takes them.
-    pub fn capture_diagnostics(&mut self) {
-        self.solver.capture_diagnostics();
-    }
-
-    /// Returns and clears deferred verbose solver diagnostics.
-    pub fn take_diagnostics(&mut self) -> Option<String> {
-        self.solver.take_diagnostics()
-    }
-
-    /// Registers a callback invoked after each solver query for live progress rendering.
-    pub fn set_query_observer(&mut self, observer: impl Fn(usize) + Send + Sync + 'static) {
-        self.solver.set_query_observer(Some(Box::new(observer)));
-    }
-
     /// Executes one function symbolically against an already-deployed test contract.
     ///
     /// The input executor supplies the deployed bytecode, storage backend, caller, and

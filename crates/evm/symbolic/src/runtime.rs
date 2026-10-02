@@ -22,10 +22,7 @@ pub(crate) use evm::*;
 pub(crate) use expr::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
-pub use solver::PortfolioDiagnostics;
-pub(crate) use solver::{
-    BranchFeasibility, SmtLibSubprocessSolver, solver_portfolio_availability_warning,
-};
+pub(crate) use solver::{BranchFeasibility, SmtLibSubprocessSolver};
 pub(crate) use state::*;
 pub(crate) use symbols::*;
 
