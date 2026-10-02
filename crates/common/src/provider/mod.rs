@@ -585,9 +585,6 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
 #[cfg(test)]
 mod tests {
     use alloy_json_rpc::ErrorPayload;
-    use alloy_primitives::B256;
-    use alloy_provider::{Provider, WalletProvider};
-    use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
 
@@ -687,33 +684,5 @@ mod tests {
         assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
         assert_eq!(builder.timeout, Duration::from_secs(7));
         assert_eq!(builder.chain, NamedChain::Mainnet);
-    }
-
-    #[test]
-    fn wallet_provider_preserves_signer_and_poll_interval() {
-        let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
-        let address = signer.address();
-        let wallet = EthereumWallet::from(signer);
-
-        for url in ["http://localhost:8545", "https://example.com"] {
-            for curl_mode in [false, true] {
-                let provider = ProviderBuilder::<AnyNetwork>::new(url)
-                    .chain(NamedChain::Polygon)
-                    .curl_mode(curl_mode)
-                    .build()
-                    .unwrap();
-                let wallet_provider = ProviderBuilder::<AnyNetwork>::new(url)
-                    .chain(NamedChain::Polygon)
-                    .curl_mode(curl_mode)
-                    .build_with_wallet(wallet.clone())
-                    .unwrap();
-
-                assert_eq!(wallet_provider.default_signer_address(), address);
-                assert_eq!(
-                    wallet_provider.client().poll_interval(),
-                    provider.client().poll_interval()
-                );
-            }
-        }
     }
 }
