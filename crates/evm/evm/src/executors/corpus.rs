@@ -792,16 +792,10 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             target.fuzzed_contracts,
             target.senders,
         ) {
-            let mut call_result = if target.fuzzed_contracts.is_some() {
-                let (kind, result) = execute_invariant_replay_tx(executor, tx)?;
-                if kind == CampaignCallKind::AssumptionRejected {
-                    // Preserve positional alignment without crediting discarded feedback.
-                    cmp_seq.push(Vec::new());
-                    continue;
-                }
-                result
+            let (kind, mut call_result) = if target.fuzzed_contracts.is_some() {
+                execute_invariant_replay_tx(executor, tx)?
             } else {
-                execute_tx(executor, tx)?
+                (CampaignCallKind::Accepted, execute_tx(executor, tx)?)
             };
             cmp_seq.push(
                 call_result
@@ -825,12 +819,14 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
                 }
             }
 
-            register_replay_created(
-                &call_result.state_changeset,
-                target.dynamic,
-                target.fuzzed_contracts,
-                &mut created,
-            );
+            if kind == CampaignCallKind::Accepted {
+                register_replay_created(
+                    &call_result.state_changeset,
+                    target.dynamic,
+                    target.fuzzed_contracts,
+                    &mut created,
+                );
+            }
 
             if trace_sync {
                 trace!(
@@ -2131,7 +2127,7 @@ mod tests {
     }
 
     #[test]
-    fn stateful_replay_discards_assumption_feedback_and_delays() {
+    fn stateful_replay_restores_assumption_state_and_delays() {
         let target = Address::repeat_byte(0x11);
         let function = Function::parse("test(uint256)").unwrap();
         let contracts = targeted_contracts_with_selective_functions(
@@ -2193,10 +2189,10 @@ mod tests {
             assert!(outcome.keep_entry);
             assert_eq!(outcome.failed_replays, 0);
             assert_eq!(outcome.cmp_seq.len(), sequence.len());
-            assert!(outcome.cmp_seq[0].is_empty());
-            assert_eq!(outcome.cmp_seq[1].is_empty(), !accept_last);
-            assert_eq!(outcome.new_coverage, accept_last);
-            assert_eq!(history_map.iter().any(|&hit| hit != 0), accept_last);
+            // Rejected inputs remain useful mutation seeds; this fix preserves their feedback.
+            assert!(outcome.cmp_seq.iter().all(|hints| !hints.is_empty()));
+            assert!(outcome.new_coverage);
+            assert!(history_map.iter().any(|&hit| hit != 0));
             if accept_last {
                 let timestamp = initial_block.timestamp() + U256::from(3);
                 assert_eq!(executor.evm_env().block_env.timestamp(), timestamp);
@@ -2212,8 +2208,6 @@ mod tests {
                     initial_cheatcode_block
                 );
                 assert_eq!(executor.backend().storage_ref(target, U256::ZERO).unwrap(), U256::ZERO);
-                assert!(sancov_history_map.iter().all(|&hit| hit == 0));
-                assert_eq!(edge_indices.edge_count(), 0);
             }
         }
     }
