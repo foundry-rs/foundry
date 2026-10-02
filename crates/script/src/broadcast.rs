@@ -2084,7 +2084,7 @@ mod tests {
     }
 
     #[test]
-    fn unrecorded_signed_attempts_exclude_pending_and_receipted_hashes() {
+    fn unreceipted_signed_attempts_include_pending_but_not_receipted_hashes() {
         let dir = tempfile::tempdir().unwrap();
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
@@ -2099,13 +2099,13 @@ mod tests {
         let mut completed = receipt();
         completed.transaction_hash = second;
         sequence.sequences_mut()[0].receipts.push(completed);
-
-        assert_eq!(sequence.unrecorded_signed_attempts(0), [(0, first)]);
-        assert_eq!(sequence.submission_hashes(0).1, [first, second]);
-
         sequence.sequences_mut()[0].add_pending(0, first);
 
-        assert!(sequence.unrecorded_signed_attempts(0).is_empty());
+        let unreceipted = sequence.unreceipted_signed_attempts(0);
+        assert_eq!(unreceipted.len(), 1);
+        assert_eq!((unreceipted[0].0, unreceipted[0].1.hash), (0, first));
+        assert_eq!(unreceipted[0].1.payload, Bytes::from_static(SIGNED_TX));
+        assert_eq!(sequence.submission_hashes(0).1, [first, second]);
     }
 
     #[test]

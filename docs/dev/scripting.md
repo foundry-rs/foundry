@@ -146,7 +146,10 @@ attempt whose hash was never recorded. If the endpoint returns its receipt with 
 hash, and transaction index, the submission was mined before its response was lost, so it joins
 `pending` and is reconciled before signers are requested; otherwise, including when it is still
 queued or its receipt lacks that inclusion metadata, its identical bytes are rebroadcast later
-so a queued later nonce never waits behind a missing predecessor. A confirmed success removes the
+so a queued later nonce never waits behind a missing predecessor. Before waiting, resume also
+rebroadcasts the identical bytes of a saved signed attempt that is not currently visible to the
+endpoint when it precedes a pending nonce from the same sender, so that pending nonce does not wait
+behind a predecessor lost before reaching the node. A confirmed success removes the
 hash from `pending` and appends its receipt. A revert removes the hash and returns an error without
 appending the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying
 without consuming the retry budget while the selected RPC still returns the transaction. If that

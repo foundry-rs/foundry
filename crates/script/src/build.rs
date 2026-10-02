@@ -13,7 +13,7 @@ use crate::{
 use alloy_network::{AnyNetwork, ReceiptResponse};
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
-use eyre::{ContextCompat, OptionExt, Result};
+use eyre::{ContextCompat, OptionExt, Result, WrapErr};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
@@ -354,15 +354,52 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 )?
                 .build()?;
                 // A saved signed attempt with an included receipt was mined before its response
-                // was recorded; reconcile it before requesting signers. Other attempts, including
-                // queued ones or those with pending receipts, are left for an identical-bytes
-                // rebroadcast, so a queued later nonce never waits behind a missing predecessor.
-                for (operation, hash) in sequence.unrecorded_signed_attempts(index) {
-                    if let Some(receipt) = provider.get_transaction_receipt(hash).await?
+                // was recorded; reconcile it before requesting signers, and stop on a mined revert
+                // before anything is rebroadcast. Only then is a saved attempt that is not
+                // currently visible to the endpoint but precedes a pending nonce from the same
+                // sender rebroadcast with its identical bytes, so that pending nonce cannot wait
+                // forever behind a predecessor lost before reaching the node. All other attempts
+                // are left for the identical-bytes rebroadcast during broadcast.
+                let mut unseen = Vec::new();
+                for (operation, signed) in sequence.unreceipted_signed_attempts(index) {
+                    if let Some(receipt) = provider.get_transaction_receipt(signed.hash).await?
                         && receipt.block_number().is_some()
                         && receipt.block_hash().is_some()
                         && receipt.transaction_index().is_some()
                     {
+                        if !receipt.status() {
+                            eyre::bail!("Transaction Failure: {:?}", signed.hash);
+                        }
+                        sequence.sequences_mut()[index].add_pending(operation, signed.hash);
+                    } else {
+                        unseen.push((operation, signed));
+                    }
+                }
+                for (operation, signed) in unseen {
+                    let hash = signed.hash;
+                    let deployment = &sequence.sequences()[index];
+                    let planned = deployment.transactions[operation].tx();
+                    let precedes_pending = deployment.transactions.iter().any(|transaction| {
+                        transaction.hash.is_some_and(|hash| deployment.pending.contains(&hash))
+                            && transaction.tx().from() == planned.from()
+                            && transaction.tx().nonce() > planned.nonce()
+                    });
+                    if precedes_pending && provider.get_transaction_by_hash(hash).await?.is_none() {
+                        match provider.send_raw_transaction(&signed.payload).await {
+                            Ok(pending) if *pending.tx_hash() == hash => {}
+                            Ok(pending) => eyre::bail!(
+                                "RPC returned hash {} for signed payload {hash}",
+                                pending.tx_hash()
+                            ),
+                            Err(error)
+                                if provider.get_transaction_by_hash(hash).await?.is_none() =>
+                            {
+                                return Err(error).wrap_err_with(|| {
+                                    format!("failed to rebroadcast saved signed attempt {hash}")
+                                });
+                            }
+                            Err(_) => {}
+                        }
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     }
                 }
