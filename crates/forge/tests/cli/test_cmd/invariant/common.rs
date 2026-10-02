@@ -1,4 +1,5 @@
 use super::*;
+use foundry_compilers::artifacts::EvmVersion;
 
 forgetest!(invariant_after_invariant, |prj, cmd| {
     prj.insert_vm();
@@ -2228,6 +2229,69 @@ Encountered 1 failing test in test/InvariantReplayInitialAfterInvariantFailure.t
 "#]]);
 });
 
+forgetest_init!(invariant_replay_uses_full_persisted_sequence_after_depth_decrease, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 20;
+    });
+
+    prj.add_test(
+        "InvariantReplayFullSequence.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FullSequenceHandler {
+    uint256 public count;
+
+    function inc() external {
+        count += 1;
+    }
+}
+
+contract InvariantReplayFullSequence is Test {
+    FullSequenceHandler handler;
+
+    function setUp() public {
+        handler = new FullSequenceHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_count_below_five() public view {
+        require(handler.count() < 5, "count reached five");
+    }
+}
+"#,
+    );
+
+    // Five calls are needed to break the invariant; record that sequence.
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+[FAIL: count reached five]
+	[SEQUENCE]
+ invariant_count_below_five() ([RUNS])
+...
+"#]]);
+
+    // A depth of 3 can never reach five calls on its own, so only the persisted sequence can
+    // still fail the test. It must be replayed in full rather than cut to the new depth.
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 3;
+    });
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: count reached five]
+	[Sequence] (original: 5, shrunk: 5)
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+		sender=[..] addr=[..] calldata=inc() args=[]
+ invariant_count_below_five() (runs: 1, calls: 5, reverts: 0)
+...
+"#]]);
+});
+
 forgetest_init!(invariant_test1, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.depth = 10;
@@ -3024,4 +3088,187 @@ contract InvariantStorageHooks is Test {
     );
 
     assert_invariant(cmd.args(["test"])).success();
+});
+
+forgetest_init!(invariant_test_trace_seed_preserves_time_advances, |prj, cmd| {
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Prague;
+        config.isolate = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.shrink_run_limit = 0;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 0,
+        };
+    });
+
+    prj.add_test(
+        "TimedTraceSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TimedHandler {
+    uint256 immutable expectedOpenTime;
+    uint256 immutable expectedOpenBlock;
+    bool opened;
+    bool public finished;
+
+    constructor(uint256 expectedOpenTime_, uint256 expectedOpenBlock_) {
+        expectedOpenTime = expectedOpenTime_;
+        expectedOpenBlock = expectedOpenBlock_;
+    }
+
+    function open() external {
+        opened = block.timestamp == expectedOpenTime && block.number == expectedOpenBlock;
+    }
+
+    function finish() external {
+        if (
+            opened && block.timestamp == expectedOpenTime + 1 days
+                && block.number == expectedOpenBlock + 5
+        ) finished = true;
+    }
+}
+
+contract TimedTraceSeedTest is Test {
+    TimedHandler handler;
+
+    function setUp() public {
+        vm.setEvmVersion("cancun");
+        vm.warp(block.timestamp + 30 days);
+        vm.roll(block.number + 100);
+        handler = new TimedHandler(block.timestamp, block.number);
+        targetContract(address(handler));
+    }
+
+    function test_seedTimedLifecycle() public {
+        handler.open();
+        vm.warp(block.timestamp + 1 days);
+        vm.roll(block.number + 5);
+        handler.finish();
+    }
+
+    function invariant_notFinished() public view {
+        assertFalse(handler.finished());
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args([
+        "test",
+        "--match-test",
+        "invariant_notFinished",
+        "--fuzz-seed",
+        "0x1",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TimedTraceSeed.t.sol:TimedTraceSeedTest
+[FAIL: assertion failed]
+	[SEQUENCE]
+ invariant_notFinished() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TimedTraceSeed.t.sol:TimedTraceSeedTest
+[FAIL: assertion failed]
+	[SEQUENCE]
+ invariant_notFinished() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
+
+forgetest_init!(invariant_test_trace_seed_skips_prague_rolls, |prj, cmd| {
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Prague;
+        config.isolate = true;
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = true;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 0,
+        };
+    });
+
+    prj.add_test(
+        "HistoryTraceSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract HistoryHandler {
+    uint256 public checks;
+
+    function checkHistory() external {
+        checks++;
+        if (block.number != 1001) return;
+        (bool ok, bytes memory result) =
+            address(0x0000F90827F1C53a10cb7A02335B175320002935).staticcall(abi.encode(uint256(1000)));
+        require(ok && abi.decode(result, (bytes32)) == bytes32(uint256(42)), "missing history");
+    }
+}
+
+contract HistoryTraceSeedTest is Test {
+    HistoryHandler handler;
+
+    function setUp() public {
+        vm.roll(1000);
+        vm.setBlockhash(1000, bytes32(uint256(42)));
+        handler = new HistoryHandler();
+        targetContract(address(handler));
+    }
+
+    function test_seedHistory() public {
+        vm.roll(1001);
+        handler.checkHistory();
+    }
+
+    function invariant_history() public pure {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "--fuzz-seed", "0x1"])).success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/HistoryTraceSeed.t.sol:HistoryTraceSeedTest
+[PASS] invariant_history() ([RUNS])
+
+[STATS]
+
+[PASS] test_seedHistory() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });

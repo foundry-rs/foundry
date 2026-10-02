@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Foundry Solidity Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--user-data-dir=${workspaceFolder}/../../target/editor-dev/vscode-user-data",
+        "--extensions-dir=${workspaceFolder}/../../target/editor-dev/vscode-extensions",
+        "--disable-extensions",
+        "--skip-welcome",
+        "--skip-release-notes",
+        "${workspaceFolder}/../../target/editor-dev/project"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ],
+      "preLaunchTask": "editors: prepare development host"
+    }
+  ]
+}

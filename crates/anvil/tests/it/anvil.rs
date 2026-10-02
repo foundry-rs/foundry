@@ -288,6 +288,28 @@ async fn test_can_use_default_genesis_block_number() {
     assert_eq!(0, provider.get_block(0.into()).await.unwrap().unwrap().header.number);
 }
 
+/// `earliest`, `safe` and `finalized` resolve within the chain when it starts at a non-zero
+/// genesis number.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_tags_respect_genesis_block_number() {
+    let genesis_number = 1000u64;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_genesis_block_number(Some(genesis_number))).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    assert_eq!(provider.get_block_number().await.unwrap(), genesis_number + 5);
+
+    let latest = provider.get_balance(account).await.unwrap();
+    for tag in [BlockNumberOrTag::Earliest, BlockNumberOrTag::Safe, BlockNumberOrTag::Finalized] {
+        let balance = provider.get_balance(account).block_id(tag.into()).await.unwrap();
+        assert_eq!(balance, latest, "{tag} should resolve to a block of this chain");
+        let block = provider.get_block(tag.into()).await.unwrap().unwrap();
+        assert_eq!(block.header.number, genesis_number, "{tag} should resolve to genesis");
+    }
+}
+
 /// Verify that genesis block number affects both RPC and EVM execution layer.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_number_opcode_reflects_genesis_block_number() {

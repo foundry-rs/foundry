@@ -100,6 +100,12 @@ contract RevertingConstructor {
     }
 }
 
+contract RefundingConstructor {
+    constructor(Target target) {
+        target.resetValue();
+    }
+}
+
 contract NestedRevertingTarget {
     RevertingTarget public target;
 
@@ -284,6 +290,59 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 26180, gasMemoryUsed: 0, gasRefunded: 4800}));
         assertEq(vm.snapshotGasLastCall("isolated refund call"), 21380);
         assertEq(vm.snapshotGasLastFrame("isolated refund frame"), 21380);
+    }
+
+    function testSnapshotGasSectionRefund() public {
+        _snapshotResetValue(1);
+    }
+
+    function testSnapshotGasSectionNoRefund() public {
+        _snapshotResetValue(0);
+    }
+
+    function testSnapshotGasSectionAfterRefund() public {
+        _setup();
+        _performRefund();
+        _snapshotResetValue(0);
+    }
+
+    function testSnapshotGasSectionMultipleRefunds() public {
+        _setup();
+        Target other = new Target();
+        target.setValue(1);
+        other.setValue(1);
+        vm.startSnapshotGas("isolated multiple refunds");
+        target.resetValue();
+        other.resetValue();
+        // Recorded with v1.8.1, including both finalized transaction refunds.
+        assertEq(vm.stopSnapshotGas(), 43648);
+    }
+
+    /// forge-config: default.evm_version = "cancun"
+    function testSnapshotGasSectionCreateRefund() public {
+        _setup();
+        target.setValue(1);
+        // Prepare the init code before measuring so compiler-dependent copying is excluded.
+        bytes memory initCode = abi.encodePacked(type(RefundingConstructor).creationCode, abi.encode(target));
+        vm.startSnapshotGas("isolated create refund");
+        assembly {
+            pop(create(0, add(initCode, 32), mload(initCode)))
+        }
+        uint256 section = vm.stopSnapshotGas();
+        // CREATE costs 32000 gas; the remaining 20 gas is the pre-v1.8.2 snapshot overhead.
+        // EIP-3860 additionally charges 2 gas per init code word outside the isolated frame.
+        uint256 initCodeCost = 2 * ((initCode.length + 31) / 32);
+        assertEq(section, vm.snapshotGasLastFrame("isolated create frame") + 32020 + initCodeCost);
+    }
+
+    function _snapshotResetValue(uint256 initialValue) internal {
+        _setup();
+        target.setValue(initialValue);
+        vm.startSnapshotGas("isolated section");
+        target.resetValue();
+        uint256 section = vm.stopSnapshotGas();
+        // Preserve the pre-v1.8.3 region overhead for both refunding and non-refunding calls.
+        assertEq(section, vm.snapshotGasLastCall("isolated section call") + 543);
     }
 
     function testSnapshotGasForFailedCharge() public {

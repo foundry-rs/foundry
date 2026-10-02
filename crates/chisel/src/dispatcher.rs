@@ -6,7 +6,7 @@
 use crate::{
     executor::InspectResult,
     prelude::{ChiselCommand, ChiselResult, ChiselSession, SessionSourceConfig, SolidityHelper},
-    source::SessionSource,
+    source::{InvocationRpc, SessionSource},
 };
 use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
@@ -14,8 +14,9 @@ use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_config::{Chain, Config, RpcEndpointUrl};
 use foundry_evm::{
-    core::evm::FoundryEvmNetwork,
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork},
     decode::decode_console_logs,
+    executors::ExecutorBuilder,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
@@ -55,6 +56,8 @@ pub struct ChiselDispatcher<FEN: FoundryEvmNetwork> {
     pub session: ChiselSession<FEN>,
     pub helper: SolidityHelper,
     last_result: Option<String>,
+    /// RPC settings supplied to this invocation, independent of previously loaded sessions.
+    invocation_rpc: InvocationRpc,
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
@@ -66,8 +69,9 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
 impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: SessionSourceConfig<FEN>) -> eyre::Result<Self> {
+        let invocation_rpc = InvocationRpc::capture(&config.foundry_config, &config.evm_opts);
         let session = ChiselSession::new(config)?;
-        Ok(Self { session, helper: Default::default(), last_result: None })
+        Ok(Self { session, helper: Default::default(), last_result: None, invocation_rpc })
     }
 
     /// Returns the optional ID of the current session.
@@ -143,14 +147,21 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
-        let InspectResult { control_flow, formatted_output, last_result, replay_input } =
-            source.inspect(input).await?;
+        let InspectResult {
+            control_flow,
+            formatted_output,
+            last_result,
+            clear_last_result,
+            replay_input,
+        } = source.inspect(input).await?;
         let (new_source, do_execute) = if let Some(input) = replay_input {
             source.clone_with_new_line(input)?
         } else {
             (new_source, do_execute)
         };
-        if let Some(last_result) = last_result {
+        if clear_last_result {
+            self.last_result = None;
+        } else if let Some(last_result) = last_result {
             self.last_result = Some(last_result);
         }
         if let Some(res) = &formatted_output {
@@ -349,6 +360,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         )?;
         new_session.source.config.foundry_config.force =
             self.session.source.config.foundry_config.force;
+        new_session.source.config.restore_credentials(&self.invocation_rpc)?;
         new_session.source.config.initialize_local_context();
         new_session.source.build()?;
         self.session = new_session;
@@ -404,7 +416,10 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         } else {
             RpcEndpointUrl::Env(url).into()
         };
-        let fork_url = endpoint.resolve().url()?;
+        let endpoint = endpoint.resolve();
+        let fork_url = endpoint.url()?;
+        let fork_headers =
+            endpoint.auth.transpose()?.map(|auth| vec![format!("Authorization: {auth}")]);
 
         if let Err(e) = Url::parse(&fork_url) {
             eyre::bail!("invalid fork URL: {e}");
@@ -412,6 +427,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
         let mut fork_opts = self.source().config.evm_opts.clone();
         fork_opts.fork_url = Some(fork_url.clone());
+        fork_opts.fork_headers = fork_headers;
         fork_opts.fork_block_number = None;
         fork_opts.fork_block_number_is_inferred = false;
         let explicit_network =
@@ -435,6 +451,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         fork_opts.fork_endpoint = Some(identity.clone());
         fork_opts.fork_network_is_inferred = !explicit_network;
         fork_opts.pin_fork_block().await?;
+        self.invocation_rpc.set_fork(fork_url.clone(), fork_opts.fork_headers.clone());
         let chain_id_is_inferred = fork_opts.fork_chain_id_is_inferred;
         let source = self.source_mut();
         source.config.evm_opts = fork_opts;
@@ -444,6 +461,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         source.config.foundry_config.chain = Some(Chain::from(identity.source_chain_id));
         source.config.resolved_hardfork = None;
         source.config.source_chain_id = None;
+        source.config.fork_url_required = false;
         // Clear the backend so that it is re-instantiated with the new fork
         // upon the next execution of the session source.
         source.config.cached_backend = None;
@@ -462,6 +480,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
         let source = self.source_mut();
         source.config.evm_opts.fork_url = None;
+        source.config.fork_url_required = false;
         source.config.evm_opts.fork_block_number = None;
         source.config.evm_opts.fork_block_number_is_inferred = false;
         source.config.evm_opts.networks = local_networks;
@@ -557,7 +576,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
     /// Fetches an interface from Etherscan
     pub(crate) async fn fetch_interface(&mut self, address: Address, name: String) -> Result<()> {
-        let abis = fetch_abi_from_etherscan(address, &self.source().config.foundry_config)
+        let abis = fetch_abi_from_etherscan(address, &self.source().config.foundry_config, false)
             .await
             .wrap_err("Failed to fetch ABI from Etherscan")?;
         let (abi, _) = abis
@@ -696,10 +715,26 @@ fn preprocess<'a>(input: &'a str, last_result: Option<&str>) -> Result<(bool, Co
     }
 }
 
+/// Displays cached source without restoring credentials or building an execution environment.
+pub(crate) fn view_session(id: &str) -> Result<()> {
+    // Source rendering is independent of the session's execution network.
+    let executor_builder = ExecutorBuilder::<EthEvmNetwork>::new();
+    let session = match id {
+        "latest" => ChiselSession::latest(executor_builder),
+        id => ChiselSession::load(id, executor_builder),
+    }
+    .wrap_err("failed to load session")?;
+    sh_println!("Loaded Chisel session! (ID = {})", session.id.as_deref().unwrap_or("<unknown>"))?;
+    let formatted =
+        format_source(&session.source.to_repl_source(), session.source.config.foundry_config.fmt)
+            .wrap_err("failed to format session source")?;
+    sh_println!("{}", SolidityHelper::default().highlight(&formatted))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
+    use foundry_evm::opts::EvmOpts;
 
     fn config_with_network(network: Option<&str>) -> Config {
         let mut config = Config::default();
@@ -730,7 +765,11 @@ mod tests {
         let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
         let networks = NetworkConfigs::with_celo();
         let config = SessionSourceConfig::<EthEvmNetwork> {
-            foundry_config: Config { networks, ..Default::default() },
+            foundry_config: Config {
+                networks,
+                solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 29))),
+                ..Default::default()
+            },
             evm_opts: EvmOpts { networks, ..Default::default() },
             local_networks: Some(networks),
             ..Default::default()
@@ -740,6 +779,11 @@ mod tests {
         dispatcher.set_fork(Some(handle.http_endpoint())).await.unwrap();
         assert!(dispatcher.source().config.evm_opts.networks.is_celo());
         assert!(!dispatcher.source().config.evm_opts.fork_network_is_inferred);
+        let encoded = serde_json::to_string(&dispatcher.source().config).unwrap();
+        let mut restored =
+            serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
+        restored.restore_credentials(&dispatcher.invocation_rpc).unwrap();
+        assert_eq!(restored.evm_opts.fork_url, Some(handle.http_endpoint()));
 
         dispatcher.clear_fork().unwrap();
         assert!(dispatcher.source().config.evm_opts.networks.is_celo());
@@ -826,6 +870,17 @@ mod tests {
         ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap();
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn ensure_loaded_session_network_matches_preserves_base() {
+        let base = config_with_network(Some("base"));
+        ensure_loaded_session_network_matches(&base, &base, "42").unwrap();
+
+        let err =
+            ensure_loaded_session_network_matches(&Config::default(), &base, "42").unwrap_err();
+        assert!(err.to_string().contains("Rerun with `--network base`"), "{err}");
+    }
+
     #[test]
     fn test_trivia() {
         fn only_trivia(s: &str) -> bool {
@@ -852,5 +907,55 @@ mod tests {
         assert_eq!(input, literal);
 
         assert_eq!(preprocess("$_", None).unwrap_err().to_string(), "no previous result");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn explicit_fork_refreshes_credentials_used_by_saved_sessions() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let endpoint = handle.http_endpoint();
+        let config = SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config {
+                solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 29))),
+                rpc_endpoints: serde_json::from_value(serde_json::json!({
+                    "current": { "endpoint": endpoint, "auth": "Bearer current-token" }
+                }))
+                .unwrap(),
+                ..Default::default()
+            },
+            evm_opts: EvmOpts {
+                fork_url: Some("https://old.invalid/old-token".into()),
+                fork_headers: Some(vec!["Authorization: Bearer old-token".into()]),
+                rpc_headers: Some(vec!["X-Invocation: current".into()]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+
+        dispatcher.set_fork(Some("current".into())).await.unwrap();
+        let encoded = serde_json::to_string(&dispatcher.source().config).unwrap();
+        // Leaving fork mode keeps the invocation's endpoint available for later session loads.
+        dispatcher.clear_fork().unwrap();
+        let mut restored =
+            serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
+        restored.restore_credentials(&dispatcher.invocation_rpc).unwrap();
+
+        assert_eq!(restored.evm_opts.fork_url.as_deref(), Some(endpoint.as_str()));
+        assert_eq!(restored.foundry_config.eth_rpc_url.as_deref(), Some(endpoint.as_str()));
+        assert_eq!(
+            restored.evm_opts.fork_headers,
+            Some(vec!["Authorization: Bearer current-token".into()])
+        );
+        assert_eq!(restored.evm_opts.rpc_headers, Some(vec!["X-Invocation: current".into()]));
+
+        // Switching to a raw URL drops the previous alias's endpoint-specific authorization.
+        dispatcher.set_fork(Some(endpoint.clone())).await.unwrap();
+        restored.restore_credentials(&dispatcher.invocation_rpc).unwrap();
+        assert_eq!(restored.evm_opts.fork_headers, None);
+        assert_eq!(restored.evm_opts.rpc_headers, Some(vec!["X-Invocation: current".into()]));
+
+        assert!(dispatcher.set_fork(Some("not-a-url".into())).await.is_err());
+        restored.restore_credentials(&dispatcher.invocation_rpc).unwrap();
+        assert_eq!(restored.evm_opts.fork_url.as_deref(), Some(endpoint.as_str()));
     }
 }

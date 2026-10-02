@@ -3,7 +3,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::Bytes;
-use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
+use foundry_evm::hardfork::OpHardfork;
 use op_alloy_consensus::{
     decode_holocene_extra_data, decode_jovian_extra_data, encode_holocene_extra_data,
     encode_jovian_extra_data,
@@ -17,8 +17,7 @@ pub(super) enum OptimismBaseFeeRules {
 }
 
 impl OptimismBaseFeeRules {
-    pub(super) fn for_hardfork(hardfork: FoundryHardfork, params: BaseFeeParams) -> Option<Self> {
-        let hardfork = OpHardfork::from(hardfork);
+    pub(super) fn for_hardfork(hardfork: OpHardfork, params: BaseFeeParams) -> Option<Self> {
         if hardfork >= OpHardfork::Jovian {
             Some(Self::Jovian { params, min_base_fee: 0 })
         } else if hardfork >= OpHardfork::Holocene {

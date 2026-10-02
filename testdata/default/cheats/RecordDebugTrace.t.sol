@@ -177,4 +177,29 @@ contract RecordDebugTraceTest is Test {
         Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
         assertGt(steps.length, 0, "first recording should remain active after failed restart");
     }
+
+    /**
+     * The goal of this test is to ensure a step that fails with a stack underflow can be
+     * recorded. The runtime code is a single ADD, which needs two stack inputs it never gets.
+     */
+    function testDebugTraceCanRecordStackUnderflow() public {
+        address underflow = address(0x1234);
+        vm.etch(underflow, hex"01");
+
+        vm.startDebugTraceRecording();
+
+        (bool success,) = underflow.call{gas: 50_000}("");
+        require(!success, "ADD on an empty stack should fail");
+
+        Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
+
+        bool sawAdd = false;
+        for (uint256 i = 0; i < steps.length; i++) {
+            if (steps[i].contractAddr == underflow && steps[i].opcode == 0x01) {
+                sawAdd = true;
+                assertEq(steps[i].stack.length, 0, "no stack inputs were available");
+            }
+        }
+        assertTrue(sawAdd, "the failing ADD step should be recorded");
+    }
 }

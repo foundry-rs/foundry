@@ -247,29 +247,31 @@ contract SymbolicOversizedMemoryRange {
     }
 
     function testOversizedVariableMemoryRanges() public {
-        verifyOversizedVariableMemoryRanges();
+        verifyOversizedVariableMemoryRanges(true);
     }
 
     function checkOversizedVariableMemoryRanges() public {
-        verifyOversizedVariableMemoryRanges();
+        verifyOversizedVariableMemoryRanges(false);
     }
 
-    function verifyOversizedVariableMemoryRanges() internal {
-        assertFails(this.calldataCopy.selector);
-        assertFails(this.codeCopy.selector);
-        assertFails(this.extcodeCopy.selector);
-        assertFails(this.returndataCopy.selector);
-        assertFails(this.memoryCopyDest.selector);
-        assertFails(this.memoryCopySource.selector);
-        assertFails(this.hash.selector);
-        assertFails(this.log.selector);
-        assertFails(this.ret.selector);
-        assertFails(this.rev.selector);
+    function verifyOversizedVariableMemoryRanges(bool capGas) internal {
+        assertFails(this.calldataCopy.selector, capGas);
+        assertFails(this.codeCopy.selector, capGas);
+        assertFails(this.extcodeCopy.selector, capGas);
+        assertFails(this.returndataCopy.selector, capGas);
+        assertFails(this.memoryCopyDest.selector, capGas);
+        assertFails(this.memoryCopySource.selector, capGas);
+        assertFails(this.hash.selector, capGas);
+        assertFails(this.log.selector, capGas);
+        assertFails(this.ret.selector, capGas);
+        assertFails(this.rev.selector, capGas);
     }
 
-    function assertFails(bytes4 selector) internal {
-        (bool ok, bytes memory data) =
-            address(this).call{gas: 100_000}(abi.encodeWithSelector(selector));
+    function assertFails(bytes4 selector, bool capGas) internal {
+        bytes memory input = abi.encodeWithSelector(selector);
+        (bool ok, bytes memory data) = capGas
+            ? address(this).call{gas: 100_000}(input)
+            : address(this).call(input);
         assert(!ok);
         assert(data.length == 0);
     }

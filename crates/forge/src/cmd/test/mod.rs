@@ -39,7 +39,8 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
+    compile::{ProjectCompiler, compile_abi_project_cached},
+    external_compiler::is_external_artifact,
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
@@ -83,6 +84,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use rand::Rng;
 use regex::Regex;
 use revm::{bytecode::opcode::OpCode, context::Transaction};
+use solar::ast::{ContractKind as SolarContractKind, ItemKind};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -92,6 +94,9 @@ use std::{
 };
 use tempfile::TempDir;
 use yansi::Paint;
+
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
@@ -103,8 +108,9 @@ mod evm_profile_server;
 mod filter;
 mod summary;
 use filter::RerunFailures;
-pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
+
+pub use filter::{FilterArgs, ProjectPathsAwareFilter, RerunFailure};
 
 const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
@@ -213,50 +219,30 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
         .sum()
 }
 
-#[derive(Clone, Copy)]
-enum NetworkDispatchKind {
-    Tempo,
-    #[cfg(feature = "monad")]
-    Monad,
-    #[cfg(feature = "optimism")]
-    Optimism,
-    Eth,
-}
-
-const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
-    if evm_opts.networks.is_tempo() {
-        return NetworkDispatchKind::Tempo;
-    }
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return NetworkDispatchKind::Monad;
-    }
-    #[cfg(feature = "optimism")]
-    if evm_opts.networks.is_optimism() {
-        return NetworkDispatchKind::Optimism;
-    }
-    NetworkDispatchKind::Eth
-}
-
 /// Evaluates `$body` with `$fen` bound to the concrete network type selected by `$evm_opts`.
 macro_rules! dispatch_network {
     ($evm_opts:expr, | $fen:ident | $body:expr) => {
-        match network_dispatch_kind($evm_opts) {
-            NetworkDispatchKind::Tempo => {
+        match $evm_opts.networks.execution_network() {
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                type $fen = BaseEvmNetwork;
+                $body
+            }
+            NetworkVariant::Tempo => {
                 type $fen = TempoEvmNetwork;
                 $body
             }
             #[cfg(feature = "monad")]
-            NetworkDispatchKind::Monad => {
+            NetworkVariant::Monad => {
                 type $fen = MonadEvmNetwork;
                 $body
             }
             #[cfg(feature = "optimism")]
-            NetworkDispatchKind::Optimism => {
+            NetworkVariant::Optimism => {
                 type $fen = OpEvmNetwork;
                 $body
             }
-            NetworkDispatchKind::Eth => {
+            NetworkVariant::Ethereum => {
                 type $fen = EthEvmNetwork;
                 $body
             }
@@ -866,6 +852,7 @@ pub struct TestArgs {
     pub symbolic_use_fuzz_frontiers: bool,
 
     /// Check invariants from imported stateful fuzz frontier prefixes before flipping comparisons.
+    /// Also enables invariant frontier seeding.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_CHECK_INVARIANT_FRONTIERS")]
     pub symbolic_check_invariant_frontiers: bool,
 
@@ -972,8 +959,8 @@ pub struct TestArgs {
     #[arg(
         long,
         env = "FOUNDRY_SYMBOLIC_STORAGE_LAYOUT",
-        value_name = "solidity|generic",
-        value_parser = ["solidity", "generic"]
+        value_name = "solidity|generic|zero_init",
+        value_parser = ["solidity", "generic", "zero_init"]
     )]
     pub symbolic_storage_layout: Option<String>,
 
@@ -1053,6 +1040,11 @@ pub struct TestArgs {
         requires = "showmap_out",
     )]
     pub showmap_corpus_dir: Option<PathBuf>,
+
+    /// Decode the storage layouts of contracts outside the local project in state diffs, by
+    /// compiling the verified source a block explorer has for them.
+    #[arg(long)]
+    pub decode_external_storage: bool,
 
     #[command(flatten)]
     filter: FilterArgs,
@@ -1485,6 +1477,43 @@ impl TestArgs {
         }))
     }
 
+    /// Discovers test ABIs before contract and function filters select compilation roots.
+    fn compile_test_abis(
+        &self,
+        config: &Config,
+        test_filter: &ProjectPathsAwareFilter,
+    ) -> Result<(BTreeSet<PathBuf>, ProjectCompileOutput)> {
+        let mut project = config.create_project(config.cache, true)?;
+        let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .chain(
+                // Preserve path-filter behavior for conventional test files while still
+                // scanning non-test fixtures under the test root.
+                source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+            )
+            .collect::<BTreeSet<_>>();
+        // ABI discovery does not need dynamic linking, whose job-specific cache prevents
+        // incremental ABI compilation after edits.
+        let output = compile_abi_project_cached(
+            &mut project,
+            ProjectCompiler::new()
+                .external_compilers(config)
+                .files(sources.iter().cloned())
+                .source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+                .quiet(true),
+        )?;
+        if output.has_compiler_errors() {
+            sh_println!("{output}")?;
+            bail!("Compilation failed");
+        }
+
+        Ok((sources, output))
+    }
+
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter, and the inline config parsed from the ABI-only compilation when one was
     /// needed.
@@ -1508,25 +1537,7 @@ impl TestArgs {
             return Ok((src_files().chain(test_files()).collect(), None));
         }
 
-        let mut project = config.create_project(config.cache, true)?;
-        let sources = src_files()
-            .chain(
-                // Preserve path-filter behavior for conventional test files while still
-                // scanning non-test fixtures under the test root.
-                test_files().filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
-            )
-            .collect::<BTreeSet<_>>();
-        let output = compile_abi_project_cached(
-            &mut project,
-            ProjectCompiler::new()
-                .files(sources.iter().cloned())
-                .dynamic_test_linking(config.dynamic_test_linking)
-                .quiet(true),
-        )?;
-        if output.has_compiler_errors() {
-            sh_println!("{output}")?;
-            bail!("Compilation failed");
-        }
+        let (sources, output) = self.compile_test_abis(config, test_filter)?;
 
         let inline_config = Arc::new(InlineConfig::new_parsed(&output, config)?);
         let test_matcher =
@@ -1644,7 +1655,7 @@ impl TestArgs {
         self.apply_test_config_overrides(&mut config);
 
         // Set up the project.
-        let mut project = config.project()?;
+        let project = config.project()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1667,9 +1678,11 @@ impl TestArgs {
         trace!(target: "forge::test", ?filter, "using filter");
 
         let compiler = ProjectCompiler::new()
+            .external_compilers(&config)
             .dynamic_test_linking(config.dynamic_test_linking)
             .quiet(shell::is_json() || self.junit);
         let (output, selected_sources, inline_config) = if self.list {
+            let compiler = compiler.external_artifacts(false);
             // Only the ABI is needed to list tests, so skip the full compile when possible.
             let compiler = if filter.args().path_pattern.is_some()
                 && config.extra_output.is_empty()
@@ -1685,10 +1698,22 @@ impl TestArgs {
             } else {
                 compiler
             };
-            (compile_abi_project(&mut project, compiler)?, BTreeSet::new(), None)
+            // Listing must not replace full artifacts with ABI-only ones, which later cached
+            // builds would treat as fresh.
+            let mut project = config.create_project(config.cache, true)?;
+            (compile_abi_project_cached(&mut project, compiler)?, BTreeSet::new(), None)
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
+            let compiler = if filter.is_empty() {
+                compiler
+            } else {
+                compiler.source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+            };
             let output = compiler.files(files.clone()).compile(&project);
             let output = if should_mutate {
                 output.wrap_err(
@@ -1876,6 +1901,9 @@ impl TestArgs {
             // Per-pass summaries are suppressed in `run_tests_inner`.
             self.print_summary(&outcome, multi_pass_timer.elapsed())?;
         }
+
+        // Record failures once after merging all network passes, including successful runs.
+        persist_run_failures(&config_for_mutation, &outcome);
 
         if let Some(replay) = &execution.replay_symbolic_artifact {
             let target = &replay.artifact.test;
@@ -2248,28 +2276,52 @@ impl TestArgs {
         }
 
         if num_filtered == 0 {
-            let total_tests = if filter.is_empty() {
-                num_filtered
+            let empty_filter = EmptyTestFilter::default();
+            let mut has_tests = runner.matching_test_functions(&empty_filter).next().is_some();
+            // Selective compilation omits unmatched contracts. Consult ABI discovery only
+            // when diagnostics need the tests that the runner cannot see.
+            let discovery = if filter.is_empty() {
+                None
             } else {
-                runner.matching_test_functions(&EmptyTestFilter::default()).count()
+                Some(self.compile_test_abis(&config, filter)?.1)
             };
-            if total_tests == 0 {
+            let mut candidates =
+                runner.all_test_functions(filter).map(|f| &f.name).collect::<Vec<_>>();
+            if let Some(output) = &discovery {
+                let matcher = runner.test_function_matcher();
+                for (id, artifact) in output.artifact_ids() {
+                    let id = id.with_stripped_file_prefixes(&config.root);
+                    if let Some(abi) = &artifact.abi
+                        && matcher.matches_contract(&empty_filter, &id, abi)
+                        && is_runnable_test_contract(output, &config, &id, artifact, abi)
+                    {
+                        has_tests = true;
+                        if filter.matches_path(&id.source) && filter.matches_contract(&id.name) {
+                            candidates.extend(
+                                matcher
+                                    .test_functions(id.identifier(), abi, |_, _, kind| {
+                                        kind.is_any_test()
+                                    })
+                                    .map(|function| &function.name),
+                            );
+                        }
+                    }
+                }
+            }
+            if has_tests {
+                let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                // Try to suggest a test when there's no match.
+                if let Some(test_pattern) = &filter.args().test_pattern
+                    && let Some(suggestion) =
+                        utils::did_you_mean(test_pattern.as_str(), candidates).pop()
+                {
+                    write!(msg, "\nDid you mean `{suggestion}`?")?;
+                }
+                sh_warn!("{msg}")?;
+            } else {
                 sh_warn!(
                     "No tests found in project! Forge looks for functions that start with `test`"
                 )?;
-            } else {
-                let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                // Try to suggest a test when there's no match.
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                    if let Some(suggestion) =
-                        utils::did_you_mean(test_pattern.as_str(), candidates).pop()
-                    {
-                        write!(msg, "\nDid you mean `{suggestion}`?")?;
-                    }
-                }
-                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -2362,6 +2414,17 @@ impl TestArgs {
                 junit_xml_report(&results, verbosity).to_string()?
             };
             sh_println!("{rendered}")?;
+
+            let mut gas_snapshots = BTreeMap::<String, BTreeMap<String, String>>::new();
+            for result in results.values().flat_map(|suite| suite.test_results.values()) {
+                for (group, new_snapshots) in &result.gas_snapshots {
+                    gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
+                }
+            }
+            if !gas_snapshots.is_empty() {
+                self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
+            }
+
             return Ok(TestOutcome::new(
                 Some(runner.known_contracts),
                 results,
@@ -2704,9 +2767,6 @@ impl TestArgs {
             }
             outcome.json_file_results = Some(results);
         }
-
-        // Persist test run failures to enable replaying.
-        persist_run_failures(&config, &outcome);
 
         Ok(outcome)
     }
@@ -3080,6 +3140,7 @@ impl Provider for TestArgs {
             "etherscan_api_key" =>
                 self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty()).cloned(),
             "show_progress" => self.show_progress.then_some(true),
+            "decode_external_storage" => self.decode_external_storage.then_some(true),
         };
         // Mutation-testing CLI overrides
         if !mutation.is_empty() {
@@ -3106,6 +3167,43 @@ const fn apply_mutation_compiler_overrides(config: &mut Config) {
     if let Some(via_ir) = config.mutation.via_ir {
         config.via_ir = via_ir;
     }
+}
+
+/// Returns whether an ABI-discovered contract could be included in the test runner.
+fn is_runnable_test_contract(
+    output: &ProjectCompileOutput,
+    config: &Config,
+    id: &ArtifactId,
+    artifact: &ConfigurableContractArtifact,
+    abi: &JsonAbi,
+) -> bool {
+    if abi.constructor.as_ref().is_some_and(|constructor| !constructor.inputs.is_empty())
+        || is_external_artifact(&id.build_id)
+            && artifact.get_bytecode_bytes().is_none_or(|bytecode| bytecode.is_empty())
+    {
+        return false;
+    }
+
+    let contract_name = id.name.split('.').next().unwrap_or(&id.name);
+    let path = config.root.join(&id.source);
+    let compiler = output.parser().solc().compiler();
+    compiler.enter_sequential(|compiler| {
+        if let Some((_, source)) = compiler.gcx().get_ast_source(&path)
+            && let Some(ast) = &source.ast
+            && let Some(contract) = ast.items.iter().find_map(|item| match &item.kind {
+                ItemKind::Contract(contract) if contract.name.as_str() == contract_name => {
+                    Some(contract)
+                }
+                _ => None,
+            })
+        {
+            return matches!(
+                contract.kind,
+                SolarContractKind::Contract | SolarContractKind::Library
+            );
+        }
+        true
+    })
 }
 
 /// Returns the deployable contracts in `output` that match `filter`, with project-relative ids.
@@ -3309,9 +3407,11 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
     LastRunFailures { test_pattern, failures: None }
 }
 
-/// Persist filter with last test run failures (only if there's any failure).
+/// Replace the last run failures, clearing the record when the run succeeds.
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
+    if outcome.failed() == 0 {
+        let _ = fs::remove_file(&config.test_failures_file);
+    } else if fs::create_file(&config.test_failures_file).is_ok() {
         let failures = outcome
             .results
             .iter()

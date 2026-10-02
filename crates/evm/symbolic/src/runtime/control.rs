@@ -27,6 +27,7 @@ pub(crate) enum StepOutcome {
     Forked,
     Halt,
     Revert,
+    ExceptionalHalt,
     Failure,
     AssumeRejected,
 }

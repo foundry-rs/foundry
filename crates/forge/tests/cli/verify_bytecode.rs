@@ -1,7 +1,7 @@
 use crate::utils;
 use alloy_chains::Chain;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::{B256, Bytes, hex};
+use alloy_primitives::{Address, B256, Bytes, hex};
 use alloy_provider::Provider;
 use axum::{Json, Router, extract::Query};
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
@@ -623,6 +623,28 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
     assert!(stdout.contains("Runtime code matched"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
 
+    #[cfg(feature = "base")]
+    {
+        cmd.forge_fuse();
+        cmd.unset_env("ETHERSCAN_API_KEY");
+        cmd.unset_env("VERIFIER_API_KEY");
+        cmd.unset_env("VERIFIER_URL");
+        let output = cmd
+            .args([
+                "verify-bytecode",
+                &address,
+                "Counter",
+                "--rpc-url",
+                rpc.as_str(),
+                "--network",
+                "base",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(output.contains("Runtime code matched"), "{output}");
+    }
+
     // Dependencies and projects with Vyper sources retain full-project compilation. The unrelated
     // invalid source therefore makes both builds fail.
     prj.create_file("lib/Dependency.sol", "contract Dependency {}");
@@ -853,4 +875,122 @@ contract LinkedContract {
 
     assert!(stdout.contains("Runtime code matched with status full"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+});
+
+forgetest_async!(can_verify_bytecode_tempo_aa_deployments, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+    // Constructor gas depends on the intrinsic gas of the whole batch, not only the creation call.
+    prj.add_source("GasLeft.sol", "contract GasLeft { uint256 public immutable gas = gasleft(); }");
+
+    let (api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let deployer = wallet.address().to_string();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Advance the protocol nonce so it differs from the nonce of each nonce lane below.
+    let mut deployments = Vec::new();
+    let lanes: [&[&str]; 3] =
+        [&[], &["--tempo.nonce-key", "5", "--nonce", "0"], &["--tempo.expires", "30"]];
+    for (index, lane) in lanes.into_iter().enumerate() {
+        cmd.forge_fuse()
+            .args([
+                "create",
+                "./src/Counter.sol:Counter",
+                "--rpc-url",
+                rpc.as_str(),
+                "--private-key",
+                pk.as_str(),
+                "--broadcast",
+            ])
+            .args(lane);
+        let output = cmd.assert_success().get_output().stdout_lossy();
+        if index == 0 {
+            continue;
+        }
+        let field =
+            |prefix| output.lines().find_map(|line| line.strip_prefix(prefix)).unwrap().to_string();
+        deployments.push((
+            "src/Counter.sol:Counter",
+            field("Deployed to: "),
+            field("Transaction hash: "),
+        ));
+    }
+
+    // Batch a creation with a follow-up call.
+    cmd.forge_fuse().arg("build").assert_success();
+    let artifact: serde_json::Value = serde_json::from_slice(
+        &fs::read(prj.paths().artifacts.join("GasLeft.sol/GasLeft.json")).unwrap(),
+    )
+    .unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let tx_hash: B256 = provider
+        .client()
+        .request(
+            "eth_sendTransaction",
+            [serde_json::json!({
+                "from": deployer,
+                "type": "0x76",
+                "gas": "0x1e8480",
+                "calls": [
+                    {"to": null, "value": "0x0", "input": artifact["bytecode"]["object"]},
+                    {"to": Address::with_last_byte(0x22), "value": "0x0", "input": "0x"},
+                ],
+            })],
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let receipt: serde_json::Value =
+        provider.client().request("eth_getTransactionReceipt", [tx_hash]).await.unwrap();
+    assert_eq!(receipt["status"], "0x1");
+    deployments.push((
+        "src/GasLeft.sol:GasLeft",
+        receipt["contractAddress"].as_str().unwrap().to_string(),
+        tx_hash.to_string(),
+    ));
+
+    for (contract, address, tx_hash) in deployments {
+        let creation_data = serde_json::json!({"status":"1", "message":"OK", "result":[{
+            "contractAddress": address,
+            "contractCreator": deployer,
+            "txHash": tx_hash,
+        }]});
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api", listener.local_addr().unwrap());
+        let app = Router::new().fallback(move |Query(query): Query<HashMap<String, String>>| {
+            let response =
+                if query.get("action").is_some_and(|action| action == "getcontractcreation") {
+                    creation_data.clone()
+                } else {
+                    serde_json::json!({"status":"1", "message":"OK", "result":[]})
+                };
+            async move { Json(response) }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        // The runtime replay must keep the lane's own nonce and the full batch. AA creation code
+        // is not read from the batched calls yet, so only runtime is compared.
+        cmd.forge_fuse()
+            .args([
+                "verify-bytecode",
+                &address,
+                contract,
+                "--rpc-url",
+                &rpc,
+                "--verifier",
+                "etherscan",
+                "--verifier-url",
+                &url,
+                "--etherscan-api-key",
+                "test",
+                "--ignore",
+                "creation",
+                "--json",
+            ])
+            .assert_json_stdout(r#"[{"bytecode_type":"runtime", "match_type":"full"}]"#);
+        server.abort();
+    }
 });

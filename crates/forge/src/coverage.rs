@@ -105,19 +105,6 @@ fn format_cell(hits: usize, total: usize) -> Cell {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_summary_cell_is_not_applicable() {
-        assert_eq!(
-            format_cell(0, 0),
-            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
-        );
-    }
-}
-
 /// Writes the coverage report in [LCOV]'s [tracefile format].
 ///
 /// [LCOV]: https://github.com/linux-test-project/lcov
@@ -196,7 +183,7 @@ impl CoverageReporter for LcovReporter {
                     CoverageItemKind::Line | CoverageItemKind::Statement
                         if recorded_lines.insert(line) =>
                     {
-                        writeln!(out, "DA:{line},{hits}")?;
+                        writeln!(out, "DA:{line},{}", line_hits[&line])?;
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         // Per LCOV spec: "-" means the expression was never evaluated (line not
@@ -473,14 +460,15 @@ impl CoverageReporter for DebugReporter {
         }
 
         for (contract_id, (cta, rta)) in &report.anchors {
-            if cta.is_empty() && rta.is_empty() {
+            if cta.anchors.is_empty() && rta.anchors.is_empty() {
                 continue;
             }
 
             let anchors = cta
+                .anchors
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(rta.iter().map(|anchor| (true, anchor)))
+                .chain(rta.anchors.iter().map(|anchor| (true, anchor)))
                 .filter_map(|(is_runtime, anchor)| {
                     let item = report
                         .analyses
@@ -620,5 +608,18 @@ impl LineNumberCache {
         };
         let pos = offset - line_offsets.get(lo).unwrap() + 1;
         Ok((lo, pos))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_summary_cell_is_not_applicable() {
+        assert_eq!(
+            format_cell(0, 0),
+            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
+        );
     }
 }

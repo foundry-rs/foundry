@@ -32,6 +32,10 @@ revm.workspace = true
 yansi.workspace = true
 comfy-table.workspace = true
 
+# Base
+base-common-consensus = { workspace = true, optional = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["std"] }
+
 # Tempo
 tempo-alloy.workspace = true
 
@@ -42,4 +46,5 @@ proptest.workspace = true
 
 [features]
 default = ["optimism"]
+base = ["dep:base-common-consensus", "dep:base-common-rpc-types"]
 optimism = ["dep:op-alloy-consensus", "dep:op-alloy-rpc-types"]

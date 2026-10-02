@@ -7,7 +7,8 @@ use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::utils::get_chain;
+use foundry_cli::{opts::RpcOpts, utils::get_chain};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
@@ -15,6 +16,8 @@ mod create;
 pub(crate) use create::iso4217_warning_message;
 pub(crate) mod logo;
 pub(crate) mod mine;
+mod role;
+pub use role::Tip20Role;
 
 const MINE_REGISTER_MESSAGES: mine::RegisterMessages = mine::RegisterMessages {
     no_signer: "--register requires a signer or Tempo keychain identity (for example --private-key or --from)",
@@ -122,6 +125,73 @@ pub enum Tip20Subcommand {
         #[command(flatten)]
         tx: TxParams,
     },
+
+    /// Grant a TIP-20 role to an account.
+    ///
+    /// The sender must hold the role's admin role, which is `DEFAULT_ADMIN_ROLE` unless it was
+    /// reconfigured. A newly created token only assigns `DEFAULT_ADMIN_ROLE` to its admin, so
+    /// minting requires granting `issuer` first.
+    GrantRole {
+        /// The TIP-20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The role to grant: `admin`, `issuer`, `pause`, `unpause`, `burn-blocked`, `burn-at`
+        /// (T12+), or a 32-byte role hash.
+        role: Tip20Role,
+
+        /// The account that receives the role.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        account: NameOrAddress,
+
+        #[command(flatten)]
+        send_tx: SendTxOpts,
+
+        #[command(flatten)]
+        tx: TxParams,
+    },
+
+    /// Revoke a TIP-20 role from an account.
+    ///
+    /// The sender must hold the role's admin role, which is `DEFAULT_ADMIN_ROLE` unless it was
+    /// reconfigured.
+    RevokeRole {
+        /// The TIP-20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The role to revoke: `admin`, `issuer`, `pause`, `unpause`, `burn-blocked`, `burn-at`
+        /// (T12+), or a 32-byte role hash.
+        role: Tip20Role,
+
+        /// The account that loses the role.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        account: NameOrAddress,
+
+        #[command(flatten)]
+        send_tx: SendTxOpts,
+
+        #[command(flatten)]
+        tx: TxParams,
+    },
+
+    /// Check whether an account holds a TIP-20 role.
+    HasRole {
+        /// The TIP-20 token contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// The role to check: `admin`, `issuer`, `pause`, `unpause`, `burn-blocked`, `burn-at`
+        /// (T12+), or a 32-byte role hash.
+        role: Tip20Role,
+
+        /// The account to check.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        account: NameOrAddress,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
 }
 
 impl Tip20Subcommand {
@@ -166,6 +236,15 @@ impl Tip20Subcommand {
                 }
                 Ok(())
             }
+            Self::GrantRole { token, role, account, send_tx, tx } => {
+                role::update(role::RoleUpdate::Grant, token, role, account, send_tx, tx).await
+            }
+            Self::RevokeRole { token, role, account, send_tx, tx } => {
+                role::update(role::RoleUpdate::Revoke, token, role, account, send_tx, tx).await
+            }
+            Self::HasRole { token, role, account, rpc } => {
+                role::has_role(token, role, account, rpc).await
+            }
         }
     }
 }
@@ -178,12 +257,19 @@ pub(crate) async fn send_tip20_transaction(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    tempo::ensure_session_not_browser(&tx.tempo, send_tx.browser.browser)?;
-    let (config, provider) = tempo::tempo_provider(&send_tx.eth.rpc)?;
-    let chain = get_chain(config.chain, &provider).await?;
-    let (signer, access_key) =
-        tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id()).await?;
+    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
     SendTxArgs::contract_call(NameOrAddress::Address(to), data, send_tx, tx)
         .run_generic::<TempoNetwork>(signer, access_key)
         .await
+}
+
+/// Resolves the Tempo session, access key, or wallet that signs a `cast send` style transaction.
+pub(crate) async fn resolve_tip20_signer(
+    send_tx: &SendTxOpts,
+    tx: &TxParams,
+) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
+    tempo::ensure_session_not_browser(&tx.tempo, send_tx.browser.browser)?;
+    let (config, provider) = tempo::tempo_provider(&send_tx.eth.rpc)?;
+    let chain = get_chain(config.chain, &provider).await?;
+    tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id()).await
 }

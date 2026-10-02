@@ -9,6 +9,7 @@ use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_evm::hardfork::TempoHardfork;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
@@ -128,6 +129,13 @@ pub(crate) async fn register_virtual_master(
     msgs: &RegisterMessages,
 ) -> Result<B256> {
     let (config, provider) = tempo::tempo_provider(&send_tx.eth.rpc)?;
+    tempo::ensure_tempo_precompile_active(
+        &provider,
+        TempoHardfork::T3,
+        ADDRESS_REGISTRY_ADDRESS,
+        "virtual master registration requires a Tempo T3-capable AddressRegistry RPC",
+    )
+    .await?;
     apply_poll_interval(&provider, send_tx.poll_interval);
     let chain = get_chain(config.chain, &provider).await?;
     tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;

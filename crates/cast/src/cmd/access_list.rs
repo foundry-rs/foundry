@@ -16,6 +16,9 @@ use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
+#[cfg(feature = "base")]
+use base_common_network::Base;
+
 /// CLI arguments for `cast access-list`.
 #[derive(Debug, Parser)]
 pub struct AccessListArgs {
@@ -70,10 +73,14 @@ impl AccessListArgs {
         let requires_tempo = self.tx.tempo.is_tempo() || self.tx.tempo.session_id()?.is_some();
         let network = super::resolve_transaction_network(&config, requires_tempo).await?;
         if network.is_tempo() {
-            self.run_with_network::<TempoNetwork>(config).await
-        } else {
-            self.run_with_network::<Ethereum>(config).await
+            return self.run_with_network::<TempoNetwork>(config).await;
         }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self.run_with_network::<Base>(config).await;
+        }
+        self.run_with_network::<Ethereum>(config).await
     }
 
     async fn run_with_network<N: Network + Unpin>(self, config: Config) -> Result<()>
@@ -105,6 +112,9 @@ impl AccessListArgs {
         let access_list = if shell::is_json() {
             serde_json::to_string(&access_list)?
         } else {
+            if let Some(error) = &access_list.error {
+                sh_warn!("access list generated from a failed execution: {error}")?;
+            }
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {

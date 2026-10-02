@@ -1,13 +1,23 @@
 //! Gas related tests
 
 use crate::utils::http_provider_with_signer;
+use alloy_chains::NamedChain;
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, U64, U256, uint};
+use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{AccessList, AccessListItem, BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{EthereumHardfork, NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use anvil::{
+    EthereumHardfork, NodeConfig,
+    eth::{
+        error::{BlockchainError, InvalidTransactionError},
+        fees::INITIAL_BASE_FEE,
+    },
+    spawn,
+};
+use foundry_evm::constants::HARDHAT_CONSOLE_ADDRESS;
+use foundry_evm_networks::arbitrum;
 use revm::context_interface::block::BlobExcessGasAndPrice;
 
 const GAS_TRANSFER: u64 = 21_000;
@@ -383,6 +393,50 @@ async fn test_estimate_gas_empty_data() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_empty_precompile_data() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let identity_precompile = Address::with_last_byte(4);
+    let tx = TransactionRequest::default()
+        .with_to(identity_precompile)
+        .with_gas_price(1_000_000_000)
+        .with_input(vec![]);
+
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+
+    assert_eq!(gas, U256::from(GAS_TRANSFER + 15));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_block_precompile() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;
+    let from = handle.dev_accounts().next().unwrap();
+    let empty_input = TransactionRequest::default()
+        .with_from(from)
+        .with_to(arbitrum::ARB_SYS_ADDRESS)
+        .with_input(vec![]);
+
+    let err = api
+        .estimate_gas(WithOtherFields::new(empty_input), None, Default::default())
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), "EVM error PrecompileError");
+
+    let valid_input = TransactionRequest::default()
+        .with_from(from)
+        .with_to(arbitrum::ARB_SYS_ADDRESS)
+        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR));
+    let gas = api
+        .estimate_gas(WithOtherFields::new(valid_input), None, Default::default())
+        .await
+        .unwrap();
+
+    // 21000 base, 64 for the four calldata bytes and 803 inside ArbSys.
+    assert_eq!(gas, U256::from(21_867));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_simple_transfer_checks_funds() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let to = handle.dev_accounts().next().unwrap();
@@ -435,4 +489,78 @@ async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let err = api.estimate_gas(tx, None, Default::default()).await.unwrap_err();
 
     assert!(err.to_string().contains("Insufficient funds for gas * price + value"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimation_with_print_traces() {
+    let contract = Address::random();
+    let mut results = Vec::new();
+    for print_traces in [false, true] {
+        let (api, handle) = spawn(NodeConfig::test().with_print_traces(print_traces)).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_accounts().next().unwrap();
+        // Return the old slot value and store calldata[0], reverting after the write if zero.
+        api.anvil_set_code(
+            contract,
+            bytes!("600054600052600035806000551560165760206000f35b60006000fd"),
+        )
+        .await
+        .unwrap();
+        api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(3)).await.unwrap();
+        let mut request = WithOtherFields::new(
+            TransactionRequest::default()
+                .from(from)
+                .to(contract)
+                .gas_limit(200_000)
+                .input(Bytes::copy_from_slice(&U256::from(5).to_be_bytes::<32>()).into()),
+        );
+        let estimate = api.estimate_gas(request.clone(), None, Default::default()).await.unwrap();
+        let access_list = api.create_access_list(request.clone(), None, None).await.unwrap();
+        assert_eq!(access_list.error, None);
+        let expected_access_list = AccessList::from(vec![AccessListItem {
+            address: contract,
+            storage_keys: vec![B256::ZERO],
+        }]);
+        assert_eq!(access_list.access_list, expected_access_list);
+
+        // The estimated limit must execute successfully, while one gas less must fail.
+        request.gas = Some(estimate.to());
+        let output = api.call(request.clone(), None, Default::default()).await.unwrap();
+        assert_eq!(output.as_ref(), U256::from(3).to_be_bytes::<32>());
+        request.gas = Some(estimate.to::<u64>() - 1);
+        assert!(api.call(request.clone(), None, Default::default()).await.is_err());
+
+        request.gas = Some(200_000);
+        request.input = Bytes::from(vec![0; 32]).into();
+        let error = api.estimate_gas(request.clone(), None, Default::default()).await.unwrap_err();
+        assert!(matches!(
+            error,
+            BlockchainError::InvalidTransaction(InvalidTransactionError::Revert(Some(data)))
+                if data.is_empty()
+        ));
+        let reverted = api.create_access_list(request, None, None).await.unwrap();
+        assert_eq!(reverted.error.as_deref(), Some("execution reverted"));
+        assert_eq!(reverted.access_list, expected_access_list);
+
+        // The console collector must remain active: malformed console calldata must revert,
+        // rather than succeed as an ordinary call to an address without code.
+        let console_request = WithOtherFields::new(
+            TransactionRequest::default()
+                .from(from)
+                .to(HARDHAT_CONSOLE_ADDRESS)
+                .gas_limit(200_000)
+                .input(bytes!("01").into()),
+        );
+        let error = api.estimate_gas(console_request, None, Default::default()).await.unwrap_err();
+        let BlockchainError::InvalidTransaction(InvalidTransactionError::Revert(Some(data))) =
+            error
+        else {
+            panic!("expected console decoding revert, got {error:?}");
+        };
+        assert!(!data.is_empty());
+        assert_eq!(provider.get_storage_at(contract, U256::ZERO).await.unwrap(), U256::from(3));
+        assert_eq!(provider.get_transaction_count(from).await.unwrap(), 0);
+        results.push((estimate, access_list, reverted, data));
+    }
+    assert_eq!(results[0], results[1]);
 }

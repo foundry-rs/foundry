@@ -46,6 +46,10 @@ alloy-network.workspace = true
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
+# Base
+base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
+
 revm.workspace = true
 
 solar.workspace = true
@@ -66,10 +70,12 @@ reqwest.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
+wait-timeout.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
 
@@ -95,11 +101,16 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
 foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
-tempfile.workspace = true
 
 [features]
 default = ["optimism"]
 monad = ["foundry-config/monad"]
+base = [
+    "dep:base-common-network",
+    "dep:base-common-rpc-types",
+    "foundry-common-fmt/base",
+    "foundry-config/base",
+]
 optimism = [
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",

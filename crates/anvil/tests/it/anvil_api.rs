@@ -577,7 +577,7 @@ async fn can_get_node_info() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork,
         transaction_order: "fees".to_owned(),
@@ -781,6 +781,22 @@ async fn test_revert_restores_time_offset() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_next_block_timestamp() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let next_timestamp = initial.header.timestamp + 1_000;
+
+    api.evm_set_next_block_timestamp(next_timestamp).unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.timestamp, next_timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_revert_restores_next_block_base_fee() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let base_fee = api.base_fee().unwrap();
@@ -874,6 +890,21 @@ async fn test_set_next_block_prevrandao_cleared_on_revert() {
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_ne!(block.header.mix_hash, Some(prevrandao));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_prevrandao_restored_on_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let prevrandao = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+
+    api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(state_snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.mix_hash, Some(prevrandao));
 }
 
 // test that after a snapshot revert, the env block is reset
@@ -1419,6 +1450,35 @@ async fn fixed_and_mixed_mining_failures_remain_bounded() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_reorg_zero_depth_with_transactions_is_rejected() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await.unwrap();
+    let tip = api.block_number().unwrap();
+
+    // Nothing is mined by a reorg of depth 0, so a transaction can't be placed anywhere.
+    let err = api
+        .anvil_reorg(ReorgOptions {
+            depth: 0,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 0)],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Reorg depth must be at least 1"), "{err}");
+
+    // Block numbers are still checked against the last reorged block.
+    let err = api
+        .anvil_reorg(ReorgOptions {
+            depth: 1,
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 1)],
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("must not exceed (depth-1) 0"), "{err}");
+
+    assert_eq!(api.block_number().unwrap(), tip);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reorg_blockhash_opcode_consistency() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -1857,7 +1917,7 @@ async fn can_get_node_info_tempo_t0() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork: "T0".to_string(),
         transaction_order: "fees".to_owned(),
@@ -1905,7 +1965,7 @@ async fn can_get_node_info_tempo_t1() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork: "T1".to_string(),
         transaction_order: "fees".to_owned(),
@@ -1942,7 +2002,7 @@ async fn can_get_node_info_monad() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork: "MonadEight".to_string(),
         transaction_order: "fees".to_owned(),

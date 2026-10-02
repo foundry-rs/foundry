@@ -1,6 +1,9 @@
 use async_lsp::{
     LanguageServer, MainLoop, ServerSocket,
-    lsp_types::notification::{self, Notification},
+    lsp_types::{
+        PublishDiagnosticsParams, Url,
+        notification::{self, Notification},
+    },
     router::Router,
 };
 use futures::{
@@ -18,14 +21,13 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct Stop;
-
 pub struct LspClient {
     child: Option<Child>,
     pub(crate) runtime: tokio::runtime::Runtime,
     pub(crate) server: ServerSocket,
     main_loop: Option<JoinHandle<async_lsp::Result<()>>>,
     notifications: Receiver<String>,
+    diagnostics: Receiver<PublishDiagnosticsParams>,
 }
 
 impl LspClient {
@@ -48,6 +50,7 @@ impl LspClient {
         let stdin = child.stdin.take().unwrap();
 
         let (notification_sender, notifications) = mpsc::channel();
+        let (diagnostic_sender, diagnostics) = mpsc::channel();
         let (main_loop, server) = MainLoop::new_client(move |_| {
             let mut router = Router::new(());
             let log_sender = notification_sender.clone();
@@ -55,12 +58,14 @@ impl LspClient {
                 let _ = log_sender.send(notification::LogMessage::METHOD.to_owned());
                 std::ops::ControlFlow::Continue(())
             });
-            router
-                .unhandled_notification(move |_, notification| {
-                    let _ = notification_sender.send(notification.method);
-                    std::ops::ControlFlow::Continue(())
-                })
-                .event::<Stop>(|_, _| std::ops::ControlFlow::Break(Ok(())));
+            router.notification::<notification::PublishDiagnostics>(move |_, params| {
+                let _ = diagnostic_sender.send(params);
+                std::ops::ControlFlow::Continue(())
+            });
+            router.unhandled_notification(move |_, notification| {
+                let _ = notification_sender.send(notification.method);
+                std::ops::ControlFlow::Continue(())
+            });
             router
         });
 
@@ -74,7 +79,14 @@ impl LspClient {
             })
         });
 
-        Self { child: Some(child), runtime, server, main_loop: Some(main_loop), notifications }
+        Self {
+            child: Some(child),
+            runtime,
+            server,
+            main_loop: Some(main_loop),
+            notifications,
+            diagnostics,
+        }
     }
 
     pub fn wait_for_log_message(&self) {
@@ -95,15 +107,42 @@ impl LspClient {
         }
     }
 
+    pub fn wait_for_diagnostics(
+        &self,
+        uri: &Url,
+        matches: impl Fn(&PublishDiagnosticsParams) -> bool,
+    ) -> PublishDiagnosticsParams {
+        let deadline = std::time::Instant::now() + REQUEST_TIMEOUT;
+        let mut observed = Vec::new();
+        loop {
+            let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.diagnostics.recv_timeout(timeout) {
+                Ok(params) if params.uri == *uri && matches(&params) => return params,
+                Ok(params) => observed.push(params),
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!(
+                        "timed out waiting for LSP diagnostics for {uri}; observed: {observed:?}"
+                    )
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("LSP client stopped before receiving diagnostics for {uri}")
+                }
+            }
+        }
+    }
+
     pub fn shutdown(mut self) {
         let future = self.server.shutdown(());
         request(&self.runtime, future);
         self.server.exit(()).unwrap();
-        self.server.emit(Stop).unwrap();
 
+        // The server closes stdout after exit; let EOF finish the transport.
         let main_loop = self.main_loop.take().unwrap();
         let result = main_loop.join().unwrap();
-        assert!(result.is_ok(), "LSP client transport failed: {result:?}");
+        assert!(
+            matches!(result, Err(async_lsp::Error::Eof)),
+            "LSP client transport failed: {result:?}"
+        );
 
         let mut child = self.child.take().unwrap();
         let status = child.wait().unwrap();
