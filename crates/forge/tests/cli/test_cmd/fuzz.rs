@@ -8,9 +8,6 @@ use regex::Regex;
 use serde_json::Value;
 use std::{collections::BTreeSet, path::Path};
 
-#[cfg(unix)]
-use std::{fs, os::unix::fs::PermissionsExt};
-
 const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
 const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
 
@@ -6246,7 +6243,10 @@ fn random_failure_reason(stdout: &str) -> String {
 }
 
 #[cfg(unix)]
-foundry_test_utils::forgetest_init!(fuzz_improve_retains_reproducible_property, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_improve_retains_reproducible_property(prj: _, cmd: _) {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
     let assertion_lib = prj.root().join("lib/example");
     fs::create_dir_all(&assertion_lib).unwrap();
     fs::write(
@@ -6380,4 +6380,4 @@ accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8
     assert_eq!(rounds[1]["accepted"], true);
     assert_eq!(rounds[1]["generator"]["model"], "deterministic");
     assert!(rounds[1]["minimum_new_kills"].as_i64().unwrap() > 0);
-});
+}
