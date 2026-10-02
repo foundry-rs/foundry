@@ -6,7 +6,8 @@
 use foundry_test_utils::{forgetest_init, str};
 
 // Handler `assert(false)` surfaces under `Assertion Tests:`, not as a live invariant failure.
-forgetest_init!(handler_assertion_routed_to_handler_section, |prj, cmd| {
+#[forgetest_init]
+fn handler_assertion_routed_to_handler_section(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -59,13 +60,14 @@ contract AssertAllAssertTest is Test {
     assert!(stdout.contains(" invariant_a() (runs: 1, calls:"), "{stdout}");
     assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
     assert!(!stdout.contains("invariant_b"), "{stdout}");
-});
+}
 
 // Site-granular dedup: 4 distinct paths through one selector all share the same
 // `(reverter, selector)` site → 1 persisted bug, shrunk to its anchor. Echidna/Medusa
 // semantics: one bug per `(handler, function)`, regardless of which code path reached it.
 // If the handler is patched to no longer assert, the persisted file is deleted on replay.
-forgetest_init!(handler_assertion_dedupes_by_site, |prj, cmd| {
+#[forgetest_init]
+fn handler_assertion_dedupes_by_site(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 200;
@@ -207,12 +209,13 @@ contract MultiPathHandler {
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert!(after.is_empty(), "stale handler-bug file should be deleted, got {after:?}");
-});
+}
 
 // Bug persists to `failures/<contract>/handlers/<fingerprint>.json`, replays from disk,
 // and is deleted when stale (handler patched to no-op, or anchor stops asserting while the
 // invariant breaks instead).
-forgetest_init!(handler_assertion_persisted_to_disk, |prj, cmd| {
+#[forgetest_init]
+fn handler_assertion_persisted_to_disk(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -378,9 +381,10 @@ contract AlwaysAssertTest is Test {
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert!(entries_after.is_empty(), "stale handler file must be deleted, got {entries_after:?}");
-});
+}
 
-forgetest_init!(nested_handler_assertion_replays_from_disk, |prj, cmd| {
+#[forgetest_init]
+fn nested_handler_assertion_replays_from_disk(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 30;
@@ -462,9 +466,10 @@ Warning: Replayed handler-side assertion bug from [..]
 ...
 "#]]);
     assert!(file.path().exists(), "replayed nested handler failure should be preserved");
-});
+}
 
-forgetest_init!(handler_vm_assert_replays_from_disk, |prj, cmd| {
+#[forgetest_init]
+fn handler_vm_assert_replays_from_disk(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 1;
@@ -551,9 +556,10 @@ Warning: Replayed handler-side assertion bug from [..]
     cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure();
     assert!(!legacy_path.exists(), "legacy failure should be removed after safe migration");
     assert_eq!(handlers_dir.read_dir().unwrap().count(), 1);
-});
+}
 
-forgetest_init!(handler_replay_uses_full_persisted_sequence_after_depth_decrease, |prj, cmd| {
+#[forgetest_init]
+fn handler_replay_uses_full_persisted_sequence_after_depth_decrease(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 20;
@@ -621,10 +627,11 @@ Warning: Replayed handler-side assertion bug from [..]
 ...
 "#]]);
     assert!(file.path().exists(), "replayed handler file should be preserved");
-});
+}
 
 // Two distinct handler contracts → two persisted files, both reported.
-forgetest_init!(multi_handler_bugs_each_persist_independently, |prj, cmd| {
+#[forgetest_init]
+fn multi_handler_bugs_each_persist_independently(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 20;
@@ -740,11 +747,12 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert_eq!(entries.len(), 2, "expected one persisted file per handler bug");
-});
+}
 
 // Persisted file holds the post-shrink sequence; replay renders `(original: M, shrunk: M)`
 // instead of regrowing.
-forgetest_init!(handler_bug_replay_is_idempotent_after_shrink, |prj, cmd| {
+#[forgetest_init]
+fn handler_bug_replay_is_idempotent_after_shrink(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 50;
@@ -826,11 +834,12 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
 // `InvariantSettings` change between runs → persisted file is skipped with a warning and
 // left intact for a future compatible run.
-forgetest_init!(handler_persisted_failure_skipped_on_settings_change, |prj, cmd| {
+#[forgetest_init]
+fn handler_persisted_failure_skipped_on_settings_change(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -895,10 +904,11 @@ Warning: Failure from [..] file was ignored because invariant test settings have
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert_eq!(entries_after.len(), 1, "settings-incompatible file should be preserved");
-});
+}
 
 // Pre-anchor assertion = different bug: replay must delete the file, not keep it.
-forgetest_init!(handler_persisted_failure_deleted_when_earlier_call_now_asserts, |prj, cmd| {
+#[forgetest_init]
+fn handler_persisted_failure_deleted_when_earlier_call_now_asserts(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 50;
         config.invariant.depth = 20;
@@ -973,13 +983,14 @@ contract TwoStep {
         entries_after.is_empty(),
         "stale file (earlier call asserts) must be deleted, got {entries_after:?}"
     );
-});
+}
 
 // Two branches that both assert in the same handler function collapse to a single
 // persisted bug under site-granular dedup, regardless of whether one branch requires
 // a setup call. The shrinker minimizes the kept reproducer to whichever branch is
 // reachable with the fewest calls (typically the no-setup-required branch).
-forgetest_init!(handler_two_branches_same_function_collapse_to_one_bug, |prj, cmd| {
+#[forgetest_init]
+fn handler_two_branches_same_function_collapse_to_one_bug(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 100;
         config.invariant.depth = 20;
@@ -1036,14 +1047,15 @@ contract TwoBranchTest is Test {
         1,
         "expected 1 persisted handler bug for two branches in same function, got {entries:?}",
     );
-});
+}
 
 // Regression: with `assertions_revert = false`, a non-reverting `vm.assert*` writes
 // `GLOBAL_FAIL_SLOT = 1` and that committed slot was never cleared, poisoning every
 // subsequent `handlers_succeeded` check and silently suppressing later `assert_invariants`
 // evaluations. Asserts on call #1, then bumps a counter on call #2/#3 to trip a real
 // predicate — both the handler bug AND the predicate failure must be reported.
-forgetest_init!(handler_vm_assert_global_flag_does_not_poison_invariant_checks, |prj, cmd| {
+#[forgetest_init]
+fn handler_vm_assert_global_flag_does_not_poison_invariant_checks(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 5;
@@ -1129,4 +1141,4 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}

@@ -24,6 +24,7 @@ use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSui
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
@@ -507,10 +508,10 @@ impl Lint for SolLint {
     }
 }
 
-impl<'a> TryFrom<&'a str> for SolLint {
-    type Error = SolLintError;
+impl FromStr for SolLint {
+    type Err = SolLintError;
 
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         all_lints()
             .find(|lint| lint.id == value)
             .copied()

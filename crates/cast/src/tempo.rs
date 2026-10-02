@@ -162,10 +162,18 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
-    match tempo.session_signer_for_wallet(wallet, chain_id)? {
-        Some(session) => Ok((None, Some(session.access_key))),
-        None => wallet.maybe_signer_for_chain(chain_id).await,
+    let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
+        Some(session) => (None, Some(session.access_key)),
+        None => wallet.maybe_signer_for_chain(chain_id).await?,
+    };
+    if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match Tempo account {}",
+            access_key.account()
+        );
     }
+    Ok((signer, access_key))
 }
 
 pub(crate) fn ensure_session_not_browser(tempo: &TempoOpts, browser: bool) -> Result<()> {

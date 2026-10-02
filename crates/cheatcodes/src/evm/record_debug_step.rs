@@ -1,12 +1,9 @@
 use alloy_primitives::{Bytes, U256};
-
-use foundry_evm_traces::CallTraceArena;
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use revm_inspectors::tracing::types::{
-    CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
+use foundry_evm_traces::{
+    CallTraceArena, CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
 };
+use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use spec::Vm::DebugStep;
 
 // Context for a CallTraceStep, includes depth and contract address.

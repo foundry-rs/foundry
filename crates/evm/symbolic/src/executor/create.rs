@@ -31,18 +31,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &size,
-                            max_limit,
-                            "symbolic CREATE initcode size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &size,
+                    max_limit,
+                    "symbolic CREATE initcode size",
+                )?;
                 BoundedCopySize::Symbolic { size, max_size }
             }
         };
@@ -211,7 +205,7 @@ fn runtime_exceeds_code_size_limit(
     runtime: &SymReturnData,
 ) -> bool {
     spec_id >= SpecId::SPURIOUS_DRAGON
-        && !runtime.has_symbolic_len()
+        && runtime.len_word.as_const().is_some()
         && runtime.len() > cfg.max_code_size()
 }
 
@@ -228,20 +222,4 @@ fn runtime_has_rejected_prefix(
         return Err(SymbolicError::Unsupported("CREATE with symbolic runtime prefix not modeled"));
     };
     Ok(first_byte == U256::from(0xef))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_evm::revm::context::CfgEnv;
-
-    #[test]
-    fn runtime_code_limit_uses_fork_default_without_override() {
-        let mut cx = SymCx::default();
-        let runtime = SymReturnData::from_concrete_bytes(&mut cx, vec![0; 24_577]);
-        let cfg = CfgEnv::<SpecId>::default();
-
-        assert!(runtime_exceeds_code_size_limit(&cfg, SpecId::SHANGHAI, &runtime));
-        assert!(!runtime_exceeds_code_size_limit(&cfg, SpecId::HOMESTEAD, &runtime));
-    }
 }

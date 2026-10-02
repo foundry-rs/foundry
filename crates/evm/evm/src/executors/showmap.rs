@@ -311,7 +311,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut last_accepted_checked_invariant = false;
         let mut entry_failure: Option<ReplayFailure> = None;
         for tx in &tx_seq {
-            if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
+            if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts, None) {
                 continue;
             }
 
@@ -503,7 +503,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     let mut last_accepted_checked_invariant = false;
     let mut last_accepted_handlers_succeeded = false;
     for tx in input.sequence {
-        if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
+        if !WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts, None) {
             observation.unmatched += 1;
             continue;
         }

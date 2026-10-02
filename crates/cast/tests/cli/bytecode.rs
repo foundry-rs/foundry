@@ -4,7 +4,8 @@ use super::*;
 
 // <https://github.com/foundry-rs/foundry/issues/10945>
 // tests `cast code --disassemble`
-casttest!(can_disassemble_contract_code, |_prj, cmd| {
+#[casttest]
+fn can_disassemble_contract_code(cmd: _) {
     let rpc = next_rpc_endpoint(NamedChain::Mainnet);
     cmd.args([
         "code",
@@ -27,9 +28,10 @@ casttest!(can_disassemble_contract_code, |_prj, cmd| {
 0000002e: PUSH1 0x00
 ...
 "#]]);
-});
+}
 
-casttest!(code_empty, async |_prj, cmd| {
+#[casttest]
+async fn code_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "code",
@@ -39,9 +41,10 @@ casttest!(code_empty, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq("0x\n");
-});
+}
 
-casttest!(codesize_empty, async |_prj, cmd| {
+#[casttest]
+async fn codesize_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "codesize",
@@ -51,9 +54,10 @@ casttest!(codesize_empty, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq("0\n");
-});
+}
 
-casttest!(codehash_empty, async |_prj, cmd| {
+#[casttest]
+async fn codehash_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "codehash",
@@ -63,9 +67,10 @@ casttest!(codehash_empty, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(format!("{}\n", keccak256([])));
-});
+}
 
-casttest!(disassemble_incomplete_sequence, |_prj, cmd| {
+#[casttest]
+fn disassemble_incomplete_sequence(cmd: _) {
     cmd.cast_fuse().args(["disassemble", "60"]).assert_success().stdout_eq("00000000: PUSH1\n\n");
     cmd.cast_fuse()
         .args(["disassemble", "6000"])
@@ -76,4 +81,4 @@ casttest!(disassemble_incomplete_sequence, |_prj, cmd| {
         .assert_success()
         .stdout_eq("00000000: PUSH32\n\n");
     cmd.cast_fuse().args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]).assert_success().stdout_eq("00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n\n");
-});
+}
