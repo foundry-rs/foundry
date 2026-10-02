@@ -483,68 +483,11 @@ impl<N: Network> ProviderBuilder<N> {
     where
         N: RecommendedFillers,
     {
-        let Self {
-            url,
-            chain,
-            max_retry,
-            initial_backoff,
-            timeout,
-            compute_units_per_second,
-            jwt,
-            headers,
-            is_local,
-            accept_invalid_certs,
-            no_proxy,
-            curl_mode,
-            ..
-        } = self;
-        let url = url?;
-        let no_proxy = no_proxy || is_local;
-
-        let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
-
-        // If curl_mode is enabled, use CurlTransport instead of RuntimeTransport
-        if curl_mode {
-            let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
-            let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
-
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .with_recommended_fillers()
-                .wallet(wallet)
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
-        }
-
-        let transport = RuntimeTransportBuilder::new(url)
-            .with_timeout(timeout)
-            .with_headers(headers)
-            .with_jwt(jwt)
-            .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy)
-            .build();
-
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
-
-        if !is_local {
-            client.set_poll_interval(
-                chain
-                    .average_blocktime_hint()
-                    // we cap the poll interval because if not provided, chain would default to
-                    // mainnet
-                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
-                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
-                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
-            );
-        }
-
-        let provider = AlloyProviderBuilder::<_, _, N>::default()
+        let provider = self.build()?;
+        Ok(AlloyProviderBuilder::<_, _, N>::default()
             .with_recommended_fillers()
             .wallet(wallet)
-            .connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+            .connect_provider(provider))
     }
 }
 
@@ -642,6 +585,9 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
 #[cfg(test)]
 mod tests {
     use alloy_json_rpc::ErrorPayload;
+    use alloy_primitives::B256;
+    use alloy_provider::{Provider, WalletProvider};
+    use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
 
@@ -741,5 +687,33 @@ mod tests {
         assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
         assert_eq!(builder.timeout, Duration::from_secs(7));
         assert_eq!(builder.chain, NamedChain::Mainnet);
+    }
+
+    #[test]
+    fn wallet_provider_preserves_signer_and_poll_interval() {
+        let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
+        let address = signer.address();
+        let wallet = EthereumWallet::from(signer);
+
+        for url in ["http://localhost:8545", "https://example.com"] {
+            for curl_mode in [false, true] {
+                let provider = ProviderBuilder::<AnyNetwork>::new(url)
+                    .chain(NamedChain::Polygon)
+                    .curl_mode(curl_mode)
+                    .build()
+                    .unwrap();
+                let wallet_provider = ProviderBuilder::<AnyNetwork>::new(url)
+                    .chain(NamedChain::Polygon)
+                    .curl_mode(curl_mode)
+                    .build_with_wallet(wallet.clone())
+                    .unwrap();
+
+                assert_eq!(wallet_provider.default_signer_address(), address);
+                assert_eq!(
+                    wallet_provider.client().poll_interval(),
+                    provider.client().poll_interval()
+                );
+            }
+        }
     }
 }
