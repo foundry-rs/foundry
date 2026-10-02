@@ -3423,3 +3423,119 @@ contract FailureEventTest is Test {
 ...
 "#]]);
 });
+
+// Persisted corpus entries must not replay calls the current invariant settings no longer allow.
+forgetest_init!(invariant_corpus_respects_current_senders_and_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 32;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    let add_test = |sender: &str, selector: &str| {
+        let touch_targeted = selector == "touch";
+        prj.add_test(
+            "CorpusPolicyTest.t.sol",
+            &format!(
+                r#"
+import {{Test}} from "forge-std/Test.sol";
+
+contract CorpusPolicyTarget {{
+    address public unexpected;
+
+    function touch() external {{
+        if (msg.sender != {sender} || !{touch_targeted}) unexpected = msg.sender;
+    }}
+
+    function other() external {{
+        if (msg.sender != {sender} || {touch_targeted}) unexpected = msg.sender;
+    }}
+}}
+
+contract CorpusPolicyTest is Test {{
+    CorpusPolicyTarget target;
+
+    function setUp() public {{
+        target = new CorpusPolicyTarget();
+        targetSender({sender});
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = CorpusPolicyTarget.{selector}.selector;
+        targetSelector(FuzzSelector({{addr: address(target), selectors: selectors}}));
+    }}
+
+    function invariant_only_current_policy() public view {{
+        require(target.unexpected() == address(0), "stale corpus call");
+    }}
+}}
+   "#
+            ),
+        );
+    };
+
+    add_test("address(0xA11CE)", "touch");
+    cmd.args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+
+    // Changing only the sender must not replay calls from the previous sender.
+    add_test("address(0xB0B)", "touch");
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+
+    // Changing only the selector must not replay calls to the previous selector.
+    add_test("address(0xB0B)", "other");
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+});
+
+// Calls hoisted from handler sub-calls must respect `targetSenders`.
+forgetest_init!(invariant_corpus_hoisting_respects_target_senders, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 32;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "HoistSenderTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract HoistSenderToken {
+    address public unexpected;
+
+    function touch() external {
+        if (tx.origin != address(0xA11CE)) unexpected = tx.origin;
+    }
+}
+
+contract HoistSenderHandler {
+    HoistSenderToken token;
+
+    constructor(HoistSenderToken _token) {
+        token = _token;
+    }
+
+    function poke() external {
+        token.touch();
+    }
+}
+
+contract HoistSenderTest is Test {
+    HoistSenderToken token;
+
+    function setUp() public {
+        token = new HoistSenderToken();
+        targetContract(address(token));
+        targetContract(address(new HoistSenderHandler(token)));
+        targetSender(address(0xA11CE));
+    }
+
+    function invariant_only_target_sender() public view {
+        require(token.unexpected() == address(0), "unexpected sender");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success();
+});

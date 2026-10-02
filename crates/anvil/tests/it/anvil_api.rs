@@ -577,7 +577,7 @@ async fn can_get_node_info() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork,
         transaction_order: "fees".to_owned(),
@@ -1917,7 +1917,7 @@ async fn can_get_node_info_tempo_t0() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork: "T0".to_string(),
         transaction_order: "fees".to_owned(),
@@ -1965,7 +1965,7 @@ async fn can_get_node_info_tempo_t1() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork: "T1".to_string(),
         transaction_order: "fees".to_owned(),
@@ -2002,7 +2002,7 @@ async fn can_get_node_info_monad() {
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
-        current_block_timestamp: 1,
+        current_block_timestamp: block.header.timestamp,
         current_block_hash: block.header.hash,
         hard_fork: "MonadEight".to_string(),
         transaction_order: "fees".to_owned(),

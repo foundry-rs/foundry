@@ -4851,7 +4851,9 @@ forgetest!(preprocess_inline_verbatim_diagnostics, |prj, cmd| {
             .stderr
             .clone();
         prj.update_config(|config| config.dynamic_test_linking = true);
-        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+        let mut expected = b"Warning: dynamic test linking disabled for 1 files: error: unsupported verbatim builtin\n".to_vec();
+        expected.extend(native);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
     }
 });
 
@@ -4917,4 +4919,159 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
             cmd.forge_fuse().arg("test").assert_success();
         }
     }
+});
+
+// <https://github.com/foundry-rs/foundry/issues/17220>
+forgetest!(filtered_tests_preserve_cyclic_import_order, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.evm_version = EvmVersion::Cancun;
+    });
+    prj.add_test(
+        "helpers/Base.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Derived.sol";
+contract Base {}
+"#,
+    );
+    prj.add_test(
+        "helpers/Derived.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Base.sol";
+contract Derived is Base {}
+"#,
+    );
+    // This root makes solc visit Derived before Base. Dropping it reverses traversal of the
+    // import cycle and produces error 2449, even though inheritance itself is acyclic.
+    prj.add_test(
+        "Anchor.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./helpers/Derived.sol";
+contract Anchor {
+    function testOther() public pure { revert("must remain filtered out"); }
+}
+"#,
+    );
+    prj.add_test(
+        "Selected.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+contract Selected {
+    function testSelected() public pure {}
+}
+"#,
+    );
+    // Test compilation should continue to omit unrelated scripts, including on retry.
+    prj.add_raw_script("Broken.s.sol", "this is not valid Solidity");
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        for filter in [
+            ["--match-test", "testSelected"],
+            ["--match-contract", "Selected"],
+            ["--match-path", "test/Selected.t.sol"],
+        ] {
+            cmd.forge_fuse().args(["test", "--force"]).args(filter).assert_success().stdout_eq(
+                str![[r#"
+...
+Ran 1 test for test/Selected.t.sol:Selected
+[PASS] testSelected() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+            );
+            // Reusing the artifacts from the retry must preserve the test selection.
+            cmd.forge_fuse().args(["test"]).args(filter).assert_success();
+        }
+
+        cmd.forge_fuse()
+            .args(["test", "--force", "--match-test", "^__nomatch__$", "--json"])
+            .assert_empty_stdout();
+    }
+});
+
+// <https://github.com/foundry-rs/foundry/issues/17222>
+forgetest!(preprocess_analysis_fallback_uses_import_invalidation, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));
+        config.evm_version = EvmVersion::Istanbul;
+        config.lint.lint_on_build = false;
+    });
+    let implementation = "pragma solidity 0.6.12; contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_raw_source("Impl.sol", implementation);
+    prj.add_raw_source(
+        "Middle.sol",
+        "pragma solidity 0.6.12; import './Impl.sol'; contract Middle is Impl {}",
+    );
+    prj.add_raw_source("Unrelated.sol", "pragma solidity 0.6.12; contract Unrelated {}");
+    let test = r#"
+pragma solidity 0.6.12;
+import "../src/Middle.sol";
+contract FallbackTest {
+    // Valid in solc 0.6.12, but unavailable in Solar's analysis.
+    uint256 timestamp = now;
+    function test_fallback() public {
+        require(new Middle().value() == 111, "stale fallback bytecode");
+    }
+}
+"#;
+    prj.add_raw_test("Fallback.t.sol", test);
+    prj.add_raw_test(
+        "Independent.t.sol",
+        "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} }",
+    );
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 2 files: error: unresolved symbol `now`
+
+"#]]);
+
+    prj.add_raw_source("Unrelated.sol", "pragma solidity 0.6.12; contract Unrelated {} // edit");
+    cmd.forge_fuse()
+        .arg("build")
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![""]);
+
+    prj.add_raw_test("Independent.t.sol", "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} } // edit");
+    cmd.forge_fuse()
+        .arg("build")
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![""]);
+
+    prj.add_raw_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse()
+        .arg("test")
+        .with_no_redact()
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Compiling 3 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+...
+[FAIL: stale fallback bytecode] test_fallback() ([..])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+
+"#]]);
 });

@@ -946,6 +946,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 stateless: None,
                 fuzzed_contracts: Some(&replay_targets),
                 dynamic: Some(&dynamic),
+                senders: Some(&campaign_seed.sender_filters),
             },
         )?;
         let mut runner = self.runner.clone();
@@ -1516,6 +1517,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
+                    &campaign_seed.sender_filters,
                     CorpusInsertionMode::Live,
                 );
             }
@@ -1853,9 +1855,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
 
-        if let Err(err) =
-            worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
-        {
+        if let Err(err) = worker.seed_from_test_traces(
+            invariant_contract,
+            &targeted_contracts,
+            &campaign_seed.sender_filters,
+            executor,
+        ) {
             debug!(target: "corpus", %err, "failed to seed corpus from test traces");
         }
 

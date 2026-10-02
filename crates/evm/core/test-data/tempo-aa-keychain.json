@@ -1,0 +1,67 @@
+{
+  "type": "0x76",
+  "chainId": "0xa5bf",
+  "feeToken": null,
+  "maxPriorityFeePerGas": "0x30a32c",
+  "maxFeePerGas": "0x560f0568",
+  "gas": "0x4ed05",
+  "calls": [
+    {
+      "to": "0x0000000000000000000000000000000000000000",
+      "value": "0x0",
+      "input": "0x",
+      "data": null
+    }
+  ],
+  "accessList": [],
+  "nonceKey": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "nonce": "0x0",
+  "feePayerSignature": {
+    "r": "0xb8f7e9c00477083beb8867ccc3f83ba1c62eb1e78de166b1b83d6a5bcbbb0389",
+    "s": "0x192d1fecea3c628c20b0c0c05c9c809a7c5fa60c19c8087d9de0e02e36d52035",
+    "yParity": "0x1",
+    "v": "0x1"
+  },
+  "validBefore": "0x6abd9dbb",
+  "validAfter": "0x389b25e1",
+  "keyAuthorization": {
+    "chainId": "0xa5bf",
+    "keyType": "p256",
+    "keyId": "0x240a31713e851acdc0c590fe45ef72baeff55f91",
+    "expiry": null,
+    "limits": null,
+    "allowedCalls": null,
+    "witness": null,
+    "isAdmin": false,
+    "account": null,
+    "signature": {
+      "type": "p256",
+      "r": "0x9fcb18e7fcf24ab6b0dfc52ec350d7545c9998c05310b0982399035f33f61cf5",
+      "s": "0x19aa5d3a6a5200a2e35c718db03fa4d168b528edc74dfe2843e24d537097d931",
+      "pubKeyX": "0xc6774268fd7a385cf84921db76caac4701f007cc9b78cf330d56e846ada93e07",
+      "pubKeyY": "0x2ff5860a6692c4af45833230f8d11abd5d185aca1c12d7348c9b4ec314c974a3",
+      "preHash": false
+    }
+  },
+  "aaAuthorizationList": [],
+  "signature": {
+    "userAddress": "0x5f704c6c7075acd14ee36527f03b5b5dcb4a966f",
+    "signature": {
+      "type": "p256",
+      "r": "0x0858c1fe383caf0d2c518fdb0783065a00ea37d5322140fbc0e058b1398432ab",
+      "s": "0x37c9ca2725858d9433390ba017e9bfd804d5b32a15bed21742756f5e13159fe3",
+      "pubKeyX": "0x01c70db647bf022c5112d515b61d6f242ebe7ee85fbb4c40f27fec94684f2455",
+      "pubKeyY": "0xc52642f443bc839c1afa85374f3f5a82a7199b650238e72bb2d903be877b118e",
+      "preHash": false
+    },
+    "version": "v2",
+    "keyId": "0x240a31713e851acdc0c590fe45ef72baeff55f91"
+  },
+  "hash": "0xd4d372ad5cfa4cdf476aeb25d4a76fb80fe2d6169eb9354c544500c0496a19d6",
+  "blockHash": "0xdb7ad242e9d214f9055a1320e309a00f7bf6e3db899ad0f8503be993646c0a62",
+  "blockNumber": "0x23e1ee8",
+  "transactionIndex": "0x7",
+  "from": "0x5f704c6c7075acd14ee36527f03b5b5dcb4a966f",
+  "gasPrice": "0x23f3e92c",
+  "blockTimestamp": "0x6abd9da2"
+}

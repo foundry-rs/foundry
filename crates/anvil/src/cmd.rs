@@ -703,6 +703,10 @@ pub struct AnvilEvmArgs {
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
+    ///
+    /// Steps are recorded by replaying the transaction from its parent block's state, so they
+    /// are unavailable once that state is pruned or when loading a state dump created without
+    /// `--preserve-historical-states`.
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
