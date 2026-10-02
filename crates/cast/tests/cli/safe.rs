@@ -799,7 +799,7 @@ fn ensure_delegate_signature(
     Err(format!("delegate signature does not recover {expected}"))
 }
 
-#[casttest]
+#[tokio::test(flavor = "multi_thread")]
 async fn safe_service_rejects_non_checksum_proposal_addresses() {
     // Cast serializes parsed Address values as checksums, so send malformed wire payloads
     // directly to the strict service to cover the validation boundary a remote client crosses.

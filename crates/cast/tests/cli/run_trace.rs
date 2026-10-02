@@ -34,12 +34,11 @@ Executing previous transactions from the block.
 }
 
 // tests cast can decode traces when using project artifacts
-#[forgetest]
+#[forgetest_init]
 async fn decode_traces_with_project_artifacts(prj: _, cmd: _) {
     let (api, handle) =
         anvil::spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "LocalProjectContract",
         r#"
@@ -156,14 +155,13 @@ Executing previous transactions from the block.
 // `cast run` must replay a transaction's block prefix without changing the trace requested for the
 // selected transaction. A single block covers a deployment in the first position, a revert in the
 // middle, and an internally traced state change in the last position.
-#[forgetest]
+#[forgetest_init]
 async fn cast_run_fork_traces_only_target_transaction(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "ReplayTarget",
         r#"
@@ -530,11 +528,10 @@ error: the argument '--debug-trace-transaction' cannot be used with '--debug'
 }
 
 // tests cast can decode traces when running with verbosity level > 4
-#[forgetest]
+#[forgetest_init]
 async fn show_state_changes_in_traces(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     // Deploy counter contract.
     cmd.args([

@@ -58,7 +58,7 @@ Successfully created new keypair.
 
 // tests that the machine-readable stdout record is omitted on an interactive terminal, where it
 // would duplicate the stderr prose
-#[casttest]
+#[test]
 #[cfg(unix)]
 fn new_wallet_tty_omits_stdout_record() {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
@@ -456,7 +456,7 @@ fn wallet_address_keystore_with_password_file(cmd: _) {
 }
 
 // https://github.com/foundry-rs/foundry/issues/16523
-#[casttest]
+#[test]
 #[cfg(unix)]
 fn wallet_address_keystore_from_stdin() {
     let keystore =

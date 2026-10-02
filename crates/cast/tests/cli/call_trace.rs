@@ -23,11 +23,10 @@ async fn cast_call_custom_chain_id(cmd: _) {
 }
 
 // https://github.com/foundry-rs/foundry/issues/10848
-#[forgetest]
+#[forgetest_init]
 async fn cast_call_disable_labels(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
@@ -128,11 +127,10 @@ Transaction successfully executed.
 // --debug-trace-call with --with-local-artifacts labels the called contract by its local
 // artifact name (Counter::) instead of the raw address. Without the RPC bytecode-map fetch the
 // trace falls back to the bare address, so this test can fail.
-#[forgetest]
+#[forgetest_init]
 async fn cast_call_debug_trace_call_with_local_artifacts(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     cmd.args([
         "script",
@@ -175,11 +173,10 @@ Transaction successfully executed.
 // `--debug-trace-call --with-local-artifacts` must label a contract that only exists through a
 // `--override-code` state override: the trace runs the override code, so artifact matching must
 // see that code instead of the (empty) on-chain code.
-#[forgetest]
+#[forgetest_init]
 async fn cast_call_debug_trace_call_override_code_local_artifacts(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
     // Deploy counter contract, only to read its runtime bytecode back.
@@ -235,11 +232,10 @@ async fn cast_call_debug_trace_call_override_code_local_artifacts(prj: _, cmd: _
 
 // `--json --debug-trace-call --with-local-artifacts` must keep stdout machine-readable: the
 // compile banner/progress goes to stderr, so stdout is exactly one JSON document.
-#[forgetest]
+#[forgetest_init]
 async fn cast_call_debug_trace_call_local_artifacts_json_stdout(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
     // Deploy counter contract.
@@ -279,11 +275,10 @@ async fn cast_call_debug_trace_call_local_artifacts_json_stdout(prj: _, cmd: _) 
 // `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
 // populates, without requiring `--with-local-artifacts`.
 // <https://github.com/foundry-rs/foundry/issues/11085>
-#[forgetest]
+#[forgetest_init]
 async fn flaky_cast_call_trace_decodes_error_from_signatures_cache(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "CustomErrorContract",
         r#"

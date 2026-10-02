@@ -70,7 +70,6 @@ impl Parse for TestFn {
     }
 }
 
-#[derive(Clone, Copy)]
 enum Kind {
     Forge,
     ForgeInit,
@@ -96,20 +95,18 @@ fn test_fn(attr: TokenStream, item: TokenStream, kind: Kind) -> Result<TokenStre
         let Pat::Ident(pat) = &mut *arg.pat else {
             return Err(Error::new_spanned(&arg.pat, "expected `prj` or `cmd`"));
         };
+        if !matches!(*arg.ty, Type::Infer(_)) {
+            return Err(Error::new_spanned(&arg.ty, "expected `_`"));
+        }
         let ty = match pat.ident.to_string().as_str() {
             "prj" => parse_quote!(::foundry_test_utils::TestProject),
             "cmd" => parse_quote!(::foundry_test_utils::TestCommand),
             _ => return Err(Error::new_spanned(&pat.ident, "expected `prj` or `cmd`")),
         };
-        if args.contains(&pat.ident) {
-            return Err(Error::new_spanned(&pat.ident, "duplicate argument"));
-        }
         args.push(pat.ident.clone());
         pat.mutability = Some(syn::Token![mut](pat.ident.span()));
         arg.attrs.push(parse_quote!(#[allow(unused_mut)]));
-        if let Type::Infer(_) = *arg.ty {
-            *arg.ty = ty;
-        }
+        *arg.ty = ty;
     }
     sig.inputs.clear();
 

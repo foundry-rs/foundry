@@ -21,7 +21,7 @@ fn create2_output_channels(cmd: _) {
 
 // tests that the machine-readable stdout record is omitted on an interactive terminal, where it
 // would duplicate the stderr prose
-#[casttest]
+#[test]
 #[cfg(unix)]
 fn create2_tty_omits_stdout_record() {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));

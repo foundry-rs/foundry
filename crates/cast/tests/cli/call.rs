@@ -2,11 +2,10 @@
 
 use super::*;
 
-#[forgetest]
+#[forgetest_init]
 async fn cast_call_custom_override(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     prj.add_source(
         "Counter",

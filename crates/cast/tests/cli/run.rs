@@ -180,11 +180,10 @@ Executing previous transactions from the block.
 }
 
 // tests cast can decode external libraries traces with project cached selectors
-#[forgetest]
+#[forgetest_init]
 async fn flaky_decode_external_libraries_with_cached_selectors(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "ExternalLib",
         r#"

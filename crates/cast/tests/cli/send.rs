@@ -425,11 +425,10 @@ async fn send_async_burst_is_mined_across_full_blocks(prj: _) {
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
-#[forgetest]
+#[forgetest_init]
 async fn cast_send_estimate_gas_error(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "SimpleStorage",
         r#"
@@ -720,11 +719,10 @@ contract ComplexContract {
 }
 
 // Test cast send with raw --data flag using encoded calldata
-#[forgetest]
+#[forgetest_init]
 async fn cast_send_with_data(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
     // Deploy counter contract

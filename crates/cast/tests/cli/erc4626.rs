@@ -446,12 +446,11 @@ async fn erc4626_complete_synchronous_interface(prj: _, cmd: _) {
         ));
 }
 
-#[forgetest]
+#[forgetest_init]
 async fn erc4626_check_warns_for_known_extensions(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source("TestVault.sol", include_str!("../fixtures/TestVault.sol"));
     deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestAsyncVault");
 
@@ -524,12 +523,11 @@ Summary: 14 passed, 5 warnings, 0 failed
 "#]]);
 }
 
-#[forgetest]
+#[forgetest_init]
 async fn erc4626_check_fails_for_missing_metadata(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source("TestVault.sol", include_str!("../fixtures/TestVault.sol"));
     deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestMissingMetadataVault");
 
