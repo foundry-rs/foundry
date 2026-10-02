@@ -524,8 +524,9 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
 ) {
     let active_fork_id = ccx.ecx.db().active_fork_id();
     let rolled_fork_id = target_fork_id.or(active_fork_id);
-    if let Some(overrides) = ccx.state.env_overrides.get_mut(&rolled_fork_id) {
-        overrides.implicit_basefee = None;
+    if ccx.state.env_overrides().contains_key(&rolled_fork_id) {
+        ccx.state
+            .update_env_overrides(rolled_fork_id, |overrides| overrides.implicit_basefee = None);
     }
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.ecx.db().active_fork_block_number();
