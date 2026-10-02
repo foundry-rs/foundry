@@ -10,7 +10,7 @@ use foundry_test_utils::{
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
     snapbox::IntoData,
     str,
-    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, get_vyper},
 };
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
@@ -4951,6 +4951,138 @@ contract EtchDebugTest {
             }
         }
     }
+});
+
+// Metadata-exact matches outrank the old address identity after an etch.
+forgetest!(debug_dump_prefers_exact_metadata, |prj, cmd| {
+    for name in ["Trusted", "Payload"] {
+        prj.add_source(
+            name,
+            &format!(
+                "contract {name} {{ function value() external pure returns (uint256) {{ return 7; }} }}"
+            ),
+        );
+    }
+    prj.add_test(
+        "MetadataDebug.t.sol",
+        r#"
+import "../src/Trusted.sol";
+import "../src/Payload.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata code) external;
+}
+
+contract MetadataDebugTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Trusted target;
+
+    function setUp() public { target = new Trusted(); }
+
+    function testMetadata() public {
+        require(keccak256(type(Trusted).runtimeCode) != keccak256(type(Payload).runtimeCode));
+        require(target.value() == 7);
+        vm.etch(address(target), type(Payload).runtimeCode);
+        require(Payload(address(target)).value() == 7);
+    }
+}
+"#,
+    );
+    let dump_path = prj.root().join("metadata_dump.json");
+    cmd.args(["test", "--mt", "testMetadata", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .assert_success();
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let frames = dump["debug_arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["contract_name"] != "MetadataDebugTest")
+        .map(|node| serde_json::json!([node["contract_name"], node["decoded"]["label"]]))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&frames).unwrap().is_json(),
+        str![[r#"[["Trusted", "Trusted"], ["Payload", "Payload"]]"#]].is_json()
+    );
+});
+
+// Vyper runtime artifacts omit immutable data, but changes to the runtime must still be rejected.
+forgetest!(debug_dump_identifies_vyper_immutables, |prj, cmd| {
+    prj.update_config(|config| config.vyper.path = Some(get_vyper().path));
+    for (name, value, result) in [("Immutable", 42, "value"), ("Replacement", 99, "value + 1")] {
+        prj.add_raw_source(
+            &format!("{name}.vy"),
+            &format!(
+                r#"
+value: immutable(uint256)
+
+@deploy
+def __init__():
+    value = {value}
+
+@external
+@view
+def read() -> uint256:
+    return {result}
+"#
+            ),
+        );
+    }
+    prj.add_test(
+        "VyperDebug.t.sol",
+        r#"
+interface Vm {
+    function getCode(string calldata artifact) external view returns (bytes memory);
+    function etch(address target, bytes calldata code) external;
+}
+interface IImmutable { function read() external view returns (uint256); }
+
+contract VyperDebugTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    address target;
+    address replacement;
+
+    function setUp() public {
+        target = deploy("Immutable.vy");
+        replacement = deploy("Replacement.vy");
+    }
+
+    function deploy(string memory artifact) internal returns (address deployed) {
+        bytes memory code = vm.getCode(artifact);
+        assembly { deployed := create(0, add(code, 32), mload(code)) }
+        require(deployed != address(0));
+    }
+
+    function testImmutables() public {
+        require(IImmutable(target).read() == 42);
+        vm.etch(target, replacement.code);
+        require(IImmutable(target).read() == 100);
+        bytes memory unknown = replacement.code;
+        unknown[0] = 0x00;
+        vm.etch(target, unknown);
+        (bool ok,) = target.call(abi.encodeCall(IImmutable.read, ()));
+        require(ok);
+    }
+}
+"#,
+    );
+    let dump_path = prj.root().join("vyper_dump.json");
+    cmd.args(["test", "--mt", "testImmutables", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .assert_success();
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let frames = dump["debug_arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["contract_name"] != "VyperDebugTest")
+        .map(|node| serde_json::json!([node["contract_name"], node["decoded"]["label"]]))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&frames).unwrap().is_json(),
+        str![[r#"[["Immutable", "Immutable"], ["Replacement", "Replacement"], [null, null]]"#]]
+            .is_json()
+    );
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10322>

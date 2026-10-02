@@ -226,13 +226,10 @@ fn identify_code(
     address_name: Option<&String>,
     code: &[u8],
 ) -> Option<String> {
-    // Equal runtime code cannot distinguish different constructors. Keep a matching identity.
-    if let Some((id, _)) =
-        known_contracts.find_by_deployed_code_exact_with(code, |id| address_name == Some(&id.name))
+    // Prefer the address identity only among equally strong runtime matches.
+    if let Some((id, _)) = known_contracts
+        .find_by_deployed_code_exact_preferred(code, |id| address_name == Some(&id.name))
     {
-        return Some(id.name.clone());
-    }
-    if let Some((id, _)) = known_contracts.find_by_deployed_code_exact(code) {
         return Some(id.name.clone());
     }
     // External identities cannot be checked against local artifacts.
