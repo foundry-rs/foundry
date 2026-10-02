@@ -230,10 +230,17 @@ fn identify_code(
     address_name: Option<&String>,
     code: &[u8],
 ) -> Option<String> {
-    if let Some((id, _)) = known_contracts.find_by_deployed_code_exact(code) {
-        return Some(id.name.clone());
-    }
-    address_name.filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name)).cloned()
+    // Equal runtime code doesn't tell contracts apart (e.g. different constructors), so prefer
+    // the address identity when it matches.
+    known_contracts
+        .find_by_deployed_code_exact_with(code, |id| address_name == Some(&id.name))
+        .or_else(|| known_contracts.find_by_deployed_code_exact(code))
+        .map(|(id, _)| id.name.clone())
+        .or_else(|| {
+            address_name
+                .filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name))
+                .cloned()
+        })
 }
 
 #[cfg(test)]
@@ -398,10 +405,12 @@ mod tests {
         let kept = |name: &str| (Some(name.to_string()), Some(name.to_string()), true);
         let replaced = |name: Option<&str>| (name.map(String::from), name.map(String::from), false);
 
-        // Frames are identified only by exact matches, accounting for immutables. Near matches are
-        // left unidentified, while external identities are kept unless the code exactly matches a
-        // local artifact. Decodings from a replaced identity are dropped.
+        // Frames are identified only by exact matches, accounting for immutables, preferring the
+        // address identity when several artifacts match. Near matches are left unidentified, while
+        // external identities are kept unless the code exactly matches a local artifact. Decodings
+        // from a replaced identity are dropped.
         assert_eq!(identify(local, &initialized), kept("WithImmutable"));
+        assert_eq!(identify(local, &hex!("61fffe6000600055")), kept("WithImmutable"));
         assert_eq!(identify(unknown, &initialized), replaced(Some("WithImmutable")));
         assert_eq!(identify(local, &other), replaced(Some("Other")));
         assert_eq!(identify(local, &near_other), replaced(None));
