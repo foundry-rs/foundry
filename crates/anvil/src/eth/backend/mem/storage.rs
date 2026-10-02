@@ -100,13 +100,14 @@ impl InMemoryBlockStates {
     /// This modifies the `limit` what to keep stored in memory.
     ///
     /// This will ensure the new limit adjusts based on the block time.
-    /// The lowest blocktime is 1s which should increase the limit slightly
+    /// The lowest blocktime is 1s which should increase the limit slightly.
+    /// Memory-only caches retain their configured limit.
     pub fn update_interval_mine_block_time(&mut self, block_time: Duration) {
         let block_time = block_time.as_secs();
         // for block times lower than 2s we increase the mem limit since we're mining _small_ blocks
         // very fast
         // this will gradually be decreased once the max limit was reached
-        if block_time <= 2 {
+        if block_time <= 2 && !self.is_memory_only() {
             self.in_memory_limit = DEFAULT_HISTORY_LIMIT * 3;
             self.enforce_limits();
         }
@@ -709,6 +710,25 @@ mod tests {
         let mut storage = InMemoryBlockStates::default();
         storage.update_interval_mine_block_time(Duration::from_secs(1));
         assert_eq!(storage.in_memory_limit, DEFAULT_HISTORY_LIMIT * 3);
+    }
+
+    #[test]
+    fn test_interval_update_preserves_memory_only_limit() {
+        for limit in [1, 8, DEFAULT_HISTORY_LIMIT * 4] {
+            let mut storage = InMemoryBlockStates::new(limit, 0);
+            for number in 0..limit + 2 {
+                storage.insert(B256::from(U256::from(number)), StateDb::new(MemDb::default()));
+            }
+
+            for seconds in [3, 1, 2] {
+                storage.update_interval_mine_block_time(Duration::from_secs(seconds));
+                assert_eq!(storage.in_memory_limit, limit);
+                assert_eq!(storage.states.len(), limit);
+                assert!(storage.on_disk_states.is_empty());
+                assert!(storage.get_state(&B256::ZERO).is_none());
+                assert!(storage.get_state(&B256::from(U256::from(2))).is_some());
+            }
+        }
     }
 
     #[test]
