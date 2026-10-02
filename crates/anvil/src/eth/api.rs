@@ -36,12 +36,13 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, TxType, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::{EIP4844_TX_TYPE_ID, Encodable2718},
+    eip4844::DATA_GAS_PER_BLOB,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -109,7 +110,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::BlockEnv,
+    context::{Block as RevmBlock, BlockEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{HaltReason, Output},
@@ -1916,6 +1917,22 @@ impl EthApi<FoundryNetwork> {
                 available_funds -= value;
             }
             if gas_price > 0 {
+                // Blob gas is paid on top of execution gas, so reserve its maximum cost first. Like
+                // the call itself, fall back to the block's blob gas price when no cap is given.
+                if inner.minimal_tx_type() == TxType::Eip4844
+                    && let Some(hashes) = &inner.blob_versioned_hashes
+                {
+                    let max_fee_per_blob_gas = fees
+                        .max_fee_per_blob_gas
+                        .or_else(|| block_env.blob_gasprice())
+                        .unwrap_or_default();
+                    let blob_gas = U256::from(hashes.len() as u64 * DATA_GAS_PER_BLOB);
+                    let blob_cost = blob_gas.saturating_mul(U256::from(max_fee_per_blob_gas));
+                    if blob_cost >= available_funds {
+                        return Err(InvalidTransactionError::InsufficientFunds.into());
+                    }
+                    available_funds -= blob_cost;
+                }
                 // amount of gas the sender can afford with the `gas_price`
                 let allowance =
                     available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
