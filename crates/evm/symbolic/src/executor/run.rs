@@ -689,7 +689,7 @@ impl SymbolicExecutor {
                                 let mut steps = sequence.steps.clone();
                                 steps.push(step.clone());
 
-                                match outcome.status {
+                                let post_state = match outcome.status {
                                     CallStatus::Failure => {
                                         let (sequence, storage) =
                                             self.materialize_sequence(&steps, &outcome.state)?;
@@ -722,103 +722,45 @@ impl SymbolicExecutor {
                                         let mut reverted_state = sequence.state.clone();
                                         reverted_state
                                             .take_reverted_top_level_effects(outcome.state);
-                                        if symbolic_invariant_should_check(
-                                            steps.len(),
-                                            input.depth,
-                                            input.check_interval,
-                                        ) {
-                                            for mut invariant_outcome in self
-                                                .execute_invariant_check(
-                                                    input.executor,
-                                                    reverted_state.clone(),
-                                                    input.invariant_address,
-                                                    input.sender,
-                                                    input.invariant,
-                                                    after_invariant_for(steps.len()),
-                                                    &mut completed_paths,
-                                                )?
-                                            {
-                                                if invariant_outcome.failed {
-                                                    let (sequence, storage) = self
-                                                        .materialize_sequence(
-                                                            &steps,
-                                                            &invariant_outcome.state,
-                                                        )?;
-                                                    return Ok(
-                                                        SymbolicInvariantRunResult::Counterexample {
-                                                            kind: SymbolicInvariantCounterexampleKind::Predicate,
-                                                            sequence,
-                                                            storage,
-                                                            stats: self
-                                                                .stats_with_paths(completed_paths),
-                                                        },
-                                                    );
-                                                }
-                                                let mut state = reverted_state.clone();
-                                                state.take_noncommitting_check_state(
-                                                    &mut invariant_outcome.state,
-                                                );
-                                                next_frontier.push(SequencePath {
-                                                    state,
-                                                    steps: steps.clone(),
-                                                });
-                                            }
-                                        } else {
-                                            next_frontier.push(SequencePath {
-                                                state: reverted_state,
-                                                steps: steps.clone(),
+                                        reverted_state
+                                    }
+                                    CallStatus::Success => outcome.state,
+                                };
+                                if symbolic_invariant_should_check(
+                                    steps.len(),
+                                    input.depth,
+                                    input.check_interval,
+                                ) {
+                                    for mut invariant_outcome in self.execute_invariant_check(
+                                        input.executor,
+                                        post_state.clone(),
+                                        input.invariant_address,
+                                        input.sender,
+                                        input.invariant,
+                                        after_invariant_for(steps.len()),
+                                        &mut completed_paths,
+                                    )? {
+                                        if invariant_outcome.failed {
+                                            let (sequence, storage) = self.materialize_sequence(
+                                                &steps,
+                                                &invariant_outcome.state,
+                                            )?;
+                                            return Ok(SymbolicInvariantRunResult::Counterexample {
+                                                kind: SymbolicInvariantCounterexampleKind::Predicate,
+                                                sequence,
+                                                storage,
+                                                stats: self.stats_with_paths(completed_paths),
                                             });
                                         }
+                                        let mut state = post_state.clone();
+                                        state.take_noncommitting_check_state(
+                                            &mut invariant_outcome.state,
+                                        );
+                                        next_frontier
+                                            .push(SequencePath { state, steps: steps.clone() });
                                     }
-                                    CallStatus::Success => {
-                                        if symbolic_invariant_should_check(
-                                            steps.len(),
-                                            input.depth,
-                                            input.check_interval,
-                                        ) {
-                                            for mut invariant_outcome in self
-                                                .execute_invariant_check(
-                                                    input.executor,
-                                                    outcome.state.clone(),
-                                                    input.invariant_address,
-                                                    input.sender,
-                                                    input.invariant,
-                                                    after_invariant_for(steps.len()),
-                                                    &mut completed_paths,
-                                                )?
-                                            {
-                                                if invariant_outcome.failed {
-                                                    let (sequence, storage) = self
-                                                        .materialize_sequence(
-                                                            &steps,
-                                                            &invariant_outcome.state,
-                                                        )?;
-                                                    return Ok(
-                                                        SymbolicInvariantRunResult::Counterexample {
-                                                            kind: SymbolicInvariantCounterexampleKind::Predicate,
-                                                            sequence,
-                                                            storage,
-                                                            stats: self
-                                                                .stats_with_paths(completed_paths),
-                                                        },
-                                                    );
-                                                }
-                                                let mut state = outcome.state.clone();
-                                                state.take_noncommitting_check_state(
-                                                    &mut invariant_outcome.state,
-                                                );
-                                                next_frontier.push(SequencePath {
-                                                    state,
-                                                    steps: steps.clone(),
-                                                });
-                                            }
-                                        } else {
-                                            next_frontier.push(SequencePath {
-                                                state: outcome.state,
-                                                steps: steps.clone(),
-                                            });
-                                        }
-                                    }
+                                } else {
+                                    next_frontier.push(SequencePath { state: post_state, steps });
                                 }
 
                                 if completed_paths >= path_limit {
