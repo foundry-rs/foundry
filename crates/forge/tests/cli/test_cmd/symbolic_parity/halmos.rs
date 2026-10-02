@@ -11,7 +11,8 @@ use foundry_test_utils::{forgetest_init, str};
 // beyond confirming two identical `+=`/`-=` produce equal state. Kept to
 // exercise the symbolic invariant harness on a trivially preserved property;
 // the canonical Fundamental Equation of DAI variant lives below.
-forgetest_init!(minivat_linear_smoke_parity, |prj, cmd| {
+#[forgetest_init]
+fn minivat_linear_smoke_parity(prj: _, cmd: _) {
     skip_unless_z3!("minivat_linear_smoke_parity");
 
     prj.add_test(
@@ -64,7 +65,7 @@ Ran 1 test for test/MiniVatLinear.t.sol:MiniVatLinear
 [PASS] invariant_debtEqualsUrn() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // MakerDAO MiniVat — Fundamental Equation of DAI.
@@ -79,15 +80,14 @@ Ran 1 test for test/MiniVatLinear.t.sol:MiniVatLinear
 // products. The hard-arithmetic fallback can find concrete counterexamples,
 // but it cannot certify that every path is safe. Re-enable when nonlinear
 // invariant proofs are supported.
-forgetest_init!(
-    #[ignore = "engine gap: nonlinear bv-mul (Art * rate, symbolic*symbolic) returns solver unknown"]
-    minivat_fundamental_equation_parity,
-    |prj, cmd| {
-        skip_unless_z3!("minivat_fundamental_equation_parity");
+#[forgetest_init]
+#[ignore = "engine gap: nonlinear bv-mul (Art * rate, symbolic*symbolic) returns solver unknown"]
+fn minivat_fundamental_equation_parity(prj: _, cmd: _) {
+    skip_unless_z3!("minivat_fundamental_equation_parity");
 
-        prj.add_test(
-            "MiniVatFundamental.t.sol",
-            r#"
+    prj.add_test(
+        "MiniVatFundamental.t.sol",
+        r#"
 import "forge-std/Test.sol";
 
 contract MiniVat {
@@ -130,9 +130,7 @@ contract MiniVatFundamental is Test {
     }
 }
 "#,
-        );
+    );
 
-        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_dai"]))
-            .failure();
-    }
-);
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_dai"])).failure();
+}

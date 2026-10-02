@@ -799,7 +799,8 @@ fn ensure_delegate_signature(
     Err(format!("delegate signature does not recover {expected}"))
 }
 
-casttest!(safe_service_rejects_non_checksum_proposal_addresses, async |_prj, _cmd| {
+#[tokio::test(flavor = "multi_thread")]
+async fn safe_service_rejects_non_checksum_proposal_addresses() {
     // Cast serializes parsed Address values as checksums, so send malformed wire payloads
     // directly to the strict service to cover the validation boundary a remote client crosses.
     let safe = address!("1111111111111111111111111111111111111111");
@@ -850,9 +851,10 @@ casttest!(safe_service_rejects_non_checksum_proposal_addresses, async |_prj, _cm
         assert!(state.transaction.is_none(), "rejected proposal mutated transaction state");
         assert!(state.requests.is_empty(), "rejected proposal recorded a request");
     }
-});
+}
 
-casttest!(safe_commands_are_exposed, |_prj, cmd| {
+#[casttest]
+fn safe_commands_are_exposed(cmd: _) {
     let output =
         cmd.cast_fuse().args(["safe", "--help"]).assert_success().get_output().stdout_lossy();
     for command in [
@@ -867,9 +869,10 @@ casttest!(safe_commands_are_exposed, |_prj, cmd| {
     ] {
         assert!(output.contains(command), "expected `cast safe {command}` in help:\n{output}");
     }
-});
+}
 
-casttest!(safe_signing_commands_support_hardware_wallets, |_prj, cmd| {
+#[casttest]
+fn safe_signing_commands_support_hardware_wallets(cmd: _) {
     for command in ["create", "add-delegate", "remove-delegate", "propose", "sign", "execute"] {
         let output = cmd
             .cast_fuse()
@@ -880,9 +883,10 @@ casttest!(safe_signing_commands_support_hardware_wallets, |_prj, cmd| {
         assert!(output.contains("--ledger"), "expected Ledger support in help:\n{output}");
         assert!(output.contains("--trezor"), "expected Trezor support in help:\n{output}");
     }
-});
+}
 
-casttest!(safe_onchain_commands_support_tempo_transaction_options, |_prj, cmd| {
+#[casttest]
+fn safe_onchain_commands_support_tempo_transaction_options(cmd: _) {
     for command in ["create", "execute"] {
         let output = cmd
             .cast_fuse()
@@ -899,9 +903,10 @@ casttest!(safe_onchain_commands_support_tempo_transaction_options, |_prj, cmd| {
             "expected Tempo nonce-key support in help:\n{output}"
         );
     }
-});
+}
 
-casttest!(safe_create_honors_transaction_options, async |_prj, cmd| {
+#[casttest]
+async fn safe_create_honors_transaction_options(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -961,9 +966,10 @@ casttest!(safe_create_honors_transaction_options, async |_prj, cmd| {
         access_list[0].storage_keys,
         [b256!("5555555555555555555555555555555555555555555555555555555555555555")]
     );
-});
+}
 
-casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
+#[casttest]
+async fn safe_v1_4_1_lifecycle_uses_stateful_service(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -1211,9 +1217,10 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
         ],
         delegate,
     );
-});
+}
 
-casttest!(safe_execute_rejects_approved_hash_confirmation, async |_prj, cmd| {
+#[casttest]
+async fn safe_execute_rejects_approved_hash_confirmation(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
@@ -1258,9 +1265,10 @@ Safe transaction: 0x000000000000000000000000000000000000000000000000000000000000
 Error: approved-hash signatures (v = 1) are not supported by `cast safe execute`
 
 "#]]);
-});
+}
 
-casttest!(safe_execute_rejects_future_nonce, async |_prj, cmd| {
+#[casttest]
+async fn safe_execute_rejects_future_nonce(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
@@ -1286,9 +1294,10 @@ casttest!(safe_execute_rejects_future_nonce, async |_prj, cmd| {
 Error: Safe transaction nonce 1 does not match current Safe nonce 0
 
 "#]]);
-});
+}
 
-casttest!(safe_execute_rejects_stale_nonce, async |_prj, cmd| {
+#[casttest]
+async fn safe_execute_rejects_stale_nonce(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
@@ -1319,9 +1328,10 @@ casttest!(safe_execute_rejects_stale_nonce, async |_prj, cmd| {
 Error: Safe transaction nonce 0 does not match current Safe nonce 1
 
 "#]]);
-});
+}
 
-casttest!(safe_execute_rejects_approved_hash_with_stale_or_future_nonce, async |_prj, cmd| {
+#[casttest]
+async fn safe_execute_rejects_approved_hash_with_stale_or_future_nonce(cmd: _) {
     // A v = 1 confirmation must not make a transaction with a stale or future nonce
     // executable. Use a fresh node for each case so the no-broadcast assertions are
     // independent and a regression cannot hide behind state from the other case.
@@ -1392,9 +1402,10 @@ casttest!(safe_execute_rejects_approved_hash_with_stale_or_future_nonce, async |
             provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
         assert!(latest.transactions.as_transactions().unwrap().is_empty());
     }
-});
+}
 
-casttest!(safe_execute_packs_mixed_p256_confirmations, async |_prj, cmd| {
+#[casttest]
+async fn safe_execute_packs_mixed_p256_confirmations(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -1492,9 +1503,10 @@ casttest!(safe_execute_packs_mixed_p256_confirmations, async |_prj, cmd| {
         provider.get_block_by_number(BlockNumberOrTag::Latest).full().await.unwrap().unwrap();
     let submitted = block.transactions.as_transactions().unwrap().last().unwrap();
     assert_eq!(submitted.input(), expected_calldata.as_slice());
-});
+}
 
-casttest!(safe_service_mutations_emit_json_envelopes, async |_prj, cmd| {
+#[casttest]
+async fn safe_service_mutations_emit_json_envelopes(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
@@ -1538,9 +1550,10 @@ casttest!(safe_service_mutations_emit_json_envelopes, async |_prj, cmd| {
         .args(["--json", "safe", "sign", &safe, &safe_tx_hash])
         .args(signer_args)
         .assert_json_stdout(json_envelope(json!(signature)));
-});
+}
 
-casttest!(safe_list_delegates_follows_pagination, async |_prj, cmd| {
+#[casttest]
+async fn safe_list_delegates_follows_pagination(cmd: _) {
     let safe = address!("1111111111111111111111111111111111111111");
     let first = json!({
         "safe": safe,
@@ -1588,9 +1601,10 @@ casttest!(safe_list_delegates_follows_pagination, async |_prj, cmd| {
             server.endpoint(),
         ])
         .assert_json_stdout(json_envelope(json!([first, second])));
-});
+}
 
-casttest!(safe_list_delegates_rejects_external_next_page, async |_prj, cmd| {
+#[casttest]
+async fn safe_list_delegates_rejects_external_next_page(cmd: _) {
     let service = spawn_safe_service(json!({
         "count": 1,
         "next": "http://127.0.0.1:1/collect-api-key",
@@ -1612,9 +1626,10 @@ casttest!(safe_list_delegates_rejects_external_next_page, async |_prj, cmd| {
 Error: delegate pagination URL points outside the Transaction Service endpoint: http://127.0.0.1:1/collect-api-key
 
 "#]]);
-});
+}
 
-casttest!(safe_sign_rejects_service_selected_safe, async |_prj, cmd| {
+#[casttest]
+async fn safe_sign_rejects_service_selected_safe(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let expected = address!("1111111111111111111111111111111111111111");
@@ -1642,9 +1657,10 @@ casttest!(safe_sign_rejects_service_selected_safe, async |_prj, cmd| {
         .stderr_eq(format!(
             "Error: Transaction Service returned Safe {malicious}, expected {expected}\n"
         ));
-});
+}
 
-casttest!(safe_simulation_requires_executor, |_prj, cmd| {
+#[casttest]
+fn safe_simulation_requires_executor(cmd: _) {
     let safe = address!("1111111111111111111111111111111111111111").to_string();
     let safe_tx_hash = B256::ZERO.to_string();
 
@@ -1662,9 +1678,10 @@ Usage: cast[..] safe simulate --from <ADDRESS> --rpc-url <URL> <SAFE> <SAFE_TX_H
 For more information, try '--help'.
 
 "#]]);
-});
+}
 
-casttest!(safe_simulation_uses_executor_context, async |_prj, cmd| {
+#[casttest]
+async fn safe_simulation_uses_executor_context(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
@@ -1704,9 +1721,10 @@ casttest!(safe_simulation_uses_executor_context, async |_prj, cmd| {
                 "returnData": "0x0000000000000000000000003333333333333333333333333333333333333333",
             })));
     }
-});
+}
 
-casttest!(safe_simulation_rejects_reimbursed_transaction, async |_prj, cmd| {
+#[casttest]
+async fn safe_simulation_rejects_reimbursed_transaction(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
@@ -1751,9 +1769,10 @@ Safe transaction: 0x000000000000000000000000000000000000000000000000000000000000
 Error: cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas
 
 "#]]);
-});
+}
 
-casttest!(safe_simulation_call_target_checks_origin_and_sender, async |_prj, cmd| {
+#[casttest]
+async fn safe_simulation_call_target_checks_origin_and_sender(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let provider = handle.http_provider();
@@ -1877,4 +1896,4 @@ casttest!(safe_simulation_call_target_checks_origin_and_sender, async |_prj, cmd
             "gasUsed": "[..]",
             "returnData": expected_return_data,
         })));
-});
+}

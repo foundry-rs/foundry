@@ -897,6 +897,9 @@ impl Config {
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
+        // The project root anchors `fs_permissions` and the `foundry.toml` write guard, so inline
+        // config must not be able to move it.
+        config.root = self.root.clone();
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;

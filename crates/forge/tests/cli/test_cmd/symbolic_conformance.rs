@@ -86,7 +86,8 @@ all symbolic paths reverted
     }
 }
 
-forgetest_init!(symbolic_conformance_block_cheatcodes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_block_cheatcodes(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -122,9 +123,10 @@ contract SymbolicConformanceBlock is Test {
 [PASS] checkBlock(uint256,uint256,uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_vm_store_load_symbolic_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_vm_store_load_symbolic_value(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -157,9 +159,10 @@ contract SymbolicConformanceStoreLoad is Test {
 [PASS] checkStoreLoad(bytes32)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_dstest_fail_store_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_dstest_fail_store_is_counterexample(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -211,9 +214,10 @@ checkFailSignal(uint256)
 args=[7]
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_revert_all_is_reported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_revert_all_is_reported(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -247,9 +251,10 @@ RevertAll
 all symbolic paths reverted
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_riddle_finds_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_riddle_finds_counterexample(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -296,9 +301,10 @@ check_riddle(uint256)
     );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_feature_matrix, |prj, _cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_feature_matrix(prj: _) {
     if should_skip() {
         return;
     }
@@ -505,9 +511,10 @@ contract SymbolicConformanceHalmosFeatureMatrix is Test {
         let stdout = output.get_output().stdout_lossy();
         assert_conformance_matrix_case(&stdout, case);
     }
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_simple_total_price, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_simple_total_price(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -574,9 +581,10 @@ checkBuggyTotal(uint96,uint32)
 [PASS] checkFixedTotal(uint96,uint32)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_simple_power_of_two_loop, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_simple_power_of_two_loop(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -621,9 +629,10 @@ contract SymbolicConformanceHalmosPowerOfTwo {
 "#]],
     );
     assert!(!stdout.contains("symbolic loop bound exceeded"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_simple_vault_share_price, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_simple_vault_share_price(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -716,9 +725,10 @@ checkMintCanDiluteSharePrice()
     );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_simple_fork_style_setup, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_simple_fork_style_setup(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -775,9 +785,10 @@ contract SymbolicConformanceHalmosForkSetup is Test {
     );
     assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_simple_symbolic_signature_replay, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_simple_symbolic_signature_replay(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -863,9 +874,10 @@ checkCannotVoteTwiceWithAlternateSignature(uint256,address)
     );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
     assert!(!stdout.contains("Stuck"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_multicaller_batched_calls, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_multicaller_batched_calls(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1002,9 +1014,10 @@ args=[13]
     );
     assert!(!stdout.contains("unsupported external CALL"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_invariant_simple_state_sequence, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_invariant_simple_state_sequence(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1110,9 +1123,10 @@ args=[167]
 args=[227]
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_halmos_invariant_reentrancy_exploit, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_halmos_invariant_reentrancy_exploit(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1217,9 +1231,10 @@ withdrawOne()
 "#]],
     );
     assert!(!stdout.contains("Stuck"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_transient_storage, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_transient_storage(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1252,9 +1267,10 @@ contract SymbolicConformanceTransient {
 [PASS] checkTransient(bytes32)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_mapping_storage_keys, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_mapping_storage_keys(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1288,9 +1304,10 @@ contract SymbolicConformanceMappingStorage {
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_storage_breadth, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_storage_breadth(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1373,9 +1390,10 @@ contract SymbolicConformanceStorageBreadth is Test {
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_conformance_stateless_arithmetic_and_opcodes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_stateless_arithmetic_and_opcodes(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1415,9 +1433,10 @@ contract SymbolicConformanceArithmetic {
 [PASS] checkArithmetic(uint256,int8,bytes32)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_dynamic_abi_matrix, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_dynamic_abi_matrix(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1455,9 +1474,10 @@ contract SymbolicConformanceDynamicAbi {
 [PASS] checkDynamic(bytes,string,uint256[],(bytes,uint256[]))
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_external_call_and_create, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_external_call_and_create(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1526,9 +1546,10 @@ contract SymbolicConformanceCalls is Test {
 [PASS] checkCreate(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_symbolic_selector_backdoor, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_symbolic_selector_backdoor(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1593,9 +1614,10 @@ args=[0x
 42
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_stateful_erc20_invariant, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_stateful_erc20_invariant(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1651,9 +1673,10 @@ contract SymbolicConformanceErc20Invariant is Test {
 [PASS] invariant_totalSupplyConstant()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_stateful_erc721_invariant, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_stateful_erc721_invariant(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1759,9 +1782,10 @@ contract SymbolicConformanceErc721Invariant is Test {
 [PASS] invariant_mintedOwnerIsNeverZero()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_conformance_stateful_reentrancy_sequence, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_conformance_stateful_reentrancy_sequence(prj: _, cmd: _) {
     if should_skip() {
         return;
     }
@@ -1846,4 +1870,4 @@ contract SymbolicConformanceReentrancyInvariant is Test {
 [PASS] invariant_vaultBacksHandlerBalance()
 "#]],
     );
-});
+}

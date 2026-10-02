@@ -162,10 +162,18 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
-    match tempo.session_signer_for_wallet(wallet, chain_id)? {
-        Some(session) => Ok((None, Some(session.access_key))),
-        None => wallet.maybe_signer_for_chain(chain_id).await,
+    let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
+        Some(session) => (None, Some(session.access_key)),
+        None => wallet.maybe_signer_for_chain(chain_id).await?,
+    };
+    if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match Tempo account {}",
+            access_key.account()
+        );
     }
+    Ok((signer, access_key))
 }
 
 pub(crate) fn ensure_session_not_browser(tempo: &TempoOpts, browser: bool) -> Result<()> {
@@ -198,14 +206,20 @@ pub(crate) async fn is_tempo_hardfork_active<P: Provider<TempoNetwork>>(
     provider: &P,
     hardfork: TempoHardfork,
 ) -> Result<bool> {
-    match provider.is_hardfork_active(hardfork).await {
-        Ok(active) => Ok(active),
-        Err(err) if is_rpc_method_not_found(&err) => {
-            match anvil_tempo_hardfork_active(provider, hardfork).await {
-                Ok(Some(active)) => Ok(active),
-                _ => Err(err.into()),
-            }
-        }
+    Ok(active_tempo_hardfork(provider).await? >= hardfork)
+}
+
+/// Returns the Tempo hardfork active on the RPC, falling back to `anvil_nodeInfo` for nodes that
+/// do not serve the fork schedule.
+pub(crate) async fn active_tempo_hardfork<P: Provider<TempoNetwork>>(
+    provider: &P,
+) -> Result<TempoHardfork> {
+    match provider.get_active_hardfork().await {
+        Ok(hardfork) => Ok(hardfork),
+        Err(err) if is_rpc_method_not_found(&err) => match anvil_tempo_hardfork(provider).await {
+            Ok(Some(hardfork)) => Ok(hardfork),
+            _ => Err(err.into()),
+        },
         Err(err) => Err(err.into()),
     }
 }
@@ -227,21 +241,18 @@ pub(crate) async fn ensure_tempo_precompile_active<P: Provider<TempoNetwork>>(
     Ok(())
 }
 
-async fn anvil_tempo_hardfork_active<P: Provider<TempoNetwork>>(
+async fn anvil_tempo_hardfork<P: Provider<TempoNetwork>>(
     provider: &P,
-    hardfork: TempoHardfork,
-) -> Result<Option<bool>, TransportError> {
+) -> Result<Option<TempoHardfork>, TransportError> {
     let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await?;
-    Ok(active_from_anvil_node_info(&info, hardfork))
+    Ok(hardfork_from_anvil_node_info(&info))
 }
 
-fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) -> Option<bool> {
-    (info.network.as_deref() == Some("tempo")).then(|| {
-        info.hard_fork
-            .as_deref()
-            .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
-            .is_some_and(|active_hardfork| active_hardfork >= hardfork)
-    })
+fn hardfork_from_anvil_node_info(info: &AnvilNodeInfo) -> Option<TempoHardfork> {
+    if info.network.as_deref() != Some("tempo") {
+        return None;
+    }
+    info.hard_fork.as_deref()?.parse().ok()
 }
 
 /// Connector for reusing an already-configured RPC transport.
@@ -356,6 +367,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::ErrorPayload;
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
 
@@ -384,20 +396,32 @@ mod tests {
     }
 
     #[test]
-    fn active_from_anvil_node_info_requires_tempo_network() {
+    fn hardfork_from_anvil_node_info_requires_tempo_network() {
         let info = |network: &str, hard_fork: &str| AnvilNodeInfo {
             network: Some(network.to_string()),
             hard_fork: Some(hard_fork.to_string()),
         };
-        let tempo_t3 = info("tempo", "T3");
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T2), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
-        assert_eq!(
-            active_from_anvil_node_info(&info("tempo", "T11"), TempoHardfork::T11),
-            Some(true)
-        );
-        assert_eq!(active_from_anvil_node_info(&info("ethereum", "T3"), TempoHardfork::T3), None);
+        assert_eq!(hardfork_from_anvil_node_info(&info("tempo", "T3")), Some(TempoHardfork::T3));
+        assert_eq!(hardfork_from_anvil_node_info(&info("tempo", "T11")), Some(TempoHardfork::T11));
+        assert_eq!(hardfork_from_anvil_node_info(&info("tempo", "FutureFork")), None);
+        assert_eq!(hardfork_from_anvil_node_info(&info("ethereum", "T3")), None);
+    }
+
+    #[tokio::test]
+    async fn anvil_node_info_fallback_detects_hardfork_activation() {
+        let asserter = Asserter::new();
+        for _ in 0..2 {
+            asserter.push_failure(ErrorPayload {
+                code: -32601,
+                message: "Method not found".into(),
+                data: None,
+            });
+            asserter.push_success(&serde_json::json!({ "network": "tempo", "hardFork": "T3" }));
+        }
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap());
+        assert!(!is_tempo_hardfork_active(&provider, TempoHardfork::T4).await.unwrap());
     }
 
     #[tokio::test]

@@ -26,7 +26,9 @@ impl SymExpr {
         if let Some(word) = self.as_const() {
             return SymBoolExpr::constant(cx, word == address_word(address));
         }
-        let Some(terms) = self.address_byte_terms(cx) else {
+        let Some(terms) =
+            (12..32).map(|index| self.byte_term(cx, index)).collect::<Option<Vec<_>>>()
+        else {
             let address = Self::constant(cx, address_word(address));
             return SymBoolExpr::eq(cx, self.clone(), address);
         };
@@ -101,10 +103,6 @@ impl SymExpr {
         }
     }
 
-    fn address_byte_terms(&self, cx: &mut SymCx) -> Option<Vec<Self>> {
-        (12..32).map(|index| self.byte_term(cx, index)).collect()
-    }
-
     fn address_byte_terms_for_equivalence(&self) -> Option<Vec<Self>> {
         (12..32).map(|index| self.extracted_byte_source(index)).collect()
     }
@@ -128,11 +126,11 @@ pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
 }
 
 pub(crate) fn address_word(address: Address) -> U256 {
-    U256::from_be_bytes(address.into_word().0)
+    address.into_word().into()
 }
 
 pub(crate) fn word_to_address(value: U256) -> Address {
-    Address::from_word(value.to_be_bytes::<32>().into())
+    Address::from_word(value.into())
 }
 
 pub(crate) fn stable_symbol(cx: &mut SymCx, prefix: &'static str, input: &[u8]) -> Symbol {
