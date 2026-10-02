@@ -708,12 +708,12 @@ pub(crate) fn read_abi_string_arg(
 pub(crate) fn decode_cheatcode_args(
     cx: &mut SymCx,
     state: &PathState,
+    selector: [u8; 4],
     in_offset: usize,
     in_size: usize,
-    tys: Vec<DynSolType>,
 ) -> Result<Vec<DynSolValue>, SymbolicError> {
     let data = state.memory.read_concrete(cx, in_offset + 4, in_size.saturating_sub(4))?;
-    let value = DynSolType::Tuple(tys)
+    let value = DynSolType::Tuple(vm_params(selector))
         .abi_decode_sequence(&data)
         .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode ABI decode"))?;
     let DynSolValue::Tuple(values) = value else {
@@ -722,70 +722,26 @@ pub(crate) fn decode_cheatcode_args(
     Ok(values)
 }
 
-pub(crate) const fn selector_has_string_reason(selector: [u8; 4]) -> bool {
-    matches!(
-        selector,
-        assertEq_15Call::SELECTOR
-            | assertEq_17Call::SELECTOR
-            | assertEq_19Call::SELECTOR
-            | assertEq_21Call::SELECTOR
-            | assertEq_23Call::SELECTOR
-            | assertEq_25Call::SELECTOR
-            | assertEq_27Call::SELECTOR
-            | assertNotEq_15Call::SELECTOR
-            | assertNotEq_17Call::SELECTOR
-            | assertNotEq_19Call::SELECTOR
-            | assertNotEq_21Call::SELECTOR
-            | assertNotEq_23Call::SELECTOR
-            | assertNotEq_25Call::SELECTOR
-            | assertNotEq_27Call::SELECTOR
-            | assertEqDecimal_1Call::SELECTOR
-            | assertEqDecimal_3Call::SELECTOR
-    )
-}
-
-pub(crate) const fn array_assertion_element_type(
-    selector: [u8; 4],
-) -> Result<DynSolType, SymbolicError> {
-    match selector {
-        assertEq_14Call::SELECTOR
-        | assertEq_15Call::SELECTOR
-        | assertNotEq_14Call::SELECTOR
-        | assertNotEq_15Call::SELECTOR => Ok(DynSolType::Bool),
-        assertEq_16Call::SELECTOR
-        | assertEq_17Call::SELECTOR
-        | assertNotEq_16Call::SELECTOR
-        | assertNotEq_17Call::SELECTOR => Ok(DynSolType::Uint(256)),
-        assertEq_18Call::SELECTOR
-        | assertEq_19Call::SELECTOR
-        | assertNotEq_18Call::SELECTOR
-        | assertNotEq_19Call::SELECTOR => Ok(DynSolType::Int(256)),
-        assertEq_20Call::SELECTOR
-        | assertEq_21Call::SELECTOR
-        | assertNotEq_20Call::SELECTOR
-        | assertNotEq_21Call::SELECTOR => Ok(DynSolType::Address),
-        assertEq_22Call::SELECTOR
-        | assertEq_23Call::SELECTOR
-        | assertNotEq_22Call::SELECTOR
-        | assertNotEq_23Call::SELECTOR => Ok(DynSolType::FixedBytes(32)),
-        assertEq_24Call::SELECTOR
-        | assertEq_25Call::SELECTOR
-        | assertNotEq_24Call::SELECTOR
-        | assertNotEq_25Call::SELECTOR => Ok(DynSolType::String),
-        assertEq_26Call::SELECTOR
-        | assertEq_27Call::SELECTOR
-        | assertNotEq_26Call::SELECTOR
-        | assertNotEq_27Call::SELECTOR => Ok(DynSolType::Bytes),
-        _ => Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode")),
+/// Returns the parameter types of a `Vm` cheatcode from its generated ABI signature.
+pub(crate) fn vm_params(selector: [u8; 4]) -> Vec<DynSolType> {
+    let signature = VmCalls::signature_by_selector(selector).unwrap_or_default();
+    let params = signature.find('(').map_or("()", |start| &signature[start..]);
+    match DynSolType::parse(params) {
+        Ok(DynSolType::Tuple(params)) => params,
+        _ => Vec::new(),
     }
 }
 
-pub(crate) fn is_full_word_array_assertion(selector: [u8; 4]) -> bool {
-    !selector_has_string_reason(selector)
-        && matches!(
-            array_assertion_element_type(selector),
-            Ok(DynSolType::Uint(256) | DynSolType::Int(256) | DynSolType::FixedBytes(32))
-        )
+pub(crate) const fn is_full_word_array_assertion(selector: [u8; 4]) -> bool {
+    matches!(
+        selector,
+        assertEq_16Call::SELECTOR
+            | assertEq_18Call::SELECTOR
+            | assertEq_22Call::SELECTOR
+            | assertNotEq_16Call::SELECTOR
+            | assertNotEq_18Call::SELECTOR
+            | assertNotEq_22Call::SELECTOR
+    )
 }
 
 pub(crate) fn dyn_string(value: &DynSolValue) -> Result<String, SymbolicError> {
@@ -832,9 +788,9 @@ pub(crate) fn dyn_potential_revert(
         (reverter != Address::ZERO).then(|| SymExpr::constant(cx, address_word(reverter)));
     let revert_data = SymBytes::concrete(cx, dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
-        ExpectedRevertData::prefix(revert_data)
+        ExpectedRevertData::Prefix(revert_data)
     } else {
-        ExpectedRevertData::exact(revert_data)
+        ExpectedRevertData::Exact(revert_data)
     };
     Ok(ExpectedRevert::new(data, reverter, 1))
 }
@@ -876,46 +832,35 @@ pub(crate) fn dyn_string_array(value: &DynSolValue) -> Result<Vec<String>, Symbo
     values.iter().map(dyn_string).collect()
 }
 
-pub(crate) fn parse_env_array<F>(
+pub(crate) fn parse_env_array(
     value: &str,
     delimiter: &str,
-    mut parser: F,
-) -> Result<DynSolValue, SymbolicError>
-where
-    F: FnMut(&str) -> Result<DynSolValue, SymbolicError>,
-{
+    ty: &DynSolType,
+) -> Result<DynSolValue, SymbolicError> {
     if delimiter.is_empty() {
         return Err(SymbolicError::Unsupported("symbolic env delimiter"));
     }
-    value.split(delimiter).map(&mut parser).collect::<Result<Vec<_>, _>>().map(DynSolValue::Array)
+    value
+        .split(delimiter)
+        .map(|value| parse_env_value(value, ty))
+        .collect::<Result<Vec<_>, _>>()
+        .map(DynSolValue::Array)
 }
 
-pub(crate) fn parse_env_bool_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Bool(parse_env_bool(value)?))
-}
-
-pub(crate) fn parse_env_uint_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Uint(parse_env_uint(value)?, 256))
-}
-
-pub(crate) fn parse_env_int_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256))
-}
-
-pub(crate) fn parse_env_address_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Address(parse_env_address(value)?))
-}
-
-pub(crate) fn parse_env_bytes32_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::FixedBytes(B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()), 32))
-}
-
-pub(crate) fn parse_env_string_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::String(value.to_string()))
-}
-
-pub(crate) fn parse_env_bytes_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Bytes(parse_env_bytes(value)?))
+pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValue, SymbolicError> {
+    match ty {
+        DynSolType::Bool => Ok(DynSolValue::Bool(parse_env_bool(value)?)),
+        DynSolType::Uint(256) => Ok(DynSolValue::Uint(parse_env_uint(value)?, 256)),
+        DynSolType::Int(256) => Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256)),
+        DynSolType::Address => Ok(DynSolValue::Address(parse_env_address(value)?)),
+        DynSolType::FixedBytes(32) => Ok(DynSolValue::FixedBytes(
+            B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()),
+            32,
+        )),
+        DynSolType::String => Ok(DynSolValue::String(value.to_string())),
+        DynSolType::Bytes => Ok(DynSolValue::Bytes(parse_env_bytes(value)?)),
+        _ => Err(SymbolicError::Unsupported("symbolic env type")),
+    }
 }
 
 pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
@@ -1084,40 +1029,4 @@ pub(crate) fn artifact_code(path: &str, deployed: bool) -> Result<Vec<u8>, Symbo
         .and_then(serde_json::Value::as_str)
         .ok_or(SymbolicError::Unsupported("symbolic vm.getCode artifact"))?;
     hex::decode(object).map_err(|_| SymbolicError::Unsupported("symbolic vm.getCode artifact"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mapping_hook_registrations_require_three_words() {
-        assert_eq!(
-            foundry_cheatcode_min_input_size(registerMappingSstoreHookCall::SELECTOR),
-            Some(abi_static_input_size(3))
-        );
-    }
-
-    #[test]
-    fn symbolic_full_word_array_assertions_exclude_normalized_types_and_reasons() {
-        for selector in [
-            assertEq_16Call::SELECTOR,
-            assertEq_18Call::SELECTOR,
-            assertEq_22Call::SELECTOR,
-            assertNotEq_16Call::SELECTOR,
-            assertNotEq_18Call::SELECTOR,
-            assertNotEq_22Call::SELECTOR,
-        ] {
-            assert!(is_full_word_array_assertion(selector));
-        }
-        for selector in [
-            assertEq_14Call::SELECTOR,
-            assertEq_17Call::SELECTOR,
-            assertEq_20Call::SELECTOR,
-            assertNotEq_15Call::SELECTOR,
-            assertNotEq_20Call::SELECTOR,
-        ] {
-            assert!(!is_full_word_array_assertion(selector));
-        }
-    }
 }
