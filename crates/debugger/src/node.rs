@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, Bytes, hex, map::AddressHashMap};
 use foundry_evm_core::precompiles;
-use foundry_evm_traces::{CallKind, CallTrace, CallTraceArena};
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{
-    CallTraceStep, DecodedCallTrace, DecodedTraceStep, TraceMemberOrder,
+use foundry_evm_traces::{
+    CallKind, CallTrace, CallTraceArena, CallTraceStep, DecodedCallTrace, DecodedTraceStep,
+    TraceMemberOrder,
 };
+use revm::bytecode::opcode::OpCode;
 use serde::{Deserialize, Serialize};
 
 const PRECOMPILES_TRACE_LABEL: &str = "PRECOMPILES";
@@ -303,9 +303,8 @@ const fn known_precompile_name(address: Address) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm_traces::CallTraceNode;
+    use foundry_evm_traces::{CallTraceNode, DecodedCallData, DecodedInternalCall};
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{DecodedCallData, DecodedInternalCall};
 
     fn step(pc: usize) -> CallTraceStep {
         CallTraceStep {
