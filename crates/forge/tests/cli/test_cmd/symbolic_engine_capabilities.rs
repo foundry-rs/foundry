@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str};
 // Vault that updates state AFTER the external call. An Attacker contract
 // reenters `withdraw` from its `receive` function and drains more than its
 // deposit. The symbolic engine must follow the cross-contract call stack.
-forgetest_init!(reentrancy_dao_classic, |prj, cmd| {
+#[forgetest_init]
+fn reentrancy_dao_classic(prj: _, cmd: _) {
     skip_unless_z3!("reentrancy_dao_classic");
 
     prj.add_test(
@@ -82,7 +83,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // tx.origin auth bypass.
@@ -90,7 +91,8 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // A contract gates a sensitive action on `tx.origin == owner` instead of
 // `msg.sender == owner`. Any intermediary contract called by the owner can
 // trigger the action — symbolic execution must find that path.
-forgetest_init!(tx_origin_auth_bypass, |prj, cmd| {
+#[forgetest_init]
+fn tx_origin_auth_bypass(prj: _, cmd: _) {
     skip_unless_z3!("tx_origin_auth_bypass");
 
     prj.add_test(
@@ -158,7 +160,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // ecrecover basic modeling — does the engine support symbolic ecrecover?
@@ -167,7 +169,8 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // If the engine models ecrecover symbolically, it should find a witness; if it
 // abstracts it, this test will instead Stuck. Either way, the assertion is
 // designed so a correct symbolic ecrecover produces a [FAIL] counterexample.
-forgetest_init!(ecrecover_basic_modeling, |prj, cmd| {
+#[forgetest_init]
+fn ecrecover_basic_modeling(prj: _, cmd: _) {
     skip_unless_z3!("ecrecover_basic_modeling");
 
     prj.add_test(
@@ -203,7 +206,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Solady-style `min`/`max` identities — linear small-library proof.
@@ -213,7 +216,8 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // so Z3 proves it instantly. We deliberately avoid `mulDiv`-style nonlinear
 // equivalence, which causes Z3 to return `unknown` even on uint8 inputs —
 // that's a separate engine/solver capability to track.
-forgetest_init!(solady_min_max_identities_pass, |prj, cmd| {
+#[forgetest_init]
+fn solady_min_max_identities_pass(prj: _, cmd: _) {
     skip_unless_z3!("solady_min_max_identities_pass");
 
     prj.add_test(
@@ -252,7 +256,7 @@ Ran 1 test for test/SoladyMinMax.t.sol:SoladyMinMax
 [PASS] checkMinMaxIdentities(uint256,uint256) ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // EVM word-ring distributivity — nonlinear proof without overflow assumptions.
@@ -260,7 +264,8 @@ Ran 1 test for test/SoladyMinMax.t.sol:SoladyMinMax
 // Addition and multiplication form a ring modulo 2^256. This identity must hold even when any
 // intermediate operation wraps; proving it exercises exact nonlinear algebra rather than an
 // unbounded-integer approximation.
-forgetest_init!(word_ring_distributivity_passes, |prj, cmd| {
+#[forgetest_init]
+fn word_ring_distributivity_passes(prj: _, cmd: _) {
     skip_unless_z3!("word_ring_distributivity_passes");
 
     prj.add_test(
@@ -286,7 +291,7 @@ Ran 1 test for test/WordRingDistributivity.t.sol:WordRingDistributivity
 [PASS] checkDistributivity(uint256,uint256,uint256) ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Cancun transient storage (TLOAD / TSTORE).
@@ -294,7 +299,8 @@ Ran 1 test for test/WordRingDistributivity.t.sol:WordRingDistributivity
 // Verifies symbolic semantics: `TSTORE` is visible within a transaction but
 // invisible across calls' state (in this minimal harness we just round-trip
 // within one external call).
-forgetest_init!(cancun_transient_storage, |prj, cmd| {
+#[forgetest_init]
+fn cancun_transient_storage(prj: _, cmd: _) {
     skip_unless_z3!("cancun_transient_storage");
 
     prj.add_test(
@@ -323,14 +329,15 @@ Ran 1 test for test/CancunTransient.t.sol:CancunTransient
 [PASS] checkTloadAfterTstore(uint256) ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Shanghai PUSH0 opcode.
 // ---------------------------------------------------------------------------
 // Trivial sanity check that a contract using `PUSH0` is executable under the
 // symbolic engine.
-forgetest_init!(push0_shanghai, |prj, cmd| {
+#[forgetest_init]
+fn push0_shanghai(prj: _, cmd: _) {
     skip_unless_z3!("push0_shanghai");
 
     prj.add_test(
@@ -357,7 +364,7 @@ Ran 1 test for test/Push0Shanghai.t.sol:Push0Shanghai
 [PASS] checkZeroIsZero() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Byteswap involution — small-library bitwise proof.
@@ -366,7 +373,8 @@ Ran 1 test for test/Push0Shanghai.t.sol:Push0Shanghai
 // symbolic uint16. Linear/bitwise, so Z3 proves instantly. Replacement for
 // the originally-proposed Solady log2 bit-hack, which is nonlinear and times
 // out the solver in the same way mulDiv equivalence does.
-forgetest_init!(byteswap_uint16_involution_passes, |prj, cmd| {
+#[forgetest_init]
+fn byteswap_uint16_involution_passes(prj: _, cmd: _) {
     skip_unless_z3!("byteswap_uint16_involution_passes");
 
     prj.add_test(
@@ -392,14 +400,15 @@ Ran 1 test for test/ByteswapInvolution.t.sol:ByteswapInvolution
 [PASS] checkInvolution(uint16) ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Cancun MCOPY — symbolic memory copy.
 // ---------------------------------------------------------------------------
 // Verifies that MCOPY (Cancun-era memory-to-memory copy opcode) round-trips
 // a symbolic word through scratch memory correctly.
-forgetest_init!(mcopy_cancun_roundtrip, |prj, cmd| {
+#[forgetest_init]
+fn mcopy_cancun_roundtrip(prj: _, cmd: _) {
     skip_unless_z3!("mcopy_cancun_roundtrip");
 
     prj.add_test(
@@ -429,7 +438,7 @@ Ran 1 test for test/McopyCancun.t.sol:McopyCancun
 [PASS] checkMcopyRoundtrip(bytes32) ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Cancun BLOBHASH / BLOBBASEFEE — opcode accessibility.
@@ -437,7 +446,8 @@ Ran 1 test for test/McopyCancun.t.sol:McopyCancun
 // Sanity check that both Cancun blob opcodes execute under symbolic
 // execution. We don't assert specific values (those depend on context);
 // only that they're not rejected as unsupported.
-forgetest_init!(cancun_blob_opcodes_accessible, |prj, cmd| {
+#[forgetest_init]
+fn cancun_blob_opcodes_accessible(prj: _, cmd: _) {
     skip_unless_z3!("cancun_blob_opcodes_accessible");
 
     prj.add_test(
@@ -470,12 +480,13 @@ Ran 1 test for test/CancunBlobOps.t.sol:CancunBlobOps
 [PASS] checkBlobOpcodes() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Istanbul CHAINID / SELFBALANCE — opcode accessibility.
 // ---------------------------------------------------------------------------
-forgetest_init!(istanbul_chainid_selfbalance, |prj, cmd| {
+#[forgetest_init]
+fn istanbul_chainid_selfbalance(prj: _, cmd: _) {
     skip_unless_z3!("istanbul_chainid_selfbalance");
 
     prj.add_test(
@@ -505,7 +516,7 @@ Ran 1 test for test/IstanbulOps.t.sol:IstanbulOps
 [PASS] checkChainIdAndSelfBalance() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // SDIV signed-overflow corner case — `MIN_INT256 / -1` returns `MIN_INT256`.
@@ -513,7 +524,8 @@ Ran 1 test for test/IstanbulOps.t.sol:IstanbulOps
 // Per EVM spec, signed division has no real overflow: dividing the most-
 // negative int256 by -1 wraps back to itself. Symbolic engine must model
 // this exactly.
-forgetest_init!(sdiv_min_int_overflow_semantics, |prj, cmd| {
+#[forgetest_init]
+fn sdiv_min_int_overflow_semantics(prj: _, cmd: _) {
     skip_unless_z3!("sdiv_min_int_overflow_semantics");
 
     prj.add_test(
@@ -542,7 +554,7 @@ Ran 1 test for test/SdivMinInt.t.sol:SdivMinInt
 [PASS] checkSdivMinByNegOne() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // EXP small bounded — engine handles modular exponentiation.
@@ -551,7 +563,8 @@ Ran 1 test for test/SdivMinInt.t.sol:SdivMinInt
 // concretely unroll. This is the smallest non-trivial EXP check that won't
 // time out the solver (full nonlinear EXP equivalence is out of scope, the
 // same way mulDiv equivalence is).
-forgetest_init!(exp_small_bounded, |prj, cmd| {
+#[forgetest_init]
+fn exp_small_bounded(prj: _, cmd: _) {
     skip_unless_z3!("exp_small_bounded");
 
     prj.add_test(
@@ -581,12 +594,13 @@ Ran 1 test for test/ExpSmallBounded.t.sol:ExpSmallBounded
 [PASS] checkExpSmall(uint8) ([METRICS])
 ...
 "#]]);
-});
+}
 
 // ---------------------------------------------------------------------------
 // Pranked CALL value transfers debit the effective caller.
 // ---------------------------------------------------------------------------
-forgetest_init!(pranked_value_transfer_roundtrip, |prj, cmd| {
+#[forgetest_init]
+fn pranked_value_transfer_roundtrip(prj: _, cmd: _) {
     skip_unless_z3!("pranked_value_transfer_roundtrip");
 
     prj.add_test(
@@ -645,9 +659,10 @@ Ran 1 test for test/PrankedValueTransfer.t.sol:PrankedValueTransfer
 [PASS] checkDepositWithdrawRoundtrip(uint96) ([METRICS])
 ...
 "#]]);
-});
+}
 
-forgetest_init!(pranked_self_value_transfer, |prj, cmd| {
+#[forgetest_init]
+fn pranked_self_value_transfer(prj: _, cmd: _) {
     skip_unless_z3!("pranked_self_value_transfer");
 
     prj.add_test(
@@ -684,4 +699,4 @@ Ran 1 test for test/PrankedSelfValueTransfer.t.sol:PrankedSelfValueTransfer
 [PASS] checkSelfTransferPreservesBalance(uint96) ([METRICS])
 ...
 "#]]);
-});
+}

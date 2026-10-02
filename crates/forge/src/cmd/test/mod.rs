@@ -39,7 +39,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
+    compile::{ProjectCompiler, compile_abi_project_cached},
     external_compiler::is_external_artifact,
     fs, sh_status, sh_warn, shell,
 };
@@ -1499,6 +1499,11 @@ impl TestArgs {
             ProjectCompiler::new()
                 .external_compilers(config)
                 .files(sources.iter().cloned())
+                .source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
                 .quiet(true),
         )?;
         if output.has_compiler_errors() {
@@ -1650,7 +1655,7 @@ impl TestArgs {
         self.apply_test_config_overrides(&mut config);
 
         // Set up the project.
-        let mut project = config.project()?;
+        let project = config.project()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1693,10 +1698,22 @@ impl TestArgs {
             } else {
                 compiler
             };
-            (compile_abi_project(&mut project, compiler)?, BTreeSet::new(), None)
+            // Listing must not replace full artifacts with ABI-only ones, which later cached
+            // builds would treat as fresh.
+            let mut project = config.create_project(config.cache, true)?;
+            (compile_abi_project_cached(&mut project, compiler)?, BTreeSet::new(), None)
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
+            let compiler = if filter.is_empty() {
+                compiler
+            } else {
+                compiler.source_order_fallback(
+                    source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS).chain(
+                        source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS),
+                    ),
+                )
+            };
             let output = compiler.files(files.clone()).compile(&project);
             let output = if should_mutate {
                 output.wrap_err(
@@ -1884,6 +1901,9 @@ impl TestArgs {
             // Per-pass summaries are suppressed in `run_tests_inner`.
             self.print_summary(&outcome, multi_pass_timer.elapsed())?;
         }
+
+        // Record failures once after merging all network passes, including successful runs.
+        persist_run_failures(&config_for_mutation, &outcome);
 
         if let Some(replay) = &execution.replay_symbolic_artifact {
             let target = &replay.artifact.test;
@@ -2462,7 +2482,8 @@ impl TestArgs {
             builder =
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
-        if decode_internal {
+        // The debugger resolves frame identities before decoding internal calls.
+        if decode_internal && !self.debug {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
@@ -2747,9 +2768,6 @@ impl TestArgs {
             }
             outcome.json_file_results = Some(results);
         }
-
-        // Persist test run failures to enable replaying.
-        persist_run_failures(&config, &outcome);
 
         Ok(outcome)
     }
@@ -3390,9 +3408,11 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
     LastRunFailures { test_pattern, failures: None }
 }
 
-/// Persist filter with last test run failures (only if there's any failure).
+/// Replace the last run failures, clearing the record when the run succeeds.
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
-    if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
+    if outcome.failed() == 0 {
+        let _ = fs::remove_file(&config.test_failures_file);
+    } else if fs::create_file(&config.test_failures_file).is_ok() {
         let failures = outcome
             .results
             .iter()

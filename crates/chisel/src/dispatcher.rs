@@ -576,7 +576,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
     /// Fetches an interface from Etherscan
     pub(crate) async fn fetch_interface(&mut self, address: Address, name: String) -> Result<()> {
-        let abis = fetch_abi_from_etherscan(address, &self.source().config.foundry_config)
+        let abis = fetch_abi_from_etherscan(address, &self.source().config.foundry_config, false)
             .await
             .wrap_err("Failed to fetch ABI from Etherscan")?;
         let (abi, _) = abis

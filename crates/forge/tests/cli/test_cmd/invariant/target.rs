@@ -1,6 +1,7 @@
 use super::*;
 
-forgetest!(filters, |prj, cmd| {
+#[forgetest]
+fn filters(prj: _, cmd: _) {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.update_config(|config| {
@@ -776,13 +777,14 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/5625
 // https://github.com/foundry-rs/foundry/issues/6166
 // `Target.wrongSelector` is not called when handler added as `targetContract`
 // `Target.wrongSelector` is called (and test fails) when no `targetContract` set
-forgetest!(fuzzed_selected_targets, |prj, cmd| {
+#[forgetest]
+fn fuzzed_selected_targets(prj: _, cmd: _) {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.update_config(|config| {
@@ -862,4 +864,4 @@ contract DynamicTargetContract is Test {
 ...
 
 "#]]);
-});
+}
