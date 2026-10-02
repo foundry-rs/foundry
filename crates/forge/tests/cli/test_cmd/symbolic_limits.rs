@@ -23,7 +23,8 @@ fn should_skip(test: &str) -> bool {
     false
 }
 
-forgetest_init!(symbolic_limits_riddle_counterexample_replays, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_limits_riddle_counterexample_replays(prj: _, cmd: _) {
     if should_skip("symbolic_limits_riddle_counterexample_replays") {
         return;
     }
@@ -94,9 +95,10 @@ check_riddle(uint256)
     );
     assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
     assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_limits_reports_path_width_exhaustion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_limits_reports_path_width_exhaustion(prj: _, cmd: _) {
     if should_skip("symbolic_limits_reports_path_width_exhaustion") {
         return;
     }
@@ -144,9 +146,10 @@ symbolic path limit exceeded (2)
 incomplete symbolic execution (Stuck)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_limits_reports_execution_depth_exhaustion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_limits_reports_execution_depth_exhaustion(prj: _, cmd: _) {
     if should_skip("symbolic_limits_reports_execution_depth_exhaustion") {
         return;
     }
@@ -195,9 +198,10 @@ symbolic depth limit exceeded (8)
 incomplete symbolic execution (Stuck)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_limits_reports_calldata_budget_exhaustion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_limits_reports_calldata_budget_exhaustion(prj: _, cmd: _) {
     if should_skip("symbolic_limits_reports_calldata_budget_exhaustion") {
         return;
     }
@@ -239,9 +243,10 @@ symbolic calldata size exceeds configured max
 incomplete symbolic execution (Stuck)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_limits_invariant_depth_changes_result, |prj, _cmd| {
+#[forgetest_init]
+fn symbolic_limits_invariant_depth_changes_result(prj: _) {
     if should_skip("symbolic_limits_invariant_depth_changes_result") {
         return;
     }
@@ -325,4 +330,4 @@ symbolic invariant counterexample
 invariant_valueNeverTwo()
 "#]],
     );
-});
+}

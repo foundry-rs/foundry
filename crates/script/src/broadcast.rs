@@ -56,6 +56,7 @@ use foundry_evm::{
         opts::EvmOpts,
     },
     hardfork::TempoHardfork,
+    traces::CallKind,
 };
 use foundry_wallets::{
     TempoAccountsWallet,
@@ -63,7 +64,6 @@ use foundry_wallets::{
 };
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
-use revm_inspectors::tracing::types::CallKind;
 use tempo_alloy::{
     TempoNetwork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},

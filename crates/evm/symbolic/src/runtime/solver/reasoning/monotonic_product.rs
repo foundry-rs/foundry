@@ -11,13 +11,6 @@ struct OrderFacts<'a> {
     positive: PositiveFacts<'a>,
 }
 
-/// Returns whether monotonic product facts make these constraints unsatisfiable.
-#[cfg(test)]
-pub(crate) fn product_monotonic_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
-    let constraints = normalize_constraints_for_solver(cx, constraints);
-    product_monotonic_unsat_normalized(&constraints)
-}
-
 /// Returns whether normalized monotonic product facts make constraints unsatisfiable.
 pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) -> bool {
     let facts = order_facts(constraints.iter());

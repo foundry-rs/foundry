@@ -12,11 +12,10 @@ use alloy_primitives::{
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use foundry_evm_traces::debug::SourceData;
+use foundry_evm_traces::{CallKind, CallTraceStep, debug::SourceData};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +239,13 @@ impl<'a> TUIContext<'a> {
         if space != StorageSpace::Persistent {
             return None;
         }
+        // Storage layouts are keyed by address identity, so skip them for frames that executed
+        // different code than the address was identified as.
+        if self.debug_call().contract_name.as_ref()
+            != self.debugger_context.identified_contracts.get(self.address())
+        {
+            return None;
+        }
         let identifier = self.debugger_context.slot_identifiers.as_ref()?.get(self.address())?;
         let slot = B256::from(slot);
         identifier
@@ -284,9 +290,8 @@ impl<'a> TUIContext<'a> {
 
     /// Returns source map, source code and source name of the current line.
     pub(crate) fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
-        let address = self.address();
-        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
-            return Err(format!("Unknown contract at address {address}"));
+        let Some(contract_name) = &self.debug_call().contract_name else {
+            return Err(format!("Unknown contract at address {}", self.address()));
         };
 
         self.debugger_context
@@ -837,11 +842,10 @@ impl TUIContext<'_> {
                 return;
             };
             let contract_name = self
-                .debugger_context
-                .identified_contracts
-                .get(self.address())
-                .expect("source mapping requires an identified contract")
-                .clone();
+                .debug_call()
+                .contract_name
+                .clone()
+                .expect("source mapping requires an identified contract");
             (source.path.clone(), source_line, contract_name)
         };
 
@@ -1623,7 +1627,9 @@ fn source_line_range(source: &str, line: usize) -> Option<std::ops::Range<usize>
 }
 
 fn same_code_context(a: &DebugNode, b: &DebugNode) -> bool {
-    a.address == b.address && a.kind.is_any_create() == b.kind.is_any_create()
+    a.address == b.address
+        && a.kind.is_any_create() == b.kind.is_any_create()
+        && a.contract_name == b.contract_name
 }
 
 fn pc_exists_outside_code_context(arena: &[DebugNode], current: &DebugNode, pc: usize) -> bool {
@@ -1722,9 +1728,11 @@ mod tests {
     use foundry_common::slot_identifier::{ENCODING_BYTES, SlotIdentifier};
     use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType, sourcemap::Parser};
     use foundry_evm_core::{Breakpoints, ic::PcIcMap};
-    use foundry_evm_traces::debug::{ArtifactData, ContractSources};
+    use foundry_evm_traces::{
+        StorageChange, StorageChangeReason,
+        debug::{ArtifactData, ContractSources},
+    };
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
     use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {
@@ -1786,7 +1794,9 @@ mod tests {
     }
 
     fn context_with_source_lines(address: Address) -> DebuggerContext {
-        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[0, 1, 2])]);
+        let mut node = node(address, CallKind::Call, &[0, 1, 2]);
+        node.contract_name = Some("Test".to_string());
+        let mut context = context_with_arena(vec![node]);
         context.identified_contracts.insert(address, "Test".to_string());
 
         let build_id = "test-build".to_string();

@@ -5468,7 +5468,6 @@ dependencies = [
  "itertools 0.15.0",
  "parking_lot",
  "reqwest 0.13.5",
- "revm-inspectors",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -5640,7 +5639,6 @@ dependencies = [
  "proptest",
  "rand 0.9.5",
  "revm",
- "revm-inspectors",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -5985,7 +5983,6 @@ dependencies = [
  "foundry-tui",
  "ratatui",
  "revm",
- "revm-inspectors",
  "serde",
  "tracing",
 ]
@@ -6330,6 +6327,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-test-macros"
+version = "1.8.4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "foundry-test-utils"
 version = "1.8.4"
 dependencies = [
@@ -6343,6 +6349,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-test-macros",
  "idna_adapter",
  "parking_lot",
  "rand 0.9.5",
