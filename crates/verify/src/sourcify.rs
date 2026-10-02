@@ -449,7 +449,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_config::Config;
-    use foundry_test_utils::forgetest_async;
+    use foundry_test_utils::forgetest;
     use serde_json::json;
     use std::{
         io::{Read, Write},
@@ -589,7 +589,8 @@ mod tests {
         assert_eq!(response, "redirected");
     }
 
-    forgetest_async!(creates_correct_verify_request_body, |prj, _cmd| {
+    #[forgetest]
+    async fn creates_correct_verify_request_body(prj: _) {
         prj.add_source("Counter", "contract Counter {}");
 
         let args = VerifyArgs::parse_from([
@@ -620,5 +621,5 @@ mod tests {
         let counter_source = sources.get("src/Counter.sol").unwrap().as_object().unwrap();
         let content = counter_source.get("content").unwrap().as_str().unwrap();
         assert!(content.contains("contract Counter {}"));
-    });
+    }
 }

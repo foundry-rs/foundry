@@ -130,11 +130,8 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
 }
 
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
-    is_assert_panic(data) || is_revert_assertion_failure(data)
-}
-
-pub(crate) fn is_assert_panic(data: &[u8]) -> bool {
     Panic::abi_decode(data).is_ok_and(|panic| panic.kind() == Some(PanicKind::Assert))
+        || is_revert_assertion_failure(data)
 }
 
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {

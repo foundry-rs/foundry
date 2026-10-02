@@ -42,7 +42,8 @@ ensure_svm_releases!(
 );
 
 // Ensures we can always test with the latest solc build
-forgetest_init!(can_test_with_latest_solc, |prj, cmd| {
+#[forgetest_init]
+fn can_test_with_latest_solc(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "Counter.2.t.sol",
@@ -80,9 +81,10 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(can_test_with_solc_0_8_37_amsterdam, |prj, cmd| {
+#[forgetest_init]
+fn can_test_with_solc_0_8_37_amsterdam(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "StateGas.t.sol",
@@ -226,9 +228,10 @@ contract StateGasTest is Test {
         config.enable_tx_gas_limit = true;
     });
     cmd.forge_fuse().args(args).assert_success();
-});
+}
 
-forgetest_init!(can_test_slot_number_amsterdam, |prj, cmd| {
+#[forgetest_init]
+fn can_test_slot_number_amsterdam(prj: _, cmd: _) {
     prj.add_test(
         "SlotNumber.t.sol",
         r#"
@@ -267,4 +270,4 @@ contract SlotNumberTest is Test {
     cmd.args(args).assert_success();
     cmd.forge_fuse().args(args).args(["--optimize", "--via-ir"]).assert_success();
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();
-});
+}
