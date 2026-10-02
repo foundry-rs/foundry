@@ -91,6 +91,16 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
         PolygonAmoy,
     };
 
+    // The blob fee market is priced from the header's excess blob gas and the source chain's
+    // blob schedule at the block timestamp. Headers without the field (pre-Cancun blocks and
+    // chains without EIP-4844) keep the default blob environment.
+    if let Some(excess_blob_gas) = block.header().excess_blob_gas() {
+        evm_env.block_env.set_blob_excess_gas_and_price(
+            excess_blob_gas,
+            get_blob_base_fee_update_fraction(source_chain_id, block.header().timestamp()),
+        );
+    }
+
     if let Ok(chain) = NamedChain::try_from(source_chain_id) {
         let block_number = block.header().number();
 
@@ -273,6 +283,62 @@ mod tests {
 
         assert_eq!(evm_env.cfg_env.chain_id, NamedChain::Mainnet as u64);
         assert_eq!(evm_env.block_env.number, U256::from(100));
+    }
+
+    #[test]
+    fn block_normalization_sets_blob_excess_gas_from_header() {
+        // Mainnet block 22_000_000 (Cancun): 22_151_168 excess blob gas prices blobs at 761 wei.
+        let header = AnyHeader {
+            timestamp: 1_741_410_875,
+            excess_blob_gas: Some(22_151_168),
+            ..Default::default()
+        };
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        let mut evm_env = EvmEnv::new(CfgEnv::<SpecId>::default(), BlockEnv::default());
+        // The execution chain id can be overridden; the blob schedule follows the source chain.
+        evm_env.cfg_env.chain_id = 1337;
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Mainnet as u64,
+            NetworkConfigs::default(),
+        );
+
+        let blob = evm_env.block_env.blob_excess_gas_and_price.unwrap();
+        assert_eq!(blob.excess_blob_gas, 22_151_168);
+        assert_eq!(blob.blob_gasprice, 761);
+    }
+
+    #[test]
+    fn block_normalization_keeps_default_blob_env_without_header_field() {
+        let header = AnyHeader { excess_blob_gas: None, ..Default::default() };
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        let mut evm_env = EvmEnv::new(CfgEnv::<SpecId>::default(), BlockEnv::default());
+
+        apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Mainnet as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert_eq!(
+            evm_env.block_env.blob_excess_gas_and_price,
+            BlockEnv::default().blob_excess_gas_and_price
+        );
     }
 
     #[test]

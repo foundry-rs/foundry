@@ -1,5 +1,6 @@
 use super::interface::load_abi_from_file;
 use alloy_consensus::Transaction;
+use alloy_dyn_abi::{DynSolType, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ext::TraceApi};
@@ -104,7 +105,7 @@ pub(crate) async fn load_abi(
     if let Some(path) = abi_path {
         return load_abi_from_file(path);
     }
-    let abis = fetch_abi_from_etherscan(contract, config).await?;
+    let abis = fetch_abi_from_etherscan(contract, config, false).await?;
     abis.into_iter().next().map(|(abi, _)| abi).ok_or_eyre("No ABI found.")
 }
 
@@ -118,16 +119,43 @@ pub(crate) fn constructor_with_args(abi: &JsonAbi) -> Result<&Constructor> {
 }
 
 /// Returns the offset in `bytecode` at which the ABI-encoded constructor arguments start.
+///
+/// The arguments are appended to the init code, so their encoding is a word-aligned suffix of the
+/// creation bytecode. Static arguments occupy a fixed number of words, but dynamic ones carry
+/// their own lengths, so the suffix is searched for a unique candidate that decodes as the
+/// constructor inputs and encodes back to the same bytes. Nested ABI data can make this ambiguous.
 pub(crate) fn constructor_args_offset(constructor: &Constructor, bytecode: &[u8]) -> Result<usize> {
-    let args_size = constructor.inputs.len() * 32;
-    bytecode.len().checked_sub(args_size).ok_or_else(|| {
+    let types =
+        constructor.inputs.iter().map(|input| input.resolve()).collect::<Result<Vec<_>, _>>()?;
+    let min_words = types.iter().map(DynSolType::minimum_words).sum::<usize>();
+    let max_offset = bytecode.len().checked_sub(min_words * 32).ok_or_else(|| {
         eyre!(
             "Invalid creation bytecode length: have {} bytes, need at least {} for {} constructor inputs",
             bytecode.len(),
-            args_size,
+            min_words * 32,
             constructor.inputs.len()
         )
-    })
+    })?;
+    if !types.iter().any(DynSolType::is_dynamic) {
+        return Ok(max_offset);
+    }
+
+    let tuple = DynSolType::Tuple(types);
+    let mut candidates = (min_words..=bytecode.len() / 32)
+        .map(|words| bytecode.len() - words * 32)
+        .filter(|&offset| {
+            let args = &bytecode[offset..];
+            tuple.abi_decode_params(args).is_ok_and(|value| value.abi_encode_params() == args)
+        });
+    let offset = candidates.next().ok_or_else(|| {
+        eyre!("Could not find constructor arguments matching the ABI in the creation bytecode")
+    })?;
+    if candidates.next().is_some() {
+        eyre::bail!(
+            "Multiple constructor argument suffixes match the ABI in the creation bytecode"
+        );
+    }
+    Ok(offset)
 }
 
 /// Connects to the configured RPC, pins `config.chain` to it, and fetches the creation code of
@@ -174,7 +202,84 @@ pub(crate) async fn fetch_creation_code(config: &mut Config, contract: Address) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_dyn_abi::DynSolValue;
+    use alloy_primitives::U256;
     use std::io::Write;
+
+    fn constructor(inputs: &str) -> Constructor {
+        let abi: JsonAbi =
+            serde_json::from_str(&format!(r#"[{{"type":"constructor","inputs":[{inputs}]}}]"#))
+                .unwrap();
+        abi.constructor().unwrap().clone()
+    }
+
+    #[test]
+    fn splits_static_constructor_args() {
+        let constructor = constructor(
+            r#"{"name":"owner","type":"address"},{"name":"limits","type":"uint256[2]"}"#,
+        );
+        let args = DynSolValue::Tuple(vec![
+            DynSolValue::Address(Address::repeat_byte(0x11)),
+            DynSolValue::FixedArray(vec![
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::from(2), 256),
+            ]),
+        ])
+        .abi_encode_params();
+        let init_code = vec![0xfe; 77];
+        let bytecode = [init_code.as_slice(), args.as_slice()].concat();
+
+        assert_eq!(constructor_args_offset(&constructor, &bytecode).unwrap(), init_code.len());
+    }
+
+    #[test]
+    fn splits_dynamic_constructor_args() {
+        let constructor = constructor(
+            r#"{"name":"name","type":"string"},{"name":"supply","type":"uint256"},{"name":"admins","type":"address[]"}"#,
+        );
+        let args = DynSolValue::Tuple(vec![
+            DynSolValue::String("Creation code with a name longer than one word".into()),
+            DynSolValue::Uint(U256::from(42), 256),
+            DynSolValue::Array(vec![
+                DynSolValue::Address(Address::repeat_byte(0x11)),
+                DynSolValue::Address(Address::repeat_byte(0x22)),
+            ]),
+        ])
+        .abi_encode_params();
+        let init_code = vec![0xfe; 77];
+        let bytecode = [init_code.as_slice(), args.as_slice()].concat();
+
+        let offset = constructor_args_offset(&constructor, &bytecode).unwrap();
+        assert_eq!(offset, init_code.len());
+        assert_eq!(&bytecode[offset..], args.as_slice());
+    }
+
+    #[test]
+    fn rejects_ambiguous_dynamic_constructor_args() {
+        let constructor = constructor(r#"{"name":"data","type":"bytes"}"#);
+        let nested =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![0x42; 32])]).abi_encode_params();
+        let args = DynSolValue::Tuple(vec![DynSolValue::Bytes(nested)]).abi_encode_params();
+        for init_len in [64, 77] {
+            let bytecode = [vec![0xfe; init_len], args.clone()].concat();
+            assert_eq!(
+                constructor_args_offset(&constructor, &bytecode).unwrap_err().to_string(),
+                "Multiple constructor argument suffixes match the ABI in the creation bytecode"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_creation_code_without_matching_args() {
+        let constructor = constructor(r#"{"name":"name","type":"string"}"#);
+        let bytecode = vec![0xfe; 100];
+
+        let err = constructor_args_offset(&constructor, &bytecode).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Could not find constructor arguments matching the ABI in the creation bytecode"
+        );
+    }
 
     #[tokio::test]
     async fn rejects_creation_code_shorter_than_constructor_head() {

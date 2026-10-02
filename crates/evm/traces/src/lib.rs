@@ -111,6 +111,8 @@ pub mod folded_stack_trace;
 pub mod backtrace;
 pub mod speedscope;
 
+pub mod erc8021;
+
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
 /// Presentation-only detail for an otherwise empty EVM revert.
@@ -703,6 +705,9 @@ impl TraceRequirements {
         let steps = if self.state_diff { StepRecording::All } else { self.steps };
         TracingInspectorConfig {
             record_steps: steps != StepRecording::None,
+            record_inputs: true,
+            record_bytecode: false,
+            step_limit: None,
             record_memory_snapshots: self.memory_snapshots,
             record_stack_snapshots: if self.stack_snapshots {
                 StackSnapshotType::Full
@@ -720,6 +725,7 @@ impl TraceRequirements {
             },
             exclude_precompile_calls: false,
             record_immediate_bytes: self.immediate_bytes,
+            record_step_deltas: false,
         }
         .into()
     }

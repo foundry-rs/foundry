@@ -9,7 +9,7 @@ use crate::{
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network};
+use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -31,6 +31,9 @@ use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use url::Url;
+
+#[cfg(feature = "base")]
+use base_common_network::Base;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -146,10 +149,16 @@ impl SendTxArgs {
                 .await?;
 
         if network.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
         }
+
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            super::validate_base_transaction_options(&self.tx)?;
+            return self.run_generic::<Base>(signer, None).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None).await
     }
 
     /// Runs a contract call with an already resolved browser signer.
@@ -407,6 +416,7 @@ impl SendTxArgs {
                 browser.switch_chain(chain.id()).await?;
             }
 
+            tx_request.prep_for_submission();
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
             send_opts.print_tx_result(&provider, tx_hash).await?;
         // Case 3: Tempo access-key wallet.

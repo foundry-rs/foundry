@@ -18,7 +18,7 @@ use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
-        next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_rpc_endpoint, next_ws_rpc_endpoint, spawn_rpc_proxy_method_not_found_before,
     },
     snapbox::IntoData as _,
     str,
@@ -42,6 +42,7 @@ mod erc4626;
 mod keychain;
 mod read_networks;
 mod remote_trace;
+mod run_bal;
 mod run_networks;
 mod safe;
 mod selectors;
@@ -112,6 +113,9 @@ async fn deploy_counter_and_set_number(
 mod abi;
 mod access_list;
 mod address;
+mod bal;
+#[cfg(feature = "base")]
+mod base;
 mod bytecode;
 mod call;
 mod call_trace;

@@ -11,7 +11,10 @@ use alloy_consensus::{
 };
 use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
-    block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB, TxResult},
+    block::{
+        BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB,
+        TxResult,
+    },
 };
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::B256;
@@ -170,7 +173,7 @@ pub(crate) fn execute_historical_replay<E>(
 ) -> Result<(Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>, Vec<TransactionInfo>)>
 where
     E: Evm<
-            DB: StateDB,
+            DB: StateDB + BalIndexedDatabase,
             Inspector = AnvilInspector,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
@@ -195,7 +198,7 @@ pub(crate) fn execute_historical_replay_with<E, F>(
 ) -> Result<(Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>, Vec<TransactionInfo>)>
 where
     E: Evm<
-            DB: StateDB,
+            DB: StateDB + BalIndexedDatabase,
             Inspector = AnvilInspector,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,

@@ -4,7 +4,7 @@
 //! from the emitted MDX pages.
 
 use crate::{
-    render::{code_regions, region_contains},
+    render::{code_regions, neutralize_esm, region_contains},
     utils::{git_raw_url, git_source_url},
 };
 use foundry_config::DocConfig;
@@ -67,7 +67,8 @@ pub fn write_site_files(
     } else {
         homepage_content
     };
-    let homepage_content = escape_mdx_outside_code_fences(&homepage_content);
+    let homepage_content = homepage_content.strip_prefix('\u{feff}').unwrap_or(&homepage_content);
+    let homepage_content = neutralize_esm(&escape_mdx_outside_code_fences(homepage_content));
     let index_path = out_dir.join("src").join("pages").join("index.mdx");
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)?;

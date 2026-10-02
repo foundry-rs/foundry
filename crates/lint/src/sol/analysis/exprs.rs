@@ -49,7 +49,7 @@ pub fn is_zero_value(expr: &Expr<'_>) -> bool {
             LitKind::Bool(value) => !value,
             _ => false,
         },
-        ExprKind::Call(callee, args, _) if cast_type(callee).is_some() => {
+        ExprKind::Call(callee, args) if cast_type(callee).is_some() => {
             let mut exprs = args.exprs();
             exprs.len() == 1 && exprs.next().is_some_and(is_zero_value)
         }
@@ -61,7 +61,7 @@ pub fn is_zero_value(expr: &Expr<'_>) -> bool {
 
 /// `revert(...)`, `selfdestruct(...)`, `require(false, ...)` or `assert(false)`.
 pub fn is_exit_call(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
     match gcx.resolved_builtin(callee) {
         Some(Builtin::Revert | Builtin::RevertMsg | Builtin::Selfdestruct) => true,
         Some(Builtin::Require | Builtin::Assert) => {
@@ -123,7 +123,7 @@ pub fn is_address_self(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
         ExprKind::Payable(inner) => is_address_self(gcx, inner),
-        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
+        ExprKind::Call(callee, args) if is_address_like_cast(gcx, callee) => {
             args.exprs().next().is_some_and(|expr| is_address_self(gcx, expr))
         }
         _ => is_builtin(gcx, expr, sym::this),
@@ -135,7 +135,7 @@ pub fn is_address_self(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
 pub fn underlying_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(_) => gcx.resolved_variable(expr),
-        ExprKind::Call(callee, args, _) if is_address_like_cast(gcx, callee) => {
+        ExprKind::Call(callee, args) if is_address_like_cast(gcx, callee) => {
             args.exprs().next().and_then(|arg| underlying_var(gcx, arg))
         }
         ExprKind::Payable(inner) => underlying_var(gcx, inner),
@@ -265,18 +265,16 @@ pub fn referenced_item(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<ItemId> {
 /// Receiver of `<expr>.{call,delegatecall,transfer,send}` (value-bearing sinks), including the
 /// `.call{value: x}(...)` option form.
 pub fn address_call_receiver<'a>(callee: &'a Expr<'a>) -> Option<&'a Expr<'a>> {
-    let inner = match &callee.kind {
-        ExprKind::Call(inner, ..) if matches!(inner.kind, ExprKind::Member(..)) => inner,
-        _ => callee,
-    };
+    let (inner, _) = callee.split_call_options();
     let ExprKind::Member(receiver, name) = &inner.kind else { return None };
     matches!(name.name, kw::Call | kw::Delegatecall | sym::transfer | sym::send).then_some(receiver)
 }
 
 /// True if a HIR call carries an explicit `gas:` option.
 pub fn is_call_with_gas_limit(expr: &Expr<'_>) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Call(_, _, Some(opts))
-        if opts.args.iter().any(|opt| opt.name.name == kw::Gas))
+    expr.peel_parens().as_call().is_some_and(|(_, _, opts)| {
+        opts.is_some_and(|opts| opts.args.iter().any(|opt| opt.name.name == kw::Gas))
+    })
 }
 
 /// AST-level: `target.call(...)`, `.delegatecall(...)`, `.staticcall(...)`, with or without
@@ -349,10 +347,15 @@ pub fn for_each_child<'gcx>(expr: &'gcx Expr<'gcx>, f: &mut impl FnMut(&'gcx Exp
         | ExprKind::Delete(inner)
         | ExprKind::Member(inner, _)
         | ExprKind::Payable(inner) => f(inner),
-        ExprKind::Call(callee, args, opts) => {
+        ExprKind::Call(callee, args) => {
+            let (callee, opts) = callee.split_call_options();
             f(callee);
             opts.iter().flat_map(|opts| opts.args).for_each(|opt| f(&opt.value));
             args.exprs().for_each(f);
+        }
+        ExprKind::CallOptions(callee, opts) => {
+            f(callee);
+            opts.args.iter().for_each(|opt| f(&opt.value));
         }
         ExprKind::Index(base, index) => {
             f(base);

@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{U256, keccak256};
 use foundry_test_utils::{
     TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
 };
@@ -1352,6 +1352,155 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     );
 });
 
+forgetest_init!(invariant_corpus_retains_coverage_winning_reverts, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "RevertingCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract RevertingCorpusHandler {
+    uint256 public credit;
+
+    function spend(uint256 amount) external {
+        require(amount <= credit, "over credit");
+        require(amount > credit, "under credit");
+        credit = amount;
+    }
+}
+
+contract RevertingCorpusTest is Test {
+    function setUp() public {
+        RevertingCorpusHandler handler = new RevertingCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "RevertingCorpusTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/RevertingCorpusTest/worker0/corpus");
+    let selector = &keccak256("spend(uint256)")[..4];
+    let retained = std::fs::read_dir(corpus_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .map(|contents| {
+            serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap()
+        })
+        .any(|sequence| {
+            sequence.len() == 1 && sequence[0].call_details.calldata.starts_with(selector)
+        });
+    assert!(retained, "coverage-winning reverted call was not retained in the corpus");
+});
+
+forgetest_init!(invariant_corpus_ends_at_last_coverage_call, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "CoveragePrefixTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CoveragePrefixHandler {
+    function touch() external {}
+}
+
+contract CoveragePrefixTest is Test {
+    function setUp() public {
+        CoveragePrefixHandler handler = new CoveragePrefixHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "CoveragePrefixTest", "--fuzz-seed", "0x574"]).assert_success();
+
+    let corpus_dir = prj.root().join("invariant_corpus/CoveragePrefixTest/worker0/corpus");
+    let entry = std::fs::read_dir(corpus_dir).unwrap().next().unwrap().unwrap();
+    let contents = std::fs::read_to_string(entry.path()).unwrap();
+    let sequence =
+        serde_json::from_str::<Vec<foundry_evm::fuzz::BasicTxDetails>>(&contents).unwrap();
+    assert_eq!(sequence.len(), 1);
+});
+
+forgetest_init!(invariant_corpus_reuses_comparison_hints, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 1;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.dictionary.dictionary_weight = 0;
+        config.invariant.dictionary.include_storage = false;
+        config.invariant.dictionary.include_push_bytes = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_random_sequence_weight = 0;
+        config.invariant.corpus.mutation_weights = foundry_config::FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+    });
+    prj.add_test(
+        "ComparisonCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ComparisonCorpusHandler {
+    bool public reached;
+
+    function compare(uint256 value) external {
+        if (value >= type(uint256).max - 100) reached = true;
+    }
+}
+
+contract ComparisonCorpusTest is Test {
+    ComparisonCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ComparisonCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_comparison_is_reached() public view {
+        assertFalse(handler.reached());
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ComparisonCorpusTest", "--fuzz-seed", "0x574"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: assertion failed]
+...
+"#]]);
+});
+
 forgetest_init!(parallel_invariant_corpus_uses_worker_dirs, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
@@ -1804,6 +1953,34 @@ contract SkipPredicateReportTest is Test {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("SkipPredicateReportTest invariants"), "{stdout}");
     assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_", "--summary"]).assert_success().stdout_eq(
+        str![[r#"
+...
+╭-------------------------+--------+--------+---------╮
+| Test Suite              | Passed | Failed | Skipped |
++=====================================================+
+| SkipPredicateReportTest | 1      | 0      | 1       |
+╰-------------------------+--------+--------+---------╯
+
+
+"#]],
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_", "--summary", "--json"])
+        .assert_json_stdout(str![[r#"
+{
+  "results": [
+    {
+      "suite": "SkipPredicateReportTest",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 1
+    }
+  ]
+}
+"#]]);
 });
 
 forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
@@ -2968,6 +3145,9 @@ contract PersistedSecondaryShrinkTest is Test {
     let arm = calls.iter().find(|call| call["func_name"] == "arm").unwrap().clone();
     let trigger = calls.iter().find(|call| call["func_name"] == "trigger").unwrap().clone();
     persisted_json["call_sequence"] = serde_json::json!([arm, trigger]);
+    // Legacy persisted entries did not identify their failure site. Their confirmed replay must
+    // still bypass generic shrinking so the predicate reason, trace, and sequence stay aligned.
+    persisted_json.as_object_mut().unwrap().remove("failure_site");
     std::fs::write(&persisted, serde_json::to_vec_pretty(&persisted_json).unwrap()).unwrap();
     let _ = std::fs::remove_file(persisted.with_file_name("invariant_anchor"));
     let _ = std::fs::remove_dir_all(failure_root.join("handlers"));
@@ -3242,4 +3422,120 @@ contract FailureEventTest is Test {
 {"timestamp":[..],"event":"failure","invariant":"invariant_a","target":"test/FailureEventTest.t.sol:FailureEventTest","reason":"a broken"}
 ...
 "#]]);
+});
+
+// Persisted corpus entries must not replay calls the current invariant settings no longer allow.
+forgetest_init!(invariant_corpus_respects_current_senders_and_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 32;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    let add_test = |sender: &str, selector: &str| {
+        let touch_targeted = selector == "touch";
+        prj.add_test(
+            "CorpusPolicyTest.t.sol",
+            &format!(
+                r#"
+import {{Test}} from "forge-std/Test.sol";
+
+contract CorpusPolicyTarget {{
+    address public unexpected;
+
+    function touch() external {{
+        if (msg.sender != {sender} || !{touch_targeted}) unexpected = msg.sender;
+    }}
+
+    function other() external {{
+        if (msg.sender != {sender} || {touch_targeted}) unexpected = msg.sender;
+    }}
+}}
+
+contract CorpusPolicyTest is Test {{
+    CorpusPolicyTarget target;
+
+    function setUp() public {{
+        target = new CorpusPolicyTarget();
+        targetSender({sender});
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = CorpusPolicyTarget.{selector}.selector;
+        targetSelector(FuzzSelector({{addr: address(target), selectors: selectors}}));
+    }}
+
+    function invariant_only_current_policy() public view {{
+        require(target.unexpected() == address(0), "stale corpus call");
+    }}
+}}
+   "#
+            ),
+        );
+    };
+
+    add_test("address(0xA11CE)", "touch");
+    cmd.args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+
+    // Changing only the sender must not replay calls from the previous sender.
+    add_test("address(0xB0B)", "touch");
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+
+    // Changing only the selector must not replay calls to the previous selector.
+    add_test("address(0xB0B)", "other");
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+});
+
+// Calls hoisted from handler sub-calls must respect `targetSenders`.
+forgetest_init!(invariant_corpus_hoisting_respects_target_senders, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 32;
+        config.invariant.depth = 20;
+        config.invariant.workers =
+            foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(1).unwrap());
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "HoistSenderTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract HoistSenderToken {
+    address public unexpected;
+
+    function touch() external {
+        if (tx.origin != address(0xA11CE)) unexpected = tx.origin;
+    }
+}
+
+contract HoistSenderHandler {
+    HoistSenderToken token;
+
+    constructor(HoistSenderToken _token) {
+        token = _token;
+    }
+
+    function poke() external {
+        token.touch();
+    }
+}
+
+contract HoistSenderTest is Test {
+    HoistSenderToken token;
+
+    function setUp() public {
+        token = new HoistSenderToken();
+        targetContract(address(token));
+        targetContract(address(new HoistSenderHandler(token)));
+        targetSender(address(0xA11CE));
+    }
+
+    function invariant_only_target_sender() public view {
+        require(token.unexpected() == address(0), "unexpected sender");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success();
 });

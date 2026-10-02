@@ -235,8 +235,12 @@ network_replay_tests! {
     flaky_run_mainnet => ("ethereum", "https://ethereum-rpc.publicnode.com", Exact),
     flaky_run_optimism => ("optimism", "https://mainnet.optimism.io", Exact),
     flaky_run_base => ("base", "https://mainnet.base.org", Exact),
-    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", Exact),
     flaky_run_linea => ("linea", "https://linea-rpc.publicnode.com", Exact),
+
+    // Disables gas refunds and, since Helicon, charges at least ceil(gas_limit / 2), neither of
+    // which stock revm models.
+    // TODO: Restore exact gas assertions once native Avalanche accounting is implemented.
+    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", ReplaysOnly),
 
     // Blocks carry no `parentBeaconBlockRoot` even though the EVM is Cancun or later.
     flaky_run_scroll => ("scroll", "https://rpc.scroll.io", Exact),
@@ -251,8 +255,7 @@ network_replay_tests! {
     // Charges 840 gas for each storage slot a transaction creates, which revm does not model.
     flaky_run_polygon => ("polygon", "https://polygon-bor-rpc.publicnode.com", ReplaysOnly),
 
-    // Applies the EIP-7623 calldata floor that Foundry's resolved hardfork does not.
-    flaky_run_gnosis => ("gnosis", "https://gnosis-rpc.publicnode.com", ReplaysOnly),
+    flaky_run_gnosis => ("gnosis", "https://gnosis-rpc.publicnode.com", Exact),
 
     // OP-stack forks that Foundry does not route to the Optimism network.
     flaky_run_berachain => ("berachain", "https://rpc.berachain.com", Exact),
@@ -264,6 +267,59 @@ network_replay_tests! {
     flaky_run_hyperevm => ("hyperevm", "https://rpc.purroofgroup.com", ReplaysOnly),
 }
 
+/// Replays a transaction that failed on-chain from an archive endpoint and checks that it fails
+/// with the gas the chain charged.
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the nightly test log")]
+fn assert_replays_failed_transaction(
+    cmd: &mut TestCommand,
+    name: &str,
+    rpc_url: &str,
+    tx_hash: &str,
+    gas: u64,
+) {
+    if json_output(cmd, &["receipt", tx_hash, "--rpc-url", rpc_url]).is_none() {
+        eprintln!("skipping {name}: archive endpoint unreachable");
+        return;
+    }
+
+    let output = cmd
+        .cast_fuse()
+        .args(["run", tx_hash, "--rpc-url", rpc_url])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+
+"#]])
+        .get_output()
+        .stdout_lossy();
+
+    assert_eq!(gas_used(&output), Some(gas), "{name}: replayed {tx_hash}");
+}
+
+casttest!(flaky_run_arbitrum_out_of_gas, |_prj, cmd| {
+    assert_replays_failed_transaction(
+        &mut cmd,
+        "arbitrum",
+        "https://arbitrum-one.public.blastapi.io",
+        "0x1d66909d9039e5937406357449fad064edbb6d9c81944a8001ebfc4f0ba6d0b9",
+        177_864,
+    );
+});
+
+// Cronos had not activated Cancun at this block, so an `MCOPY` in the called contract halted and
+// the transaction reverted. Foundry has no Cronos hardfork schedule, so replay has to detect the
+// spec the node executed rather than default to the newest one, under which it succeeds.
+casttest!(flaky_run_cronos_pre_cancun, |_prj, cmd| {
+    assert_replays_failed_transaction(
+        &mut cmd,
+        "cronos",
+        "https://evm.cronos.org",
+        "0x6f23146056354c0b2a3b982e2f03bbadf8eece0364c5b8be4db1a0ec987f7af4",
+        562_421,
+    );
+});
+
 casttest!(flaky_run_celo_cip64, |_prj, cmd| {
     assert_replays_recent_transaction(
         &mut cmd,
@@ -274,4 +330,43 @@ casttest!(flaky_run_celo_cip64, |_prj, cmd| {
             transaction_type: Some(CELO_DYNAMIC_FEE_TX_TYPE),
         },
     );
+});
+
+// The bot behind this transaction reverts unless `ArbSys.arbBlockNumber()` returns the block it
+// targeted, the one before the block the transaction landed in. Replay executes on the parent
+// block's state but must report the transaction's own block, or the transaction succeeds.
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the nightly test log")]
+fn assert_arbitrum_arb_block_number(cmd: &mut TestCommand) {
+    const RPC_URL: &str = "https://arbitrum-one.public.blastapi.io";
+    const TX_HASH: &str = "0x3823e04a8def5dc41ffdd2528997a2c70f2337caabfd8039d1e28db4bc71b8b1";
+
+    if json_output(cmd, &["receipt", TX_HASH, "--rpc-url", RPC_URL]).is_none() {
+        eprintln!("skipping arbitrum: archive endpoint unreachable");
+        return;
+    }
+
+    cmd.cast_fuse()
+        .args(["run", TX_HASH, "--rpc-url", RPC_URL])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0xeAB71344cc3D1BF0803BbFCb36bAB6ee07650B74::01000000([..]1e5c14c0)
+    ├─ [803] 0x0000000000000000000000000000000000000064::[..] [staticcall]
+    │   └─ ← [Return] 0x000000000000000000000000000000000000000000000000000000001e5c14c1
+    └─ ← [Revert] EvmError: Revert
+
+
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Error: Transaction failed.
+...
+
+"#]]);
+}
+
+casttest!(flaky_run_arbitrum_arb_block_number, |_prj, cmd| {
+    assert_arbitrum_arb_block_number(&mut cmd);
 });

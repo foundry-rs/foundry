@@ -123,18 +123,16 @@ fn get_memory_input_for_opcode(
 }
 
 // The expected `stack` here is from the trace stack, where the top of the stack
-// is the last value of the vector
+// is the last value of the vector.
+//
+// A step that fails with a stack underflow is recorded with fewer items than its opcode
+// consumes, so only the items that are actually present are returned.
 fn get_stack_inputs_for_opcode(opcode: u8, stack: Option<&[U256]>) -> Vec<U256> {
-    let mut inputs = Vec::new();
+    let Some(op) = OpCode::new(opcode) else { return Vec::new() };
+    let Some(stack_data) = stack else { return Vec::new() };
 
-    let Some(op) = OpCode::new(opcode) else { return inputs };
-    let Some(stack_data) = stack else { return inputs };
-
-    let stack_input_size = op.inputs() as usize;
-    for i in 0..stack_input_size {
-        inputs.push(stack_data[stack_data.len() - 1 - i]);
-    }
-    inputs
+    let stack_input_size = (op.inputs() as usize).min(stack_data.len());
+    stack_data.iter().rev().take(stack_input_size).copied().collect()
 }
 
 fn get_slice_from_memory(memory: &Bytes, start_index: usize, size: usize) -> Bytes {
@@ -156,4 +154,28 @@ fn get_slice_from_memory(memory: &Bytes, start_index: usize, size: usize) -> Byt
 
     // Return empty bytes with the size if not in range at all.
     Bytes::from(vec![0u8; size])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use revm::bytecode::opcode;
+
+    #[test]
+    fn stack_inputs_are_taken_from_the_top() {
+        let stack = [U256::from(1), U256::from(2), U256::from(3)];
+        assert_eq!(
+            get_stack_inputs_for_opcode(opcode::ADD, Some(&stack)),
+            vec![U256::from(3), U256::from(2)]
+        );
+    }
+
+    #[test]
+    fn stack_inputs_are_truncated_on_underflow() {
+        assert_eq!(get_stack_inputs_for_opcode(opcode::ADD, Some(&[])), Vec::<U256>::new());
+        assert_eq!(
+            get_stack_inputs_for_opcode(opcode::ADD, Some(&[U256::from(7)])),
+            vec![U256::from(7)]
+        );
+    }
 }

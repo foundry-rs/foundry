@@ -1,6 +1,7 @@
 //! CLI tests for send commands.
 
 use super::*;
+use std::{process::Stdio, time::Duration};
 
 casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -77,6 +78,45 @@ casttest!(send_eip7702, async |_prj, cmd| {
         &endpoint,
     ])
     .assert_success()
+    .stderr_eq(str![""]);
+
+    cmd.cast_fuse()
+        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
+
+"#]]);
+});
+
+casttest!(send_eip7702_without_recipient_targets_sender, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+
+    cmd.args([
+        "send",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-limit",
+        "100000",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+from                 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+...
+status               1 (success)
+...
+type                 4
+...
+to                   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+...
+"#]])
     .stderr_eq(str![""]);
 
     cmd.cast_fuse()
@@ -315,6 +355,59 @@ casttest!(send_sync, async |_prj, cmd| {
     assert!(output.contains("transactionHash"));
     assert!(output.contains("blockNumber"));
     assert!(output.contains("gasUsed"));
+});
+
+// Concurrent `cast send --async` processes whose txs do not fit into one block must all be mined.
+casttest!(send_async_burst_is_mined_across_full_blocks, async |prj, _cmd| {
+    // Room for exactly three transfers per block.
+    let (api, handle) = anvil::spawn(NodeConfig::test().with_gas_limit(Some(63_000))).await;
+    let endpoint = handle.http_endpoint();
+    let wallets = handle.dev_wallets().take(3).collect::<Vec<_>>();
+
+    let mut children = Vec::new();
+    for wallet in &wallets {
+        let private_key = hex::encode(wallet.credential().to_bytes());
+        for nonce in 0..3 {
+            let child = prj
+                .cast_bin()
+                .args([
+                    "send",
+                    "0x000000000000000000000000000000000000dEaD",
+                    "--value",
+                    "1",
+                    "--nonce",
+                    &nonce.to_string(),
+                    "--gas-limit",
+                    "21000",
+                    "--private-key",
+                    &private_key,
+                    "--rpc-url",
+                    &endpoint,
+                    "--async",
+                ])
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            children.push(child);
+        }
+    }
+    for mut child in children {
+        assert!(child.wait().unwrap().success());
+    }
+
+    let provider = ProviderBuilder::new().connect_http(endpoint.parse().unwrap());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for wallet in &wallets {
+            while provider.get_transaction_count(wallet.address()).await.unwrap() < 3 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    })
+    .await
+    .expect("txs left behind by a full block were never mined");
+
+    assert!(provider.get_block_number().await.unwrap() >= 3);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
 });
 
 // tests cast send gas estimate execution failure message contains decoded custom error

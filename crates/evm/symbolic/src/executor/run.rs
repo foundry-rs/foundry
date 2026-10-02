@@ -363,7 +363,7 @@ impl SymbolicExecutor {
         if let Err(error) =
             self.search_invariant_candidates_inner(&input, &mut candidates, &mut limitation)
         {
-            limitation.get_or_insert_with(|| error.into());
+            limitation = Some(error.into());
         }
         // Deferred hard-arithmetic branches are now sent to SMT before candidate search finishes.
         // Only branches that nested execution could not escalate remain incomplete.
@@ -515,6 +515,7 @@ impl SymbolicExecutor {
                         success_input = Some((state.depth, input));
                     }
                     *completed_paths += 1;
+                    normal_paths += 1;
                     break;
                 };
 
@@ -587,7 +588,7 @@ impl SymbolicExecutor {
                     }
                     StepOutcome::AssumeRejected => break,
                     StepOutcome::Forked => break,
-                    StepOutcome::Failure => {
+                    StepOutcome::ExceptionalHalt | StepOutcome::Failure => {
                         let Some((args, calldata_bytes)) = self
                             .materialize_stateless_counterexample_if_branch_target_satisfied(
                                 state.root_calldata.as_ref().ok_or_else(|| {
@@ -623,6 +624,14 @@ impl SymbolicExecutor {
             return Ok(SymbolicRunResult::Incomplete {
                 kind,
                 reason,
+                stats: self.stats_with_paths(*completed_paths),
+            });
+        }
+
+        if normal_paths == 0 {
+            return Ok(SymbolicRunResult::Incomplete {
+                kind: SymbolicStopReason::Stuck,
+                reason: "no successful symbolic paths".to_string(),
                 stats: self.stats_with_paths(*completed_paths),
             });
         }
@@ -810,7 +819,7 @@ impl SymbolicExecutor {
                                             stats: self.stats_with_paths(completed_paths),
                                         });
                                     }
-                                    CallStatus::Revert => {
+                                    CallStatus::Revert | CallStatus::ExceptionalHalt => {
                                         if input.fail_on_revert {
                                             let (sequence, storage) =
                                                 self.materialize_sequence(&steps, &outcome.state)?;

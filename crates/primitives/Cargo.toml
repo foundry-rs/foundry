@@ -27,6 +27,27 @@ op-alloy-consensus = { workspace = true, features = ["serde", "alloy-compat"], o
 op-alloy-rpc-types = { workspace = true, optional = true }
 alloy-op-evm = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
+
+# Base
+base-common-consensus = { workspace = true, optional = true, features = [
+    "alloy-compat",
+    "evm",
+    "k256",
+    "serde",
+    "std",
+] }
+base-common-evm = { workspace = true, optional = true, features = [
+    "blst",
+    "c-kzg",
+    "memory_limit",
+    "optional_block_gas_limit",
+    "optional_eip3607",
+    "optional_no_base_fee",
+    "serde",
+    "std",
+] }
+base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
+
 revm.workspace = true
 serde_json.workspace = true
 serde = { version = "1.0", features = ["derive"] }
@@ -37,6 +58,13 @@ tempo-revm.workspace = true
 
 [features]
 default = ["optimism"]
+base = [
+    "dep:base-common-consensus",
+    "dep:base-common-evm",
+    "dep:base-common-rpc-types",
+    "dep:op-alloy-consensus",
+    "dep:op-revm",
+]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",

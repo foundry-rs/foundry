@@ -19,7 +19,7 @@ use tempo_alloy::{
 use tempo_primitives::transaction::{Call, SignatureType};
 
 use super::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, resolve_and_set_fee_token,
     resolve_fee_token_symbol,
 };
@@ -836,6 +836,7 @@ fn resolves_known_fee_token_symbols() {
         (ALPHA_USD_ADDRESS, "AlphaUSD"),
         (BETA_USD_ADDRESS, "BetaUSD"),
         (THETA_USD_ADDRESS, "ThetaUSD"),
+        (OUSD_ADDRESS, "OUSD"),
     ] {
         assert_eq!(known_fee_token_symbol(fee_token), Some(symbol));
     }

@@ -138,6 +138,17 @@ or journal boundary. Do not rely on cloning the ordinary account database to pre
 another component. Do not add optional custom-family state to a generic context or return generic
 "context update" signals when only one concrete family can use them.
 
+Both cheatcode inspector adapters use
+[`with_inherited_evm`](../../crates/evm/core/src/evm/mod.rs) to pair inherited context setup
+with successful write-back. Inspector assembly stays with the adapter, and EVM factories retain
+construction ownership. This shared operation still uses the existing Monad journal bridge; it
+is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
+
+Isolated calls and `executeTransaction` share account-state preparation and settlement through
+[`prepare_child_state` and `merge_child_state`](../../crates/evm/core/src/evm/mod.rs).
+Their transaction context, environment restoration, and native journal handling remain distinct:
+an isolated call belongs to its enclosing transaction, while `executeTransaction` runs a fresh one.
+
 Historical replay retains the RPC envelope's system classification after transaction conversion.
 The default nested replay behavior deliberately skips system envelopes unsupported by the selected
 execution family without mutating state. A family that supports protocol system envelopes must
@@ -161,6 +172,26 @@ Unsupported combinations should fail at the selection boundary with a specific e
 Ethereum and other enabled families must continue to use their existing path. Once a workflow has
 selected a concrete FEN, helpers used by that workflow must not accept a second runtime execution
 profile.
+
+### Script recovery
+
+The requirements in this subsection are proposed and are not guarantees of the current script
+broadcaster. Network integrations must satisfy them as the durable recovery architecture is
+implemented.
+
+Custom transaction fields remain owned by the selected Alloy `Network` and concrete execution
+family, but `forge script` must carry their final values through durable submission and resume. A
+network integration that changes transaction preparation is incomplete until it identifies every
+field that can change transaction identity or semantics, preserves those fields in script recovery
+state, and tests interrupted submission with that network's real envelope type.
+
+Do not reconstruct a custom transaction from family-neutral Ethereum fields during resume. Persist
+the final typed or encoded payload at the transaction boundary, including fee assets, validity
+windows, sponsorship, authorization, auxiliary calls, or signer metadata required by that family.
+Locally signed payloads must be recoverable without the signer; delegated signing with an ambiguous
+outcome must stop rather than silently request a second signature. See the
+[Forge scripting recovery contract](./scripting.md#recovery-contract) for the shared lifecycle and
+failure-injection requirements.
 
 ## Tests and CI
 
@@ -190,7 +221,3 @@ User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
-
-Add a changelog fragment for user-visible behavior. If a change only reorganizes contributor
-documentation or CI and has no release-facing effect, use the repository's `L-ignore` label instead
-of inventing a package release note.

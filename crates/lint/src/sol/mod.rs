@@ -22,7 +22,9 @@ use solar::{
 };
 use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
@@ -192,6 +194,7 @@ pub struct SolidityLinter<'a> {
     with_description: bool,
     with_json_emitter: bool,
     json_emitter_stdout: bool,
+    report_unused_suppressions: bool,
     // lint-specific configuration
     lint_specific: &'a LintSpecificConfig,
 }
@@ -206,6 +209,7 @@ impl<'a> SolidityLinter<'a> {
             lints_excluded: None,
             with_json_emitter: false,
             json_emitter_stdout: false,
+            report_unused_suppressions: false,
             lint_specific: &DEFAULT_LINT_SPECIFIC_CONFIG,
         }
     }
@@ -237,6 +241,11 @@ impl<'a> SolidityLinter<'a> {
 
     pub const fn with_json_emitter_stdout(mut self, with: bool) -> Self {
         self.json_emitter_stdout = with;
+        self
+    }
+
+    pub const fn with_report_unused_suppressions(mut self, with: bool) -> Self {
+        self.report_unused_suppressions = with;
         self
     }
 
@@ -326,13 +335,16 @@ impl<'a> Linter for SolidityLinter<'a> {
 
             let gcx = compiler.gcx();
             let mut targets = Vec::with_capacity(input.len());
+            let mut seen_sources = HashSet::new();
             for path in input {
                 let path = self.path_config.root.join(path);
-                if gcx.get_ast_source(&path).is_none() {
+                let Some((_, source)) = gcx.get_ast_source(&path) else {
                     // Issue a warning rather than panicking when some input files use old
                     // Solidity versions that Solar does not support.
                     _ = sh_warn!("AST source not found for {}", path.display());
-                } else {
+                    continue;
+                };
+                if seen_sources.insert(source.file.start_pos) {
                     targets.push(path);
                 }
             }
@@ -383,6 +395,20 @@ impl<'a> Linter for SolidityLinter<'a> {
                 }
                 error => panic!("lint run failed: {error}"),
             });
+
+            if self.report_unused_suppressions
+                && let Some(sources) = &suite.sources
+            {
+                for source in sources.iter() {
+                    for (span, id) in source.inline.unused_suppressions(&source.active) {
+                        gcx.sess
+                            .dcx
+                            .warn(format!("unused lint suppression for '{id}'"))
+                            .span(span)
+                            .emit();
+                    }
+                }
+            }
 
             Ok(())
         })?;
@@ -482,10 +508,10 @@ impl Lint for SolLint {
     }
 }
 
-impl<'a> TryFrom<&'a str> for SolLint {
-    type Error = SolLintError;
+impl FromStr for SolLint {
+    type Err = SolLintError;
 
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         all_lints()
             .find(|lint| lint.id == value)
             .copied()

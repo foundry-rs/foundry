@@ -368,7 +368,7 @@ fn unary_operand_kind(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<UnaryOperand
 }
 
 fn is_non_storage_push_call(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> bool {
-    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Call(callee, args) = &expr.peel_parens().kind else { return false };
     let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
     if member.as_str() != "push" || !args.is_empty() {
         return false;

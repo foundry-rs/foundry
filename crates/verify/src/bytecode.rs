@@ -40,13 +40,19 @@ use foundry_evm::{
         env::FromAnyRpcTransaction as _,
         evm::{ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
-    executors::{EvmError, Executor, ExecutorBuilder, TracingExecutor},
+    executors::{Executor, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
 use foundry_evm_networks::NetworkVariant;
-use revm::{context::Block as _, state::AccountInfo};
+use revm::{
+    context::{Block as _, Transaction as _},
+    state::AccountInfo,
+};
 use std::path::PathBuf;
+
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
@@ -257,6 +263,16 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                self.run_with_network::<BaseEvmNetwork>(
+                    config,
+                    endpoint_identity,
+                    network_was_inferred,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
                 .await
             }
@@ -863,15 +879,6 @@ impl VerifyBytecodeArgs {
             .await?;
             Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
 
-            // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
-            // block.
-            let prev_block_id = BlockId::number(simulation_block - 1);
-
-            // Use `transaction.from` instead of `creation_data.contract_creator` to resolve
-            // blockscout creation data discrepancy in case of CREATE2.
-            let prev_block_nonce =
-                provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
-
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
             return Ok(Some(RuntimeVerification {
                 address: self.address,
@@ -883,7 +890,6 @@ impl VerifyBytecodeArgs {
                 block,
                 simulation_block,
                 transaction,
-                prev_block_nonce,
                 local_bytecode_vec,
                 constructor_args,
                 json_results,
@@ -908,7 +914,6 @@ struct RuntimeVerification<FEN: FoundryEvmNetwork> {
     block: Option<AnyRpcBlock>,
     simulation_block: u64,
     transaction: AnyRpcTransaction,
-    prev_block_nonce: u64,
     local_bytecode_vec: Vec<u8>,
     constructor_args: Bytes,
     json_results: Vec<JsonResult>,
@@ -926,23 +931,22 @@ impl<FEN: FoundryEvmNetwork> RuntimeVerification<FEN> {
             evm_env,
             simulation_block,
             transaction,
-            prev_block_nonce,
             local_bytecode_vec,
             constructor_args,
             mut json_results,
             etherscan_metadata,
             ..
         } = self;
-        let kind = ConsensusTransaction::kind(&transaction);
         let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&transaction)?;
-        tx_env.set_nonce(prev_block_nonce);
+        // Read the call from the decoded env: batched transactions have no top-level `to`/`input`.
+        let kind = tx_env.kind();
         let target_context =
             target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
 
         // Replace the `input` with local creation code in the creation tx.
         if let TxKind::Call(to) = kind {
             if to == DEFAULT_CREATE2_DEPLOYER {
-                let mut input = transaction.input()[..32].to_vec(); // Salt
+                let mut input = tx_env.input()[..32].to_vec(); // Salt
                 input.extend_from_slice(&local_bytecode_vec);
                 tx_env.set_data(Bytes::from(input));
 
@@ -1094,33 +1098,17 @@ fn execute_replay_transaction<FEN: FoundryEvmNetwork>(
     tx_env: TxEnvFor<FEN>,
     chain_context: ChainFor<FEN>,
 ) -> Result<()> {
-    if ConsensusTransaction::to(tx).is_some() {
-        executor
-            .transact_with_env_and_context(evm_env.clone(), tx_env, chain_context)
-            .wrap_err_with(|| {
-                format!(
-                    "Failed to execute transaction: {:?} in block {}",
-                    tx.tx_hash(),
-                    evm_env.block_env.number()
-                )
-            })?;
-    } else if let Err(error) =
-        executor.deploy_with_env_and_context(evm_env.clone(), tx_env, chain_context, None)
-    {
-        match error {
-            // Reverted transactions should be skipped.
-            EvmError::Execution(_) => (),
-            error => {
-                return Err(error).wrap_err_with(|| {
-                    format!(
-                        "Failed to deploy transaction: {:?} in block {}",
-                        tx.tx_hash(),
-                        evm_env.block_env.number()
-                    )
-                });
-            }
-        }
-    }
+    // Transact creations too: batched transactions can mix a creation with calls, so their result
+    // need not be a deployment. Reverted transactions are committed and replay continues.
+    executor.transact_with_env_and_context(evm_env.clone(), tx_env, chain_context).wrap_err_with(
+        || {
+            format!(
+                "Failed to execute transaction: {:?} in block {}",
+                tx.tx_hash(),
+                evm_env.block_env.number()
+            )
+        },
+    )?;
     Ok(())
 }
 
@@ -1379,6 +1367,16 @@ mod tests {
                 .unwrap()
                 .id(),
             1
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn configured_network_preserves_base() {
+        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Base)
         );
     }
 }

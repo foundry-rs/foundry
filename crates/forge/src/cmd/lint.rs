@@ -35,6 +35,11 @@ pub struct LintArgs {
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
     pub(crate) lint: Option<Vec<String>>,
 
+    /// Report inline suppression comments (e.g. `// forge-lint: disable-next-line(...)`) that did
+    /// not suppress any diagnostic during the run.
+    #[arg(long)]
+    pub(crate) report_unused_suppressions: bool,
+
     #[command(flatten)]
     pub(crate) build: BuildOpts,
 }
@@ -90,7 +95,7 @@ impl LintArgs {
         }
 
         let parse_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {
-            lints.iter().map(|s| SolLint::try_from(s.as_str())).collect()
+            lints.iter().map(|s| s.parse()).collect()
         };
 
         // Override default lint config with user-defined lints
@@ -114,6 +119,7 @@ impl LintArgs {
             .with_lints(include)
             .without_lints(exclude)
             .with_severity(if severity.is_empty() { None } else { Some(severity) })
+            .with_report_unused_suppressions(self.report_unused_suppressions)
             .with_lint_specific(&config.lint.lint_specific);
 
         let mut opts = solar::interface::config::CompileOpts::default();
