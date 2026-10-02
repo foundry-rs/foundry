@@ -1207,16 +1207,6 @@ pub(crate) enum ExpectedRevertData {
     Exact(SymBytes),
 }
 
-impl ExpectedRevertData {
-    pub(crate) const fn prefix(data: SymBytes) -> Self {
-        Self::Prefix(data)
-    }
-
-    pub(crate) const fn exact(data: SymBytes) -> Self {
-        Self::Exact(data)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AssumeNoRevert {
     Any,
@@ -1559,15 +1549,13 @@ pub(crate) struct ExpectedEmitChecks {
     data: bool,
 }
 
+impl Default for ExpectedEmitChecks {
+    fn default() -> Self {
+        Self { topics: [true; 4], data: true }
+    }
+}
+
 impl ExpectedEmitChecks {
-    pub(crate) const fn default_non_anonymous() -> Self {
-        Self { topics: [true, true, true, true], data: true }
-    }
-
-    pub(crate) const fn default_anonymous() -> Self {
-        Self::default_non_anonymous()
-    }
-
     pub(crate) fn from_non_anonymous_args(
         cx: &mut SymCx,
         memory: &SymMemory,

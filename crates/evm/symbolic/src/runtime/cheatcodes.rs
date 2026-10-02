@@ -830,9 +830,9 @@ pub(crate) fn dyn_potential_revert(
         (reverter != Address::ZERO).then(|| SymExpr::constant(cx, address_word(reverter)));
     let revert_data = SymBytes::concrete(cx, dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
-        ExpectedRevertData::prefix(revert_data)
+        ExpectedRevertData::Prefix(revert_data)
     } else {
-        ExpectedRevertData::exact(revert_data)
+        ExpectedRevertData::Exact(revert_data)
     };
     Ok(ExpectedRevert::new(data, reverter, 1))
 }
