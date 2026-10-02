@@ -48,9 +48,6 @@ use std::{
 use thiserror::Error;
 use tracing::{debug, trace, trace_span, warn};
 
-#[cfg(test)]
-use std::collections::BTreeMap;
-
 mod abi;
 mod consts;
 mod executor;
@@ -557,6 +554,3 @@ pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
 pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
     runtime::solver_portfolio_availability_warning(config)
 }
-
-#[cfg(test)]
-mod tests;

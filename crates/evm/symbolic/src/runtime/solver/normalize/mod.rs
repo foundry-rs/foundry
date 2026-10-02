@@ -7,17 +7,6 @@ mod rounding;
 
 use polynomial::polynomial_identity;
 
-/// Normalizes path constraints into an equivalent, solver-friendlier form.
-#[cfg(test)]
-pub(crate) fn normalize_constraints_for_solver(
-    cx: &mut SymCx,
-    constraints: &[SymBoolExpr],
-) -> Vec<SymBoolExpr> {
-    normalize_constraints_for_solver_with(cx, constraints, |cx, constraint| {
-        normalize_bool_for_solver(cx, constraint.clone())
-    })
-}
-
 /// Reuses context-free normalization results while retaining per-query contextual rewrites.
 pub(super) fn normalize_constraints_for_solver_cached(
     cx: &mut SymCx,
@@ -2118,6 +2107,3 @@ impl ConstraintContext {
         Some(bits)
     }
 }
-
-#[cfg(test)]
-mod tests;

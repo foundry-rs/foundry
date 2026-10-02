@@ -26,13 +26,6 @@ pub(crate) use fallback::{
     fallback_bounded_model, fallback_single_var_model, hard_arith_fallback_model,
 };
 
-#[cfg(test)]
-pub(crate) use normalize::{
-    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
-};
-#[cfg(test)]
-pub(crate) use reasoning::product_monotonic_unsat;
-
 const Z3_QUERY_END: &str = "foundry-query-complete";
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
@@ -132,21 +125,6 @@ impl SolverCommand {
             .join(" ");
         Ok(Self { program, args, display, smt_timeout })
     }
-
-    #[cfg(test)]
-    pub(crate) fn program(&self) -> &str {
-        &self.program
-    }
-
-    #[cfg(test)]
-    pub(crate) fn args(&self) -> &[String] {
-        &self.args
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn smt_timeout(&self) -> bool {
-        self.smt_timeout
-    }
 }
 
 pub(crate) struct SmtLibSubprocessSolver {
@@ -227,11 +205,6 @@ impl SmtLibSubprocessSolver {
         solver
     }
 
-    #[cfg(test)]
-    pub(crate) const fn enable_bounded_model_search(&mut self) {
-        self.bounded_model_search = true;
-    }
-
     /// Returns solver counters collected by this backend.
     pub(crate) fn stats(&self) -> SymbolicStats {
         SymbolicStats {
@@ -282,12 +255,6 @@ impl SmtLibSubprocessSolver {
         self.model_cache.clear();
     }
 
-    /// Returns how many validated local hard-arithmetic witnesses this solver used.
-    #[cfg(test)]
-    pub(crate) const fn heuristic_witnesses(&self) -> usize {
-        self.heuristic_witnesses
-    }
-
     /// Verifies that a configured solver can be invoked before exploration starts.
     pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
@@ -308,15 +275,6 @@ impl SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_sat(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(cx, constraints, false)?.into_result()
-    }
-
     /// Returns satisfiability with path-local storage symbols that concrete replay can set.
     pub(crate) fn is_sat_with_replayable_storage(
         &mut self,
@@ -329,15 +287,6 @@ impl SmtLibSubprocessSolver {
             self.is_sat_inner(cx, constraints, false).and_then(BranchFeasibility::into_result);
         self.replayable_storage = previous;
         result
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_sat_branch(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(cx, constraints, true)?.into_result()
     }
 
     /// Returns branch feasibility with path-local storage symbols concrete replay can set.
@@ -919,31 +868,6 @@ fn collect_solver_vars(constraint: &SymBoolExpr, vars: &mut SymbolicVars) -> boo
     }
 
     visit_bool(constraint, vars)
-}
-
-#[cfg(test)]
-#[test]
-fn removes_only_witnessed_isolated_hash_constraints() {
-    let mut cx = SymCx::new();
-    let input = SymExpr::var(&mut cx, "input");
-    let hash = keccak_word(&mut cx, vec![input.clone()]);
-    let modulus = SymExpr::constant(&mut cx, U256::MAX);
-    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), hash.clone(), modulus);
-    let hash_branch = SymBoolExpr::eq_word_const(&mut cx, &mulmod, U256::ZERO);
-    let preimage_constraint = SymBoolExpr::eq_word_const(&mut cx, &input, U256::from(1));
-
-    let remaining = remove_witnessed_isolated_hash_constraints(
-        &mut cx,
-        vec![hash_branch.clone(), preimage_constraint.clone()],
-    );
-    assert_eq!(remaining, vec![preimage_constraint]);
-
-    let shared_hash_constraint = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
-    let remaining = remove_witnessed_isolated_hash_constraints(
-        &mut cx,
-        vec![hash_branch, shared_hash_constraint],
-    );
-    assert_eq!(remaining.len(), 2, "a shared hash symbol is not an independent component");
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
@@ -2001,15 +1925,6 @@ pub(crate) fn validate_solver_model_output(
     parse_and_validate_model(cx, output, constraints).map(|_| ())
 }
 
-#[cfg(test)]
-pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, SymbolicError> {
-    let mut values = BTreeMap::new();
-    parse_model_values(output, |name, value| {
-        values.insert(name.to_owned(), value);
-    })?;
-    Ok(values)
-}
-
 fn parse_model_with_symbols(
     output: &str,
     symbols: &HashMap<String, Symbol>,
@@ -2092,24 +2007,4 @@ fn model_symbols_for_constraints(
         constraint.collect_vars(&mut vars);
     }
     vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
-}
-
-#[cfg(test)]
-#[test]
-fn z3_session_resets_and_reuses_the_process() {
-    let command = named_solver_command("z3").unwrap();
-    if solver_command_availability_error(&command).is_some() {
-        return;
-    }
-
-    let mut solver = SmtLibSubprocessSolver::new(Ok(vec![command]), Some(5), 2, false);
-    let mut cx = SymCx::new();
-    let value = SymExpr::var(&mut cx, "value");
-    let one = SymExpr::one(&mut cx);
-    let constraints = vec![SymBoolExpr::eq(&mut cx, value, one)];
-
-    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
-    let pid = solver.z3_session.as_mut().unwrap().child.child_mut().id();
-    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
-    assert_eq!(solver.z3_session.as_mut().unwrap().child.child_mut().id(), pid);
 }

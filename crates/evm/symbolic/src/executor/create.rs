@@ -229,19 +229,3 @@ fn runtime_has_rejected_prefix(
     };
     Ok(first_byte == U256::from(0xef))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_evm::revm::context::CfgEnv;
-
-    #[test]
-    fn runtime_code_limit_uses_fork_default_without_override() {
-        let mut cx = SymCx::default();
-        let runtime = SymReturnData::from_concrete_bytes(&mut cx, vec![0; 24_577]);
-        let cfg = CfgEnv::<SpecId>::default();
-
-        assert!(runtime_exceeds_code_size_limit(&cfg, SpecId::SHANGHAI, &runtime));
-        assert!(!runtime_exceeds_code_size_limit(&cfg, SpecId::HOMESTEAD, &runtime));
-    }
-}

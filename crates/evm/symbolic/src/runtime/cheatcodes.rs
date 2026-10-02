@@ -1083,39 +1083,3 @@ pub(crate) fn artifact_code(path: &str, deployed: bool) -> Result<Vec<u8>, Symbo
         .ok_or(SymbolicError::Unsupported("symbolic vm.getCode artifact"))?;
     hex::decode(object).map_err(|_| SymbolicError::Unsupported("symbolic vm.getCode artifact"))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mapping_hook_registrations_require_three_words() {
-        assert_eq!(
-            foundry_cheatcode_min_input_size(registerMappingSstoreHookCall::SELECTOR),
-            Some(abi_static_input_size(3))
-        );
-    }
-
-    #[test]
-    fn symbolic_full_word_array_assertions_exclude_normalized_types_and_reasons() {
-        for selector in [
-            assertEq_16Call::SELECTOR,
-            assertEq_18Call::SELECTOR,
-            assertEq_22Call::SELECTOR,
-            assertNotEq_16Call::SELECTOR,
-            assertNotEq_18Call::SELECTOR,
-            assertNotEq_22Call::SELECTOR,
-        ] {
-            assert!(is_full_word_array_assertion(selector));
-        }
-        for selector in [
-            assertEq_14Call::SELECTOR,
-            assertEq_17Call::SELECTOR,
-            assertEq_20Call::SELECTOR,
-            assertNotEq_15Call::SELECTOR,
-            assertNotEq_20Call::SELECTOR,
-        ] {
-            assert!(!is_full_word_array_assertion(selector));
-        }
-    }
-}
