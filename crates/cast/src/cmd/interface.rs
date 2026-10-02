@@ -72,7 +72,7 @@ impl InterfaceArgs {
         let abis = if is_json_file {
             vec![(load_abi_from_file(&contract)?, name.unwrap_or_else(|| "Interface".to_owned()))]
         } else if let Ok(address) = Address::from_str(&contract) {
-            fetch_abi_from_etherscan(address, &etherscan.load_config()?).await?
+            fetch_abi_from_etherscan(address, &etherscan.load_config()?, true).await?
         } else {
             vec![load_abi_from_artifact(&contract)?]
         };

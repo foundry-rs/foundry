@@ -105,7 +105,7 @@ pub(crate) async fn load_abi(
     if let Some(path) = abi_path {
         return load_abi_from_file(path);
     }
-    let abis = fetch_abi_from_etherscan(contract, config).await?;
+    let abis = fetch_abi_from_etherscan(contract, config, false).await?;
     abis.into_iter().next().map(|(abi, _)| abi).ok_or_eyre("No ABI found.")
 }
 
