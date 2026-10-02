@@ -335,10 +335,16 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
         value: U256,
         gas_limit: u64,
     ) -> HandlerResult<Recovered<TxEnvelope>> {
-        let mut state = self.state.clone();
-        let nonce = Database::get_account(&mut state, &caller)
-            .map_err(HandlerError::Database)?
-            .map_or(0, |account| account.nonce);
+        let nonce = if self.state.database().bal_context.bal().is_none()
+            && let Some(account) = self.state.database().account_info(&caller)
+        {
+            account.nonce
+        } else {
+            let mut state = self.state.clone();
+            Database::get_account(&mut state, &caller)
+                .map_err(HandlerError::Database)?
+                .map_or(0, |account| account.nonce)
+        };
         Ok(Recovered::new_unchecked(
             TxEnvelope::Legacy(TxLegacy {
                 chain_id: (self.env.spec >= SpecId::SPURIOUS_DRAGON)
@@ -358,9 +364,15 @@ impl<D: Database + Clone + 'static, I: Inspector<FoundryEvmTypes> + Clone> Ether
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::Transaction;
     use alloy_primitives::keccak256;
     use alloy_sol_types::SolCall;
-    use evm2::{bytecode::Bytecode, env::BlockEnvExt, evm::AccountInfo, interpreter::Interpreter};
+    use evm2::{
+        bytecode::Bytecode,
+        env::BlockEnvExt,
+        evm::{AccountInfo, bal::Bal},
+        interpreter::Interpreter,
+    };
     use foundry_cheatcodes::{Error, Vm};
     use foundry_compilers::artifacts::EvmVersion;
     use foundry_evm_core::{
@@ -1245,6 +1257,25 @@ mod tests {
 
         stopped.store(true, Ordering::Relaxed);
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn synthetic_nonce_lookup_respects_attached_bal_with_cached_caller() {
+        let caller = Address::with_last_byte(0xa);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(&caller, AccountInfo::default().with_nonce(7));
+        let env = EthereumEnv::new(SpecId::CANCUN, BlockEnvExt::default());
+        let mut executor = EthereumExecutor::new(env, state);
+        let request =
+            executor.synthetic_tx(caller, TxKind::Create, Bytes::new(), U256::ZERO).unwrap();
+        assert_eq!(request.inner().nonce(), 7);
+
+        // A strict read BAL must reject an uncovered caller even when its raw info is cached.
+        executor.state_mut().database_mut().bal_context.set_bal(Arc::new(Bal::new()));
+        assert!(matches!(
+            executor.synthetic_tx(caller, TxKind::Create, Bytes::new(), U256::ZERO),
+            Err(HandlerError::Database(_))
+        ));
     }
 
     fn cheatcode_tx(caller: Address, input: Bytes) -> Recovered<TxEnvelope> {
