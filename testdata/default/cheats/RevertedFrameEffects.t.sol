@@ -34,6 +34,8 @@ contract RevertedFrameProbe {
     }
 }
 
+error FrameEffectApplied();
+
 contract RevertedFrameHelper is Test {
     event Recorded(uint256 value);
 
@@ -47,8 +49,10 @@ contract RevertedFrameHelper is Test {
             vm.deal(target, 123);
         } else if (effect == FrameEffect.Store) {
             vm.store(target, bytes32(0), bytes32(uint256(123)));
+            require(vm.load(target, bytes32(0)) == bytes32(uint256(123)), "store was not applied");
         } else if (effect == FrameEffect.Etch) {
             vm.etch(target, hex"00");
+            require(keccak256(target.code) == keccak256(hex"00"), "etch was not applied");
         } else if (effect == FrameEffect.SetNonce) {
             vm.setNonce(target, 123);
         } else if (effect == FrameEffect.SetNonceUnsafe) {
@@ -88,7 +92,7 @@ contract RevertedFrameHelper is Test {
             vm.recordLogs();
             emit Recorded(123);
         }
-        revert();
+        revert FrameEffectApplied();
     }
 }
 
@@ -115,201 +119,201 @@ contract RevertedFrameEffectsTest is Test {
     }
 
     function test_deal_persists_depth1() public {
-        try helper.run(FrameEffect.Deal, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Deal, false);
         // Master behavior: persists.
         assertEq(target.balance, 123);
     }
 
     function test_deal_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Deal, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Deal, true);
         // Master behavior: persists.
         assertEq(target.balance, 123);
     }
 
     function test_store_reverts_depth1() public {
-        try helper.run(FrameEffect.Store, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Store, false);
         assertEq(vm.load(target, bytes32(0)), bytes32(0));
     }
 
     function test_store_reverts_depth2() public {
-        try outer.run(helper, FrameEffect.Store, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Store, true);
         assertEq(vm.load(target, bytes32(0)), bytes32(0));
     }
 
     function test_etch_reverts_depth1() public {
-        try helper.run(FrameEffect.Etch, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Etch, false);
         assertEq(target.code.length, 0);
     }
 
     function test_etch_reverts_depth2() public {
-        try outer.run(helper, FrameEffect.Etch, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Etch, true);
         assertEq(target.code.length, 0);
     }
 
     function test_setNonce_persists_depth1() public {
-        try helper.run(FrameEffect.SetNonce, target, probe) {} catch {}
+        runAndCatch(FrameEffect.SetNonce, false);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 123);
     }
 
     function test_setNonce_persists_depth2() public {
-        try outer.run(helper, FrameEffect.SetNonce, target, probe) {} catch {}
+        runAndCatch(FrameEffect.SetNonce, true);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 123);
     }
 
     function test_setNonceUnsafe_persists_depth1() public {
-        try helper.run(FrameEffect.SetNonceUnsafe, target, probe) {} catch {}
+        runAndCatch(FrameEffect.SetNonceUnsafe, false);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 123);
     }
 
     function test_setNonceUnsafe_persists_depth2() public {
-        try outer.run(helper, FrameEffect.SetNonceUnsafe, target, probe) {} catch {}
+        runAndCatch(FrameEffect.SetNonceUnsafe, true);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 123);
     }
 
     function test_resetNonce_persists_depth1() public {
         vm.setNonce(target, 123);
-        try helper.run(FrameEffect.ResetNonce, target, probe) {} catch {}
+        runAndCatch(FrameEffect.ResetNonce, false);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 0);
     }
 
     function test_resetNonce_persists_depth2() public {
         vm.setNonce(target, 123);
-        try outer.run(helper, FrameEffect.ResetNonce, target, probe) {} catch {}
+        runAndCatch(FrameEffect.ResetNonce, true);
         // Master behavior: persists.
         assertEq(vm.getNonce(target), 0);
     }
 
     function test_warp_persists_depth1() public {
-        try helper.run(FrameEffect.Warp, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Warp, false);
         assertEq(block.timestamp, 123);
     }
 
     function test_warp_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Warp, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Warp, true);
         assertEq(block.timestamp, 123);
     }
 
     function test_roll_persists_depth1() public {
-        try helper.run(FrameEffect.Roll, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Roll, false);
         assertEq(block.number, 123);
     }
 
     function test_roll_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Roll, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Roll, true);
         assertEq(block.number, 123);
     }
 
     function test_fee_persists_depth1() public {
-        try helper.run(FrameEffect.Fee, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Fee, false);
         assertEq(block.basefee, 123);
     }
 
     function test_fee_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Fee, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Fee, true);
         assertEq(block.basefee, 123);
     }
 
     function test_chainId_persists_depth1() public {
-        try helper.run(FrameEffect.ChainId, target, probe) {} catch {}
+        runAndCatch(FrameEffect.ChainId, false);
         assertEq(block.chainid, 123);
     }
 
     function test_chainId_persists_depth2() public {
-        try outer.run(helper, FrameEffect.ChainId, target, probe) {} catch {}
+        runAndCatch(FrameEffect.ChainId, true);
         assertEq(block.chainid, 123);
     }
 
     function test_coinbase_persists_depth1() public {
-        try helper.run(FrameEffect.Coinbase, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Coinbase, false);
         assertEq(block.coinbase, target);
     }
 
     function test_coinbase_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Coinbase, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Coinbase, true);
         assertEq(block.coinbase, target);
     }
 
     function test_prevrandao_persists_depth1() public {
-        try helper.run(FrameEffect.Prevrandao, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Prevrandao, false);
         assertEq(block.prevrandao, 123);
     }
 
     function test_prevrandao_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Prevrandao, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Prevrandao, true);
         assertEq(block.prevrandao, 123);
     }
 
     function test_blobBaseFee_persists_depth1() public {
-        try helper.run(FrameEffect.BlobBaseFee, target, probe) {} catch {}
+        runAndCatch(FrameEffect.BlobBaseFee, false);
         // Master behavior: persists.
         assertEq(block.blobbasefee, 7);
     }
 
     function test_blobBaseFee_persists_depth2() public {
-        try outer.run(helper, FrameEffect.BlobBaseFee, target, probe) {} catch {}
+        runAndCatch(FrameEffect.BlobBaseFee, true);
         // Master behavior: persists.
         assertEq(block.blobbasefee, 7);
     }
 
     function test_txGasPrice_persists_depth1() public {
-        try helper.run(FrameEffect.TxGasPrice, target, probe) {} catch {}
+        runAndCatch(FrameEffect.TxGasPrice, false);
         assertEq(tx.gasprice, 123);
     }
 
     function test_txGasPrice_persists_depth2() public {
-        try outer.run(helper, FrameEffect.TxGasPrice, target, probe) {} catch {}
+        runAndCatch(FrameEffect.TxGasPrice, true);
         assertEq(tx.gasprice, 123);
     }
 
     function test_blobhashes_persists_depth1() public {
-        try helper.run(FrameEffect.Blobhashes, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Blobhashes, false);
         assertEq(blobhash(0), bytes32(uint256(123)));
     }
 
     function test_blobhashes_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Blobhashes, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Blobhashes, true);
         assertEq(blobhash(0), bytes32(uint256(123)));
     }
 
     function test_label_persists_depth1() public {
-        try helper.run(FrameEffect.Label, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Label, false);
         assertEq(vm.getLabel(target), "reverted label");
     }
 
     function test_label_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Label, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Label, true);
         assertEq(vm.getLabel(target), "reverted label");
     }
 
     function test_startPrank_persists_depth1() public {
-        try helper.run(FrameEffect.StartPrank, target, probe) {} catch {}
+        runAndCatch(FrameEffect.StartPrank, false);
         // Master behavior: persists.
         assertEq(helper.observeSender(probe), target);
     }
 
     function test_startPrank_persists_depth2() public {
-        try outer.run(helper, FrameEffect.StartPrank, target, probe) {} catch {}
+        runAndCatch(FrameEffect.StartPrank, true);
         // Master behavior: persists.
         assertEq(outer.observeSender(helper, probe), target);
     }
 
     function test_mockCall_persists_depth1() public {
-        try helper.run(FrameEffect.MockCall, target, probe) {} catch {}
+        runAndCatch(FrameEffect.MockCall, false);
         assertEq(probe.value(), 123);
     }
 
     function test_mockCall_persists_depth2() public {
-        try outer.run(helper, FrameEffect.MockCall, target, probe) {} catch {}
+        runAndCatch(FrameEffect.MockCall, true);
         assertEq(probe.value(), 123);
     }
 
     function test_record_persists_depth1() public {
-        try helper.run(FrameEffect.Record, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Record, false);
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(probe));
         assertEq(reads.length, 1);
         assertEq(reads[0], bytes32(0));
@@ -317,7 +321,7 @@ contract RevertedFrameEffectsTest is Test {
     }
 
     function test_record_persists_depth2() public {
-        try outer.run(helper, FrameEffect.Record, target, probe) {} catch {}
+        runAndCatch(FrameEffect.Record, true);
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(probe));
         assertEq(reads.length, 1);
         assertEq(reads[0], bytes32(0));
@@ -325,7 +329,7 @@ contract RevertedFrameEffectsTest is Test {
     }
 
     function test_recordLogs_persists_depth1() public {
-        try helper.run(FrameEffect.RecordLogs, target, probe) {} catch {}
+        runAndCatch(FrameEffect.RecordLogs, false);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1);
         assertEq(logs[0].emitter, address(helper));
@@ -335,12 +339,24 @@ contract RevertedFrameEffectsTest is Test {
     }
 
     function test_recordLogs_persists_depth2() public {
-        try outer.run(helper, FrameEffect.RecordLogs, target, probe) {} catch {}
+        runAndCatch(FrameEffect.RecordLogs, true);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1);
         assertEq(logs[0].emitter, address(helper));
         assertEq(logs[0].topics.length, 1);
         assertEq(logs[0].topics[0], keccak256("Recorded(uint256)"));
         assertEq(logs[0].data, abi.encode(uint256(123)));
+    }
+
+    function runAndCatch(FrameEffect effect, bool nested) internal {
+        bool success;
+        bytes memory result;
+        if (nested) {
+            (success, result) = address(outer).call(abi.encodeCall(outer.run, (helper, effect, target, probe)));
+        } else {
+            (success, result) = address(helper).call(abi.encodeCall(helper.run, (effect, target, probe)));
+        }
+        assertTrue(!success, "helper did not revert");
+        assertEq(result, abi.encodeWithSelector(FrameEffectApplied.selector), "unexpected helper revert");
     }
 }
