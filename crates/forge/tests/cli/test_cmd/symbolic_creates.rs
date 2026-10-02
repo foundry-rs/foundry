@@ -4,7 +4,8 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
-forgetest_init!(symbolic_create_contains_invalid_initcode_halt, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_contains_invalid_initcode_halt(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_contains_invalid_initcode_halt because z3 is not available"
@@ -36,9 +37,10 @@ contract SymbolicInvalidInitcode {
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkInvalidInitcode"]).assert_success();
-});
+}
 
-forgetest_init!(symbolic_create_respects_configured_runtime_code_limit, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_respects_configured_runtime_code_limit(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_respects_configured_runtime_code_limit because z3 is not available"
@@ -102,9 +104,10 @@ contract OversizedRuntime {
     cmd.forge_fuse();
     cmd.args(["test", "--symbolic", "--match-test", "checkConfiguredRuntimeCodeLimit"])
         .assert_success();
-});
+}
 
-forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_deploys_and_calls_helper(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_deploys_and_calls_helper because z3 is not available"
@@ -149,9 +152,10 @@ checkCreate(uint256)
 "#]],
     );
     assert!(!stdout.contains("unsupported opcode: 0xf0"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create_respects_eip3541_runtime_prefix, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_respects_eip3541_runtime_prefix(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_respects_eip3541_runtime_prefix because z3 is not available"
@@ -315,9 +319,10 @@ contract ConsumeMockThenReject {
         "checkAllowedPrefixBeforeLondon",
     ])
     .assert_success();
-});
+}
 
-forgetest_init!(symbolic_create_preserves_symbolic_constructor_args, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_preserves_symbolic_constructor_args(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_preserves_symbolic_constructor_args because z3 is not available"
@@ -361,9 +366,10 @@ contract SymbolicCreateConstructorArgs {
         !stdout.contains("unsupported symbolic execution feature: symbolic CREATE initcode"),
         "{stdout}"
     );
-});
+}
 
-forgetest_init!(symbolic_create_accepts_constrained_symbolic_initcode_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_accepts_constrained_symbolic_initcode_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_accepts_constrained_symbolic_initcode_offset because z3 is not available"
@@ -409,9 +415,10 @@ contract SymbolicCreateInitcodeOffset is Test {
     );
     assert!(!stdout.contains("symbolic CREATE initcode offset"), "{stdout}");
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create_size_respects_path_width, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_size_respects_path_width(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_size_respects_path_width because z3 is not available"
@@ -460,9 +467,10 @@ symbolic path limit exceeded
 checkCreateSizeRespectsPathWidth(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_create2_deploys_and_calls_helper, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create2_deploys_and_calls_helper(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create2_deploys_and_calls_helper because z3 is not available"
@@ -507,9 +515,10 @@ checkCreate2(uint256)
 "#]],
     );
     assert!(!stdout.contains("unsupported opcode: 0xf5"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create2_preserves_symbolic_constructor_args, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create2_preserves_symbolic_constructor_args(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create2_preserves_symbolic_constructor_args because z3 is not available"
@@ -555,9 +564,10 @@ contract SymbolicCreate2Args {
 "#]],
     );
     assert!(!stdout.contains("symbolic CREATE2 initcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_create_matches_and_reports_missing, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_create_matches_and_reports_missing(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_create_matches_and_reports_missing because z3 is not available"
@@ -689,9 +699,10 @@ checkMismatchedSymbolicCreateExpectation(address)
 checkMissingCreateExpectation(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_create2_supports_symbolic_salt_and_self_address, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create2_supports_symbolic_salt_and_self_address(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create2_supports_symbolic_salt_and_self_address because z3 is not available"
@@ -738,9 +749,10 @@ contract SymbolicCreate2SelfAddress {
     );
     assert!(!stdout.contains("symbolic CREATE2 salt"), "{stdout}");
     assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create2_collision_returns_zero, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create2_collision_returns_zero(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create2_collision_returns_zero because z3 is not available"
@@ -785,9 +797,10 @@ contract SymbolicCreate2Collision is Test {
 [PASS] checkCreate2Collision()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_create_failure_bumps_creator_nonce, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_failure_bumps_creator_nonce(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_failure_bumps_creator_nonce because z3 is not available"
@@ -830,9 +843,10 @@ contract SymbolicCreateFailureNonce is Test {
 [PASS] checkCreateFailureNonce(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_compute_create_address_cheatcodes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_compute_create_address_cheatcodes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_compute_create_address_cheatcodes because z3 is not available"
@@ -969,9 +983,10 @@ contract SymbolicComputeCreateAddresses is Test {
     assert!(!stdout.contains("symbolic vm.computeCreate2Address init code hash"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreateAddress deployer"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreate2Address deployer"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_nonce_cheatcodes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_nonce_cheatcodes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_vm_nonce_cheatcodes because z3 is not available");
         return;
@@ -1035,9 +1050,10 @@ contract SymbolicNonceCheatcodes is Test {
 [PASS] checkResetNonceCheatcode(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_set_nonce_rejects_decrement, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_set_nonce_rejects_decrement(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_set_nonce_rejects_decrement because z3 is not available"
@@ -1079,9 +1095,10 @@ contract SymbolicSetNonceRejectsDecrement is Test {
 checkSetNonceRejectsDecrement(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_create_transfers_value_and_checks_balance, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_transfers_value_and_checks_balance(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_transfers_value_and_checks_balance because z3 is not available"
@@ -1128,9 +1145,10 @@ contract SymbolicCreateValue is Test {
 [PASS] checkCreateValue()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_create_preserves_revert_data, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_preserves_revert_data(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_preserves_revert_data because z3 is not available"
@@ -1173,9 +1191,10 @@ contract SymbolicCreateRevertData {
 [PASS] checkCreateRevertData()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_create_accepts_symbolic_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_accepts_symbolic_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_accepts_symbolic_value because z3 is not available"
@@ -1224,9 +1243,10 @@ contract SymbolicCreateSymbolicValue is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create_splits_symbolic_insufficient_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_splits_symbolic_insufficient_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_splits_symbolic_insufficient_value because z3 is not available"
@@ -1279,9 +1299,10 @@ contract SymbolicCreateInsufficientValue is Test {
     );
     assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
     assert!(!stdout.contains("symbolic CREATE balance"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create2_accepts_symbolic_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create2_accepts_symbolic_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create2_accepts_symbolic_value because z3 is not available"
@@ -1331,9 +1352,10 @@ contract SymbolicCreate2SymbolicValue is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_create_accepts_bounded_symbolic_initcode_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_accepts_bounded_symbolic_initcode_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_accepts_bounded_symbolic_initcode_size because z3 is not available"
@@ -1377,9 +1399,10 @@ contract SymbolicCreateInitcodeSize is Test {
     );
     assert!(!stdout.contains("symbolic CREATE initcode size"), "{stdout}");
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_staticcall_rejects_create, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_staticcall_rejects_create(prj: _, cmd: _) {
     if !z3_available() {
         let _ =
             sh_eprintln!("skipping symbolic_staticcall_rejects_create because z3 is not available");
@@ -1427,14 +1450,15 @@ contract SymbolicStaticCreate {
 [PASS] checkStaticCreate()
 "#]],
     );
-});
+}
 
 // CREATE whose constructor returns a symbolic-length runtime image must fail
 // closed as Unsupported instead of silently installing a max-length padded
 // bytecode (which would corrupt EXTCODESIZE, selector dispatch, and later
 // execution). The constructor below returns `len` bytes; with symbolic `len`
 // the engine must report the unsupported feature.
-forgetest_init!(symbolic_create_with_symbolic_runtime_size_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_create_with_symbolic_runtime_size_reports_unsupported(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_create_with_symbolic_runtime_size_reports_unsupported because z3 is not available"
@@ -1479,4 +1503,4 @@ contract SymbolicCreateRuntimeLen {
 unsupported symbolic execution feature: symbolic RETURN size
 "#]],
     );
-});
+}
