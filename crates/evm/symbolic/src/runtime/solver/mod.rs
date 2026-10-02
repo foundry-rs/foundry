@@ -55,10 +55,9 @@ pub(crate) enum SolverOutcome {
     Unexpected,
 }
 
-impl SolverOutcome {
-    /// Returns the diagnostic label for this solver outcome.
-    const fn as_str(self) -> &'static str {
-        match self {
+impl fmt::Display for SolverOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Cancelled => "cancelled",
             Self::Error => "error",
             Self::NotStarted => "not-started",
@@ -71,13 +70,7 @@ impl SolverOutcome {
             Self::Unsat => "unsat",
             Self::UnsatAfterWinner => "unsat-after-winner",
             Self::Unexpected => "unexpected",
-        }
-    }
-}
-
-impl fmt::Display for SolverOutcome {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        })
     }
 }
 
@@ -89,10 +82,6 @@ pub(crate) enum BranchFeasibility {
 }
 
 impl BranchFeasibility {
-    const fn from_bool(sat: bool) -> Self {
-        if sat { Self::Sat } else { Self::Unsat }
-    }
-
     const fn into_result(self) -> Result<bool, SymbolicError> {
         match self {
             Self::Sat => Ok(true),
@@ -236,11 +225,9 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<bool, SymbolicError> {
-        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result =
-            self.is_sat_inner(cx, constraints, false).and_then(BranchFeasibility::into_result);
-        self.replayable_storage = previous;
-        result
+        self.with_replayable_storage(replayable_storage, |solver| {
+            solver.is_sat_inner(cx, constraints, false).and_then(BranchFeasibility::into_result)
+        })
     }
 
     /// Returns branch feasibility with path-local storage symbols concrete replay can set.
@@ -250,10 +237,9 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<BranchFeasibility, SymbolicError> {
-        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = self.is_sat_inner(cx, constraints, true);
-        self.replayable_storage = previous;
-        result
+        self.with_replayable_storage(replayable_storage, |solver| {
+            solver.is_sat_inner(cx, constraints, true)
+        })
     }
 
     /// Returns a model with path-local storage symbols that concrete replay can set.
@@ -263,8 +249,16 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<SymbolicModel, SymbolicError> {
+        self.with_replayable_storage(replayable_storage, |solver| solver.model(cx, constraints))
+    }
+
+    fn with_replayable_storage<T>(
+        &mut self,
+        replayable_storage: &SymbolicVars,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = self.model(cx, constraints);
+        let result = operation(self);
         self.replayable_storage = previous;
         result
     }
@@ -298,7 +292,7 @@ impl SmtLibSubprocessSolver {
         }
 
         if let Some(model) = self.model_cache.get(&cache_key) {
-            if model_satisfies_constraints(model, constraints) {
+            if eval_model_constraints(constraints, model) {
                 let model = model.clone();
                 self.model_cache_hits += 1;
                 trace!("model: normalized cache hit");
@@ -322,14 +316,14 @@ impl SmtLibSubprocessSolver {
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
         if let Some(model) = fallback_single_var_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
         if let Some(model) = fallback_bounded_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
@@ -413,7 +407,7 @@ impl SmtLibSubprocessSolver {
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
-            return Ok(BranchFeasibility::from_bool(*result));
+            return Ok(if *result { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
         }
         if self.has_cached_unsat_subset(&cache_key) {
             self.sat_cache_hits += 1;
@@ -464,20 +458,20 @@ impl SmtLibSubprocessSolver {
             return Ok(BranchFeasibility::Unsat);
         }
         if !constraints.is_empty()
-            && model_satisfies_constraints(&SymbolicModel::default(), constraints)
+            && eval_model_constraints(constraints, &SymbolicModel::default())
             && !constraints.iter().any(SymBoolExpr::contains_gasleft)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
         if let Some(model) = fallback_bounded_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
@@ -557,32 +551,12 @@ impl SmtLibSubprocessSolver {
         Ok(())
     }
 
-    /// Caches a definitive normalized satisfiability result if the cache has room.
     fn cache_sat_result(&mut self, key: Vec<SymBoolExpr>, result: bool) {
-        let has_capacity = self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES;
-        match self.sat_cache.entry(key) {
-            alloy_primitives::map::Entry::Occupied(mut entry) => {
-                entry.insert(result);
-            }
-            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
-                entry.insert(result);
-            }
-            alloy_primitives::map::Entry::Vacant(_) => {}
-        }
+        cache_result(&mut self.sat_cache, key, result, SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES);
     }
 
-    /// Caches a validated normalized model result if the cache has room.
     fn cache_model_result(&mut self, key: Vec<SymBoolExpr>, model: SymbolicModel) {
-        let has_capacity = self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES;
-        match self.model_cache.entry(key) {
-            alloy_primitives::map::Entry::Occupied(mut entry) => {
-                entry.insert(model);
-            }
-            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
-                entry.insert(model);
-            }
-            alloy_primitives::map::Entry::Vacant(_) => {}
-        }
+        cache_result(&mut self.model_cache, key, model, SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES);
     }
 
     /// Returns whether an already-proved unsat constraint set is a subset of `key`.
@@ -688,6 +662,22 @@ impl SmtLibSubprocessSolver {
             }
             other => other,
         }
+    }
+}
+
+fn cache_result<K, V>(cache: &mut HashMap<K, V>, key: K, value: V, max_entries: usize)
+where
+    K: Eq + std::hash::Hash,
+{
+    let has_capacity = cache.len() < max_entries;
+    match cache.entry(key) {
+        alloy_primitives::map::Entry::Occupied(mut entry) => {
+            entry.insert(value);
+        }
+        alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
+            entry.insert(value);
+        }
+        alloy_primitives::map::Entry::Vacant(_) => {}
     }
 }
 
@@ -809,15 +799,7 @@ fn validated_hard_arith_fallback_model(
     original_constraints: &[SymBoolExpr],
 ) -> Option<SymbolicModel> {
     let model = hard_arith_fallback_model(cx, normalized_constraints)?;
-    model_satisfies_constraints(&model, original_constraints).then_some(model)
-}
-
-/// Returns whether a parsed model satisfies the current original constraints.
-fn model_satisfies_constraints(
-    model: &(impl SymbolicModelLookup + ?Sized),
-    constraints: &[SymBoolExpr],
-) -> bool {
-    eval_model_constraints(constraints, model)
+    eval_model_constraints(original_constraints, &model).then_some(model)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -849,11 +831,6 @@ impl PortfolioSchedulerSignal {
         }
     }
 
-    /// Returns whether this signal should affect later portfolio scheduling.
-    const fn is_neutral(self) -> bool {
-        matches!(self, Self::Neutral)
-    }
-
     /// Returns the numeric score contribution for adaptive portfolio ordering.
     const fn score(self) -> i64 {
         match self {
@@ -869,7 +846,7 @@ impl PortfolioSchedulerSignal {
 impl PortfolioScheduler {
     /// Returns configured commands ordered by recent portfolio performance.
     fn ordered_commands(&mut self, commands: &[SolverCommand]) -> Vec<(usize, SolverCommand)> {
-        self.ensure_len(commands.len());
+        self.history.resize_with(commands.len(), VecDeque::new);
         let mut ordered = commands.iter().cloned().enumerate().collect::<Vec<_>>();
         ordered.sort_by(|(left_index, _), (right_index, _)| {
             self.score(*right_index)
@@ -890,7 +867,7 @@ impl PortfolioScheduler {
             let Some((configured_index, _)) = ordered_commands.get(run_index) else { continue };
             let Some(history) = self.history.get_mut(*configured_index) else { continue };
             let signal = PortfolioSchedulerSignal::from_summary(summary);
-            if signal.is_neutral() {
+            if matches!(signal, PortfolioSchedulerSignal::Neutral) {
                 continue;
             }
             history.push_back(signal);
@@ -898,11 +875,6 @@ impl PortfolioScheduler {
                 history.pop_front();
             }
         }
-    }
-
-    /// Ensures the scheduler has one history slot per configured solver.
-    fn ensure_len(&mut self, len: usize) {
-        self.history.resize_with(len, VecDeque::new);
     }
 
     /// Returns the recent-performance score for one configured solver index.
@@ -1196,7 +1168,9 @@ fn run_solver_commands(
                 continue;
             }
             match outcome {
-                SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
+                SolverProcessOutcome::Output(output)
+                    if output.lines().next().unwrap_or_default().trim() == "sat" =>
+                {
                     if let Some(constraints) = model_constraints
                         && let Err(err) = validate_solver_model_output(cx, &output, constraints)
                     {
@@ -1224,14 +1198,18 @@ fn run_solver_commands(
                         summaries.push(summary_for_unstarted_solver(solver));
                     }
                 }
-                SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+                SolverProcessOutcome::Output(output)
+                    if output.lines().next().unwrap_or_default().trim() == "unsat" =>
+                {
                     summaries.push(
                         SolverRunSummary::new(display, elapsed, SolverOutcome::Unsat)
                             .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unsat = true;
                 }
-                SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
+                SolverProcessOutcome::Output(output)
+                    if output.lines().next().unwrap_or_default().trim() == "unknown" =>
+                {
                     summaries.push(
                         SolverRunSummary::new(display, elapsed, SolverOutcome::Unknown)
                             .with_schedule(index, scheduled_after, Some(started_after)),
@@ -1239,7 +1217,7 @@ fn run_solver_commands(
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Output(output) => {
-                    let first_line = first_solver_line(&output).to_string();
+                    let first_line = output.lines().next().unwrap_or_default().trim().to_string();
                     summaries.push(
                         SolverRunSummary::new(display.clone(), elapsed, SolverOutcome::Unexpected)
                             .with_schedule(index, scheduled_after, Some(started_after))
@@ -1344,18 +1322,24 @@ fn summary_for_cancelled_solver_result(
     outcome: SolverProcessOutcome,
 ) -> SolverRunSummary {
     let summary = match outcome {
-        SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
+        SolverProcessOutcome::Output(output)
+            if output.lines().next().unwrap_or_default().trim() == "sat" =>
+        {
             SolverRunSummary::new(display, elapsed, SolverOutcome::SatAfterWinner)
         }
-        SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+        SolverProcessOutcome::Output(output)
+            if output.lines().next().unwrap_or_default().trim() == "unsat" =>
+        {
             SolverRunSummary::new(display, elapsed, SolverOutcome::UnsatAfterWinner)
         }
-        SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
+        SolverProcessOutcome::Output(output)
+            if output.lines().next().unwrap_or_default().trim() == "unknown" =>
+        {
             SolverRunSummary::new(display, elapsed, SolverOutcome::UnknownAfterWinner)
         }
         SolverProcessOutcome::Output(output) => {
             SolverRunSummary::new(display, elapsed, SolverOutcome::Unexpected)
-                .with_detail(first_solver_line(&output).to_string())
+                .with_detail(output.lines().next().unwrap_or_default().trim().to_string())
         }
         SolverProcessOutcome::Unknown => {
             SolverRunSummary::new(display, elapsed, SolverOutcome::TimeoutOrUnknown)
@@ -1637,22 +1621,6 @@ fn solver_exit_error(
         message.push_str(stdout.trim());
     }
     message
-}
-
-fn solver_output_is_sat(output: &str) -> bool {
-    first_solver_line(output) == "sat"
-}
-
-fn solver_output_is_unsat(output: &str) -> bool {
-    first_solver_line(output) == "unsat"
-}
-
-fn solver_output_is_unknown(output: &str) -> bool {
-    first_solver_line(output) == "unknown"
-}
-
-fn first_solver_line(output: &str) -> &str {
-    output.lines().next().unwrap_or_default().trim()
 }
 
 pub(crate) fn parse_and_validate_model(

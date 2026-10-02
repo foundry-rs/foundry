@@ -678,7 +678,7 @@ fn complete_support_constraints_once(
         match constraint.eval_model_if_complete(model) {
             Ok(Some(true)) => {}
             Ok(Some(false)) | Err(_) => return None,
-            Ok(None) => changed |= complete_support_constraint(constraint, model),
+            Ok(None) => changed |= complete_support_bool(constraint, model, false, false),
         }
     }
     Some(changed)
@@ -719,10 +719,6 @@ fn complete_model_with_zeroes(
         model.entry(var).or_default();
     }
     true
-}
-
-fn complete_support_constraint(constraint: &SymBoolExpr, model: &mut SymbolicModel) -> bool {
-    complete_support_bool(constraint, model, false, false)
 }
 
 fn complete_default_support_constraint(
@@ -1089,7 +1085,7 @@ impl MaskHints {
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
         {
             if inverted {
-                if is_single_bit(mask) {
+                if mask.is_power_of_two() {
                     self.one |= mask;
                 }
             } else {
@@ -1097,10 +1093,6 @@ impl MaskHints {
             }
         }
     }
-}
-
-fn is_single_bit(value: U256) -> bool {
-    !value.is_zero() && (value & (value - U256::from(1))).is_zero()
 }
 
 fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
