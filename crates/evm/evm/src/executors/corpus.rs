@@ -438,9 +438,17 @@ impl WorkerCorpusSeed {
         if !self.optimization_best_sequence.is_empty()
             && !is_replayable(&self.optimization_best_sequence)
         {
-            self.optimization_best_value = None;
-            self.optimization_best_sequence.clear();
+            self.discard_optimization_best();
         }
+    }
+
+    pub(crate) fn discard_optimization_best(&mut self) {
+        self.optimization_best_value = None;
+        self.optimization_best_sequence.clear();
+    }
+
+    pub(crate) fn optimization_initial_state(&self) -> (Option<I256>, &[BasicTxDetails]) {
+        (self.optimization_best_value, &self.optimization_best_sequence)
     }
 
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
@@ -460,8 +468,7 @@ impl WorkerCorpusSeed {
         if let Some(senders) = target.senders
             && !seed.optimization_best_sequence.iter().all(|tx| senders.allows(tx.sender))
         {
-            seed.optimization_best_value = None;
-            seed.optimization_best_sequence.clear();
+            seed.discard_optimization_best();
         }
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation

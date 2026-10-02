@@ -2786,6 +2786,56 @@ contract InvariantOptimizeTest is Test {
 }
 
 #[forgetest_init]
+fn invariant_optimization_discards_stale_persisted_best(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    let source = r#"
+import {Test} from "forge-std/Test.sol";
+
+contract OptimizationHandler {
+    int256 public value;
+
+    function step() external {
+        value += 1;
+    }
+}
+
+contract OptimizationTest is Test {
+    OptimizationHandler handler;
+
+    function setUp() public {
+        handler = new OptimizationHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_optimize_value() public view returns (int256) {
+        return handler.value();
+    }
+}
+"#;
+    prj.add_test("OptimizationTest.t.sol", source);
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+...
+ invariant_optimize_value() (best: 3, runs: 1, calls: 3)
+...
+"#]]);
+
+    prj.add_test("OptimizationTest.t.sol", &source.replace("value += 1;", "value -= 1;"));
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS]
+...
+ invariant_optimize_value() (best: -1, runs: 1, calls: 3)
+...
+"#]]);
+}
+
+#[forgetest_init]
 fn invariant_zero_delays_are_disabled(prj: _, cmd: _) {
     prj.add_test(
         "InvariantZeroDelay.t.sol",
