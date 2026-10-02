@@ -4,7 +4,8 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
-forgetest_init!(symbolic_precompiles_execute_concrete_inputs, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_precompiles_execute_concrete_inputs(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_precompiles_execute_concrete_inputs because z3 is not available"
@@ -153,9 +154,10 @@ contract SymbolicPrecompiles is Test {
 [PASS] checkEcrecoverPrecompile(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_hash_precompiles_accept_symbolic_input, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_hash_precompiles_accept_symbolic_input(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_hash_precompiles_accept_symbolic_input because z3 is not available"
@@ -212,9 +214,10 @@ contract SymbolicPrecompileInput {
 "#]],
     );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_ecrecover_return_data_conformance, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_ecrecover_return_data_conformance(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_ecrecover_return_data_conformance because z3 is not available"
@@ -275,9 +278,10 @@ contract EcrecoverReturnData {
 [PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
 ...
 "#]]);
-});
+}
 
-forgetest_init!(symbolic_identity_precompile_accepts_symbolic_input, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_identity_precompile_accepts_symbolic_input(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_identity_precompile_accepts_symbolic_input because z3 is not available"
@@ -317,9 +321,10 @@ contract SymbolicIdentityPrecompileInput is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_advanced_precompiles_accept_symbolic_payloads, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_advanced_precompiles_accept_symbolic_payloads(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_advanced_precompiles_accept_symbolic_payloads because z3 is not available"
@@ -389,9 +394,10 @@ contract SymbolicAdvancedPrecompileInput is Test {
     );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
     assert!(!stdout.contains("symbolic precompile length header"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_precompiles_accept_symbolic_input_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_precompiles_accept_symbolic_input_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_precompiles_accept_symbolic_input_size because z3 is not available"
@@ -477,9 +483,10 @@ contract SymbolicPrecompileInputSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic precompile CALL input size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_kzg_precompile_models_symbolic_witnesses, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_models_symbolic_witnesses(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_models_symbolic_witnesses because z3 is not available"
@@ -640,9 +647,10 @@ checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256)
 "#]],
     );
     assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_kzg_precompile_explores_invalid_symbolic_length, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_explores_invalid_symbolic_length(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_explores_invalid_symbolic_length because z3 is not available"
@@ -687,9 +695,10 @@ contract SymbolicKzgInvalidLength {
 checkKzgInvalidLengthIsNotDropped(uint8)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_kzg_precompile_inactive_before_cancun, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_inactive_before_cancun(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_inactive_before_cancun because z3 is not available"
@@ -741,9 +750,10 @@ contract SymbolicPreCancunKzg {
 [PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_precompile_codehash_matches_account_state, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_precompile_codehash_matches_account_state(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_precompile_codehash_matches_account_state because z3 is not available"
@@ -840,9 +850,10 @@ contract PrecompileAccounts is Test {
   }
 }
 "#]]);
-});
+}
 
-forgetest_init!(symbolic_kzg_precompile_residual_reports_incomplete, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_residual_reports_incomplete(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_residual_reports_incomplete because z3 is not available"
@@ -879,4 +890,4 @@ contract SymbolicKzgResidual {
         stdout.contains("symbolic KZG point-evaluation precompile residual not modeled"),
         "{stdout}"
     );
-});
+}

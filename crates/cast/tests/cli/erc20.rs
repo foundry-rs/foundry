@@ -80,7 +80,8 @@ async fn setup_token_test(
     (rpc, token, handle)
 }
 
-casttest!(erc20_balance_applies_call_overrides, async |_prj, cmd| {
+#[casttest]
+async fn erc20_balance_applies_call_overrides(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let token = "0x00000000000000000000000000000000000000aa";
@@ -106,9 +107,10 @@ casttest!(erc20_balance_applies_call_overrides, async |_prj, cmd| {
 1234
 
 "#]]);
-});
+}
 
-casttest!(deprecated_erc20_balance_applies_call_overrides, async |_prj, cmd| {
+#[casttest]
+async fn deprecated_erc20_balance_applies_call_overrides(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let token = "0x00000000000000000000000000000000000000aa";
@@ -134,9 +136,10 @@ casttest!(deprecated_erc20_balance_applies_call_overrides, async |_prj, cmd| {
 1234
 
 "#]]);
-});
+}
 
-casttest!(native_balance_rejects_call_overrides, |_prj, cmd| {
+#[casttest]
+fn native_balance_rejects_call_overrides(cmd: _) {
     cmd.cast_fuse()
         .args([
             "balance",
@@ -151,10 +154,11 @@ casttest!(native_balance_rejects_call_overrides, |_prj, cmd| {
 Error: call overrides require `--erc20` when using `cast balance`
 
 "#]]);
-});
+}
 
 // tests that `balance` and `transfer` commands works correctly
-forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
+#[forgetest]
+async fn erc20_transfer_approve_success(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // Test constants
@@ -187,10 +191,11 @@ forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
     let addr2_balance_after = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
     assert_eq!(addr1_balance_after, addr1_balance_before - transfer_amount);
     assert_eq!(addr2_balance_after, addr2_balance_before + transfer_amount);
-});
+}
 
 // tests that `approve` and `allowance` commands works correctly
-forgetest_async!(erc20_approval_allowance, |prj, cmd| {
+#[forgetest]
+async fn erc20_approval_allowance(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // ADDR1 approves ADDR2 to spend their tokens
@@ -212,10 +217,11 @@ forgetest_async!(erc20_approval_allowance, |prj, cmd| {
     // Verify allowance was set
     let allowance = get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc);
     assert_eq!(allowance, approve_amount);
-});
+}
 
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly
-forgetest_async!(erc20_metadata_success, |prj, cmd| {
+#[forgetest]
+async fn erc20_metadata_success(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // Test name
@@ -254,10 +260,11 @@ forgetest_async!(erc20_metadata_success, |prj, cmd| {
         .stdout_lossy();
     let total_supply: U256 = output.split_whitespace().next().unwrap().parse().unwrap();
     assert_eq!(total_supply, U256::from(1_000_000_000_000_000_000_000u128));
-});
+}
 
 // tests that `mint` command works correctly
-forgetest_async!(erc20_mint_success, |prj, cmd| {
+#[forgetest]
+async fn erc20_mint_success(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let mint_amount = U256::from(500_000_000_000_000_000_000u128); // 500 tokens
@@ -295,10 +302,11 @@ forgetest_async!(erc20_mint_success, |prj, cmd| {
         .stdout_lossy();
     let total_supply: U256 = output.split_whitespace().next().unwrap().parse().unwrap();
     assert_eq!(total_supply, initial_supply + mint_amount);
-});
+}
 
 // tests that `burn` command works correctly
-forgetest_async!(erc20_burn_success, |prj, cmd| {
+#[forgetest]
+async fn erc20_burn_success(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let burn_amount = U256::from(200_000_000_000_000_000_000u128); // 200 tokens
@@ -335,10 +343,11 @@ forgetest_async!(erc20_burn_success, |prj, cmd| {
         .stdout_lossy();
     let total_supply: U256 = output.split_whitespace().next().unwrap().parse().unwrap();
     assert_eq!(total_supply, initial_supply - burn_amount);
-});
+}
 
 // tests that `transfer` command works with gas options
-forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
+#[forgetest]
+async fn erc20_transfer_with_gas_opts(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(100_000_000_000_000_000_000u128); // 100 tokens
@@ -365,10 +374,11 @@ forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
     // Verify transfer succeeded
     let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
     assert_eq!(balance, transfer_amount);
-});
+}
 
 // tests that `transfer` command fails with insufficient gas limit
-forgetest_async!(erc20_transfer_insufficient_gas, |prj, cmd| {
+#[forgetest]
+async fn erc20_transfer_insufficient_gas(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
@@ -393,10 +403,11 @@ forgetest_async!(erc20_transfer_insufficient_gas, |prj, cmd| {
     // Verify transfer did NOT occur
     let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
     assert_eq!(balance, U256::ZERO);
-});
+}
 
 // tests that `transfer` command fails with incorrect nonce
-forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
+#[forgetest]
+async fn erc20_transfer_incorrect_nonce(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
@@ -435,10 +446,11 @@ forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
     // Verify transfer did NOT occur
     let balance = get_balance(&mut cmd, &token, anvil_const::ADDR2, &rpc);
     assert_eq!(balance, transfer_amount); // 2nd transfer failed
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast erc20 balance
-casttest!(curl_erc20_balance, |_prj, cmd| {
+#[casttest]
+fn curl_erc20_balance(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xdead000000000000000000000000000000000000";
     let owner = "0xbeef000000000000000000000000000000000000";
@@ -453,10 +465,11 @@ casttest!(curl_erc20_balance, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast erc20 name
-casttest!(curl_erc20_name, |_prj, cmd| {
+#[casttest]
+fn curl_erc20_name(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xdead000000000000000000000000000000000000";
 
@@ -470,10 +483,11 @@ casttest!(curl_erc20_name, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast erc20 decimals
-casttest!(curl_erc20_decimals, |_prj, cmd| {
+#[casttest]
+fn curl_erc20_decimals(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xdead000000000000000000000000000000000000";
 
@@ -487,10 +501,11 @@ casttest!(curl_erc20_decimals, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast erc20 total-supply
-casttest!(curl_erc20_total_supply, |_prj, cmd| {
+#[casttest]
+fn curl_erc20_total_supply(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xdead000000000000000000000000000000000000";
 
@@ -504,10 +519,11 @@ casttest!(curl_erc20_total_supply, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for erc20 balance
-casttest!(erc20_curl_balance, |_prj, cmd| {
+#[casttest]
+fn erc20_curl_balance(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
     let owner = "0xdead000000000000000000000000000000000000";
@@ -522,10 +538,11 @@ casttest!(erc20_curl_balance, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for erc20 name
-casttest!(erc20_curl_name, |_prj, cmd| {
+#[casttest]
+fn erc20_curl_name(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
 
@@ -539,10 +556,11 @@ casttest!(erc20_curl_name, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for erc20 decimals
-casttest!(erc20_curl_decimals, |_prj, cmd| {
+#[casttest]
+fn erc20_curl_decimals(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
 
@@ -556,10 +574,11 @@ casttest!(erc20_curl_decimals, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for erc20 total-supply
-casttest!(erc20_curl_total_supply, |_prj, cmd| {
+#[casttest]
+fn erc20_curl_total_supply(cmd: _) {
     let rpc = "https://eth.example.com";
     let token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // USDC
 
@@ -573,9 +592,10 @@ casttest!(erc20_curl_total_supply, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_call"));
     assert!(output.contains(rpc));
-});
+}
 
-casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
+#[casttest]
+fn erc20_transfer_help_includes_tempo_expires(cmd: _) {
     let output =
         cmd.args(["erc20", "transfer", "--help"]).assert_success().get_output().stdout_lossy();
 
@@ -583,9 +603,10 @@ casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
         output.contains("--tempo.expires <SECONDS>"),
         "expected erc20 transfer help to expose --tempo.expires, got:\n{output}",
     );
-});
+}
 
-forgetest_async!(erc20_transfer_prints_tempo_sponsor_hash, |_prj, cmd| {
+#[forgetest]
+async fn erc20_transfer_prints_tempo_sponsor_hash(cmd: _) {
     let (_, _handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = _handle.http_endpoint();
 
@@ -617,10 +638,11 @@ forgetest_async!(erc20_transfer_prints_tempo_sponsor_hash, |_prj, cmd| {
 
     let hash = output.trim();
     assert!(hash.starts_with("0x") && hash.len() == 66, "expected sponsor hash, got:\n{output}",);
-});
+}
 
 // tests that `balance` command works correctly with --json flag
-forgetest_async!(erc20_balance_json, |prj, cmd| {
+#[forgetest]
+async fn erc20_balance_json(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let output = cmd
@@ -634,10 +656,11 @@ forgetest_async!(erc20_balance_json, |prj, cmd| {
     let balance_str = v["data"].as_str().expect("string data");
     let balance: U256 = balance_str.parse().unwrap();
     assert_eq!(balance, U256::from(1_000_000_000_000_000_000_000u128));
-});
+}
 
 // tests that `allowance` command works correctly with --json flag
-forgetest_async!(erc20_allowance_json, |prj, cmd| {
+#[forgetest]
+async fn erc20_allowance_json(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // First approve some tokens
@@ -677,11 +700,12 @@ forgetest_async!(erc20_allowance_json, |prj, cmd| {
     let allowance_str = v["data"].as_str().expect("string data");
     let allowance: U256 = allowance_str.parse().unwrap();
     assert_eq!(allowance, approve_amount);
-});
+}
 
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly with --json
 // flag
-forgetest_async!(erc20_metadata_json, |prj, cmd| {
+#[forgetest]
+async fn erc20_metadata_json(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // Test name with --json
@@ -724,7 +748,7 @@ forgetest_async!(erc20_metadata_json, |prj, cmd| {
     let v: serde_json::Value = serde_json::from_str(&output).expect("valid json");
     let total_supply: U256 = v["data"].as_str().expect("string data").parse().unwrap();
     assert_eq!(total_supply, U256::from(1_000_000_000_000_000_000_000u128));
-});
+}
 
 async fn setup_permit_test(
     prj: &foundry_test_utils::TestProject,
@@ -739,7 +763,8 @@ async fn setup_permit_test(
     (rpc, token, handle)
 }
 
-casttest!(erc20_permit_sign_and_relay, async |prj, cmd| {
+#[casttest]
+async fn erc20_permit_sign_and_relay(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_permit_test(&prj, &mut cmd).await;
     let output = cmd
         .cast_fuse()
@@ -839,9 +864,10 @@ casttest!(erc20_permit_sign_and_relay, async |prj, cmd| {
             &rpc,
         ])
         .assert_failure();
-});
+}
 
-casttest!(erc20_permit_broadcast_and_domain_fallback, async |prj, cmd| {
+#[casttest]
+async fn erc20_permit_broadcast_and_domain_fallback(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_permit_test(&prj, &mut cmd).await;
     for (version, discovery, extra) in [
         ("2", "true", vec![]),
@@ -902,9 +928,10 @@ casttest!(erc20_permit_broadcast_and_domain_fallback, async |prj, cmd| {
 Error: EIP-712 domain does not match DOMAIN_SEPARATOR(); check --domain-name and --domain-version
 
 "#]]);
-});
+}
 
-casttest!(erc20_permit_rejects_wrong_owner_and_expired_submission, async |prj, cmd| {
+#[casttest]
+async fn erc20_permit_rejects_wrong_owner_and_expired_submission(prj: _, cmd: _) {
     let (rpc, token, _handle) = setup_permit_test(&prj, &mut cmd).await;
     cmd.cast_fuse()
         .args([
@@ -968,4 +995,4 @@ Error: --from must match the permit signing wallet
         get_allowance(&mut cmd, &token, anvil_const::ADDR1, anvil_const::ADDR2, &rpc),
         U256::ZERO
     );
-});
+}
