@@ -105,19 +105,6 @@ fn format_cell(hits: usize, total: usize) -> Cell {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_summary_cell_is_not_applicable() {
-        assert_eq!(
-            format_cell(0, 0),
-            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
-        );
-    }
-}
-
 /// Writes the coverage report in [LCOV]'s [tracefile format].
 ///
 /// [LCOV]: https://github.com/linux-test-project/lcov
@@ -621,5 +608,18 @@ impl LineNumberCache {
         };
         let pos = offset - line_offsets.get(lo).unwrap() + 1;
         Ok((lo, pos))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_summary_cell_is_not_applicable() {
+        assert_eq!(
+            format_cell(0, 0),
+            Cell::new("N/A (0/0)").fg(Color::Grey).add_attribute(Attribute::Dim)
+        );
     }
 }
