@@ -2116,6 +2116,30 @@ contract TempoEvmVersionTest is Test {
 }
 
 #[forgetest_init]
+fn test_set_evm_version_tempo_gas(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoEvmVersionGas.t.sol",
+        include_str!("../../fixtures/TempoEvmVersionGas.t.sol"),
+    );
+    for hardfork in ["tempo:T3", "tempo:T7", "tempo:T14"] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--network",
+                "tempo",
+                "--hardfork",
+                hardfork,
+                "--mc",
+                "TempoEvmVersionGasTest",
+            ])
+            .assert_success();
+    }
+}
+
+#[forgetest_init]
 fn test_network_tempo_defaults_to_latest_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
