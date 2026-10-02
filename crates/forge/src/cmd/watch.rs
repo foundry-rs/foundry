@@ -9,6 +9,7 @@ use foundry_cli::utils::{self, FoundryPathExt, LoadConfig};
 use foundry_config::Config;
 use parking_lot::Mutex;
 use std::{
+    ffi::{OsStr, OsString},
     io::IsTerminal,
     path::PathBuf,
     sync::{
@@ -173,8 +174,7 @@ impl WatchArgs {
 
         config.pathset(paths.iter().map(|p| p.as_path()));
 
-        let n_path_args = self.watch.as_deref().unwrap_or_default().len();
-        let base_command = Arc::new(watch_command(cmd_args(n_path_args)));
+        let base_command = Arc::new(watch_command(cmd_args()));
 
         let id = watchexec::Id::default();
         let quit_again = Arc::new(AtomicU8::new(0));
@@ -533,49 +533,101 @@ pub async fn watch_doc(args: DocArgs) -> Result<()> {
 /// # Panics
 ///
 /// Panics if `args` is empty.
-fn watch_command(mut args: Vec<String>) -> Command {
+fn watch_command(mut args: Vec<OsString>) -> Command {
     debug_assert!(!args.is_empty());
     let prog = args.remove(0);
+    // `watchexec`'s `Program::Exec` takes `String` arguments, so an argument that is not valid
+    // Unicode cannot be passed through unchanged. Watched paths are removed beforehand, so the
+    // common case of a non-Unicode path never reaches this conversion.
+    let args = args.into_iter().map(|arg| arg.to_string_lossy().into_owned()).collect();
     Command { program: Program::Exec { prog: prog.into(), args }, options: Default::default() }
 }
 
-/// Returns the env args without the `--watch` flag from the args for the Watchexec command
-fn cmd_args(num: usize) -> Vec<String> {
-    clean_cmd_args(num, std::env::args().collect())
+/// Returns the env args without the `--watch` flag from the args for the Watchexec command.
+///
+/// `args_os` is used instead of `args` because the latter panics on an argument that is not valid
+/// Unicode, and a watched path is a `PathBuf`, which is allowed to be non-Unicode on Unix.
+fn cmd_args() -> Vec<OsString> {
+    clean_cmd_args(std::env::args_os().collect())
 }
 
+/// How a command-line argument relates to the `watch` flag.
+enum WatchFlag {
+    /// Not the `watch` flag.
+    Other,
+    /// `--watch`, `-w`, or a short flag cluster ending in `w`, with the paths given as the
+    /// arguments that follow it. Holds the short flags leading up to `w`, which are kept.
+    Bare(Option<OsString>),
+    /// `--watch=<PATH>`, `-w<PATH>`, or a short flag cluster with the path attached to its `w`.
+    /// Holds the short flags leading up to `w`, which are kept.
+    Inline(Option<OsString>),
+}
+
+/// Removes the `--watch` flag from the args for the Watchexec command, so that the child command
+/// does not enter watch mode itself and spawn another watcher.
+///
+/// `watch` is an `Option<Vec<PathBuf>>`, so clap accepts the flag as `--watch <PATH>`,
+/// `--watch=<PATH>`, `-w <PATH>`, and `-w<PATH>`, combines it with other short flags (`-vw`,
+/// `-vw<PATH>`), and allows it to repeat, appending the paths of every occurrence.
 #[instrument(level = "debug", ret)]
-fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
-    if let Some(pos) = cmd_args.iter().position(|arg| arg == "--watch" || arg == "-w") {
-        cmd_args.drain(pos..=(pos + num));
-    }
+fn clean_cmd_args(cmd_args: Vec<OsString>) -> Vec<OsString> {
+    let mut cleaned = Vec::with_capacity(cmd_args.len());
+    let mut args = cmd_args.into_iter().peekable();
 
-    // There's another edge case where short flags are combined into one which is supported by clap,
-    // like `-vw` for verbosity and watch
-    // this removes any `w` from concatenated short flags
-    if let Some(pos) = cmd_args.iter().position(|arg| {
-        fn contains_w_in_short(arg: &str) -> Option<bool> {
-            let mut iter = arg.chars().peekable();
-            if *iter.peek()? != '-' {
-                return None;
+    while let Some(arg) = args.next() {
+        match watch_flag(&arg) {
+            WatchFlag::Other => cleaned.push(arg),
+            WatchFlag::Inline(kept) => cleaned.extend(kept),
+            WatchFlag::Bare(kept) => {
+                cleaned.extend(kept);
+                // clap consumes the values of a `num_args(0..)` argument greedily, up to the next
+                // option-like argument, so the paths follow the flag until one of those.
+                while args.peek().is_some_and(|next| !looks_like_option(next)) {
+                    args.next();
+                }
             }
-            iter.next();
-            if *iter.peek()? == '-' {
-                return None;
-            }
-            Some(iter.any(|c| c == 'w'))
-        }
-        contains_w_in_short(arg).unwrap_or(false)
-    }) {
-        let clean_arg = cmd_args[pos].replace('w', "");
-        if clean_arg == "-" {
-            cmd_args.remove(pos);
-        } else {
-            cmd_args[pos] = clean_arg;
         }
     }
 
-    cmd_args
+    cleaned
+}
+
+/// Returns how `arg` relates to the `watch` flag.
+fn watch_flag(arg: &OsStr) -> WatchFlag {
+    let arg = arg.to_string_lossy();
+    if arg == "--watch" || arg == "-w" {
+        return WatchFlag::Bare(None);
+    }
+    if arg.starts_with("--watch=") {
+        return WatchFlag::Inline(None);
+    }
+    let Some(pos) = short_watch_pos(&arg) else { return WatchFlag::Other };
+    // Everything after `w` is the path attached to it; only the short flags before it are kept. The
+    // kept flags are ASCII, so they are the same in the lossy representation.
+    let kept = (pos > 1).then(|| OsString::from(&arg[..pos]));
+    if arg.len() == pos + 1 { WatchFlag::Bare(kept) } else { WatchFlag::Inline(kept) }
+}
+
+/// Returns the index of the `w` short flag in a short flag cluster, if `arg` is one.
+///
+/// clap parses a short flag cluster from left to right, so `w` is the `watch` flag when it is the
+/// first flag of the cluster (`-w`, `-w<PATH>`) or when every flag before it is another short flag
+/// (`-vw`, `-vw<PATH>`). Requiring short flags before `w` keeps an attached value that contains a
+/// `w`, such as `-C./workspace`, from being mistaken for the cluster.
+fn short_watch_pos(arg: &str) -> Option<usize> {
+    let cluster = arg.strip_prefix('-')?;
+    if cluster.is_empty() || cluster.starts_with('-') {
+        return None;
+    }
+    let pos = cluster.find('w')?;
+    cluster[..pos].chars().all(|c| c.is_ascii_alphabetic()).then_some(pos + 1)
+}
+
+/// Returns whether `arg` looks like an option, which is where clap stops consuming the values of a
+/// `num_args(0..)` argument. A lone `-` is a value.
+fn looks_like_option(arg: &OsStr) -> bool {
+    let arg = arg.to_string_lossy();
+    arg.len() > 1 && arg.starts_with('-')
 }
 
 #[cfg(test)]
@@ -583,11 +635,18 @@ mod tests {
     use super::*;
     use watchexec_events::Modifiers;
 
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+
     fn key_event(key: char, modifiers: Modifiers) -> Event {
         Event {
             tags: vec![Tag::Keyboard(Keyboard::Key { key: KeyCode::Char(key), modifiers })],
             ..Default::default()
         }
+    }
+
+    fn clean(args: &[&str]) -> Vec<OsString> {
+        clean_cmd_args(args.iter().copied().map(OsString::from).collect())
     }
 
     #[test]
@@ -611,18 +670,61 @@ mod tests {
 
     #[test]
     fn parse_cmd_args() {
-        let args = vec!["-vw".to_string()];
-        let cleaned = clean_cmd_args(0, args);
-        assert_eq!(cleaned, vec!["-v".to_string()]);
+        assert_eq!(clean(&["-vw"]), ["-v"]);
     }
 
     #[test]
     fn locked_survives_cleaning_watch_args() {
-        let args =
-            ["forge", "build", "--locked", "--watch", "src", "test"].map(str::to_string).to_vec();
-        assert_eq!(clean_cmd_args(2, args), ["forge", "build", "--locked"].map(str::to_string));
+        assert_eq!(
+            clean(&["forge", "build", "--locked", "--watch", "src", "test"]),
+            ["forge", "build", "--locked"]
+        );
 
-        let args = ["forge", "build", "--watch", "src", "--locked"].map(str::to_string).to_vec();
-        assert_eq!(clean_cmd_args(1, args), ["forge", "build", "--locked"].map(str::to_string));
+        assert_eq!(
+            clean(&["forge", "build", "--watch", "src", "--locked"]),
+            ["forge", "build", "--locked"]
+        );
+    }
+
+    #[test]
+    fn watch_spellings_survive_cleaning_watch_args() {
+        assert_eq!(clean(&["forge", "test", "--watch", "src"]), ["forge", "test"]);
+        assert_eq!(clean(&["forge", "test", "--watch=src"]), ["forge", "test"]);
+        assert_eq!(clean(&["forge", "test", "-w", "src"]), ["forge", "test"]);
+        assert_eq!(clean(&["forge", "test", "-wsrc"]), ["forge", "test"]);
+        assert_eq!(clean(&["forge", "test", "-vw", "src"]), ["forge", "test", "-v"]);
+        assert_eq!(clean(&["forge", "test", "-vwsrc"]), ["forge", "test", "-v"]);
+    }
+
+    #[test]
+    fn repeated_watch_survives_cleaning_watch_args() {
+        assert_eq!(
+            clean(&["forge", "test", "--watch", "src", "--watch", "test"]),
+            ["forge", "test"]
+        );
+
+        assert_eq!(clean(&["forge", "test", "--watch=src", "-w"]), ["forge", "test"]);
+        assert_eq!(clean(&["forge", "test", "-w", "--watch=src"]), ["forge", "test"]);
+    }
+
+    #[test]
+    fn other_flags_survive_cleaning_watch_args() {
+        // `--watch-delay` is a different flag.
+        assert_eq!(
+            clean(&["forge", "test", "--watch-delay", "1s"]),
+            ["forge", "test", "--watch-delay", "1s"]
+        );
+
+        // A `w` in the value attached to another short flag is not the watch flag.
+        assert_eq!(clean(&["forge", "test", "-C./workspace"]), ["forge", "test", "-C./workspace"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_watch_survives_cleaning_watch_args() {
+        let mut args = ["forge", "test", "--watch"].map(OsString::from).to_vec();
+        args.push(OsStr::from_bytes(b"src/\xff").to_os_string());
+
+        assert_eq!(clean_cmd_args(args), ["forge", "test"]);
     }
 }
