@@ -13,7 +13,7 @@ use foundry_test_utils::{
     str,
     util::{OutputExt, TestCommand, TestProject},
 };
-use std::{fs, str::FromStr};
+use std::{fs, str::FromStr, time::Duration};
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -285,6 +285,39 @@ ABI: [
 
     cmd.assert().stdout_eq(str![[r#"
 No files changed, compilation skipped
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+[TX_HASH]
+
+"#]]);
+});
+
+// The deployment is only mined on the next interval tick.
+forgetest_async!(can_create_with_interval_mining, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    cmd.forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]

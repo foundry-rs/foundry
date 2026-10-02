@@ -12,8 +12,9 @@ use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempo_contracts::precompiles::{
-    CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, ITIP20, ITIP403Registry,
-    TIP20_CHANNEL_RESERVE_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee, IReceivePolicyGuard, IRolesAuth, ITIP20,
+    ITIP20Factory, ITIP403Registry, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS,
 };
 use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoTxEnvelope;
@@ -33,6 +34,8 @@ casttest!(tempo_state_changing_help_includes_expires, |_prj, cmd| {
         ("tip20 create", &["tip20", "create", "--help"]),
         ("tip20 logo-set", &["tip20", "logo-set", "--help"]),
         ("tip20 mine", &["tip20", "mine", "--help"]),
+        ("tip20 grant-role", &["tip20", "grant-role", "--help"]),
+        ("tip20 revoke-role", &["tip20", "revoke-role", "--help"]),
         ("storage-credits set-mode", &["storage-credits", "set-mode", "--help"]),
         ("storage-credits set-budget", &["storage-credits", "set-budget", "--help"]),
         ("vaddr create", &["vaddr", "create", "--help"]),
@@ -1393,6 +1396,333 @@ Error: expiring nonce transactions must use nonce 0 before the Tempo T12 hardfor
         .stdout_eq("")
         .stderr_eq(str![[r#"
 Error: server returned an error response: error code -32603: tempo transaction error: expiring nonce transaction must have nonce == 0 before T12
+
+"#]]);
+});
+
+/// Returns the address and private key of the dev account at `index`.
+fn dev_account(handle: &anvil::NodeHandle, index: usize) -> (Address, String) {
+    let wallet = handle.dev_wallets().nth(index).unwrap();
+    (wallet.address(), format!("0x{}", hex::encode(wallet.credential().to_bytes())))
+}
+
+/// Creates a TIP-20 token administered by the first dev account and returns its address.
+async fn create_role_test_token(
+    cmd: &mut foundry_test_utils::TestCommand,
+    handle: &anvil::NodeHandle,
+) -> Address {
+    let (admin, admin_pk) = dev_account(handle, 0);
+    let salt = B256::with_last_byte(1);
+    cmd.cast_fuse()
+        .args([
+            "tip20",
+            "create",
+            "Role Test",
+            "ROLE",
+            "USD",
+            &PATH_USD_ADDRESS.to_string(),
+            &admin.to_string(),
+            &salt.to_string(),
+            "--private-key",
+            &admin_pk,
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success();
+    ITIP20Factory::new(TIP20_FACTORY_ADDRESS, handle.http_provider())
+        .getTokenAddress(admin, salt)
+        .call()
+        .await
+        .unwrap()
+}
+
+/// Expected `cast --json tip20 has-role` output.
+fn has_role_json(
+    token: Address,
+    role: B256,
+    role_name: Option<&str>,
+    account: Address,
+    has_role: bool,
+) -> String {
+    serde_json::json!({
+        "schema_version": 1,
+        "success": true,
+        "data": {
+            "token": token.to_string(),
+            "role": role.to_string(),
+            "role_name": role_name,
+            "account": account.to_string(),
+            "has_role": has_role,
+        },
+        "errors": [],
+        "warnings": [],
+    })
+    .to_string()
+}
+
+// A freshly created token only assigns `DEFAULT_ADMIN_ROLE`, so minting is gated on granting
+// `ISSUER_ROLE` and stops working again once the role is revoked.
+casttest!(tip20_issuer_role_grant_and_revoke_gate_minting, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (admin, admin_pk) = dev_account(&handle, 0);
+    let token = create_role_test_token(&mut cmd, &handle).await;
+    let token_arg = token.to_string();
+    let admin_arg = admin.to_string();
+    let tip20 = ITIP20::new(token, &provider);
+    let issuer_role = tip20.ISSUER_ROLE().call().await.unwrap();
+
+    cmd.cast_fuse()
+        .args(["tip20", "has-role", &token_arg, "admin", &admin_arg, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Token:    0x20c000000000000000000000A3C1274aaDd82e4D
+Role:     DEFAULT_ADMIN_ROLE (0x0000000000000000000000000000000000000000000000000000000000000000)
+Account:  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Has role: true
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["--json", "tip20", "has-role", &token_arg, "issuer", &admin_arg, "--rpc-url", &rpc])
+        .assert_json_stdout(has_role_json(token, issuer_role, Some("ISSUER_ROLE"), admin, false));
+
+    let mint = ["erc20", "mint", &token_arg, &admin_arg, "1000", "--private-key", &admin_pk];
+    cmd.cast_fuse().args(mint).args(["--rpc-url", &rpc]).assert_failure().stderr_eq(str![[r#"
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x82b42900, data: "0x82b42900": Unauthorized
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "issuer", &admin_arg, "--private-key", &admin_pk])
+        .args(["--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["--json", "tip20", "has-role", &token_arg, "ISSUER_ROLE", &admin_arg])
+        .args(["--rpc-url", &rpc])
+        .assert_json_stdout(has_role_json(token, issuer_role, Some("ISSUER_ROLE"), admin, true));
+
+    cmd.cast_fuse().args(mint).args(["--rpc-url", &rpc]).assert_success();
+    assert_eq!(tip20.balanceOf(admin).call().await.unwrap(), U256::from(1000));
+
+    cmd.cast_fuse()
+        .args([
+            "tip20",
+            "revoke-role",
+            &token_arg,
+            "issuer",
+            &admin_arg,
+            "--private-key",
+            &admin_pk,
+        ])
+        .args(["--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["--json", "tip20", "has-role", &token_arg, "issuer", &admin_arg, "--rpc-url", &rpc])
+        .assert_json_stdout(has_role_json(token, issuer_role, Some("ISSUER_ROLE"), admin, false));
+    cmd.cast_fuse().args(mint).args(["--rpc-url", &rpc]).assert_failure();
+    assert_eq!(tip20.balanceOf(admin).call().await.unwrap(), U256::from(1000));
+});
+
+// T12 activates TIP-1006 `burnAt`, which only accounts holding `BURN_AT_ROLE` may call.
+casttest!(tip20_burn_at_role_enables_burn_at_on_t12, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (admin, admin_pk) = dev_account(&handle, 0);
+    let (burner, burner_pk) = dev_account(&handle, 1);
+    let holder = handle.dev_accounts().nth(2).unwrap();
+    let token = create_role_test_token(&mut cmd, &handle).await;
+    let token_arg = token.to_string();
+    let burner_arg = burner.to_string();
+    let holder_arg = holder.to_string();
+    let tip20 = ITIP20::new(token, &provider);
+    let burn_at_role = tip20.BURN_AT_ROLE().call().await.unwrap();
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "issuer", &admin.to_string()])
+        .args(["--private-key", &admin_pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["erc20", "mint", &token_arg, &holder_arg, "1000"])
+        .args(["--private-key", &admin_pk, "--rpc-url", &rpc])
+        .assert_success();
+
+    let burn_at = ["send", &token_arg, "burnAt(address,uint256)", &holder_arg, "400"];
+    cmd.cast_fuse()
+        .args(burn_at)
+        .args(["--private-key", &burner_pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x82b42900, data: "0x82b42900": Unauthorized
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "burn-at", &burner_arg])
+        .args(["--private-key", &admin_pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args([
+            "--json",
+            "tip20",
+            "has-role",
+            &token_arg,
+            "burn-at",
+            &burner_arg,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_json_stdout(has_role_json(token, burn_at_role, Some("BURN_AT_ROLE"), burner, true));
+
+    cmd.cast_fuse()
+        .args(burn_at)
+        .args(["--private-key", &burner_pk, "--rpc-url", &rpc])
+        .assert_success();
+    assert_eq!(tip20.balanceOf(holder).call().await.unwrap(), U256::from(600));
+    assert_eq!(tip20.totalSupply().call().await.unwrap(), U256::from(600));
+});
+
+// Role updates are rejected before a transaction is sent when the sender does not hold the
+// role's admin role, including an admin role reconfigured to a role the precompile does not name.
+casttest!(tip20_role_updates_require_role_admin, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let (admin, admin_pk) = dev_account(&handle, 0);
+    let (delegate, delegate_pk) = dev_account(&handle, 1);
+    let token = create_role_test_token(&mut cmd, &handle).await;
+    let token_arg = token.to_string();
+    let admin_arg = admin.to_string();
+    let delegate_arg = delegate.to_string();
+    let issuer_role = keccak256("ISSUER_ROLE");
+    let issuer_admin_role = B256::with_last_byte(0xab);
+    let issuer_admin_role_arg = issuer_admin_role.to_string();
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "issuer", &delegate_arg])
+        .args(["--private-key", &delegate_pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 cannot grant ISSUER_ROLE on TIP-20 token 0x20c000000000000000000000A3C1274aaDd82e4D: it does not hold DEFAULT_ADMIN_ROLE, the role's admin role
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["tip20", "revoke-role", &token_arg, "admin", &admin_arg])
+        .args(["--private-key", &delegate_pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 cannot revoke DEFAULT_ADMIN_ROLE on TIP-20 token 0x20c000000000000000000000A3C1274aaDd82e4D: it does not hold DEFAULT_ADMIN_ROLE, the role's admin role
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(delegate).await.unwrap(), 0);
+
+    let set_role_admin = TransactionRequest::default()
+        .from(admin)
+        .to(token)
+        .with_input(
+            IRolesAuth::new(token, &provider)
+                .setRoleAdmin(issuer_role, issuer_admin_role)
+                .calldata()
+                .clone(),
+        )
+        .with_gas_limit(10_000_000);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(set_role_admin))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "setRoleAdmin should succeed");
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "issuer", &admin_arg])
+        .args(["--private-key", &admin_pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 cannot grant ISSUER_ROLE on TIP-20 token 0x20c000000000000000000000A3C1274aaDd82e4D: it does not hold 0x00000000000000000000000000000000000000000000000000000000000000ab, the role's admin role
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, &issuer_admin_role_arg, &delegate_arg])
+        .args(["--private-key", &admin_pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["tip20", "has-role", &token_arg, &issuer_admin_role_arg, &delegate_arg])
+        .args(["--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Token:    0x20c000000000000000000000A3C1274aaDd82e4D
+Role:     0x00000000000000000000000000000000000000000000000000000000000000ab
+Account:  0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+Has role: true
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "issuer", &admin_arg])
+        .args(["--private-key", &delegate_pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args(["--json", "tip20", "has-role", &token_arg, "issuer", &admin_arg, "--rpc-url", &rpc])
+        .assert_json_stdout(has_role_json(token, issuer_role, Some("ISSUER_ROLE"), admin, true));
+});
+
+// Roles are plain hashes, so `BURN_AT_ROLE` can be granted ahead of T12 even though the `burnAt`
+// selector it guards is not active yet.
+casttest!(tip20_burn_at_role_can_be_granted_before_t12, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T11.into()))).await;
+    let rpc = handle.http_endpoint();
+    let (_, admin_pk) = dev_account(&handle, 0);
+    let (burner, burner_pk) = dev_account(&handle, 1);
+    let holder = handle.dev_accounts().nth(2).unwrap();
+    let token = create_role_test_token(&mut cmd, &handle).await;
+    let token_arg = token.to_string();
+    let burner_arg = burner.to_string();
+    let burn_at_role = keccak256("BURN_AT_ROLE");
+
+    cmd.cast_fuse()
+        .args(["tip20", "grant-role", &token_arg, "burn-at", &burner_arg])
+        .args(["--private-key", &admin_pk, "--rpc-url", &rpc])
+        .assert_success();
+    cmd.cast_fuse()
+        .args([
+            "--json",
+            "tip20",
+            "has-role",
+            &token_arg,
+            "burn-at",
+            &burner_arg,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_json_stdout(has_role_json(token, burn_at_role, Some("BURN_AT_ROLE"), burner, true));
+
+    cmd.cast_fuse()
+        .args(["send", &token_arg, "burnAt(address,uint256)", &holder.to_string(), "1"])
+        .args(["--private-key", &burner_pk, "--rpc-url", &rpc])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0xaa4bc69a: 9803f21600000000000000000000000000000000000000000000000000000000, data: "0xaa4bc69a9803f21600000000000000000000000000000000000000000000000000000000": UnknownFunctionSelector(0x9803f216)
+
+"#]]);
+});
+
+casttest!(tip20_role_commands_reject_unknown_role_names, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["tip20", "has-role", &PATH_USD_ADDRESS.to_string(), "minter"])
+        .arg("0x0000000000000000000000000000000000000001")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+error: invalid value 'minter' for '<ROLE>': unknown TIP-20 role `minter`; expected one of admin, issuer, pause, unpause, burn-blocked, burn-at, or a 32-byte role hash
+
+For more information, try '--help'.
 
 "#]]);
 });

@@ -998,6 +998,62 @@ casttest!(curl_call, |_prj, cmd| {
     assert!(output.contains(rpc));
 });
 
+casttest!(curl_call_eip1559_fees, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "--curl",
+        "--gas-price",
+        "2gwei",
+        "--priority-gas-price",
+        "1gwei",
+        "--from",
+        "0xbeef000000000000000000000000000000000000",
+        "--value",
+        "1",
+        "--gas-limit",
+        "100000",
+        "--nonce",
+        "7",
+        "--data",
+        "0x1234",
+    ])
+    .assert_success()
+    .stderr_eq(str![""])
+    .stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_call","params":[{"from":"0xbeef000000000000000000000000000000000000","to":"0xdead000000000000000000000000000000000000","maxFeePerGas":"0x77359400","maxPriorityFeePerGas":"0x3b9aca00","gas":"0x186a0","value":"0x1","data":"0x1234","nonce":"0x7"},"latest"],"id":1}' 'http://127.0.0.1:1'
+
+"#]]);
+});
+
+casttest!(curl_call_legacy_fees, |prj, cmd| {
+    for configured in [false, true] {
+        if configured {
+            prj.create_file("foundry.toml", "[profile.default]\nchain_id = \"fantom\"\n");
+        }
+        cmd.cast_fuse().current_dir(prj.root()).args([
+            "call",
+            "0xdead000000000000000000000000000000000000",
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--curl",
+            "--gas-price",
+            "2gwei",
+            "--priority-gas-price",
+            "1gwei",
+        ]);
+        if !configured {
+            cmd.arg("--legacy");
+        }
+        cmd.assert_success().stderr_eq(str![""]).stdout_eq(str![[r#"
+curl -X POST -H 'Content-Type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"0xdead000000000000000000000000000000000000","gasPrice":"0x77359400","data":"0x"},"latest"],"id":1}' 'http://127.0.0.1:1'
+
+"#]]);
+    }
+});
+
 casttest!(curl_call_accepts_named_chain_config, |prj, cmd| {
     let rpc = "https://eth.example.com";
     prj.create_file("foundry.toml", "[profile.default]\nchain_id = \"sepolia\"\n");

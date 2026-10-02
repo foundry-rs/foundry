@@ -7,6 +7,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
 };
+use foundry_evm::hardfork::TempoHardfork;
 use std::{
     num::NonZeroU64,
     path::PathBuf,
@@ -49,9 +50,10 @@ pub struct TempoOpts {
     /// `--tempo.valid-before`. Sets nonce_key = U256::MAX and valid_before = now + seconds. The
     /// nonce defaults to 0; see `--tempo.expiring-nonce` for how an explicit nonce is used.
     ///
-    /// Maximum value is 30 seconds. The transaction must be mined before the deadline or it
-    /// becomes permanently invalid, giving safe retry semantics: retries produce a fresh tx hash
-    /// and the old tx can never land late.
+    /// Maximum value is 300 seconds; networks that have not activated the T11 hardfork reject
+    /// windows above 30 seconds. The transaction must be mined before the deadline or it becomes
+    /// permanently invalid, giving safe retry semantics: retries produce a fresh tx hash and the
+    /// old tx can never land late.
     #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds)]
     pub expires: Option<u64>,
 
@@ -317,13 +319,17 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
 
-/// Parses a seconds value for `--tempo.expires`, capped at the protocol maximum of 30 seconds.
+/// Largest TIP-1009 validity window accepted by any hardfork. The window was 30 seconds before
+/// T11; the node enforces the limit of its active hardfork.
+const MAX_EXPIRES_SECS: u64 = TempoHardfork::T11.expiring_nonce_max_expiry_secs();
+
+/// Parses a seconds value for `--tempo.expires`, capped at [`MAX_EXPIRES_SECS`].
 fn parse_expires_seconds(s: &str) -> Result<u64, String> {
     let secs: u64 = s
         .parse()
         .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
-    if secs > 30 {
-        return Err(format!("expires must be at most 30 seconds (got {secs})"));
+    if secs > MAX_EXPIRES_SECS {
+        return Err(format!("expires must be at most {MAX_EXPIRES_SECS} seconds (got {secs})"));
     }
     Ok(secs)
 }
@@ -354,14 +360,14 @@ mod tests {
 
     #[test]
     fn parse_expires_flag() {
-        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30"]).unwrap();
-        assert_eq!(opts.expires, Some(30));
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "300"]).unwrap();
+        assert_eq!(opts.expires, Some(300));
 
         let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
         assert_eq!(opts.expires, Some(10));
 
-        // exceeds 30s maximum
-        assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "31"]).is_err());
+        // exceeds the post-T11 maximum
+        assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "301"]).is_err());
 
         // conflicts with --tempo.expiring-nonce
         assert!(
