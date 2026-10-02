@@ -19,6 +19,7 @@ foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util"] }
 foundry-config.workspace = true
+foundry-test-macros.workspace = true
 
 alloy-chains.workspace = true
 alloy-primitives.workspace = true

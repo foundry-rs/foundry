@@ -3,7 +3,8 @@
 use super::*;
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
-casttest!(impl_slot, |_prj, cmd| {
+#[casttest]
+fn impl_slot(cmd: _) {
     let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the implementation slot (AAVE Proxy)
@@ -20,9 +21,10 @@ casttest!(impl_slot, |_prj, cmd| {
 0xb61306c8eb34a2104d9eb8d84f1bb1001067fa4b
 
 "#]]);
-});
+}
 
-casttest!(impl_slot_beacon, |_prj, cmd| {
+#[casttest]
+fn impl_slot_beacon(cmd: _) {
     let eth_rpc_url = next_http_archive_rpc_url();
 
     // Call `cast impl` for the beacon slot
@@ -40,9 +42,10 @@ casttest!(impl_slot_beacon, |_prj, cmd| {
 0xa748ae65ba11606492a9c57effa0d4b7be551ec2
 
 "#]]);
-});
+}
 
-casttest!(storage, |_prj, cmd| {
+#[casttest]
+fn storage(cmd: _) {
     let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
         [r#"
@@ -125,9 +128,10 @@ casttest!(storage, |_prj, cmd| {
 0x0000000000000000000000000000000000000000000000000000000000000006
 
 "#]]);
-});
+}
 
-casttest!(flaky_storage_with_valid_solc_version_1, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_with_valid_solc_version_1(cmd: _) {
     cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
@@ -139,9 +143,10 @@ casttest!(flaky_storage_with_valid_solc_version_1, |_prj, cmd| {
         next_etherscan_api_key().as_str(),
     ])
     .assert_success();
-});
+}
 
-casttest!(flaky_storage_with_valid_solc_version_2, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_with_valid_solc_version_2(cmd: _) {
     cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
@@ -153,9 +158,10 @@ casttest!(flaky_storage_with_valid_solc_version_2, |_prj, cmd| {
         next_etherscan_api_key().as_str(),
     ])
     .assert_success();
-});
+}
 
-casttest!(flaky_storage_with_invalid_solc_version_1, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_with_invalid_solc_version_1(cmd: _) {
     let output = cmd
         .args([
             "storage",
@@ -178,9 +184,10 @@ casttest!(flaky_storage_with_invalid_solc_version_1, |_prj, cmd| {
         ),
         "stderr did not contain expected warning. Full stderr:\n{stderr}"
     );
-});
+}
 
-casttest!(flaky_storage_with_invalid_solc_version_2, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_with_invalid_solc_version_2(cmd: _) {
     cmd.args([
         "storage",
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
@@ -196,10 +203,11 @@ casttest!(flaky_storage_with_invalid_solc_version_2, |_prj, cmd| {
 Error: Encountered invalid compiler version in contracts/Create2Deployer.sol: No compiler version exists that matches the version requirement: ^0.8.9
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(flaky_storage_layout_simple, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_layout_simple(cmd: _) {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -223,10 +231,11 @@ casttest!(flaky_storage_layout_simple, |_prj, cmd| {
 
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/pull/9332>
-casttest!(flaky_storage_layout_simple_json, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_layout_simple_json(cmd: _) {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -240,10 +249,11 @@ casttest!(flaky_storage_layout_simple_json, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(file!["../fixtures/storage_layout_simple.json": Json]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/6319>
-casttest!(flaky_storage_layout_complex, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_layout_complex(cmd: _) {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -289,9 +299,10 @@ casttest!(flaky_storage_layout_complex, |_prj, cmd| {
 
 
 "#]]);
-});
+}
 
-casttest!(flaky_storage_layout_complex_md, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_layout_complex_md(cmd: _) {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -324,9 +335,10 @@ casttest!(flaky_storage_layout_complex_md, |_prj, cmd| {
 
 
 "#]]);
-});
+}
 
-casttest!(flaky_storage_layout_complex_proxy, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_layout_complex_proxy(cmd: _) {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -366,9 +378,10 @@ casttest!(flaky_storage_layout_complex_proxy, |_prj, cmd| {
 
 
 "#]]);
-});
+}
 
-casttest!(flaky_storage_layout_complex_json, |_prj, cmd| {
+#[casttest]
+fn flaky_storage_layout_complex_json(cmd: _) {
     cmd.args([
         "storage",
         "--rpc-url",
@@ -382,9 +395,10 @@ casttest!(flaky_storage_layout_complex_json, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(file!["../fixtures/storage_layout_complex.json": Json]);
-});
+}
 
-casttest!(storage_root_empty, async |_prj, cmd| {
+#[casttest]
+async fn storage_root_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "storage-root",
@@ -394,9 +408,10 @@ casttest!(storage_root_empty, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\n");
-});
+}
 
-casttest!(implementation_empty, async |_prj, cmd| {
+#[casttest]
+async fn implementation_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "implementation",
@@ -406,9 +421,10 @@ casttest!(implementation_empty, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq("0x0000000000000000000000000000000000000000\n");
-});
+}
 
-casttest!(admin_empty, async |_prj, cmd| {
+#[casttest]
+async fn admin_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "admin",
@@ -418,9 +434,10 @@ casttest!(admin_empty, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq("0x0000000000000000000000000000000000000000\n");
-});
+}
 
-casttest!(index_mapping, |_prj, cmd| {
+#[casttest]
+fn index_mapping(cmd: _) {
     cmd.args(["index", "uint256", "42", "6"])
         .assert_success()
         .stdout_eq("0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1\n");
@@ -432,4 +449,4 @@ casttest!(index_mapping, |_prj, cmd| {
         .args(["index", "address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5", "2"])
         .assert_success()
         .stdout_eq("0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb\n");
-});
+}

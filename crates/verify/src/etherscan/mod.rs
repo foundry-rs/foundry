@@ -530,7 +530,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_common::fs;
-    use foundry_test_utils::{forgetest_async, str};
+    use foundry_test_utils::{forgetest, str};
     use tempfile::tempdir;
 
     #[test]
@@ -722,7 +722,8 @@ mod tests {
         );
     }
 
-    forgetest_async!(respects_path_for_duplicate, |prj, cmd| {
+    #[forgetest]
+    async fn respects_path_for_duplicate(prj: _, cmd: _) {
         prj.add_source("Counter1", "contract Counter {}");
         prj.add_source("Counter2", "contract Counter {}");
 
@@ -745,5 +746,5 @@ Compiler run successful!
 
         let mut etherscan = EtherscanVerificationProvider::default();
         etherscan.preflight_verify_check(args, context).await.unwrap();
-    });
+    }
 }

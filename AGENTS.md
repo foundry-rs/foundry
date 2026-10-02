@@ -67,8 +67,8 @@ For CLI and integration tests:
 
 - Put Forge CLI coverage under `crates/forge/tests/cli/` and Cast CLI coverage
   under `crates/cast/tests/cli/`.
-- Use the existing `forgetest!`, `forgetest_init!`, and `casttest!` macros to
-  create isolated test projects and command handles.
+- Use the existing `#[forgetest]`, `#[forgetest_init]`, and `#[casttest]`
+  macros to create isolated test projects and command handles.
 - Assert command output with snapbox helpers such as `assert_success()`,
   `assert_failure()`, `stdout_eq(str![...])`, `stderr_eq(str![...])`, and
   `assert_empty_stdout()`.
