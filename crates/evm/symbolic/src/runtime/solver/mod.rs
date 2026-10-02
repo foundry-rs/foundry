@@ -23,7 +23,7 @@ use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_con
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
-    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
+    fallback_bounded_model, fallback_single_var_model, hard_arith_fallback_model,
 };
 
 #[cfg(test)]
@@ -153,6 +153,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     commands: Result<Vec<SolverCommand>, SolverConfigError>,
     timeout: Option<u32>,
     max_queries: usize,
+    bounded_model_search: bool,
     queries: usize,
     query_observer: Option<QueryObserver>,
     dump_smt: bool,
@@ -188,6 +189,7 @@ impl SmtLibSubprocessSolver {
             commands,
             timeout,
             max_queries,
+            bounded_model_search: false,
             queries: 0,
             query_observer: None,
             dump_smt,
@@ -215,12 +217,19 @@ impl SmtLibSubprocessSolver {
 
     /// Constructs a subprocess solver from Foundry symbolic config.
     pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
-        Self::new(
+        let mut solver = Self::new(
             solver_commands_for_config(config),
             config.timeout,
             config.max_solver_queries as usize,
             config.dump_smt,
-        )
+        );
+        solver.bounded_model_search = true;
+        solver
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn enable_bounded_model_search(&mut self) {
+        self.bounded_model_search = true;
     }
 
     /// Returns solver counters collected by this backend.
@@ -416,7 +425,8 @@ impl SmtLibSubprocessSolver {
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = fallback_two_var_model(&smt_constraints)
+        if self.bounded_model_search
+            && let Some(model) = fallback_bounded_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key.clone(), true);
@@ -564,7 +574,8 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if let Some(model) = fallback_two_var_model(&smt_constraints)
+        if self.bounded_model_search
+            && let Some(model) = fallback_bounded_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key, true);

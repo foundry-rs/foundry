@@ -173,6 +173,26 @@ Ethereum and other enabled families must continue to use their existing path. On
 selected a concrete FEN, helpers used by that workflow must not accept a second runtime execution
 profile.
 
+### Script recovery
+
+The requirements in this subsection are proposed and are not guarantees of the current script
+broadcaster. Network integrations must satisfy them as the durable recovery architecture is
+implemented.
+
+Custom transaction fields remain owned by the selected Alloy `Network` and concrete execution
+family, but `forge script` must carry their final values through durable submission and resume. A
+network integration that changes transaction preparation is incomplete until it identifies every
+field that can change transaction identity or semantics, preserves those fields in script recovery
+state, and tests interrupted submission with that network's real envelope type.
+
+Do not reconstruct a custom transaction from family-neutral Ethereum fields during resume. Persist
+the final typed or encoded payload at the transaction boundary, including fee assets, validity
+windows, sponsorship, authorization, auxiliary calls, or signer metadata required by that family.
+Locally signed payloads must be recoverable without the signer; delegated signing with an ambiguous
+outcome must stop rather than silently request a second signature. See the
+[Forge scripting recovery contract](./scripting.md#recovery-contract) for the shared lifecycle and
+failure-injection requirements.
+
 ## Tests and CI
 
 Use a layered test plan:

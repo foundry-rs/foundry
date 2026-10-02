@@ -18,7 +18,7 @@ use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
-        next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_rpc_endpoint, next_ws_rpc_endpoint, spawn_rpc_proxy_method_not_found_before,
     },
     snapbox::IntoData as _,
     str,

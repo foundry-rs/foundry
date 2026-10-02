@@ -9,7 +9,8 @@ use std::fmt;
 /// JWT; the configured selector (`latest` or a block number); and the observed exact block (number
 /// and hash) plus endpoint context. `latest` is retained as the configured selector, while `block`
 /// is always exact. Reusing this value keeps preflight reads, environment reconstruction, cache
-/// identity, and backend construction on the same remote state.
+/// identity, and backend construction on the same remote state. Endpoint profiles are canonical,
+/// so equivalent network selections share the same identity.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
@@ -32,9 +33,11 @@ impl ResolvedFork {
         jwt: Option<&str>,
         selector: Option<BlockNumber>,
         block: BlockNumHash,
-        context: ForkContext,
+        mut context: ForkContext,
     ) -> Self {
         debug_assert_eq!(block.number, context.block_number);
+        // Match endpoint discovery, including default and explicitly selected Ethereum.
+        context.network_profile = context.network_profile.canonical_execution_profile();
         Self {
             source: ForkSource {
                 url: url.to_string(),
@@ -206,13 +209,28 @@ mod tests {
     fn endpoint_identity_participates_in_equality_and_hashing() {
         let block = BlockNumHash::new(1, B256::with_last_byte(1));
         let first = ResolvedFork::new("http://localhost:8545", None, None, None, block, context(1));
-        let mut changed_context = context(1);
-        changed_context.instance_id = Some(B256::with_last_byte(2));
-        let second =
-            ResolvedFork::new("http://localhost:8545", None, None, None, block, changed_context);
+        for changed_context in [
+            ForkContext { instance_id: Some(B256::with_last_byte(2)), ..context(1) },
+            ForkContext { network_profile: NetworkConfigs::with_celo(), ..context(1) },
+            ForkContext {
+                network: NetworkVariant::Tempo,
+                network_profile: NetworkConfigs::with_tempo(),
+                ..context(1)
+            },
+        ] {
+            let second = ResolvedFork::new(
+                "http://localhost:8545",
+                None,
+                None,
+                None,
+                block,
+                changed_context,
+            );
 
-        assert_ne!(first, second);
-        assert_eq!(HashSet::from([first, second]).len(), 2);
+            assert_ne!(first, second);
+            assert_ne!(first.fingerprint(), second.fingerprint());
+            assert_eq!(HashSet::from([first.clone(), second]).len(), 2);
+        }
     }
 
     #[test]
@@ -236,5 +254,24 @@ mod tests {
         assert_ne!(header.source_id(), jwt.source_id());
         assert_ne!(plain.fingerprint(), header.fingerprint());
         assert_ne!(plain.fingerprint(), jwt.fingerprint());
+    }
+
+    #[test]
+    fn resolved_fork_canonicalizes_equivalent_ethereum_profiles() {
+        let url = "http://localhost:8545";
+        let block = BlockNumHash::new(1, B256::with_last_byte(1));
+        let implicit = ResolvedFork::new(url, None, None, Some(1), block, context(1));
+        let explicit = ResolvedFork::new(
+            url,
+            None,
+            None,
+            Some(1),
+            block,
+            ForkContext { network_profile: NetworkConfigs::with_ethereum(), ..context(1) },
+        );
+
+        assert_eq!(implicit.context(), explicit.context());
+        assert_eq!(implicit.fingerprint(), explicit.fingerprint());
+        assert_eq!(HashSet::from([implicit, explicit]).len(), 1);
     }
 }

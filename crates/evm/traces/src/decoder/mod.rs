@@ -1,6 +1,7 @@
 use crate::{
     CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
     debug::DebugTraceIdentifier,
+    erc8021,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
 use alloy_dyn_abi::{
@@ -14,7 +15,7 @@ use alloy_primitives::{
 use alloy_sol_types::SolValue;
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
-    get_contract_name, selectors::SelectorKind,
+    get_contract_name, selectors::SelectorKind, tempo::OUSD_ADDRESS,
 };
 use foundry_config::TracingConfig;
 use foundry_evm_core::{
@@ -458,6 +459,7 @@ impl CallTraceDecoder {
             (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
             (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
+            (OUSD_ADDRESS, "OUSD".to_string()),
         ]);
 
         let functions = console::hh::abi::functions()
@@ -873,6 +875,18 @@ impl CallTraceDecoder {
         functions: &'a [Function],
         trace: &CallTrace,
     ) -> &'a [Function] {
+        // Suffixed calldata must start with the exact ABI encoding of the function inputs, so
+        // packed calldata isn't decoded as a function with fewer inputs. Cheatcode calls are
+        // always decoded to redact sensitive inputs.
+        if trace.address != CHEATCODE_ADDRESS
+            && let Some(args) = suffixed_abi_args(&trace.data)
+        {
+            return functions
+                .iter()
+                .position(|func| is_abi_encoded_input(func, args))
+                .map_or(&[], |i| &functions[i..=i]);
+        }
+
         // When there are selector collisions, try to decode the calldata with each function
         // to determine which one is actually being called. The correct function should
         // decode successfully while the wrong ones will fail due to parameter type mismatches.
@@ -1038,6 +1052,33 @@ impl CallTraceDecoder {
         }
     }
 
+    /// Returns the same function signature as [`Self::decode_function`] without formatting
+    /// arguments and return values when the ABI identifies a single function.
+    pub async fn decode_function_signature(&self, trace: &CallTrace) -> Option<String> {
+        if !trace.kind.is_any_create()
+            && trace.address != DEFAULT_CREATE2_DEPLOYER
+            && !precompiles::is_known_precompile_call(
+                trace,
+                self.networks,
+                self.chain_id,
+                self.hardfork,
+            )
+            && is_abi_call_data(&trace.data)
+            // Suffixed calldata is only decoded if it matches the function inputs.
+            && suffixed_abi_args(&trace.data).is_none()
+            && let Some(selector) = trace.data.first_chunk().map(Selector::from)
+            && let Some([function]) = self.functions_for_selector(trace.address, &selector)
+            && self
+                .fallback_contracts
+                .get(&trace.address)
+                .is_none_or(|selectors| selectors.contains(&selector))
+        {
+            return Some(function.signature());
+        }
+
+        self.decode_function(trace).await.call_data.map(|data| data.signature)
+    }
+
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         let label = if self.disable_labels {
@@ -1087,6 +1128,8 @@ impl CallTraceDecoder {
                 }
             };
 
+            let contract_functions = self.select_contract_function(functions, trace);
+
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
             // non-fallback contract + no receive
             if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
@@ -1109,7 +1152,7 @@ impl CallTraceDecoder {
                     }
                 };
 
-                return if let Some(func) = functions.first() {
+                return if let Some(func) = contract_functions.first() {
                     DecodedCallTrace {
                         label,
                         call_data: Some(self.decode_function_input(trace, func)),
@@ -1124,7 +1167,6 @@ impl CallTraceDecoder {
                 };
             }
 
-            let contract_functions = self.select_contract_function(functions, trace);
             let [func, ..] = contract_functions else {
                 return DecodedCallTrace {
                     label,
@@ -1254,7 +1296,7 @@ impl CallTraceDecoder {
                 )
             }
             "addr" | "createEd25519Key" | "createWallet" | "deriveKey" | "publicKeyEd25519" |
-            "publicKeyP256" | "rememberKey" => {
+            "publicKeyP256" | "rememberKey" | "rememberKeys" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
             }
@@ -1803,12 +1845,16 @@ impl CallTraceDecoder {
 
 /// Returns `true` if the given function calldata (including function selector) is ABI-encoded.
 ///
-/// This is a simple heuristic to avoid fetching non ABI-encoded selectors.
+/// This is a simple heuristic to avoid fetching non ABI-encoded selectors. A trailing ERC-8021
+/// attribution suffix is ignored.
 fn is_abi_call_data(data: &[u8]) -> bool {
+    let data = erc8021::strip_suffix(data);
     match data.len().cmp(&SELECTOR_LEN) {
         std::cmp::Ordering::Less => false,
         std::cmp::Ordering::Equal => true,
-        std::cmp::Ordering::Greater => is_abi_data(&data[SELECTOR_LEN..]),
+        std::cmp::Ordering::Greater => {
+            is_abi_data(&data[SELECTOR_LEN..]) || suffixed_abi_args(data).is_some()
+        }
     }
 }
 
@@ -1822,6 +1868,25 @@ fn is_abi_data(data: &[u8]) -> bool {
     }
     // If the length is not a multiple of 32, also accept when the last remainder bytes are all 0.
     data[data.len() - rem..].iter().all(|byte| *byte == 0)
+}
+
+/// Returns the word-aligned arguments of the given function calldata if they are followed by a
+/// non-zero suffix shorter than a word, such as tracking bytes appended by routers. A trailing
+/// ERC-8021 attribution suffix is removed first.
+///
+/// The first argument word must be left-padded like an address, integer, boolean or offset, which
+/// packed calldata rarely is.
+fn suffixed_abi_args(data: &[u8]) -> Option<&[u8]> {
+    let args = erc8021::strip_suffix(data).get(SELECTOR_LEN..)?;
+    let (args, suffix) = args.split_at(args.len() - args.len() % 32);
+    (args.starts_with(&[0; 12]) && suffix.iter().any(|byte| *byte != 0)).then_some(args)
+}
+
+/// Returns `true` if `args` is exactly the ABI encoding of the function inputs.
+fn is_abi_encoded_input(func: &Function, args: &[u8]) -> bool {
+    func.abi_decode_input(args)
+        .and_then(|values| func.abi_encode_input_raw(&values))
+        .is_ok_and(|encoded| encoded == args)
 }
 
 /// Restore the order of the params of a decoded event,
@@ -1876,6 +1941,7 @@ fn constructor_signature(constructor: &Constructor) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CallKind;
     use alloy_primitives::{address, aliases::U96, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
@@ -2000,6 +2066,86 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn function_signature_matches_full_decoding() {
+        let address = Address::repeat_byte(0x11);
+        let fallback = Address::repeat_byte(0x22);
+        let no_fallback = Address::repeat_byte(0x33);
+        let scoped = Address::repeat_byte(0x44);
+        let known_fallback = Address::repeat_byte(0x55);
+        let mut decoder = CallTraceDecoder::new().clone();
+        let function = Function::parse("roundTrip(uint256[]) returns (uint256[])").unwrap();
+        let data = function
+            .abi_encode_input(&[DynSolValue::Array(vec![DynSolValue::Uint(U256::MAX, 256)])])
+            .unwrap();
+        decoder.push_function(function.clone());
+        decoder.push_address_function(scoped, function.clone());
+        decoder.fallback_contracts.insert(fallback, HashSet::default());
+        decoder
+            .fallback_contracts
+            .insert(known_fallback, HashSet::from_iter([function.selector()]));
+        decoder.receive_contracts.insert(fallback);
+        decoder.non_fallback_contracts.insert(no_fallback, HashSet::default());
+        decoder
+            .constructors_by_address
+            .insert(address, Constructor::parse("constructor()").unwrap());
+        decoder.constructor_args_offsets.insert(address, 0);
+
+        // A global collision still resolves through the existing calldata checks.
+        let transfer = Function::parse("transferFrom(address,address,uint256)").unwrap();
+        let collision = Function::parse("gasprice_bit_ether(int128)").unwrap();
+        assert_eq!(transfer.selector(), collision.selector());
+        let collision_data =
+            [collision.selector().as_slice(), &U256::from(1).to_be_bytes::<32>()].concat();
+        decoder.push_function(transfer.clone());
+        decoder.push_function(collision);
+        decoder.push_address_function(scoped, transfer);
+
+        for address in [
+            address,
+            fallback,
+            no_fallback,
+            scoped,
+            known_fallback,
+            IDENTITY,
+            DEFAULT_CREATE2_DEPLOYER,
+        ] {
+            for kind in [CallKind::Call, CallKind::DelegateCall, CallKind::Create] {
+                for success in [true, false] {
+                    for data in [
+                        vec![],
+                        vec![1, 2, 3],
+                        vec![0xff; SELECTOR_LEN],
+                        function.selector().to_vec(),
+                        [function.selector().as_slice(), &[0xff; 32]].concat(),
+                        data.clone(),
+                        collision_data.clone(),
+                    ] {
+                        let trace = CallTrace {
+                            address,
+                            kind,
+                            success,
+                            status: (!success).then_some(InstructionResult::Revert),
+                            data: data.into(),
+                            output: vec![0xff; 64].into(),
+                            ..Default::default()
+                        };
+                        assert_eq!(
+                            decoder.decode_function_signature(&trace).await,
+                            decoder
+                                .decode_function(&trace)
+                                .await
+                                .call_data
+                                .map(|data| data.signature),
+                            "{address} {kind:?} success={success} calldata={}",
+                            trace.data,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_selector_collision_resolution() {
         use alloy_json_abi::Function;
@@ -2055,6 +2201,71 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[test]
+    fn test_is_abi_call_data() {
+        let call_data = |args: &[&[u8]]| [&[0x07, 0xed, 0x23, 0x79][..], &args.concat()].concat();
+        let address = Address::repeat_byte(0x11);
+        let word = address.into_word();
+        let suffix = hex!("2a6f45f2");
+
+        assert!(is_abi_call_data(&call_data(&[&word[..]])));
+        assert!(is_abi_call_data(&call_data(&[&word[..], &[0; 4]])));
+        assert!(is_abi_call_data(&call_data(&[&word[..], &suffix])));
+        // Packed arguments and suffixes without a whole ABI-encoded word.
+        assert!(!is_abi_call_data(&call_data(&[&address[..], &word[..]])));
+        assert!(!is_abi_call_data(&call_data(&[&suffix])));
+        // ERC-8021 attribution suffixes are removed exactly, whatever the first word.
+        let erc8021 = hex!("a161776a6364705f666163696c31000e0280218021802180218021802180218021");
+        assert!(is_abi_call_data(&call_data(&[&B256::repeat_byte(0x11)[..], &erc8021])));
+    }
+
+    #[tokio::test]
+    async fn test_decode_call_data_with_suffix() {
+        let abi = JsonAbi::parse([
+            "function execute(bytes commands, bytes[] inputs, uint256 deadline)",
+            "function chargeFee()",
+        ])
+        .unwrap();
+        let identifier = SignaturesIdentifier::new_offline_with_abis([&abi]).unwrap();
+        let mut decoder =
+            CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
+        let tag = hex!("756e6978000001a0ee8a61e9800089610000006d0100");
+        let trace = |data: &[&[u8]]| CallTrace {
+            address: Address::repeat_byte(0x12),
+            data: data.concat().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let execute = abi.function("execute").unwrap().first().unwrap();
+        let data = execute
+            .abi_encode_input(&[
+                DynSolValue::Bytes(vec![0x0b]),
+                DynSolValue::Array(vec![DynSolValue::Bytes(vec![0x01; 3])]),
+                DynSolValue::Uint(U256::from(1), 256),
+            ])
+            .unwrap();
+        let call_data = decoder.decode_function(&trace(&[&data, &tag])).await.call_data.unwrap();
+        assert_eq!(call_data.signature, "execute(bytes,bytes[],uint256)");
+        assert_eq!(call_data.args, ["0x0b", "[0x010101]", "1"]);
+
+        // A trailing ERC-8021 attribution suffix of any length is removed before the tag.
+        let erc8021 = hex!(
+            "72616e67655f7661756c742c63656c6f5f6533386364643332313061361d0080218021802180218021802180218021"
+        );
+        let decoded = decoder.decode_function(&trace(&[&data, &tag, &erc8021])).await;
+        assert_eq!(decoded.call_data.unwrap().args, call_data.args);
+
+        // Packed arguments are not decoded as a function with fewer inputs, including on a known
+        // contract without a fallback that lacks the selector.
+        let charge_fee = abi.function("chargeFee").unwrap().first().unwrap();
+        let word = Address::repeat_byte(0x11).into_word();
+        let packed = trace(&[&charge_fee.selector()[..], &word[..], &tag]);
+        assert!(decoder.decode_function(&packed).await.call_data.is_none());
+        decoder.non_fallback_contracts.insert(packed.address, HashSet::default());
+        assert!(decoder.decode_function(&packed).await.call_data.is_none());
     }
 
     #[cfg(feature = "base")]
@@ -2484,6 +2695,8 @@ mod tests {
             ("publicKeyEd25519(bytes32)", vec![], Some(vec!["<pk>".to_string()])),
             ("publicKeyP256(uint256)", vec![], Some(vec!["<pk>".to_string()])),
             ("rememberKey(uint256)", vec![], Some(vec!["<pk>".to_string()])),
+            ("rememberKeys(string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
+            ("rememberKeys(string,string,string,uint32)", vec![], Some(vec!["<pk>".to_string()])),
             //
             // Should redact private key from traces in specific cases with exceptions:
             ("broadcast(uint256)", vec![], Some(vec!["<pk>".to_string()])),
@@ -3025,6 +3238,19 @@ mod tests {
         assert_eq!(call_data.signature, "sign(uint256,bytes32)");
         assert!(!call_data.args.join(",").contains(pk_hex));
 
+        // Suffixed calldata that isn't the exact ABI encoding (dirty string padding) must not
+        // fall back to raw calldata rendering either.
+        let call = Vm::deriveKey_0Call {
+            mnemonic: "test test test test test test test test test test test junk".to_string(),
+            index: 0,
+        };
+        let mut data = call.abi_encode();
+        *data.last_mut().unwrap() = 0xff;
+        data.push(0xff);
+        let decoded = decoder.decode_function(&cheatcode_trace(data)).await;
+        let call_data = decoded.call_data.expect("suffixed calldata must not fall back to raw");
+        assert_eq!(call_data.args, vec!["<pk>".to_string()]);
+
         // Truncated calldata cannot be decoded at all and fails closed.
         let data = Vm::sign_1Call::SELECTOR.iter().copied().chain(pk).collect::<Vec<u8>>();
         let decoded = decoder.decode_function(&cheatcode_trace(data)).await;
@@ -3040,6 +3266,26 @@ mod tests {
 
         let decoded = decoder.decode_function(&trace).await;
         assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+    }
+
+    #[tokio::test]
+    async fn test_tempo_decode_labels_ousd() {
+        let decoder = CallTraceDecoder::new();
+        let transfer = ITIP20::transferCall {
+            to: address!("0x0000000000000000000000000000000000000def"),
+            amount: U256::from(1_000_000u64),
+        };
+        let trace = CallTrace {
+            address: OUSD_ADDRESS,
+            data: transfer.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("OUSD"));
+        let call_data = decoded.call_data.expect("OUSD transfer should decode");
+        assert_eq!(call_data.signature, "transfer(address,uint256)");
     }
 
     #[tokio::test]

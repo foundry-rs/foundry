@@ -75,6 +75,7 @@ impl EthApi<FoundryNetwork> {
             .backend
             .trace_transaction(hash)
             .await?
+            .unwrap_or_default()
             .into_iter()
             .filter_map(|trace| TraceEntry::from_transaction_trace(&trace.trace))
             .collect();

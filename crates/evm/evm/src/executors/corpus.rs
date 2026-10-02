@@ -44,18 +44,29 @@ use crate::{
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
+use alloy_sol_types::SolCall;
 use eyre::{Result, eyre};
+use foundry_cheatcodes::Vm::{
+    revertToAndDeleteCall, revertToCall, revertToStateAndDeleteCall, revertToStateCall, rollCall,
+    setEvmVersionCall, warpCall,
+};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
+use foundry_evm_core::{
+    constants::{CALLER, CHEATCODE_ADDRESS},
+    evm::FoundryEvmNetwork,
+    utils::StateChangeset,
+};
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
     invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, SenderFilters,
+        TargetedContracts,
     },
     sequence::{ComparisonHint, CorpusEntryView, SequenceGenerator, SequencePlan},
 };
 use proptest::test_runner::TestRunner;
+use revm::{context::Block, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -320,6 +331,8 @@ pub(crate) struct ReplayTarget<'a> {
     pub(crate) stateless: Option<StatelessReplayTarget<'a>>,
     pub(crate) fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub(crate) dynamic: Option<&'a DynamicTargetCtx<'a>>,
+    /// Current invariant sender policy; persisted transactions from other senders are rejected.
+    pub(crate) senders: Option<&'a SenderFilters>,
 }
 
 struct ReplayCoverage<'a> {
@@ -438,6 +451,14 @@ impl WorkerCorpusSeed {
         };
         let replay_dirs = canonical_replay_dirs(replay_root.unwrap_or(corpus_dir));
         seed.replay_dirs = Some(replay_dirs.clone());
+
+        // Drop a persisted optimization seed with a sender the current policy no longer allows.
+        if let Some(senders) = target.senders
+            && !seed.optimization_best_sequence.iter().all(|tx| senders.allows(tx.sender))
+        {
+            seed.optimization_best_value = None;
+            seed.optimization_best_sequence.clear();
+        }
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation
         // engine can build on it in future runs.
@@ -761,7 +782,12 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     let mut created: Vec<Address> = Vec::new();
 
     for tx in tx_seq {
-        if WorkerCorpus::can_replay_tx(tx, target.stateless, target.fuzzed_contracts) {
+        if WorkerCorpus::can_replay_tx(
+            tx,
+            target.stateless,
+            target.fuzzed_contracts,
+            target.senders,
+        ) {
             let mut call_result = execute_tx(executor, tx)?;
             cmp_seq.push(
                 call_result
@@ -809,7 +835,9 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             cmp_seq.push(Vec::new());
             failed_replays += 1;
 
-            if reject_unmatched_function && target.stateless.is_some() {
+            // The campaign executes loaded sequences verbatim, so a persisted sequence with any
+            // transaction outside the current targets, selectors, or senders must be dropped.
+            if reject_unmatched_function {
                 rollback_replay_created(target.fuzzed_contracts, created);
                 return Ok(ReplayOutcome {
                     keep_entry: false,
@@ -1130,6 +1158,7 @@ impl WorkerCorpus {
         observed: &[ObservedCall],
         parent_tx: &BasicTxDetails,
         targeted_contracts: &FuzzRunIdentifiedContracts,
+        senders: &SenderFilters,
         insertion_mode: CorpusInsertionMode,
     ) {
         if !self.config.is_coverage_guided() || observed.is_empty() {
@@ -1141,7 +1170,7 @@ impl WorkerCorpus {
             sequence_from_observed(
                 observed,
                 &targets,
-                ObservedCallDepth::All,
+                senders,
                 Some((parent_tx.warp, parent_tx.roll)),
             )
         };
@@ -1157,6 +1186,7 @@ impl WorkerCorpus {
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         targeted_contracts: &FuzzRunIdentifiedContracts,
+        senders: &SenderFilters,
         executor: &Executor<FEN>,
     ) -> Result<usize> {
         if !self.config.is_coverage_guided() {
@@ -1198,9 +1228,30 @@ impl WorkerCorpus {
                 continue;
             }
 
-            let seq = {
+            let Some(seq) = ({
                 let targets = targeted_contracts.targets();
-                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
+                let block = executor
+                    .inspector()
+                    .cheatcodes
+                    .as_ref()
+                    .and_then(|cheatcodes| cheatcodes.block.as_ref())
+                    .unwrap_or(&executor.evm_env().block_env);
+                let spec_id = executor
+                    .inspector()
+                    .cheatcodes
+                    .as_ref()
+                    .and_then(|cheatcodes| cheatcodes.execution_evm_version)
+                    .unwrap_or_else(|| executor.spec_id());
+                sequence_from_test_trace(
+                    &observed,
+                    &targets,
+                    senders,
+                    block.timestamp(),
+                    block.number(),
+                    spec_id.into(),
+                )
+            }) else {
+                continue;
             };
 
             let insertion_mode = if self.id == 0 {
@@ -1697,28 +1748,23 @@ impl WorkerCorpus {
         tx: &BasicTxDetails,
         stateless: Option<StatelessReplayTarget<'_>>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+        senders: Option<&SenderFilters>,
     ) -> bool {
-        fuzzed_contracts.is_some_and(|contracts| contracts.targets().can_replay(tx))
-            || stateless.is_some_and(|target| target.can_replay(tx))
+        senders.is_none_or(|senders| senders.allows(tx.sender))
+            && (fuzzed_contracts.is_some_and(|contracts| contracts.targets().can_replay(tx))
+                || stateless.is_some_and(|target| target.can_replay(tx)))
     }
-}
-
-#[derive(Clone, Copy)]
-enum ObservedCallDepth {
-    DirectOnly,
-    All,
 }
 
 fn sequence_from_observed(
     observed: &[ObservedCall],
     targets: &TargetedContracts,
-    depth: ObservedCallDepth,
+    senders: &SenderFilters,
     first_delay: Option<(Option<U256>, Option<U256>)>,
 ) -> Vec<BasicTxDetails> {
     let mut first_delay = first_delay;
     observed
         .iter()
-        .filter(|call| matches!(depth, ObservedCallDepth::All) || call.depth == 1)
         .filter_map(|call| {
             let mut tx = BasicTxDetails {
                 warp: None,
@@ -1730,7 +1776,7 @@ fn sequence_from_observed(
                     value: call.value,
                 },
             };
-            targets.can_replay(&tx).then(|| {
+            (targets.can_replay(&tx) && senders.allows(tx.sender)).then(|| {
                 let (warp, roll) = first_delay.take().unwrap_or((None, None));
                 tx.warp = warp;
                 tx.roll = roll;
@@ -1738,6 +1784,77 @@ fn sequence_from_observed(
             })
         })
         .collect()
+}
+
+fn sequence_from_test_trace(
+    observed: &[ObservedCall],
+    targets: &TargetedContracts,
+    senders: &SenderFilters,
+    mut timestamp: U256,
+    mut block_number: U256,
+    spec_id: SpecId,
+) -> Option<Vec<BasicTxDetails>> {
+    let mut next_timestamp = timestamp;
+    let mut next_block_number = block_number;
+    let mut sequence = Vec::new();
+
+    for call in observed {
+        if call.target == CHEATCODE_ADDRESS {
+            match <[u8; 4]>::try_from(call.calldata.get(..4)?).ok()? {
+                warpCall::SELECTOR => {
+                    if call.depth != 1 {
+                        return None;
+                    }
+                    next_timestamp = warpCall::abi_decode(&call.calldata).ok()?.newTimestamp;
+                }
+                rollCall::SELECTOR => {
+                    if call.depth != 1 {
+                        return None;
+                    }
+                    let new_height = rollCall::abi_decode(&call.calldata).ok()?.newHeight;
+                    // Prague rolls also write EIP-2935 history, which replaying a block-number
+                    // delta cannot reproduce. Reject the entire seed, including earlier calls.
+                    if spec_id >= SpecId::PRAGUE && new_height > next_block_number {
+                        return None;
+                    }
+                    next_block_number = new_height;
+                }
+                // Snapshot restoration can undo target calls and environment changes, but the
+                // observed trace does not retain enough snapshot state to reproduce that exactly.
+                revertToCall::SELECTOR
+                | revertToStateCall::SELECTOR
+                | revertToAndDeleteCall::SELECTOR
+                | revertToStateAndDeleteCall::SELECTOR
+                | setEvmVersionCall::SELECTOR => return None,
+                _ => {}
+            }
+            continue;
+        }
+        if call.depth != 1 {
+            continue;
+        }
+
+        if next_timestamp < timestamp || next_block_number < block_number {
+            return None;
+        }
+        let tx = BasicTxDetails {
+            warp: next_timestamp.checked_sub(timestamp).filter(|delay| !delay.is_zero()),
+            roll: next_block_number.checked_sub(block_number).filter(|delay| !delay.is_zero()),
+            sender: call.caller,
+            call_details: CallDetails {
+                target: call.target,
+                calldata: call.calldata.clone(),
+                value: call.value,
+            },
+        };
+        if targets.can_replay(&tx) && senders.allows(tx.sender) {
+            timestamp = next_timestamp;
+            block_number = next_block_number;
+            sequence.push(tx);
+        }
+    }
+
+    Some(sequence)
 }
 
 fn persist_optimization_output(
@@ -1953,6 +2070,7 @@ mod tests {
                     }),
                     fuzzed_contracts: None,
                     dynamic: None,
+                    senders: None,
                 },
                 coordinator,
             )
@@ -2179,6 +2297,7 @@ mod tests {
                     stateless: Some(StatelessReplayTarget { function: &function, address: target }),
                     fuzzed_contracts: None,
                     dynamic: None,
+                    senders: None,
                 },
                 true,
             )
@@ -2319,7 +2438,7 @@ mod tests {
             &config,
             None,
             None,
-            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
+            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None, senders: None },
         )
         .unwrap();
         fs::create_dir_all(flat_root.join("worker1").join(CORPUS_DIR)).unwrap();
@@ -2552,7 +2671,7 @@ mod tests {
             generator,
             None,
             None,
-            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
+            ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None, senders: None },
         )
         .unwrap();
 
@@ -2828,6 +2947,7 @@ mod tests {
             &observed,
             &parent_tx,
             &targeted_contracts,
+            &SenderFilters::default(),
             CorpusInsertionMode::Live,
         );
 
@@ -2874,6 +2994,7 @@ mod tests {
             &observed,
             &basic_tx(),
             &targeted_contracts,
+            &SenderFilters::default(),
             CorpusInsertionMode::Live,
         );
 
@@ -2906,6 +3027,7 @@ mod tests {
             &observed,
             &basic_tx(),
             &targeted_contracts,
+            &SenderFilters::default(),
             CorpusInsertionMode::Live,
         );
         assert!(manager.in_memory_corpus.is_empty());
@@ -2915,65 +3037,135 @@ mod tests {
             &[],
             &basic_tx(),
             &targeted_contracts,
+            &SenderFilters::default(),
             CorpusInsertionMode::Live,
         );
         assert!(manager.in_memory_corpus.is_empty());
     }
 
     #[test]
-    fn sequence_from_observed_keeps_only_direct_replayable_calls() {
+    fn sequence_from_test_trace_preserves_forward_environment_and_rejects_restores() {
         let target = Address::from([0x42; 20]);
-        let other = Address::from([0x43; 20]);
         let sender = Address::from([0xaa; 20]);
-        let nested_caller = Address::from([0xbb; 20]);
-        let foo = Function::parse("foo(uint256)").unwrap();
-        let bar = Function::parse("bar()").unwrap();
+        let foo = Function::parse("foo()").unwrap();
         let foo_selector = foo.selector();
-        let bar_selector = bar.selector();
         let targeted_contracts =
-            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+            targeted_contracts_with_selective_functions(target, vec![foo], [foo_selector]);
         let targets = targeted_contracts.targets();
-
-        let mut foo_calldata = vec![0u8; 36];
-        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
-        let bar_calldata = bar_selector.to_vec();
+        let target_call = || ObservedCall {
+            depth: 1,
+            caller: sender,
+            target,
+            calldata: Bytes::from(foo_selector.to_vec()),
+            value: Some(U256::from(7)),
+        };
+        let cheatcode_call = |calldata| ObservedCall {
+            depth: 1,
+            caller: sender,
+            target: CHEATCODE_ADDRESS,
+            calldata: Bytes::from(calldata),
+            value: None,
+        };
         let observed = vec![
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target,
-                calldata: Bytes::from(foo_calldata.clone()),
-                value: None,
-            },
-            ObservedCall {
-                depth: 2,
-                caller: nested_caller,
-                target,
-                calldata: Bytes::from(foo_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target,
-                calldata: Bytes::from(bar_calldata),
-                value: None,
-            },
-            ObservedCall {
-                depth: 1,
-                caller: sender,
-                target: other,
-                calldata: Bytes::from(foo_selector.to_vec()),
-                value: None,
-            },
+            cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+            target_call(),
+            cheatcode_call(rollCall { newHeight: U256::from(12) }.abi_encode()),
+            cheatcode_call(warpCall { newTimestamp: U256::from(110) }.abi_encode()),
+            target_call(),
         ];
 
-        let seq = sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None);
+        let sequence = sequence_from_test_trace(
+            &observed,
+            &targets,
+            &SenderFilters::default(),
+            U256::from(100),
+            U256::from(10),
+            SpecId::CANCUN,
+        )
+        .unwrap();
 
-        assert_eq!(seq.len(), 1);
-        assert_eq!(seq[0].sender, sender);
-        assert_eq!(seq[0].call_details.target, target);
-        assert_eq!(&seq[0].call_details.calldata[..4], &foo_selector[..]);
+        assert_eq!(sequence.len(), 2);
+        assert_eq!(sequence[0].warp, Some(U256::from(5)));
+        assert_eq!(sequence[0].roll, None);
+        assert_eq!(sequence[1].warp, Some(U256::from(5)));
+        assert_eq!(sequence[1].roll, Some(U256::from(2)));
+        assert!(sequence.iter().all(|tx| {
+            tx.sender == sender
+                && tx.call_details.target == target
+                && tx.call_details.value == Some(U256::from(7))
+        }));
+
+        for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
+            assert!(
+                sequence_from_test_trace(
+                    &observed,
+                    &targets,
+                    &SenderFilters::default(),
+                    U256::from(100),
+                    U256::from(10),
+                    spec_id,
+                )
+                .is_none()
+            );
+
+            let unchanged_block = [
+                cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+                cheatcode_call(rollCall { newHeight: U256::from(10) }.abi_encode()),
+                target_call(),
+            ];
+            let sequence = sequence_from_test_trace(
+                &unchanged_block,
+                &targets,
+                &SenderFilters::default(),
+                U256::from(100),
+                U256::from(10),
+                spec_id,
+            )
+            .unwrap();
+            assert_eq!(sequence.len(), 1);
+            assert_eq!(sequence[0].warp, Some(U256::from(5)));
+            assert_eq!(sequence[0].roll, None);
+        }
+
+        let backwards =
+            [cheatcode_call(warpCall { newTimestamp: U256::from(99) }.abi_encode()), target_call()];
+        assert!(
+            sequence_from_test_trace(
+                &backwards,
+                &targets,
+                &SenderFilters::default(),
+                U256::from(100),
+                U256::from(10),
+                SpecId::CANCUN
+            )
+            .is_none()
+        );
+
+        for calldata in [
+            revertToCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToStateCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToStateAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+            setEvmVersionCall { evm: "prague".to_string() }.abi_encode(),
+        ] {
+            let restored = [
+                cheatcode_call(warpCall { newTimestamp: U256::from(105) }.abi_encode()),
+                cheatcode_call(rollCall { newHeight: U256::from(12) }.abi_encode()),
+                cheatcode_call(calldata),
+                target_call(),
+            ];
+            assert!(
+                sequence_from_test_trace(
+                    &restored,
+                    &targets,
+                    &SenderFilters::default(),
+                    U256::from(100),
+                    U256::from(10),
+                    SpecId::CANCUN
+                )
+                .is_none()
+            );
+        }
     }
 
     #[test]
@@ -3127,5 +3319,104 @@ mod tests {
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert!(manager.in_memory_corpus.iter().all(|entry| entry.uuid != evictable_uuid));
         assert!(manager.new_entry_indices.is_empty());
+    }
+
+    #[test]
+    fn invariant_load_drops_entries_outside_current_targets_or_senders() {
+        let corpus_root = temp_corpus_dir();
+        let target = Address::from([0x11; 20]);
+        let allowed = Address::from([0xaa; 20]);
+        let excluded = Address::from([0xbb; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_selector = foo.selector();
+        let tx = |sender, function: &Function| BasicTxDetails {
+            sender,
+            ..tx_for_function(target, function, &[])
+        };
+
+        let kept = CorpusEntry::new(vec![tx(allowed, &foo)]);
+        let kept_uuid = kept.uuid;
+        for entry in [
+            kept,
+            CorpusEntry::new(vec![tx(excluded, &foo)]),
+            CorpusEntry::new(vec![tx(allowed, &bar)]),
+            CorpusEntry::new(vec![tx(allowed, &foo), tx(excluded, &foo)]),
+        ] {
+            entry.write_to_disk_in(&corpus_root, false).unwrap();
+        }
+        foundry_common::fs::write_json_file(
+            &corpus_root.join(OPTIMIZATION_BEST_FILE),
+            &OptimizationState {
+                best_value: I256::try_from(100).unwrap(),
+                best_sequence: vec![tx(excluded, &foo)],
+            },
+        )
+        .unwrap();
+
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+        let senders = SenderFilters::new(vec![allowed], vec![]);
+        let executor = sync_test_executor(corpus_root.clone(), target);
+        let seed = WorkerCorpusSeed::load_from_disk(
+            &corpus_config(corpus_root),
+            None,
+            Some(&executor),
+            ReplayTarget {
+                stateless: None,
+                fuzzed_contracts: Some(&targeted_contracts),
+                dynamic: None,
+                senders: Some(&senders),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<Vec<_>>(),
+            [kept_uuid]
+        );
+        assert_eq!(seed.metrics.corpus_count, 1);
+        assert!(seed.optimization_best_value.is_none());
+        assert!(seed.optimization_best_sequence.is_empty());
+    }
+
+    #[test]
+    fn observed_sequences_skip_disallowed_senders() {
+        let target = Address::from([0x42; 20]);
+        let allowed = Address::from([0xaa; 20]);
+        let handler = Address::from([0xbb; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let foo_selector = foo.selector();
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo], [foo_selector]);
+        let targets = targeted_contracts.targets();
+        let call = |caller| ObservedCall {
+            depth: 1,
+            caller,
+            target,
+            calldata: Bytes::from(foo_selector.to_vec()),
+            value: None,
+        };
+        let observed = [call(handler), call(allowed)];
+
+        // Cover both `targetSenders` and `excludeSenders` policies.
+        for senders in
+            [SenderFilters::new(vec![allowed], vec![]), SenderFilters::new(vec![], vec![handler])]
+        {
+            for sequence in [
+                sequence_from_observed(&observed, &targets, &senders, None),
+                sequence_from_test_trace(
+                    &observed,
+                    &targets,
+                    &senders,
+                    U256::ZERO,
+                    U256::ZERO,
+                    SpecId::CANCUN,
+                )
+                .unwrap(),
+            ] {
+                assert_eq!(sequence.iter().map(|tx| tx.sender).collect::<Vec<_>>(), [allowed]);
+            }
+        }
     }
 }

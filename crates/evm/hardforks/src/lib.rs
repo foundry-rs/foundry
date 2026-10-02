@@ -13,6 +13,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(all(feature = "optimism", not(feature = "base")))]
+use alloy_chains::NamedChain;
 #[cfg(feature = "optimism")]
 use op_revm::OpSpecId;
 
@@ -517,6 +519,30 @@ impl ExecutionSpec for OpSpecId {
         }
     }
 
+    fn fork_hardfork(
+        chain_id: u64,
+        timestamp: u64,
+        endpoint_hardfork: Option<FoundryHardfork>,
+    ) -> Option<FoundryHardfork> {
+        let endpoint_hardfork =
+            endpoint_hardfork.filter(|&hardfork| Self::from_foundry_hardfork(hardfork).is_some());
+        if endpoint_hardfork.is_some() {
+            return endpoint_hardfork;
+        }
+
+        // Base uses its own upgrade schedule. Without native Base support, retain the configured
+        // EVM version instead of applying the incompatible OP schedule.
+        #[cfg(not(feature = "base"))]
+        if matches!(
+            Chain::from_id(chain_id).named(),
+            Some(NamedChain::Base | NamedChain::BaseSepolia)
+        ) {
+            return None;
+        }
+
+        Self::historical_hardfork(chain_id, timestamp)
+    }
+
     fn historical_hardfork(chain_id: u64, timestamp: u64) -> Option<FoundryHardfork> {
         OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
             .map(FoundryHardfork::Optimism)
@@ -751,11 +777,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
         );
 
         assert_eq!(
@@ -896,6 +922,8 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T13"), Some(TempoHardfork::T13));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T13"), Some(TempoHardfork::T13));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T14"), Some(TempoHardfork::T14));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T14"), Some(TempoHardfork::T14));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
 
         #[cfg(feature = "monad")]

@@ -1,8 +1,10 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions},
+    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
+    progress::ScriptProgress,
+    recovery::recovery_exists,
     sequence::ScriptSequenceKind,
     session::{
         RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
@@ -11,13 +13,13 @@ use crate::{
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, map::AddressHashSet};
 use alloy_provider::Provider;
-use eyre::{OptionExt, Result};
+use eyre::{ContextCompat, OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    provider::ProviderBuilder,
+    external_compiler::is_builtin_compiler_source, provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -29,7 +31,11 @@ use foundry_compilers::{
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 /// Container for the compiled contracts.
 #[derive(Clone, Debug)]
@@ -218,13 +224,18 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
-        )
-        .chain([target_path.clone()]);
+        );
 
-        let output = ProjectCompiler::new()
+        let compiler = ProjectCompiler::new()
+            .external_compilers(&script_config.config)
             .files(sources_to_compile)
-            .dynamic_test_linking(script_config.config.dynamic_test_linking)
-            .compile(&project)?;
+            .dynamic_test_linking(script_config.config.dynamic_test_linking);
+        let compiler = if is_builtin_compiler_source(&target_path) {
+            compiler.files([target_path.clone()])
+        } else {
+            compiler.target_files([target_path.clone()])
+        };
+        let output = compiler.compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -292,7 +303,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
     }
 
     /// Tries loading the resumed state from the cache files, skipping simulation stage.
-    pub async fn resume(self) -> Result<BundledState<FEN>> {
+    pub async fn resume(mut self) -> Result<BundledState<FEN>> {
         let chain = if self.args.multi {
             None
         } else {
@@ -301,25 +312,86 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             Some(provider.get_chain_id().await?)
         };
 
-        let sequence = match self.try_load_sequence(chain, false) {
-            Ok(sequence) => sequence,
-            Err(_) => {
-                // If the script was simulated, but there was no attempt to broadcast yet,
-                // try to read the script sequence from the `dry-run/` folder
-                let mut sequence = self.try_load_sequence(chain, true)?;
+        let mut sequence = if self.sequence_exists(chain, false)? {
+            self.try_load_sequence(chain, false)?
+        } else {
+            // If the script was simulated, but there was no attempt to broadcast yet,
+            // read the script sequence from the `dry-run/` folder.
+            let mut sequence = self.try_load_sequence(chain, true)?;
 
-                // If sequence was in /dry-run, Update its paths so it is not saved into /dry-run
-                // this time as we are about to broadcast it.
-                sequence.update_paths_to_broadcasted(
-                    &self.script_config.config,
-                    &self.args.sig,
-                    &self.build_data.target,
-                )?;
-
-                sequence.save(true, true)?;
-                sequence
-            }
+            // Promote the complete dry-run sequence before broadcasting it.
+            sequence.promote_to_broadcasted(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+            )?;
+            sequence
         };
+
+        let resolution = sequence.restore_delegated_pending(
+            self.args.resume_attempt,
+            self.args.resume_tx_hash,
+            self.args.resume_retry,
+        )?;
+        if !self.args.batch {
+            if let Some((sequence_index, _, attempt_id, hash)) = resolution {
+                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.sequences()[sequence_index].rpc_url(),
+                )?
+                .build()?;
+                let transaction = provider
+                    .get_transaction_by_hash(hash)
+                    .await?
+                    .context("resolved transaction is not available from the recovery endpoint")?;
+                sequence.resolve_delegated_hash(attempt_id, hash, &transaction)?;
+            }
+            let progress = ScriptProgress::default();
+            for index in 0..sequence.sequences().len() {
+                if sequence.sequences()[index].pending.is_empty() {
+                    continue;
+                }
+                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
+                let provider = ProviderBuilder::from_config_with_url(
+                    &self.script_config.config,
+                    sequence.sequences()[index].rpc_url(),
+                )?
+                .build()?;
+                let result = progress
+                    .wait_for_pending(
+                        index,
+                        &mut sequence.sequences_mut()[index],
+                        &provider,
+                        self.script_config.config.transaction_timeout,
+                        self.args.confirmations,
+                        (&durable_hashes, &replayable_hashes),
+                    )
+                    .await;
+                sequence.save(true, false)?;
+                result?;
+                sequence.ensure_delegated_outcomes_known(index)?;
+            }
+        }
+
+        if !self.args.unlocked
+            && !remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
+        {
+            self.script_wallets =
+                Wallets::new(self.args.wallets.get_multi_wallet().await?, self.args.evm.sender);
+            self.browser_wallet = self.args.wallets.browser_signer::<FEN::Network>().await?;
+
+            if self.args.evm.sender.is_none() {
+                let addresses = self.script_wallets.addresses();
+                let sender = self
+                    .args
+                    .maybe_load_private_key()?
+                    .or_else(|| (addresses.len() == 1).then(|| addresses[0]))
+                    .or_else(|| self.browser_wallet.as_ref().map(|wallet| wallet.address()));
+                if let Some(sender) = sender {
+                    self.script_config.update_sender(sender).await?;
+                }
+            }
+        }
 
         let (args, build_data, script_wallets, browser_wallet, script_config) =
             if self.args.unlocked {
@@ -332,7 +404,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 )
             } else {
                 let remaining_transactions =
-                    remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
+                    remaining_unsigned_transactions_for_recovery(&sequence);
                 let remaining_froms =
                     remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
                 let expected_session_sender = script_session_expected_sender_if_configured(
@@ -375,10 +447,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             };
 
         // Collect libraries from sequence and link contracts with them.
-        let libraries = match sequence {
-            ScriptSequenceKind::Single(ref seq) => Libraries::parse(&seq.libraries)?,
-            // Library linking is not supported for multi-chain sequences
-            ScriptSequenceKind::Multi(_) => Libraries::default(),
+        let libraries = if sequence.is_multi() {
+            // Library linking is not supported for multi-chain sequences.
+            Libraries::default()
+        } else {
+            Libraries::parse(&sequence.sequences()[0].libraries)?
         };
 
         let linked_build_data = build_data.link_with_libraries(libraries)?;
@@ -399,24 +472,52 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
         dry_run: bool,
     ) -> Result<ScriptSequenceKind<FEN::Network>> {
         if let Some(chain) = chain {
-            let sequence = ScriptSequence::load(
+            ScriptSequenceKind::load_single(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.target,
                 chain,
                 dry_run,
-            )?;
-            Ok(ScriptSequenceKind::Single(sequence))
+                self.args.batch,
+            )
         } else {
-            let sequence = MultiChainSequence::load(
+            ScriptSequenceKind::load_multi(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.target,
                 dry_run,
-            )?;
-            Ok(ScriptSequenceKind::Multi(sequence))
+                self.args.batch,
+            )
         }
     }
+
+    fn sequence_exists(&self, chain: Option<u64>, dry_run: bool) -> Result<bool> {
+        let paths = if let Some(chain) = chain {
+            ScriptSequence::<FEN::Network>::get_paths(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                chain,
+                dry_run,
+            )?
+        } else {
+            MultiChainSequence::<FEN::Network>::get_paths(
+                &self.script_config.config,
+                &self.args.sig,
+                &self.build_data.target,
+                dry_run,
+            )?
+        };
+        Ok(compatibility_progress_exists(&paths) || recovery_exists(&paths)?)
+    }
+}
+
+fn compatibility_progress_exists(paths: &(PathBuf, PathBuf)) -> bool {
+    [&paths.0, &paths.1].into_iter().any(|path| progress_exists(path))
+}
+
+fn progress_exists(path: &Path) -> bool {
+    path.exists() || path.with_extension("previous").exists()
 }
 
 /// Returns whether every scoped signer needed for resume is already available.
@@ -448,6 +549,24 @@ fn has_available_script_signers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_counts_as_recoverable_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-latest.json");
+        std::fs::write(path.with_extension("previous"), b"{}").unwrap();
+
+        assert!(progress_exists(&path));
+    }
+
+    #[test]
+    fn sensitive_export_counts_as_recoverable_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = (dir.path().join("run-latest.json"), dir.path().join("run-latest-cache.json"));
+        std::fs::write(&paths.1, b"{}").unwrap();
+
+        assert!(compatibility_progress_exists(&paths));
+    }
 
     #[test]
     fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {

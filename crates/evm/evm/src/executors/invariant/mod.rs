@@ -71,7 +71,7 @@ mod error;
 pub(crate) use error::snapshot_edge_fingerprint;
 pub use error::{
     FailureKey, HandlerAssertionFailure, InvariantFailures, InvariantFuzzError,
-    handler_site_already_minimal,
+    handler_edge_fingerprint, handler_site_already_minimal,
 };
 mod campaign;
 
@@ -887,6 +887,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.config.clone()
     }
 
+    /// Retains corpus replay and result aggregation without starting fresh invariant runs.
+    pub const fn skip_fresh_runs(&mut self) {
+        self.config.runs = 0;
+        self.config.timeout = None;
+    }
+
     /// Refs for tracking contracts deployed mid-sequence during corpus replay.
     pub const fn dynamic_target_ctx(&self) -> DynamicTargetCtx<'_> {
         DynamicTargetCtx {
@@ -940,6 +946,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 stateless: None,
                 fuzzed_contracts: Some(&replay_targets),
                 dynamic: Some(&dynamic),
+                senders: Some(&campaign_seed.sender_filters),
             },
         )?;
         let mut runner = self.runner.clone();
@@ -1510,6 +1517,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
+                    &campaign_seed.sender_filters,
                     CorpusInsertionMode::Live,
                 );
             }
@@ -1847,9 +1855,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
 
-        if let Err(err) =
-            worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
-        {
+        if let Err(err) = worker.seed_from_test_traces(
+            invariant_contract,
+            &targeted_contracts,
+            &campaign_seed.sender_filters,
+            executor,
+        ) {
             debug!(target: "corpus", %err, "failed to seed corpus from test traces");
         }
 

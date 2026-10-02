@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::call_frame_to_arena,
+    rpc_trace::{call_frame_to_arena, call_tracer_config},
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
@@ -17,14 +17,15 @@ use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
-    BlockResponse, NetworkTransactionBuilder, TransactionBuilder, primitives::HeaderResponse,
+    BlockResponse, Ethereum, NetworkTransactionBuilder, TransactionBuilder,
+    primitives::HeaderResponse,
 };
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
     trace::geth::{
-        CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
+        GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions,
     },
 };
@@ -87,11 +88,11 @@ use foundry_evm::core::evm::OpEvmNetwork;
 ///
 /// ```bash
 /// cast call 0x... "transfer(address,uint256)" 0x... 100 \
-///   --override-balance 0x123:0x1234 \
-///   --override-nonce 0x123:1 \
-///   --override-code 0x123:0x1234 \
-///   --override-state 0x123:0x1:0x1234
-///   --override-state-diff 0x123:0x1:0x1234
+///   --override-balance 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-nonce 0x0000000000000000000000000000000000000001:1 \
+///   --override-code 0x0000000000000000000000000000000000000001:0x1234 \
+///   --override-state 0x0000000000000000000000000000000000000001:0x1:0x1234 \
+///   --override-state-diff 0x0000000000000000000000000000000000000001:0x1:0x1234
 /// ```
 ///
 /// `--delegate` builds on the same mechanism: it overrides the code of the `--from` address with
@@ -232,7 +233,7 @@ fn call_tracer_options() -> GethDebugTracingCallOptions {
     GethDebugTracingCallOptions::default().with_tracing_options(
         GethDebugTracingOptions::default()
             .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-            .with_call_config(CallConfig::default().with_log()),
+            .with_call_config(call_tracer_config()),
     )
 }
 
@@ -250,6 +251,11 @@ impl CallArgs {
 
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
+            if self.trace {
+                eyre::bail!(
+                    "--trace cannot be combined with --curl; use --debug-trace-call --curl instead"
+                );
+            }
             if self.browser.browser {
                 eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
             }
@@ -834,27 +840,20 @@ impl CallArgs {
             }
         }).transpose()?;
 
-        // Build eth_call params. `--curl` builds the request offline, so the fields the
-        // RPC-backed builder would resolve against the node (fee style, blob sidecars,
-        // authorization lists) are left to the node's defaults; the scalar fields given on the
-        // command line are forwarded as-is so the printed request runs the same call as the
-        // non-curl command.
-        let mut call_object = serde_json::json!({
-            "to": to,
-            "data": format!("0x{}", hex::encode(&data)),
-        });
-        if let Some(from) = self.wallet.from {
-            call_object["from"] = serde_json::json!(from);
-        }
-        if let Some(value) = self.tx.value {
-            call_object["value"] = serde_json::json!(value);
-        }
-        if let Some(gas_limit) = self.tx.gas_limit {
-            call_object["gas"] = serde_json::json!(gas_limit);
-        }
-        if let Some(nonce) = self.tx.nonce {
-            call_object["nonce"] = serde_json::json!(nonce);
-        }
+        // Apply explicit transaction options offline, using the configured chain's fee style
+        // when available. Blob sidecars and authorization lists still require the RPC builder.
+        let legacy = self.tx.legacy
+            || (config.chain.is_some_and(|chain| chain.is_legacy()) && self.tx.auth.is_empty());
+        let mut call_request = TransactionRequest {
+            to: Some(to.map_or(TxKind::Create, TxKind::Call)),
+            from: self.wallet.from,
+            input: TransactionInput::new(data.into()).normalized_data(),
+            ..Default::default()
+        };
+        // Curl currently emits Ethereum-compatible fields only. Keep Tempo options from changing
+        // the nonce without their accompanying network-specific fields.
+        let tx_opts = TransactionOpts { tempo: Default::default(), ..self.tx };
+        tx_opts.apply::<Ethereum>(&mut call_request, legacy);
 
         let block_param = self
             .block
@@ -873,9 +872,9 @@ impl CallArgs {
             if let Some(block_overrides) = self.overrides.get_block_overrides()? {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
-            ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
+            ("debug_traceCall", serde_json::json!([call_request, block_param, call_options]))
         } else {
-            ("eth_call", serde_json::json!([call_object, block_param]))
+            ("eth_call", serde_json::json!([call_request, block_param]))
         };
 
         let curl_cmd = generate_curl_command(

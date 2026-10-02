@@ -704,6 +704,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             stateless: Some(StatelessReplayTarget { function: func, address }),
             fuzzed_contracts: None,
             dynamic: None,
+            senders: None,
         };
         let mut corpus = WorkerCorpus::new(
             worker_id,

@@ -1,7 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_network::{AnyNetwork, AnyRpcBlock};
-use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -38,7 +38,11 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, context::Block as _, database::Database};
+use revm::{
+    bytecode::Bytecode,
+    context::{Block as _, Transaction as _},
+    database::Database,
+};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -442,55 +446,41 @@ pub fn deploy_contract<FEN>(
 where
     FEN: FoundryEvmNetwork,
 {
-    if let TxKind::Call(to) = to {
+    // Derive the created address up front: batched transactions return the last call's result,
+    // not the deployment's.
+    let address = if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
             );
         }
-        let result = executor.transact_with_env_and_context(
-            evm_env.clone(),
-            tx_env.clone(),
-            chain_context,
-        )?;
-
-        trace!(transact_result = ?result.exit_reason);
-
-        if result.reverted {
-            let decoded_reason = if result.result.is_empty() {
-                String::new()
-            } else {
-                format!(": {}", RevertDecoder::default().decode(&result.result, result.exit_reason))
-            };
-            eyre::bail!(
-                "Failed to deploy contract via CREATE2 on fork at block{decoded_reason}.\n\
-                This typically happens when your local bytecode differs from what was actually deployed.\n\
-                Common causes:\n\
-                - Your contract source is not at the same commit used during deployment\n\
-                - Cached build artifacts are stale (try `forge clean && forge build`)\n\
-                - Compiler settings (optimizer, evm_version, via_ir) don't match the deployment"
-            );
-        }
-
-        if result.result.len() != 20 {
-            eyre::bail!(
-                "Failed to deploy contract via CREATE2 on fork at block: deployer returned {} bytes instead of 20.\n\
-                This may indicate a bytecode mismatch - ensure your source code matches the deployed contract.",
-                result.result.len()
-            );
-        }
-
-        Ok(Address::from_slice(&result.result))
+        let (salt, init_code) = tx_env.input().split_at(32);
+        DEFAULT_CREATE2_DEPLOYER.create2_from_code(B256::from_slice(salt), init_code)
     } else {
-        let deploy_result = executor.deploy_with_env_and_context(
-            evm_env.clone(),
-            tx_env.clone(),
-            chain_context,
-            None,
-        )?;
-        trace!(deploy_result = ?deploy_result.raw.exit_reason);
-        Ok(deploy_result.address)
+        let caller = tx_env.caller();
+        caller.create(executor.backend_mut().basic(caller)?.map_or(0, |info| info.nonce))
+    };
+
+    let result =
+        executor.transact_with_env_and_context(evm_env.clone(), tx_env.clone(), chain_context)?;
+    trace!(transact_result = ?result.exit_reason);
+
+    if result.reverted {
+        let decoded_reason = RevertDecoder::default().decode(&result.result, result.exit_reason);
+        eyre::bail!(
+            "Failed to deploy contract on fork at block: {decoded_reason}.\n\
+            This typically happens when your local bytecode differs from what was actually deployed.\n\
+            Common causes:\n\
+            - Your contract source is not at the same commit used during deployment\n\
+            - Cached build artifacts are stale (try `forge clean && forge build`)\n\
+            - Compiler settings (optimizer, evm_version, via_ir) don't match the deployment"
+        );
     }
+    if !result.state_changeset.get(&address).is_some_and(|account| account.is_created()) {
+        eyre::bail!("Transaction did not deploy a contract at the expected address {address}");
+    }
+
+    Ok(address)
 }
 
 pub async fn get_runtime_codes<FEN>(

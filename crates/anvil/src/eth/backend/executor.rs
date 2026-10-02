@@ -1,7 +1,8 @@
 use crate::{
     eth::{
-        backend::cheats::CheatsManager, error::InvalidTransactionError,
-        pool::transactions::PoolTransaction,
+        backend::cheats::CheatsManager,
+        error::InvalidTransactionError,
+        pool::transactions::{PoolTransaction, TxMarker},
     },
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
@@ -29,7 +30,7 @@ use alloy_evm::{
     },
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_primitives::{Address, B256, Bytes, Log, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, U256, map::HashSet};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -44,11 +45,15 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
+use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
 
 #[cfg(feature = "base")]
 use base_common_consensus::Eip8130Receipt;
 #[cfg(feature = "base")]
 use base_common_evm::Eip8130PhaseStatuses;
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use foundry_evm::hardfork::FoundryHardfork;
 
 #[cfg(any(feature = "base", feature = "optimism"))]
 pub(crate) mod optimism;
@@ -209,12 +214,13 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
 
 /// Result of executing a transaction in [`AnvilBlockExecutor`].
 ///
-/// Wraps [`EthTxResult`] with the sender address when OP deposit nonce resolution is enabled.
+/// Wraps [`EthTxResult`] with the depositor nonce when OP deposit receipts are enabled.
 #[derive(Debug)]
 pub struct AnvilTxResult<H> {
     pub inner: EthTxResult<H, FoundryTxType>,
+    /// The sender nonce before a deposit transaction executed, `None` for other transactions.
     #[cfg(any(feature = "base", feature = "optimism"))]
-    pub sender: Address,
+    pub depositor_nonce: Option<u64>,
 }
 
 impl<H: Send + 'static> TxResult for AnvilTxResult<H> {
@@ -256,6 +262,9 @@ pub struct AnvilBlockExecutor<E> {
     /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
     #[cfg(feature = "optimism")]
     optimism_jovian: bool,
+    /// The OP-stack hardfork that gates deposit receipt metadata.
+    #[cfg(any(feature = "base", feature = "optimism"))]
+    deposit_hardfork: Option<FoundryHardfork>,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
 }
@@ -297,6 +306,8 @@ impl<E> AnvilBlockExecutor<E> {
             max_blob_gas_per_block: u64::MAX,
             #[cfg(feature = "optimism")]
             optimism_jovian: false,
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            deposit_hardfork: None,
             state_changes: None,
         }
     }
@@ -352,8 +363,20 @@ where
             .into());
         }
 
+        // The deposit nonce reported in the receipt is the sender nonce before the deposit ran, so
+        // it has to be read before the transaction executes.
         #[cfg(any(feature = "base", feature = "optimism"))]
-        let sender = *tx.signer();
+        let depositor_nonce = if tx.tx().tx_type().is_deposit() {
+            let account = self
+                .evm
+                .db_mut()
+                .basic(*tx.signer())
+                .map_err(BlockExecutionError::other)?
+                .unwrap_or_default();
+            Some(account.nonce)
+        } else {
+            None
+        };
         let transaction_hash = tx.tx().trie_hash();
         #[cfg(feature = "optimism")]
         let blob_gas_used =
@@ -376,7 +399,7 @@ where
         Ok(AnvilTxResult {
             inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
             #[cfg(any(feature = "base", feature = "optimism"))]
-            sender,
+            depositor_nonce,
         })
     }
 }
@@ -445,7 +468,7 @@ where
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             #[cfg(any(feature = "base", feature = "optimism"))]
-            sender,
+            depositor_nonce,
         } = output;
 
         let gas_used = result.tx_gas_used();
@@ -456,8 +479,13 @@ where
         }
 
         #[cfg(any(feature = "base", feature = "optimism"))]
-        let receipt = if tx_type.is_deposit() {
-            optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
+        let receipt = if let Some(depositor_nonce) = depositor_nonce {
+            optimism::build_mined_deposit_receipt(
+                result,
+                self.deposit_hardfork,
+                depositor_nonce,
+                self.gas_used,
+            )
         } else {
             self.receipt_builder.build_receipt(ReceiptBuilderCtx {
                 tx_type,
@@ -527,6 +555,8 @@ where
 pub struct ExecutedPoolTransactions<T> {
     /// Successfully included transactions.
     pub included: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions whose nonce was already consumed by the current state.
+    pub stale: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions that failed validation.
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
@@ -599,23 +629,20 @@ where
     let gas_limit = executor.evm().block().gas_limit();
 
     let mut included = Vec::new();
+    let mut stale = Vec::new();
     let mut invalid = Vec::new();
     let mut not_yet_valid = Vec::new();
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
     let mut transactions = Vec::new();
     let mut blob_gas_used = 0u64;
+    let mut unavailable_markers = HashSet::<TxMarker>::default();
 
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
         let sender = *pending.sender();
-        let block_timestamp = executor.evm().block().timestamp();
-
-        if let FoundryTxEnvelope::Tempo(aa_tx) = pending.transaction.as_ref()
-            && let Some(valid_after) = aa_tx.tx().valid_after
-            && U256::from(valid_after.get()) > block_timestamp
-        {
-            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
-            not_yet_valid.push(pool_tx.clone());
+        if pool_tx.requires.iter().any(|marker| unavailable_markers.contains(marker)) {
+            trace!(target: "backend", "[{:?}] dependency was not included, skipping transaction", pool_tx.hash());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -624,9 +651,48 @@ where
             Ok(acc) => acc,
             Err(err) => {
                 trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                unavailable_markers.extend(pool_tx.provides.iter().cloned());
                 continue;
             }
         };
+
+        let transaction = pending.transaction.as_ref();
+        let state_nonce = match transaction {
+            FoundryTxEnvelope::Tempo(tx) if tx.tx().nonce_key == U256::MAX => None,
+            FoundryTxEnvelope::Tempo(tx) if !tx.tx().nonce_key.is_zero() => {
+                let slot = NonceManager::new().nonces[sender][tx.tx().nonce_key].slot();
+                match executor.evm_mut().db_mut().storage(NONCE_PRECOMPILE_ADDRESS, slot) {
+                    Ok(nonce) => Some(nonce.saturating_to::<u64>()),
+                    Err(err) => {
+                        trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                        unavailable_markers.extend(pool_tx.provides.iter().cloned());
+                        continue;
+                    }
+                }
+            }
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => None,
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            FoundryTxEnvelope::Deposit(_) => None,
+            #[cfg(feature = "optimism")]
+            FoundryTxEnvelope::PostExec(_) => None,
+            _ => Some(account.nonce),
+        };
+        if state_nonce.is_some_and(|nonce| transaction.nonce() < nonce) {
+            warn!(target: "backend", "Skipping stale tx [{:?}]", pool_tx.hash());
+            stale.push(pool_tx.clone());
+            continue;
+        }
+
+        if let FoundryTxEnvelope::Tempo(aa_tx) = transaction
+            && let Some(valid_after) = aa_tx.tx().valid_after
+            && U256::from(valid_after.get()) > executor.evm().block().timestamp()
+        {
+            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
+            not_yet_valid.push(pool_tx.clone());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
+            continue;
+        }
 
         let tx_env =
             build_tx_env_for_pending::<B::Transaction, <B::Evm as Evm>::Tx>(pending, cheats);
@@ -637,6 +703,7 @@ where
         let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
         if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "block gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -645,6 +712,7 @@ where
             && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -653,6 +721,7 @@ where
         let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
         if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
             trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -731,13 +800,14 @@ where
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());
                 } else {
+                    unavailable_markers.extend(pool_tx.provides.iter().cloned());
                     trace!(target: "backend", ?err, "tx execution error, skipping {:?}", pool_tx.hash());
                 }
             }
         }
     }
 
-    ExecutedPoolTransactions { included, invalid, not_yet_valid, tx_info, txs: transactions }
+    ExecutedPoolTransactions { included, stale, invalid, not_yet_valid, tx_info, txs: transactions }
 }
 
 /// Builds the EVM transaction env from a pending pool transaction.

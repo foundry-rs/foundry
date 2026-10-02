@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use foundry_evm::hardforks::BaseUpgrade;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn inferred_optimism_forks_allow_non_monad_source_resets() {
+async fn inferred_optimism_forks_require_op_stack_source_resets() {
     let (_optimism_api, optimism_handle) = spawn(NodeConfig::test().with_optimism()).await;
     let (ethereum_api, _) = spawn(NodeConfig::test()).await;
 
@@ -44,16 +44,26 @@ async fn inferred_optimism_forks_allow_non_monad_source_resets() {
     )
     .await;
     let (_ethereum_origin_api, ethereum_origin) = spawn(NodeConfig::test()).await;
-    optimism_api
+    let original_node_info = optimism_api.anvil_node_info().await.unwrap();
+    let error = optimism_api
         .anvil_reset(Some(Forking {
             json_rpc_url: Some(ethereum_origin.http_endpoint()),
             block_number: Some(0),
         }))
         .await
-        .unwrap();
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "cannot reset Anvil across network families (optimism -> ethereum); start a new instance with matching network configuration"
+    );
     let node_info = optimism_api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("optimism"));
-    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
+    assert_eq!(
+        node_info.fork_config.fork_block_number,
+        original_node_info.fork_config.fork_block_number
+    );
+    optimism_api.mine_one().await.unwrap();
 }
 
 #[cfg(feature = "base")]
@@ -317,6 +327,79 @@ async fn test_simulated_op_deposit_receipt_root_includes_canyon_fields() {
         logs_bloom: receipt.logs_bloom,
     });
     assert_eq!(response[0]["receiptsRoot"], json!(calculate_receipt_root(&[receipt])));
+}
+
+/// Mines a deposit from a sender whose nonce is already `2` and returns its receipt as JSON.
+async fn mine_deposit_receipt_after_two_transfers(config: NodeConfig) -> Value {
+    let (api, handle) = spawn(config).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    // Unsigned requests go through `eth_sendTransaction`, which is where deposits are built.
+    let provider = http_provider(&handle.http_endpoint());
+
+    // Move the sender past nonce zero so pre- and post-execution nonces differ.
+    for _ in 0..2 {
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+    }
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 2);
+
+    let other: OtherFields =
+        json!({ "sourceHash": B256::ZERO, "mint": "0x0", "isSystemTx": false }).try_into().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_gas_limit(21000);
+    let pending = provider
+        .send_transaction(WithOtherFields { inner: tx, other })
+        .await
+        .unwrap()
+        .register()
+        .await
+        .unwrap();
+    api.evm_mine(None).await.unwrap();
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 3);
+
+    provider
+        .raw_request::<_, Value>("eth_getTransactionReceipt".into(), (pending.tx_hash(),))
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_deposit_receipt_uses_pre_execution_nonce() {
+    let receipt = mine_deposit_receipt_after_two_transfers(
+        NodeConfig::test().with_networks(NetworkConfigs::with_optimism()),
+    )
+    .await;
+
+    assert_eq!(receipt["type"], json!("0x7E"));
+    assert_eq!(receipt["depositNonce"], json!("0x2"));
+    assert_eq!(receipt["depositReceiptVersion"], json!("0x1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_deposit_receipt_omits_metadata_before_regolith() {
+    let receipt = mine_deposit_receipt_after_two_transfers(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Bedrock.into())),
+    )
+    .await;
+
+    assert_eq!(receipt["type"], json!("0x7E"));
+    assert_eq!(receipt["depositNonce"], Value::Null);
+    assert_eq!(receipt["depositReceiptVersion"], Value::Null);
 }
 
 #[tokio::test(flavor = "multi_thread")]
