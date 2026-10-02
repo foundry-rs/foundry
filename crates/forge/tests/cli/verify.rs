@@ -18,7 +18,7 @@ use foundry_common::retry::Retry;
 use foundry_compilers::PathStyle;
 use foundry_evm::traces::CallKind;
 use foundry_test_utils::{
-    forgetest, forgetest_async, str,
+    forgetest, str,
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
@@ -321,23 +321,27 @@ fn deploy_and_verify_on_chain(
 }
 
 // tests `create && contract-verify && verify-check` on Fantom testnet if correct env vars are set
-forgetest!(can_verify_random_contract_fantom_testnet, |prj, cmd| {
+#[forgetest]
+fn can_verify_random_contract_fantom_testnet(prj: _, cmd: _) {
     verify_on_chain(EnvExternalities::ftm_testnet(), prj, cmd);
-});
+}
 
 // tests `create && contract-verify && verify-check` on Optimism kovan if correct env vars are set
-forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
+#[forgetest]
+fn can_verify_random_contract_optimism_kovan(prj: _, cmd: _) {
     verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
-});
+}
 
 // tests `create && contract-verify && verify-check` on Sepolia testnet if correct env vars are set
-forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
+#[forgetest]
+fn can_verify_random_contract_sepolia(prj: _, cmd: _) {
     // Implicitly tests `--verifier etherscan` on Sepolia testnet
     verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
-});
+}
 
 // tests that `verify-contract --verifier etherscan` also submits to Sourcify on Sepolia
-forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
+#[forgetest]
+fn can_verify_contract_sepolia_etherscan_also_runs_sourcify(prj: _, cmd: _) {
     if let Some(info) = EnvExternalities::sepolia_etherscan() {
         test_debug!("verifying on {}", info.chain);
         add_unique(&prj);
@@ -384,19 +388,21 @@ forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| 
             "Sourcify failure warning logged: {output}"
         );
     }
-});
+}
 
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
 // TESTNET_DEPLOYER_PRIVATE_KEY=0x...
 // ETHERSCAN_API_KEY=<API_KEY>
-forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
+#[forgetest]
+fn can_create_verify_random_contract_sepolia_etherscan(prj: _, cmd: _) {
     // Implicitly tests `--verifier etherscan` on Sepolia testnet
     create_verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
-});
+}
 
 // tests that `create --verify --verifier etherscan` also submits to Sourcify on Sepolia
-forgetest!(can_create_verify_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
+#[forgetest]
+fn can_create_verify_sepolia_etherscan_also_runs_sourcify(prj: _, cmd: _) {
     if let Some(info) = EnvExternalities::sepolia_etherscan() {
         test_debug!("verifying on {}", info.chain);
         add_single_verify_target_file(&prj);
@@ -427,49 +433,45 @@ forgetest!(can_create_verify_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
             "Sourcify failure warning logged: {output}"
         );
     }
-});
+}
 
 // tests `create --verify --verifier sourcify` on Sepolia testnet
-forgetest!(can_create_verify_random_contract_sepolia_sourcify, |prj, cmd| {
+#[forgetest]
+fn can_create_verify_random_contract_sepolia_sourcify(prj: _, cmd: _) {
     verify_on_chain(EnvExternalities::sepolia_sourcify(), prj, cmd);
-});
+}
 
 // tests `create --verify --verifier sourcify` with etherscan api key set
 // <https://github.com/foundry-rs/foundry/issues/10000>
-forgetest!(
-    can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set,
-    |prj, cmd| {
-        verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
-    }
-);
+#[forgetest]
+fn can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set(prj: _, cmd: _) {
+    verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
+}
 
 // tests `create --verify --verifier blockscout` on Sepolia testnet
-forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
+#[forgetest]
+fn can_create_verify_random_contract_sepolia_blockscout(prj: _, cmd: _) {
     verify_on_chain(EnvExternalities::sepolia_blockscout(), prj, cmd);
-});
+}
 
 // tests `create --verify --verifier blockscout` on Sepolia testnet with etherscan api key set
-forgetest!(
-    can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set,
-    |prj, cmd| {
-        verify_on_chain(
-            EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(),
-            prj,
-            cmd,
-        );
-    }
-);
+#[forgetest]
+fn can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set(prj: _, cmd: _) {
+    verify_on_chain(EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(), prj, cmd);
+}
 
 // tests `create && contract-verify --guess-constructor-args && verify-check` on Goerli testnet if
 // correct env vars are set
-forgetest!(can_guess_constructor_args, |prj, cmd| {
+#[forgetest]
+fn can_guess_constructor_args(prj: _, cmd: _) {
     guess_constructor_args(EnvExternalities::goerli(), prj, cmd);
-});
+}
 
 // tests `create && verify-contract && verify-check` on sepolia with default sourcify verifier
-forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
+#[forgetest]
+fn can_verify_random_contract_sepolia_default_sourcify(prj: _, cmd: _) {
     verify_on_chain(EnvExternalities::sepolia_empty_verifier(), prj, cmd);
-});
+}
 
 // Blockscout instances are per-chain deployments with no shared registry, so `--verifier
 // blockscout` has to be given the URL explicitly.
@@ -487,13 +489,14 @@ const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.r
 /// instead. HyperEVM testnet (998) is covered by Sourcify.
 macro_rules! deploy_verify_tests {
     ($($name:ident: $chain:expr, $network:literal, $verifier:literal, $url:expr;)*) => {$(
-        forgetest!($name, |prj, cmd| {
+        #[forgetest]
+        fn $name(prj: _, cmd: _) {
             deploy_and_verify_on_chain(
                 EnvExternalities::deploy_verify($chain, $network, $verifier, $url),
                 prj,
                 cmd,
             );
-        });
+        }
     )*};
 }
 
@@ -532,8 +535,8 @@ deploy_verify_tests! {
 
 // Tests that verify properly validates verifier arguments.
 // <https://github.com/foundry-rs/foundry/issues/11430>
-forgetest_async!(can_validate_verifier_settings, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_validate_verifier_settings(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Build the project to create the cache.
     cmd.forge_fuse().arg("build").assert_success();
@@ -665,12 +668,12 @@ Contract successfully verified
 
 "#]]);
     server.abort();
-});
+}
 
 // Tests that `forge script --broadcast --verify` fails before broadcasting when
 // the verifier rejects the API key (credential preflight check).
-forgetest_async!(script_fails_early_on_bad_verifier_credentials, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn script_fails_early_on_bad_verifier_credentials(prj: _, cmd: _) {
     prj.add_script(
         "Deploy.s.sol",
         r#"
@@ -726,7 +729,7 @@ contract Deploy is Script {
         !stdout.contains("ONCHAIN EXECUTION COMPLETE") && !stdout.contains("Sending transactions"),
         "transactions were broadcast but preflight check should have prevented it: {stdout}"
     );
-});
+}
 
 /// Spawns a local HTTP server that returns the given body for Etherscan-style ABI requests.
 async fn spawn_mock_verifier(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
@@ -777,7 +780,8 @@ async fn spawn_full_mock_verifier() -> (String, &'static str, tokio::task::JoinH
 // Tests that `forge create --broadcast --verify --json` keeps stdout clean (valid JSON only) and
 // does not leak the verification submission GUID/URL into stdout, while still reporting it on
 // stderr. <https://github.com/foundry-rs/foundry/issues/1976>
-forgetest_async!(create_verify_json_keeps_stdout_clean, |prj, cmd| {
+#[forgetest]
+async fn create_verify_json_keeps_stdout_clean(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -818,13 +822,13 @@ forgetest_async!(create_verify_json_keeps_stdout_clean, |prj, cmd| {
     // The GUID/URL is still reported to the user on stderr.
     let stderr = output.stderr_lossy();
     assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
-});
+}
 
 // Tests that `forge script --broadcast --verify --json` keeps stdout clean (valid JSON Lines only)
 // and does not leak the verification submission GUID/URL into stdout, while still reporting it on
 // stderr. <https://github.com/foundry-rs/foundry/issues/1976>
-forgetest_async!(script_verify_json_keeps_stdout_clean, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn script_verify_json_keeps_stdout_clean(prj: _, cmd: _) {
     prj.add_script(
         "Deploy.s.sol",
         r#"
@@ -878,16 +882,16 @@ contract Deploy is Script {
 
     let stderr = output.stderr_lossy();
     assert!(stderr.contains(guid), "expected verification GUID on stderr, got: {stderr}");
-});
+}
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/10164>. The contract created
 // by the script is compiled in a different project and can only be identified from its factory's
 // verified Standard JSON input.
-forgetest_async!(script_verifies_external_create2_contract, |prj, cmd| {
+#[forgetest_init]
+async fn script_verifies_external_create2_contract(prj: _, cmd: _) {
     const SUBMISSION_KEY: &str = "submission-key";
     const GUID: &str = "external-create2-guid";
 
-    foundry_test_utils::util::initialize(prj.root());
     let external = TestProject::new("external-create2", PathStyle::Dapptools);
     foundry_test_utils::util::initialize(external.root());
     external.add_source(
@@ -1192,11 +1196,12 @@ contract Deploy is Script {{
     assert!(stderr.contains("creator provenance is unavailable"), "{stderr}");
     assert!(stderr.contains("Not all (0 / 1) contracts were verified"), "{stderr}");
     assert!(!stderr.contains("All (0) contracts were verified"), "{stderr}");
-});
+}
 
 // Tests that the preflight check passes (does not block deploy) when the verifier responds
 // with ContractCodeNotVerified (the normal "valid key, unknown address" response).
-forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
+#[forgetest]
+async fn create_preflight_passes_on_contract_not_verified(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -1234,11 +1239,12 @@ forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
         !stderr.contains("Verification preflight check failed"),
         "preflight should not block on ContractCodeNotVerified, got: {stderr}"
     );
-});
+}
 
 // Tests that the preflight check fails (blocks deploy) when the verifier explicitly
 // rejects the API key with an InvalidApiKey response.
-forgetest_async!(create_preflight_fails_on_invalid_api_key, |prj, cmd| {
+#[forgetest]
+async fn create_preflight_fails_on_invalid_api_key(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -1278,11 +1284,12 @@ forgetest_async!(create_preflight_fails_on_invalid_api_key, |prj, cmd| {
         !stdout.contains("Contract Address"),
         "contract was deployed but preflight check should have prevented it"
     );
-});
+}
 
 // Tests that the preflight check does NOT block deployment when the verifier responds
 // with a rate-limit error (transient, not an auth failure).
-forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
+#[forgetest]
+async fn create_preflight_warns_on_rate_limit(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -1323,4 +1330,4 @@ forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
         stderr.contains("verifier credential check inconclusive"),
         "preflight should warn on rate limit, got: {stderr}"
     );
-});
+}

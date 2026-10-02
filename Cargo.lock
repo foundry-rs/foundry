@@ -6331,6 +6331,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-test-macros"
+version = "1.8.4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "foundry-test-utils"
 version = "1.8.4"
 dependencies = [
@@ -6344,6 +6353,7 @@ dependencies = [
  "foundry-common",
  "foundry-compilers",
  "foundry-config",
+ "foundry-test-macros",
  "idna_adapter",
  "parking_lot",
  "rand 0.9.5",

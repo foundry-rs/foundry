@@ -2,7 +2,8 @@ use super::symbolic_helpers::assert_relevant_lines;
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
-forgetest_init!(symbolic_false_pass_prevention, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_false_pass_prevention(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_false_pass_prevention");
 
     prj.add_test(
@@ -166,4 +167,4 @@ unsupported symbolic execution feature: symbolic vm.stopSnapshotGas not modeled
 "#]],
     );
     assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
-});
+}

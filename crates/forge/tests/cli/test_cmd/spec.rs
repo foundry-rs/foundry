@@ -92,7 +92,8 @@ fn override_rpc_transaction_chain_id(value: &mut serde_json::Value, target: &str
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
-forgetest_init!(test_set_evm_version, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     prj.add_test(
         "TestEvmVersion.t.sol",
@@ -266,10 +267,11 @@ Traces:
 ...
 
 "#]]);
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_init!(test_set_evm_version_monad_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_monad_hardfork(prj: _, cmd: _) {
     prj.add_test(
         "MonadEvmVersion.t.sol",
         r#"
@@ -422,10 +424,11 @@ contract MonadEvmVersionTest is Test {
     );
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(fork_resolves_monad_hardfork_from_timestamp, |prj, cmd| {
+#[forgetest]
+async fn fork_resolves_monad_hardfork_from_timestamp(prj: _, cmd: _) {
     let monad_nine_activation =
         foundry_evm::hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
     let mainnet_activation =
@@ -606,10 +609,11 @@ contract MonadForkHardforkTest {
             "test_monad_nine",
         ])
         .assert_success();
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_init!(test_monad_memory_limit, |prj, cmd| {
+#[forgetest_init]
+fn test_monad_memory_limit(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.hardfork = Some("monad:MonadNine".parse().unwrap());
         config.memory_limit = 128 * 1024 * 1024;
@@ -670,10 +674,11 @@ contract MonadMemoryLimitTest is Test {
 [FAIL: EvmError: MemoryLimitOOG] test_memory_ending_above_limit() ([GAS])
 ...
 "#]]);
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(execute_transaction_uses_monad_fork_context, |prj, cmd| {
+#[forgetest]
+async fn execute_transaction_uses_monad_fork_context(prj: _, cmd: _) {
     use alloy_consensus::SignableTransaction as _;
     use alloy_network::TxSignerSync as _;
     use alloy_provider::Provider as _;
@@ -881,10 +886,11 @@ contract ExecuteTransactionMonadContextTest {
 
     cmd.args(["test", "--network", "monad", "--mc", "ExecuteTransactionMonadContextTest"])
         .assert_success();
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(transaction_fork_excludes_future_monad_participants, |prj, cmd| {
+#[forgetest]
+async fn transaction_fork_excludes_future_monad_participants(prj: _, cmd: _) {
     use alloy_consensus::SignableTransaction as _;
     use alloy_network::{ReceiptResponse as _, TxSignerSync as _};
     use alloy_provider::Provider as _;
@@ -1131,10 +1137,11 @@ contract TransactionForkMonadContextTest {
 
     cmd.args(["test", "--network", "monad", "--mc", "TransactionForkMonadContextTest"])
         .assert_success();
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(monad_fork_aux_lifecycle_tracks_outer_context, |prj, cmd| {
+#[forgetest]
+async fn monad_fork_aux_lifecycle_tracks_outer_context(prj: _, cmd: _) {
     use alloy_consensus::SignableTransaction as _;
     use alloy_network::{ReceiptResponse as _, TxSignerSync as _};
     use alloy_provider::Provider as _;
@@ -1773,10 +1780,11 @@ contract MonadForkAuxLifecycleTest {
             "--isolate",
         ])
         .assert_success();
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest_async!(transact_replays_monad_protocol_system_target_forks, |prj, cmd| {
+#[forgetest]
+async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     use alloy_network::{ReceiptResponse as _, TransactionBuilder as _};
     use alloy_provider::Provider as _;
 
@@ -2070,9 +2078,10 @@ contract MonadProtocolSystemTargetTest {
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadProtocolSystemTargetTest"])
         .assert_success();
-});
+}
 
-forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_tempo_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
@@ -2104,9 +2113,34 @@ contract TempoEvmVersionTest is Test {
     );
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
-});
+}
 
-forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
+#[forgetest_init]
+fn test_set_evm_version_tempo_gas(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+    prj.add_test(
+        "TempoEvmVersionGas.t.sol",
+        include_str!("../../fixtures/TempoEvmVersionGas.t.sol"),
+    );
+    for hardfork in ["tempo:T3", "tempo:T7", "tempo:T14"] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--network",
+                "tempo",
+                "--hardfork",
+                hardfork,
+                "--mc",
+                "TempoEvmVersionGasTest",
+            ])
+            .assert_success();
+    }
+}
+
+#[forgetest_init]
+fn test_network_tempo_defaults_to_latest_hardfork(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
@@ -2137,12 +2171,13 @@ contract TempoDefaultEvmVersionTest is Test {{
     );
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
-});
+}
 
 // Validates T5 implicit-approval wiring: the cheatcodes, the AddressRegistry selector,
 // unchanged standard approve/transferFrom behavior, an implicit pull through StablecoinDEX,
 // and a non-implicit spender control case.
-forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
+#[forgetest_init]
+fn test_tempo_implicit_approval_t5(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
         // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
@@ -2155,11 +2190,12 @@ forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
     prj.add_test("TempoImplicitApproval.t.sol", fixture);
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
-});
+}
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
 // configured evm_version must be preserved after createSelectFork / rollFork.
-forgetest_init!(test_fork_preserves_evm_version, |prj, cmd| {
+#[forgetest_init]
+fn test_fork_preserves_evm_version(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
 
     prj.update_config(|config| {
@@ -2185,4 +2221,4 @@ contract ForkEvmVersionTest is Test {
     );
 
     cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
-});
+}

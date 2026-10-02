@@ -17,7 +17,7 @@ use revm::{
     primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
 };
 use serde_json::{Value, json};
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn executes_rpc_notification_without_response() {
@@ -1582,4 +1582,43 @@ async fn blockhash_opcode_consistent_after_loading_older_state() {
         .unwrap();
 
     assert_eq!(B256::from_slice(res.as_ref()), block1_hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prune_history_respects_limit_with_configured_interval() {
+    for seconds in [1, 2, 3] {
+        assert_pruned_interval_history(seconds, true).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prune_history_respects_limit_with_rpc_interval() {
+    for seconds in [1, 2, 3] {
+        assert_pruned_interval_history(seconds, false).await;
+    }
+}
+
+async fn assert_pruned_interval_history(seconds: u64, configured: bool) {
+    let config = NodeConfig::test()
+        .set_pruned_history(Some(Some(8)))
+        .with_blocktime(configured.then(|| Duration::from_secs(seconds)));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    if !configured {
+        provider.raw_request::<_, ()>("evm_setIntervalMining".into(), [seconds]).await.unwrap();
+    }
+    // Disable the timer so the retention boundary is deterministic.
+    api.anvil_set_interval_mining(0).unwrap();
+    api.anvil_mine(Some(U256::from(40)), None).await.unwrap();
+    let best = provider.get_block_number().await.unwrap();
+    let account = handle.dev_accounts().next().unwrap();
+    let latest = provider.get_balance(account).await.unwrap();
+    assert_eq!(provider.get_balance(account).block_id((best - 8).into()).await.unwrap(), latest);
+    let error = provider.get_balance(account).block_id((best - 9).into()).await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!(error.code, -32602);
+    assert_eq!(
+        error.message,
+        format!("BlockOutOfRangeError: block height is {best} but requested was {}", best - 9)
+    );
 }

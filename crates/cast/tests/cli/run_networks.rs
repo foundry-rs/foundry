@@ -216,7 +216,8 @@ fn gas_used(output: &str) -> Option<u64> {
 macro_rules! network_replay_tests {
     ($($test:ident => ($name:literal, $rpc_url:literal, $gas:ident),)*) => {
         $(
-            casttest!($test, |_prj, cmd| {
+            #[casttest]
+            fn $test(cmd: _) {
                 assert_replays_recent_transaction(
                     &mut cmd,
                     &Network {
@@ -226,7 +227,7 @@ macro_rules! network_replay_tests {
                         transaction_type: None,
                     },
                 );
-            });
+            }
         )*
     };
 }
@@ -297,7 +298,8 @@ Error: Transaction failed.
     assert_eq!(gas_used(&output), Some(gas), "{name}: replayed {tx_hash}");
 }
 
-casttest!(flaky_run_arbitrum_out_of_gas, |_prj, cmd| {
+#[casttest]
+fn flaky_run_arbitrum_out_of_gas(cmd: _) {
     assert_replays_failed_transaction(
         &mut cmd,
         "arbitrum",
@@ -305,12 +307,13 @@ casttest!(flaky_run_arbitrum_out_of_gas, |_prj, cmd| {
         "0x1d66909d9039e5937406357449fad064edbb6d9c81944a8001ebfc4f0ba6d0b9",
         177_864,
     );
-});
+}
 
 // Cronos had not activated Cancun at this block, so an `MCOPY` in the called contract halted and
 // the transaction reverted. Foundry has no Cronos hardfork schedule, so replay has to detect the
 // spec the node executed rather than default to the newest one, under which it succeeds.
-casttest!(flaky_run_cronos_pre_cancun, |_prj, cmd| {
+#[casttest]
+fn flaky_run_cronos_pre_cancun(cmd: _) {
     assert_replays_failed_transaction(
         &mut cmd,
         "cronos",
@@ -318,9 +321,10 @@ casttest!(flaky_run_cronos_pre_cancun, |_prj, cmd| {
         "0x6f23146056354c0b2a3b982e2f03bbadf8eece0364c5b8be4db1a0ec987f7af4",
         562_421,
     );
-});
+}
 
-casttest!(flaky_run_celo_cip64, |_prj, cmd| {
+#[casttest]
+fn flaky_run_celo_cip64(cmd: _) {
     assert_replays_recent_transaction(
         &mut cmd,
         &Network {
@@ -330,7 +334,7 @@ casttest!(flaky_run_celo_cip64, |_prj, cmd| {
             transaction_type: Some(CELO_DYNAMIC_FEE_TX_TYPE),
         },
     );
-});
+}
 
 // The bot behind this transaction reverts unless `ArbSys.arbBlockNumber()` returns the block it
 // targeted, the one before the block the transaction landed in. Replay executes on the parent
@@ -367,6 +371,7 @@ Error: Transaction failed.
 "#]]);
 }
 
-casttest!(flaky_run_arbitrum_arb_block_number, |_prj, cmd| {
+#[casttest]
+fn flaky_run_arbitrum_arb_block_number(cmd: _) {
     assert_arbitrum_arb_block_number(&mut cmd);
-});
+}

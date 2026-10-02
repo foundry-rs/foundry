@@ -41,7 +41,3 @@ pub(crate) const FALLBACK_MODEL_MAX_VARS: usize = 5;
 pub(crate) const FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR: usize = 24;
 pub(crate) const FALLBACK_MODEL_MAX_ASSIGNMENTS: usize =
     FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR * FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR;
-
-/// Symbolic solver names with built-in command-line mappings.
-pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
-    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
