@@ -11,10 +11,11 @@
 //! }
 //! ```
 //!
-//! Dictionary entries are sampled through the state-based input strategy. With the default
-//! dictionary weight of 40, a guided word is selected for a parameter about 20% of the time;
-//! setting the dictionary weight to 0 disables guided words. Selector weights bias invariant
-//! target function selection; unlisted functions keep weight 1 and weight 0 excludes a function.
+//! Dictionary entries are sampled through the state-based input strategy. A guided word is selected
+//! for a parameter about 20% of the time with the default fuzz dictionary weight of 40, and about
+//! 40% with the default invariant dictionary weight of 80. Setting the dictionary weight to 0
+//! disables guided words. Selector weights bias invariant target function selection; unlisted
+//! functions keep weight 1 and weight 0 excludes a function.
 
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
@@ -104,7 +105,7 @@ impl FuzzGuidance {
         !self.dictionary.is_empty()
     }
 
-    pub(crate) fn dictionary_for(&self, param: &DynSolType) -> &B256IndexSet {
+    pub(crate) const fn dictionary_for(&self, param: &DynSolType) -> &B256IndexSet {
         if matches!(param, DynSolType::FixedBytes(_)) {
             &self.fixed_bytes_dictionary
         } else {
