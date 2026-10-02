@@ -137,18 +137,19 @@ pub(crate) fn fuzz_param_from_state(
     let value = || {
         let state = state.clone();
         let param = param.clone();
+        let sample_param = param.clone();
         // Generate a bias and use it to pick samples or non-persistent values (50 / 50).
         // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
         // entire dictionary.
         let select = move |dict: &FuzzDictionary, bias: bool, index: prop::sample::Index| {
-            let values =
-                if bias { dict.samples(&param) } else { None }.unwrap_or_else(|| dict.values());
+            let values = if bias { dict.samples(&sample_param) } else { None }
+                .unwrap_or_else(|| dict.values());
             let values = values.as_slice();
             values[index.index(values.len())]
         };
         // With external guidance, half of the dictionary picks use guidance words. The extra
         // random draw only happens when guidance is present, so unguided runs stay reproducible.
-        if state.with_dictionary(|dict| dict.guidance().dictionary().is_empty()) {
+        if state.with_dictionary(|dict| !dict.guidance().has_dictionary()) {
             any::<(bool, prop::sample::Index)>()
                 .prop_map(move |(bias, index)| {
                     state.with_dictionary(|dict| select(dict, bias, index))
@@ -158,7 +159,7 @@ pub(crate) fn fuzz_param_from_state(
             any::<(bool, bool, prop::sample::Index)>()
                 .prop_map(move |(guided, bias, index)| {
                     state.with_dictionary(|dict| {
-                        let guidance = dict.guidance().dictionary();
+                        let guidance = dict.guidance().dictionary_for(&param);
                         if guided {
                             guidance[index.index(guidance.len())]
                         } else {

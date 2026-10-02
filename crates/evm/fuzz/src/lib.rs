@@ -35,7 +35,7 @@ mod inspector;
 pub use inspector::{Fuzzer, ObservedCall};
 
 mod guidance;
-pub use guidance::{FUZZ_GUIDANCE_VERSION, FuzzGuidance, SelectorWeight};
+pub use guidance::{FUZZ_GUIDANCE_VERSION, FuzzGuidance};
 
 /// Metadata needed to reproduce a fuzz run.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

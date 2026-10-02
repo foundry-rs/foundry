@@ -6179,6 +6179,43 @@ contract FuzzGuidanceTest {
     );
 });
 
+forgetest_init!(fuzz_guidance_hex_dictionary_finds_fixed_bytes, |prj, cmd| {
+    prj.add_test(
+        "FuzzGuidanceFixedBytes.t.sol",
+        r#"
+contract FuzzGuidanceFixedBytesTest {
+    // keccak256(abi.encode(bytes4(0xdeadbeef))), so the preimage is not a source literal.
+    bytes32 constant MAGIC_HASH =
+        0x10d1d7cbb06a29b1ee7e1f7f37e7ea0b1f460d29077feacf2d1f5886e2ba233d;
+
+    function testFuzz_magic(bytes4 x) public pure {
+        require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
+    }
+}
+   "#,
+    );
+    prj.create_file("guidance.json", r#"{ "version": 1, "dictionary": ["0xdeadbeef"] }"#);
+
+    cmd.args([
+        "test",
+        "--mc",
+        "FuzzGuidanceFixedBytesTest",
+        "--fuzz-guidance",
+        "guidance.json",
+        "--fuzz-seed",
+        "1",
+        "--fuzz-runs",
+        "64",
+        "-j1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: magic value found; counterexample: calldata=0x521b44cddeadbeef[..] args=[0xdeadbeef]] testFuzz_magic(bytes4) (runs: [..], [AVG_GAS])
+...
+"#]]);
+});
+
 forgetest_init!(fuzz_guidance_zero_selector_weight_excludes_function, |prj, cmd| {
     prj.add_test(
         "FuzzGuidanceSelectors.t.sol",
@@ -6231,6 +6268,77 @@ contract FuzzGuidanceSelectorsTest {
 [FAIL: poked]
 	[Sequence] (original: [..], shrunk: 1)
 		sender=[..] addr=[test/FuzzGuidanceSelectors.t.sol:GuidedTarget][..] calldata=poke() args=[]
+ invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
+...
+"#]]);
+});
+
+forgetest_init!(fuzz_guidance_keeps_dynamic_target_identity, |prj, cmd| {
+    prj.add_test(
+        "FuzzGuidanceDynamic.t.sol",
+        r#"
+contract GuidedDynamicTarget {
+    bool public poked;
+
+    function safe() public {}
+
+    function poke() public {
+        poked = true;
+    }
+}
+
+contract GuidedDynamicFactory {
+    GuidedDynamicTarget public latest;
+
+    function create() public {
+        latest = new GuidedDynamicTarget();
+    }
+}
+
+contract FuzzGuidanceDynamicTest {
+    GuidedDynamicFactory factory;
+
+    function setUp() public {
+        factory = new GuidedDynamicFactory();
+    }
+
+    function invariant_notPoked() public view {
+        GuidedDynamicTarget latest = factory.latest();
+        require(address(latest) == address(0) || !latest.poked(), "poked");
+    }
+}
+   "#,
+    );
+    prj.create_file(
+        "guidance.json",
+        r#"{
+            "version": 1,
+            "selector_weights": {
+                "GuidedDynamicFactory.create()": 10,
+                "test/FuzzGuidanceDynamic.t.sol:GuidedDynamicTarget.poke()": 0
+            }
+        }"#,
+    );
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 50;
+        config.invariant.show_metrics = false;
+    });
+
+    let args = ["test", "--mc", "FuzzGuidanceDynamicTest", "--fuzz-seed", "1", "-j1"];
+    cmd.args(args).args(["--fuzz-guidance", "guidance.json"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_notPoked() (runs: 20, calls: 1000, reverts: 0)
+...
+"#
+    ]]);
+
+    cmd.forge_fuse().args(args).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: poked]
+	[Sequence] (original: [..], shrunk: 2)
+...
  invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
 ...
 "#]]);

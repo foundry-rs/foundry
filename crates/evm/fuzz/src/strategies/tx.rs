@@ -3,8 +3,8 @@ use super::{
     fuzz_msg_value, fuzz_param, fuzz_param_from_state,
 };
 use crate::{
-    BasicTxDetails, CallDetails, FuzzFixtures,
-    invariant::{FuzzRunIdentifiedContracts, SenderFilters},
+    BasicTxDetails, CallDetails, FuzzFixtures, FuzzGuidance,
+    invariant::{FuzzRunIdentifiedContracts, SenderFilters, TargetedContracts},
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::Function;
@@ -23,6 +23,36 @@ struct PlannedCalls {
 }
 
 impl PlannedCalls {
+    fn rebuild(
+        &mut self,
+        generation: u64,
+        fuzzed_functions: &[(Address, Function)],
+        targets: &TargetedContracts,
+        guidance: &FuzzGuidance,
+        mut build: impl FnMut(Address, Function) -> BoxedStrategy<CallDetails>,
+    ) {
+        self.calls.clear();
+        self.calls.reserve(fuzzed_functions.len());
+        self.cumulative_weights.clear();
+        if guidance.has_selector_weights() {
+            self.cumulative_weights.reserve(fuzzed_functions.len());
+        }
+
+        let mut total = 0u64;
+        for (target, function) in fuzzed_functions {
+            self.calls.push(build(*target, function.clone()));
+            if guidance.has_selector_weights() {
+                let weight = targets
+                    .get(target)
+                    .and_then(|contract| guidance.selector_weight(&contract.identifier, function))
+                    .unwrap_or(1);
+                total += u64::from(weight);
+                self.cumulative_weights.push(total);
+            }
+        }
+        self.generation = generation;
+    }
+
     /// Picks a call using the drawn random choice.
     fn select(&self, choice: CallChoice) -> &BoxedStrategy<CallDetails> {
         match choice {
@@ -107,10 +137,10 @@ impl TxGenerator {
         let guidance = state.with_dictionary(|dict| Arc::clone(dict.guidance()));
         // Only draw a weighted index when selector guidance is present, so unguided runs stay
         // reproducible.
-        let choice = if guidance.selector_weights().is_empty() {
-            any::<prop::sample::Selector>().prop_map(CallChoice::Uniform).boxed()
-        } else {
+        let choice = if guidance.has_selector_weights() {
             any::<prop::sample::Index>().prop_map(CallChoice::Weighted).boxed()
+        } else {
+            any::<prop::sample::Selector>().prop_map(CallChoice::Uniform).boxed()
         };
         let strategy = choice
             .prop_flat_map(move |choice| {
@@ -120,35 +150,23 @@ impl TxGenerator {
                     let mut planned = planned.borrow_mut();
                     if planned.generation != generation || planned.calls.is_empty() {
                         let fuzzed_functions = contracts.fuzzed_functions();
-                        planned.calls = fuzzed_functions
-                            .iter()
-                            .map(|(target, function)| {
+                        let targets = contracts.targets();
+                        planned.rebuild(
+                            generation,
+                            &fuzzed_functions,
+                            &targets,
+                            &guidance,
+                            |target, function| {
                                 Self::call_strategy(
                                     &state,
                                     &fixtures,
-                                    *target,
-                                    function.clone(),
+                                    target,
+                                    function,
                                     dictionary_weight,
                                     payable_value_weight,
                                 )
-                            })
-                            .collect();
-                        planned.cumulative_weights.clear();
-                        if !guidance.selector_weights().is_empty() {
-                            let targets = contracts.targets();
-                            let mut total = 0u64;
-                            for (target, function) in fuzzed_functions.iter() {
-                                let weight = targets
-                                    .get(target)
-                                    .and_then(|contract| {
-                                        guidance.selector_weight(&contract.identifier, function)
-                                    })
-                                    .unwrap_or(1);
-                                total += u64::from(weight);
-                                planned.cumulative_weights.push(total);
-                            }
-                        }
-                        planned.generation = generation;
+                            },
+                        );
                     }
                     planned.select(choice).clone()
                 };
@@ -229,10 +247,7 @@ fn select_sender(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        FuzzGuidance,
-        invariant::{TargetedContract, TargetedContracts},
-    };
+    use crate::invariant::TargetedContract;
     use alloy_json_abi::JsonAbi;
     use foundry_config::FuzzDictionaryConfig;
     use revm::database::{CacheDB, EmptyDB};

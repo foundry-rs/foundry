@@ -151,7 +151,7 @@ impl FuzzRunIdentifiedContracts {
         {
             artifact_filters.get_targeted_functions(artifact, &contract_data.abi)?.map(
                 |targeted_functions| CachedTargetContract {
-                    identifier: artifact.name.clone(),
+                    identifier: artifact.identifier(),
                     abi: contract_data.abi.clone(),
                     targeted_functions,
                     storage_layout: contract_data.storage_layout.as_ref().map(Arc::clone),
@@ -305,7 +305,7 @@ impl std::ops::DerefMut for TargetedContracts {
 /// A contract identified as target for invariant testing.
 #[derive(Clone, Debug)]
 pub struct TargetedContract {
-    /// The contract identifier. This is only used in error messages.
+    /// The `path:Name` artifact identifier used in metrics, errors, and external guidance.
     pub identifier: String,
     /// The contract's ABI.
     pub abi: JsonAbi,
@@ -885,8 +885,8 @@ mod tests {
         created_contracts.sort_unstable();
         assert_eq!(created_contracts, vec![existing, created]);
         let targets = identified.targets();
-        assert_eq!(targets[&existing].identifier, "DynamicTarget");
-        assert_eq!(targets[&created].identifier, "DynamicTarget");
+        assert_eq!(targets[&existing].identifier, "DynamicTarget.sol:DynamicTarget");
+        assert_eq!(targets[&created].identifier, "DynamicTarget.sol:DynamicTarget");
         assert_eq!(targets[&setup].identifier, "AlreadyTargeted");
         assert_eq!(targets[&untouched].identifier, "AlreadyTargeted");
         drop(targets);
