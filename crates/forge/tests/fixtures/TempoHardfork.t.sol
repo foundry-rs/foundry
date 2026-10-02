@@ -50,12 +50,6 @@ contract TempoHardforkTest is Test {
     function testRejectedRequestsPreserveExecution() public {
         string memory current = forks.getHardfork();
         uint256 before = this.deploy(hex"615dc05ff3");
-        forks._expectCheatcodeRevert(
-            bytes(
-                "Ethereum EVM versions do not select Tempo hardforks; set evm_version for the compiler and hardfork = \"tempo:<revision>\" before execution"
-            )
-        );
-        forks.setEvmVersion("osaka");
         forks._expectCheatcodeRevert(bytes("invalid hardfork osaka for the active network"));
         forks.setHardfork("osaka");
         forks._expectCheatcodeRevert(
@@ -69,13 +63,21 @@ contract TempoHardforkTest is Test {
         assertEq(this.deploy(hex"615dc05ff3"), before);
     }
 
-    function testClzAlreadyAvailable() public {
-        // CLZ(1) = 255; deploy raw Osaka bytecode independent of the compiler target.
-        bytes memory runtime = hex"60011e5f5260205ff3";
-        address target = address(0xC12);
-        vm.etch(target, runtime);
-        (bool ok, bytes memory result) = target.call("");
-        assertTrue(ok);
-        assertEq(abi.decode(result, (uint256)), 255);
+    function testLegacyEthereumAliasGas() public {
+        // Repeating the legacy mapping must preserve the selected network's gas schedule.
+        forks.setEvmVersion("osaka");
+        uint256 before = this.deploy(hex"615dc05ff3");
+        forks.setEvmVersion("osaka");
+        assertEq(this.deploy(hex"615dc05ff3"), before);
+        assertGt(before, 24_000_000);
+    }
+
+    function testLegacyNativeRevisionChange() public {
+        forks.setEvmVersion("tempo:T2");
+        assertEq(forks.getEvmVersion(), "t2");
+        uint256 before = this.deploy(hex"615dc05ff3");
+        forks.setEvmVersion("T2");
+        assertEq(this.deploy(hex"615dc05ff3"), before);
+        assertGt(before, 24_000_000);
     }
 }

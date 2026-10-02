@@ -7,6 +7,7 @@ interface EvmVm {
     function _expectCheatcodeRevert(bytes calldata reason) external;
     function getEvmVersion() external pure returns (string memory evm);
     function setEvmVersion(string calldata evm) external;
+    function setHardfork(string calldata hardfork) external;
     function isImplicitlyApproved(address spender) external view returns (bool);
     function assumeImplicitApproval(address spender) external view;
 }
@@ -48,6 +49,13 @@ contract TempoImplicitApprovalTest is Test {
     // Foundry's default test sender; genesis mints the fee tokens to this address.
     address constant TEST_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
+    /// Legacy revision changes remain accepted for existing callers.
+    function test_legacy_set_evm_version_remains_supported() public {
+        evm.setEvmVersion("T4");
+        assertEq(evm.getEvmVersion(), "t4");
+        assertFalse(evm.isImplicitlyApproved(TIP_FEE_MANAGER));
+    }
+
     /// A rejected revision change preserves the T5 precompiles and cheatcode semantics.
     function test_rejected_hardfork_preserves_implicit_approval() public {
         evm._expectCheatcodeRevert(
@@ -55,7 +63,7 @@ contract TempoImplicitApprovalTest is Test {
                 "changing Tempo hardforks during execution is unsupported; set hardfork = \"tempo:<revision>\" before execution so instructions, precompiles, and gas parameters agree"
             )
         );
-        evm.setEvmVersion("T4");
+        evm.setHardfork("T4");
         assertEq(evm.getEvmVersion(), "t5");
         assertTrue(evm.isImplicitlyApproved(TIP_FEE_MANAGER));
         assertTrue(IAddressRegistry(ADDRESS_REGISTRY).isImplicitlyApproved(TIP_FEE_MANAGER));

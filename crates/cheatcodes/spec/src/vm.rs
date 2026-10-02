@@ -755,8 +755,8 @@ interface Vm {
     function setHardfork(string calldata hardfork) external;
 
     /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
-    /// Prefer `setHardfork` for explicit network hardfork selection. Tempo rejects Ethereum
-    /// version names and runtime revision changes; configure its hardfork before execution.
+    /// Retains legacy version mappings on custom networks. Prefer `setHardfork` for explicit
+    /// native revision selection. Legacy runtime changes do not rebuild network precompiles.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]

@@ -123,21 +123,24 @@ non-custom execution paths.
 Keep the Solidity compiler target (`evm_version`), execution family (`network`), and protocol
 revision (`hardfork`) distinct. A Tempo revision uses an Osaka instruction-set baseline with
 Tempo's own gas schedule, precompiles, and transaction rules; an Ethereum version name does not
-identify a Tempo revision. Contracts that need `CLZ` should target Osaka at compilation and select
-the appropriate Tempo hardfork before execution.
+identify a Tempo revision.
 
-`vm.setHardfork` selects a protocol hardfork within the already selected execution family.
-`vm.getHardfork` returns its lowercase name. The legacy `vm.setEvmVersion` keeps its Ethereum
-behavior, but rejects Ethereum version names on Tempo. Both setters reject runtime Tempo revision
-changes because the instruction table and precompile registry are built for the initial revision.
-Naming the current Tempo revision is a no-op and must not install a persistent override that could
-outlive a fork switch. Configure `hardfork = "tempo:T7"` (or the required revision) before execution
-instead. This intentionally replaces the previous partial runtime switch with an error.
+`vm.setHardfork` selects a native protocol hardfork within the already selected execution family;
+`vm.getHardfork` returns its lowercase name. For example, `vm.setHardfork("ethereum:cancun")`
+selects Cancun on Ethereum, while `vm.setHardfork("tempo:T7")` names a Tempo revision. The new
+setter rejects Ethereum aliases on Tempo and runtime Tempo revision changes because instructions
+and precompiles are constructed for the initial revision. Naming the current Tempo revision is a
+no-op. Configure `hardfork = "tempo:T7"` (or the required revision) before execution instead.
 
-Gas refreshes belong to the concrete `FoundryCfg` implementation. `CfgEnv<TempoHardfork>` must use
-Tempo's gas parameters, never the Ethereum schedule derived from its instruction-set baseline.
-Custom configuration/spec integrations must implement `FoundryCfg` with their own schedule; a
-blanket implementation for every `CfgEnv<SPEC>` would silently impose Ethereum gas costs.
+The legacy `vm.setEvmVersion` retains its accepted inputs and mappings, including Ethereum aliases
+and native revision names on Tempo. Its historical limitation remains: changing the spec does not
+rebuild network instructions or precompiles. Use the new API for stricter validation; existing tests
+and scripts do not need to migrate to receive the gas-schedule fix.
+
+Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
+to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
+and its blanket implementation for `CfgEnv<SPEC>`. Tempo overrides the factory method to use its
+own gas parameters instead of Ethereum prices derived from its instruction-set baseline.
 
 ## State lifecycle
 

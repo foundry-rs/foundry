@@ -11162,7 +11162,7 @@
     {
       "func": {
         "id": "setEvmVersion",
-        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\nPrefer `setHardfork` for explicit network hardfork selection. Tempo rejects Ethereum\nversion names and runtime revision changes; configure its hardfork before execution.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\nRetains legacy version mappings on custom networks. Prefer `setHardfork` for explicit\nnative revision selection. Legacy runtime changes do not rebuild network precompiles.\n**Note:** The execution evm version is not the same as the compilation one.",
         "declaration": "function setEvmVersion(string calldata evm) external;",
         "visibility": "external",
         "mutability": "",

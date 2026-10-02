@@ -58,7 +58,9 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{ExecutionSpec, FoundryHardfork, fs_permissions::FsAccessKind};
+use foundry_config::{
+    ExecutionSpec, FoundryHardfork, evm_spec_id_from_str, fs_permissions::FsAccessKind,
+};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -1552,9 +1554,9 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { evm } = self;
-        if let Some(spec_id) = ccx.ecx.cfg().spec().runtime_hardfork(evm).map_err(Error::from)? {
-            ccx.state.execution_evm_version = Some(spec_id);
-        }
+        let spec_id = evm_spec_id_from_str(evm)
+            .ok_or_else(|| Error::from(format!("invalid evm version {evm}")))?;
+        ccx.state.execution_evm_version = Some(spec_id);
         Ok(Default::default())
     }
 }
