@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use solar::{
-    ast::{ContractKind, DataLocation, StateMutability, Visibility},
+    ast::{BinOpKind, ContractKind, DataLocation, StateMutability, Visibility},
     interface::{Span, data_structures::Never},
     sema::{
         Gcx,
@@ -437,6 +437,30 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 }
                 ControlFlow::Continue(())
             }
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                self.visit_expr(lhs)?;
+                self.correlate_pending();
+                let base = self.state.clone();
+                self.visit_expr(rhs)?;
+                self.correlate_pending();
+                let rhs_state = std::mem::take(&mut self.state);
+                // The RHS may be skipped, so its events cannot cover writes on that path.
+                self.state = merge_branches(base.clone(), rhs_state, base, false, false);
+                ControlFlow::Continue(())
+            }
+            ExprKind::Ternary(cond, then_expr, else_expr) => {
+                self.visit_expr(cond)?;
+                self.correlate_pending();
+                let base = self.state.clone();
+                self.visit_expr(then_expr)?;
+                self.correlate_pending();
+                let then_state = std::mem::replace(&mut self.state, base.clone());
+                self.visit_expr(else_expr)?;
+                self.correlate_pending();
+                let else_state = std::mem::take(&mut self.state);
+                self.state = merge_branches(base, then_state, else_state, false, false);
+                ControlFlow::Continue(())
+            }
             _ => self.walk_expr(expr),
         }
     }
@@ -484,18 +508,9 @@ fn merge_branches(
     State { taint, storage_aliases, writes, emits }
 }
 
-/// Joins try/catch clauses, each analyzed from its own isolated copy of the pre-try state:
-/// clauses are mutually exclusive (at most one runs), so a write existing before the try stays
-/// covered only if EVERY clause's own analysis covers it - deliberately including one that
-/// `branch_always_exits` via `revert` (which undoes the write, so the credit question is moot
-/// anyway) or `return` (which does NOT undo it, so the write genuinely needs its own event on
-/// that path too). Taint/aliases, which only describe what later code inside the SAME function
-/// call can observe, are unioned/intersected only across clauses that actually continue past the
-/// try - a clause whose body always exits never reaches that later code, the same way
-/// `merge_branches` excludes an exiting `if`/`else` arm from its taint/alias merge. Emits
-/// recorded inside any clause never survive past the try. If every clause exits, no taint/alias
-/// changes from any of them are observable afterwards, so the pre-try versions pass through
-/// unchanged - matching `merge_branches`'s `(true, true)` case.
+/// Joins mutually exclusive try/catch clauses. Pre-existing writes need an event in every
+/// clause, including exiting clauses: a `return` preserves writes, unlike a `revert`.
+/// Taint and aliases only merge from continuing clauses; clause-local emits are discarded.
 fn merge_try_clauses(base: State, clause_states: Vec<State>, continues: Vec<bool>) -> State {
     let n = base.writes.len();
     let mut writes = base.writes;

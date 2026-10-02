@@ -313,6 +313,62 @@ contract MissingEventsAccessControl {
         }
     }
 
+    // Conditional helper calls must not supply events to an unconditional write.
+    function setOwnerEventInShortCircuitAnd(address newOwner, bool enabled) external onlyOwner {
+        enabled && _logOwner(newOwner);
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerEventInShortCircuitOr(address newOwner, bool enabled) external onlyOwner {
+        enabled || _logOwner(newOwner);
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerEventInTernary(address newOwner, bool enabled) external onlyOwner {
+        enabled ? _logOwner(newOwner) : false;
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerBeforeShortCircuitAnd(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        enabled && _logOwner(newOwner);
+    }
+
+    function setOwnerBeforeShortCircuitOr(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        enabled || _logOwner(newOwner);
+    }
+
+    function setOwnerBeforeTernary(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        enabled ? _logOwner(newOwner) : false;
+    }
+
+    function setOwnerBeforeBothTernaryEvents(address newOwner, bool enabled) external onlyOwner {
+        owner = newOwner;
+        enabled ? _logOwner(newOwner) : _logOwner(newOwner);
+    }
+
+    function setOwnerEventBeforeWriteViaHelper(address newOwner) external onlyOwner {
+        _logOwner(newOwner);
+        owner = newOwner;
+    }
+
+    function setOwnerEventInMandatoryOperand(address newOwner, bool enabled) external onlyOwner {
+        _logOwner(newOwner) && enabled;
+        owner = newOwner;
+    }
+
+    function setOwnerEventInTernaryCondition(address newOwner, bool enabled) external onlyOwner {
+        _logOwner(newOwner) ? enabled : false;
+        owner = newOwner;
+    }
+
+    function _logOwner(address newOwner) internal returns (bool) {
+        emit OwnershipTransferred(owner, newOwner);
+        return true;
+    }
+
     function noop() external pure {}
 
     // Deliberately conservative: `revert` and `return` both count as "always exits" for the
@@ -495,7 +551,6 @@ contract MissingEventsAccessControl {
             guardian = newGuardian;
         }
     }
-
 
     function setGuardianWithInternalEvent(address newGuardian) external onlyOwner {
         _setGuardianWithEvent(newGuardian);
