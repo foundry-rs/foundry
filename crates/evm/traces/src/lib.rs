@@ -1044,7 +1044,6 @@ mod tests {
         assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
         assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
         assert!(cfg.record_state_diff, "Debug should record storage accesses for the debugger");
-        assert!(cfg.record_bytecode, "Debug must record executed bytecode per frame");
     }
 
     #[test]

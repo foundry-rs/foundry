@@ -6,8 +6,9 @@ use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
-    TestCommand,
+    TestCommand, assert_data_eq,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
+    snapbox::IntoData,
     str,
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
@@ -4769,8 +4770,13 @@ contract DebugStorageTest {
     );
 });
 
-// Frames executing code etched over an address are identified by the executed code.
+// Resolve the executed contract before decoding internal calls in tests and scripts.
 forgetest!(debug_dump_identifies_etched_code_by_executed_bytecode, |prj, cmd| {
+    prj.update_config(|config| {
+        config.bytecode_hash = "none".parse().unwrap();
+        config.optimizer = Some(false);
+        config.tracing.decode_internal = true;
+    });
     prj.add_test(
         "EtchDebug.t.sol",
         r#"
@@ -4779,67 +4785,171 @@ interface Vm {
 }
 
 contract Trusted {
-    function trustedOnly() external {}
+    function trustedOnly() external pure returns (uint256) { return trustedInternal(); }
+    function trustedInternal() internal pure returns (uint256) { return 1; }
 }
 
 contract Payload {
-    function attackerEntry() external {}
+    function attackerEntry() external pure returns (uint256) { return payloadInternal(); }
+    function payloadInternal() internal pure returns (uint256) { return 42; }
+}
+
+contract A {
+    uint256 private stored;
+    constructor() { stored = 1; }
+    function value() external pure returns (uint256) { return 7; }
+}
+
+contract B {
+    uint256 private stored;
+    constructor() { stored = 2; }
+    function value() external pure returns (uint256) { return 7; }
+}
+
+contract WithImmutable {
+    uint256 private immutable stored;
+    constructor(uint256 value_) { stored = value_; }
+    function value() external view returns (uint256) { return stored; }
+}
+
+contract WithConstant {
+    function value() external pure returns (uint256) { return 65534; }
 }
 
 contract EtchDebugTest {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
     address constant PREEXISTING = address(0xBEEF);
     Trusted trusted;
+    B b;
+    WithImmutable initialized;
 
     function setUp() public {
         trusted = new Trusted();
+        b = new B();
+        initialized = new WithImmutable(65535);
         vm.etch(PREEXISTING, type(Trusted).runtimeCode);
     }
 
     function testEtchDeployed() public {
-        trusted.trustedOnly();
+        require(trusted.trustedOnly() == 1);
         vm.etch(address(trusted), type(Payload).runtimeCode);
-        Payload(address(trusted)).attackerEntry();
+        require(Payload(address(trusted)).attackerEntry() == 42);
     }
 
     function testEtchPreexisting() public {
         vm.etch(PREEXISTING, type(Payload).runtimeCode);
-        Payload(PREEXISTING).attackerEntry();
+        require(Payload(PREEXISTING).attackerEntry() == 42);
+    }
+
+    function testIdenticalRuntime() public view {
+        require(keccak256(type(A).runtimeCode) == keccak256(type(B).runtimeCode));
+        require(b.value() == 7);
+    }
+
+    function testEtchImmutable() public {
+        vm.etch(address(trusted), address(initialized).code);
+        require(WithImmutable(address(trusted)).value() == 65535);
+    }
+
+    function testEtchUnknown() public {
+        bytes memory code = type(Trusted).runtimeCode;
+        // Change the internal function's return value without changing its jump structure.
+        bool changed;
+        for (uint256 i; i + 1 < code.length; ++i) {
+            if (code[i] == 0x60 && code[i + 1] == 0x01) {
+                code[i + 1] = 0x02;
+                changed = true;
+                break;
+            }
+        }
+        require(changed);
+        vm.etch(address(trusted), code);
+        (bool ok, bytes memory output) = address(trusted).call(abi.encodeCall(Trusted.trustedOnly, ()));
+        require(ok && abi.decode(output, (uint256)) == 2);
     }
 }
 "#,
     );
 
     let dump_path = prj.root().join("etch_dump.json");
-    for (test, expected) in [
+    for (test, expected, expected_decoded) in [
         (
             "testEtchDeployed",
-            r#"["trustedOnly()","Trusted","Trusted"] ["attackerEntry()","Payload","Payload"]"#,
+            str![[r#"
+[
+  ["Trusted", ["Trusted::trustedInternal()"]],
+  ["Payload", ["Payload::payloadInternal()"]]
+]
+"#]],
+            str![[r#"[["trustedOnly()", "Trusted"], ["attackerEntry()", "Payload"]]"#]],
         ),
-        ("testEtchPreexisting", r#"["attackerEntry()","Payload","Payload"]"#),
+        (
+            "testEtchPreexisting",
+            str![[r#"
+[["Payload", ["Payload::payloadInternal()"]]]
+"#]],
+            str![[r#"[["attackerEntry()", "Payload"]]"#]],
+        ),
+        ("testIdenticalRuntime", str![[r#"[["B", []]]"#]], str![[r#"[["value()", "B"]]"#]]),
+        (
+            "testEtchImmutable",
+            str![[r#"[["WithImmutable", []]]"#]],
+            str![[r#"[["value()", "WithImmutable"]]"#]],
+        ),
+        ("testEtchUnknown", str![[r#"[[null, []]]"#]], str![[r#"[["trustedOnly()", null]]"#]]),
     ] {
-        cmd.forge_fuse()
-            .args(["test", "--mt", test, "--debug", "--dump", dump_path.to_str().unwrap()])
-            .assert_success();
-        let dump: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&dump_path).unwrap()).unwrap();
-        let frames = dump["debug_arena"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|node| node["contract_name"] != "EtchDebugTest")
-            .map(|node| {
-                let decoded = &node["decoded"];
-                serde_json::json!([
-                    decoded["call_data"]["signature"],
-                    decoded["label"],
-                    node["contract_name"]
-                ])
-                .to_string()
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(frames, expected, "{test}");
+        for command in ["test", "script"] {
+            let args = if command == "test" {
+                vec!["test".to_string(), "--mt".to_string(), test.to_string()]
+            } else {
+                vec![
+                    "script".to_string(),
+                    "test/EtchDebug.t.sol:EtchDebugTest".to_string(),
+                    "--sig".to_string(),
+                    format!("{test}()"),
+                ]
+            };
+            cmd.forge_fuse()
+                .args(args)
+                .args(["--debug", "--dump", dump_path.to_str().unwrap()])
+                .assert_success();
+            let dump: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&dump_path).unwrap()).unwrap();
+            let nodes = dump["debug_arena"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|node| node["contract_name"] != "EtchDebugTest")
+                .collect::<Vec<_>>();
+            let frames = nodes
+                .iter()
+                .map(|node| {
+                    let mut calls = Vec::new();
+                    collect_debug_dump_internal_calls(node, &mut calls);
+                    let functions = calls.iter().map(|call| &call["func_name"]).collect::<Vec<_>>();
+                    serde_json::json!([node["contract_name"], functions])
+                })
+                .collect::<Vec<_>>();
+            assert_data_eq!(
+                serde_json::to_string(&frames).unwrap().is_json(),
+                expected.clone().is_json()
+            );
+            if command == "test" {
+                let decoded = nodes
+                    .iter()
+                    .map(|node| {
+                        serde_json::json!([
+                            node["decoded"]["call_data"]["signature"],
+                            node["decoded"]["label"]
+                        ])
+                    })
+                    .collect::<Vec<_>>();
+                assert_data_eq!(
+                    serde_json::to_string(&decoded).unwrap().is_json(),
+                    expected_decoded.clone().is_json()
+                );
+            }
+        }
     }
 });
 

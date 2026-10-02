@@ -461,7 +461,8 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
         .with_hardfork(resolved_hardfork);
     let mut decoder = builder.build();
 
-    if tracing.decode_internal {
+    // The debugger resolves frame identities before decoding internal calls.
+    if tracing.decode_internal && !args.debug {
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources.clone()));
     }
 

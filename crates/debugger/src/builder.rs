@@ -13,7 +13,6 @@ use foundry_evm_traces::{
     CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
     debug::{ContractSources, DebugTraceIdentifier},
 };
-use revm_inspectors::tracing::types::DecodedTraceStep;
 
 /// Debugger builder.
 #[derive(Debug, Default)]
@@ -47,6 +46,8 @@ impl DebuggerBuilder {
     }
 
     /// Extends the debug arena.
+    ///
+    /// Internal calls are decoded during [`Self::build`], after resolving each frame's contract.
     #[inline]
     pub fn traces(mut self, traces: Traces) -> Self {
         for (_, arena) in traces {
@@ -56,6 +57,8 @@ impl DebuggerBuilder {
     }
 
     /// Extends the debug arena.
+    ///
+    /// Internal calls are decoded during [`Self::build`], after resolving each frame's contract.
     #[inline]
     pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
         if let Some(root) = arena.nodes().first() {
@@ -202,18 +205,11 @@ fn identify_node(
             .clone(),
         _ => address_name.cloned(),
     };
-    if contract_name.as_ref() != address_name {
-        // Drop decodings derived from the stale address identity.
-        for step in &mut node.trace.steps {
-            if matches!(step.decoded.as_deref(), Some(DecodedTraceStep::InternalCall(..))) {
-                step.decoded = None;
-            }
-        }
-        if let Some(decoded) = node.trace.decoded.as_mut()
-            && decoded.label.as_ref() == address_name
-        {
-            decoded.label.clone_from(&contract_name);
-        }
+    if contract_name.as_ref() != address_name
+        && let Some(decoded) = node.trace.decoded.as_mut()
+        && decoded.label.as_ref() == address_name
+    {
+        decoded.label.clone_from(&contract_name);
     }
     if let Some(contract_name) = &contract_name
         && !sources.artifacts_by_name.is_empty()
@@ -230,35 +226,25 @@ fn identify_code(
     address_name: Option<&String>,
     code: &[u8],
 ) -> Option<String> {
-    // Equal runtime code doesn't tell contracts apart (e.g. different constructors), so prefer
-    // the address identity when it matches.
-    known_contracts
-        .find_by_deployed_code_exact_with(code, |id| address_name == Some(&id.name))
-        .or_else(|| known_contracts.find_by_deployed_code_exact(code))
-        .map(|(id, _)| id.name.clone())
-        .or_else(|| {
-            address_name
-                .filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name))
-                .cloned()
-        })
+    // Equal runtime code cannot distinguish different constructors. Keep a matching identity.
+    if let Some((id, _)) =
+        known_contracts.find_by_deployed_code_exact_with(code, |id| address_name == Some(&id.name))
+    {
+        return Some(id.name.clone());
+    }
+    if let Some((id, _)) = known_contracts.find_by_deployed_code_exact(code) {
+        return Some(id.name.clone());
+    }
+    // External identities cannot be checked against local artifacts.
+    address_name.filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name)).cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
-    use foundry_compilers::{
-        ArtifactId,
-        artifacts::{
-            BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
-            Offsets,
-        },
-    };
     use foundry_evm_traces::{CallKind, CallTrace};
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::{
-        CallTraceStep, DecodedCallTrace, DecodedInternalCall, TraceMemberOrder,
-    };
+    use revm_inspectors::tracing::types::{CallTraceStep, TraceMemberOrder};
 
     fn step() -> CallTraceStep {
         CallTraceStep {
@@ -328,93 +314,5 @@ mod tests {
         assert_eq!(builder.stats.session_subcalls, 3);
         assert_eq!(builder.stats.session_trace_gas_used, 300);
         assert_eq!(builder.trace_arenas.len(), 2);
-    }
-
-    #[test]
-    fn identify_node_uses_executed_code() {
-        let artifact = |name: &str| ArtifactId {
-            path: format!("{name}.json").into(),
-            name: name.to_string(),
-            source: format!("{name}.sol").into(),
-            version: "0.8.30".parse().unwrap(),
-            build_id: String::new(),
-            profile: String::new(),
-        };
-        // `WithImmutable` deploys with its zeroed immutable set to `0xffff`, which is closer to
-        // `WithConstant` byte-wise.
-        let initialized = hex!("61ffff6000600055");
-        let other = hex!("60016000600155");
-        let near_other = hex!("60016000600154");
-        let known_contracts = ContractsByArtifact::new(
-            [
-                (
-                    "WithImmutable",
-                    &hex!("6100006000600055")[..],
-                    vec![Offsets { start: 1, length: 2 }],
-                ),
-                ("WithConstant", &hex!("61fffe6000600055"), vec![]),
-                ("Other", &other, vec![]),
-            ]
-            .map(|(name, code, immutables)| {
-                let bytecode = CompactBytecode {
-                    object: BytecodeObject::Bytecode(Bytes::copy_from_slice(code)),
-                    source_map: None,
-                    link_references: Default::default(),
-                };
-                let deployed_bytecode = CompactDeployedBytecode {
-                    bytecode: Some(bytecode),
-                    immutable_references: [("0".to_string(), immutables)].into(),
-                };
-                let contract = CompactContractBytecode {
-                    abi: Some(Default::default()),
-                    bytecode: None,
-                    deployed_bytecode: Some(deployed_bytecode),
-                };
-                (artifact(name), contract)
-            }),
-        );
-        // `local` is identified as a local artifact, `remote` by an external identifier.
-        let (local, remote, unknown) =
-            (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
-        let identified_contracts = AddressHashMap::from_iter([
-            (local, "WithImmutable".to_string()),
-            (remote, "Remote".to_string()),
-        ]);
-
-        let identify = |address, code: &[u8]| {
-            let mut node = CallTraceNode::default();
-            node.trace.address = address;
-            node.trace.bytecode = Some(Bytes::copy_from_slice(code));
-            let label = identified_contracts.get(&address).cloned();
-            node.trace.decoded = Some(Box::new(DecodedCallTrace { label, ..Default::default() }));
-            let mut step = step();
-            let internal_call =
-                DecodedInternalCall { func_name: "f".to_string(), args: None, return_data: None };
-            step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(internal_call, 0)));
-            node.trace.steps.push(step);
-            let name = identify_node(
-                &mut node,
-                &known_contracts,
-                &identified_contracts,
-                &ContractSources::default(),
-                &mut HashMap::default(),
-            );
-            let label = node.trace.decoded.unwrap().label;
-            (name, label, node.trace.steps[0].decoded.is_some())
-        };
-        let kept = |name: &str| (Some(name.to_string()), Some(name.to_string()), true);
-        let replaced = |name: Option<&str>| (name.map(String::from), name.map(String::from), false);
-
-        // Frames are identified only by exact matches, accounting for immutables, preferring the
-        // address identity when several artifacts match. Near matches are left unidentified, while
-        // external identities are kept unless the code exactly matches a local artifact. Decodings
-        // from a replaced identity are dropped.
-        assert_eq!(identify(local, &initialized), kept("WithImmutable"));
-        assert_eq!(identify(local, &hex!("61fffe6000600055")), kept("WithImmutable"));
-        assert_eq!(identify(unknown, &initialized), replaced(Some("WithImmutable")));
-        assert_eq!(identify(local, &other), replaced(Some("Other")));
-        assert_eq!(identify(local, &near_other), replaced(None));
-        assert_eq!(identify(remote, &near_other), kept("Remote"));
-        assert_eq!(identify(remote, &other), replaced(Some("Other")));
     }
 }

@@ -2479,7 +2479,8 @@ impl TestArgs {
             builder =
                 builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
-        if decode_internal {
+        // The debugger resolves frame identities before decoding internal calls.
+        if decode_internal && !self.debug {
             let sources =
                 ContractSources::from_project_output(output, &config.root, Some(&libraries))?;
             builder = builder.with_debug_identifier(DebugTraceIdentifier::new(sources));
