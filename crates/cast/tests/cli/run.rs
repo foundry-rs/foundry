@@ -504,7 +504,8 @@ Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debu
 
 // Without Anvil metadata the endpoint identity is discovered once and reused for the environment,
 // the fork, and the executor.
-casttest!(cast_run_discovers_fork_endpoint_once, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
@@ -535,7 +536,7 @@ casttest!(cast_run_discovers_fork_endpoint_once, async |_prj, cmd| {
         assert_eq!(chain_ids.lock().unwrap().len(), 1, "{args:?}");
         assert_eq!(node_infos.lock().unwrap().len(), 1, "{args:?}");
     }
-});
+}
 
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first

@@ -1746,7 +1746,8 @@ contract NonAnvilForkTest {
 
 // A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
 // endpoint identity discovered for the same URL, since the credentials may reach another backend.
-forgetest_async!(fork_alias_auth_rediscovers_same_url_endpoint, |prj, cmd| {
+#[forgetest]
+async fn fork_alias_auth_rediscovers_same_url_endpoint(prj: _, cmd: _) {
     let (_, anonymous) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
     let anonymous =
         rpc::spawn_rpc_proxy_rejecting_method_after(anonymous.http_endpoint(), "anvil_nodeInfo", 0)
@@ -1806,7 +1807,7 @@ contract ForkAliasAuthTest {
 
     cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testForkAliasAuth"])
         .assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/7574>
 #[forgetest]
