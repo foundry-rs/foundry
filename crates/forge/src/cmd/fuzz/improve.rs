@@ -1,5 +1,5 @@
-use crate::{mutation::MutationJsonOutput, workspace};
-use alloy_primitives::keccak256;
+use crate::{mutation::MutationJsonOutput, result::TestStatus, workspace};
+use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
 use foundry_common::sh_println;
@@ -42,7 +42,7 @@ pub struct FuzzImproveArgs {
 
     /// Deterministic seeds used to evaluate every candidate. Supply at least two.
     #[arg(long, required = true, action = clap::ArgAction::Append, value_name = "SEED")]
-    seed: Vec<String>,
+    seed: Vec<U256>,
 
     /// Maximum number of proposal rounds.
     #[arg(long, default_value_t = 1, value_name = "N")]
@@ -65,8 +65,17 @@ pub struct FuzzImproveArgs {
 struct Candidate {
     schema: String,
     rationale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generator: Option<GeneratorMetadata>,
     files: Vec<CandidateFile>,
     tests: Vec<CandidateTest>,
+}
+
+/// Self-reported metadata from the external generator.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct GeneratorMetadata {
+    agent: String,
+    model: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -89,7 +98,7 @@ struct GeneratorPrompt<'a> {
     project: &'a Path,
     brief: &'a str,
     mutate: &'a [PathBuf],
-    seeds: &'a [String],
+    seeds: &'a [U256],
     baseline: &'a [PromptMutation<'a>],
     mutation_gaps: &'a [MutationGap],
     previous_feedback: &'a [ProposalFeedback],
@@ -99,7 +108,7 @@ struct GeneratorPrompt<'a> {
 #[derive(Debug, Serialize)]
 struct OutputContract {
     schema: &'static str,
-    allowed_path_prefix: &'static str,
+    allowed_path_prefix: PathBuf,
     maximum_files: usize,
     maximum_total_bytes: usize,
     note: &'static str,
@@ -107,13 +116,13 @@ struct OutputContract {
 
 #[derive(Clone, Debug)]
 struct SeedMutation {
-    seed: String,
+    seed: U256,
     output: MutationJsonOutput,
 }
 
 #[derive(Debug, Serialize)]
 struct PromptMutation<'a> {
-    seed: &'a str,
+    seed: &'a U256,
     summary: &'a crate::mutation::MutationSummaryJson,
 }
 
@@ -122,7 +131,7 @@ struct MutationGap {
     path: PathBuf,
     line: usize,
     column: usize,
-    seeds: Vec<String>,
+    seeds: Vec<U256>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,13 +147,15 @@ struct ProposalFeedback {
 
 #[derive(Clone, Debug, Serialize)]
 struct MutationResultSummary {
-    seed: String,
+    seed: U256,
     summary: crate::mutation::MutationSummaryJson,
 }
 
 #[derive(Debug, Serialize)]
 struct Evaluation {
     candidate_digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generator: Option<GeneratorMetadata>,
     accepted: bool,
     reasons: Vec<String>,
     baseline: Vec<MutationResultSummary>,
@@ -155,6 +166,10 @@ struct Evaluation {
 impl FuzzImproveArgs {
     pub fn run(self) -> Result<()> {
         ensure!(self.seed.len() >= 2, "at least two --seed values are required");
+        ensure!(
+            self.seed.iter().collect::<HashSet<_>>().len() == self.seed.len(),
+            "--seed values must be distinct"
+        );
         ensure!(self.rounds > 0, "--rounds must be greater than zero");
         for path in &self.mutate {
             ensure!(
@@ -171,11 +186,17 @@ impl FuzzImproveArgs {
 
         let root = self.root.canonicalize().wrap_err("failed to resolve project root")?;
         let config = Config::load_with_root(&root)?.sanitized();
+        let generated_tests =
+            workspace::relative_to_root(&config.root, &config.test).join("generated");
+        workspace::ensure_safe_relative_path(&generated_tests, "generated test", &config.test)?;
         let brief = fs::read_to_string(&self.brief).wrap_err("failed to read campaign brief")?;
         let generator = self.generator.canonicalize().wrap_err("failed to resolve generator")?;
         let forge = std::env::current_exe().wrap_err("failed to resolve Forge executable")?;
-        let baseline =
-            self.run_mutations(&forge, &config.root, None, self.match_contract.as_deref())?;
+        let contract_filter = self
+            .match_contract
+            .as_deref()
+            .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
+        let baseline = self.run_mutations(&forge, &config.root, None, contract_filter)?;
         let prompt_baseline = baseline
             .iter()
             .map(|result| PromptMutation { seed: &result.seed, summary: &result.output.summary })
@@ -203,10 +224,10 @@ impl FuzzImproveArgs {
                 previous_feedback: &feedback,
                 output_contract: OutputContract {
                     schema: CANDIDATE_SCHEMA,
-                    allowed_path_prefix: "test/generated/",
+                    allowed_path_prefix: generated_tests.clone(),
                     maximum_files: MAX_CANDIDATE_FILES,
                     maximum_total_bytes: MAX_CANDIDATE_BYTES,
-                    note: "Generated assertions are candidates for human review, not proofs.",
+                    note: "Generated assertions are candidates for human review, not proofs. An optional generator object may record self-reported agent and model names.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
@@ -219,13 +240,24 @@ impl FuzzImproveArgs {
                 .output()
                 .wrap_err("failed to invoke generator")?;
             let candidate = if output.status.success() {
-                read_candidate(&candidate_path)
+                read_candidate(&candidate_path, &generated_tests)
             } else {
                 Err(eyre!("generator failed: {}", stderr(&output)))
             };
             let evaluation = match candidate {
                 Ok(candidate) => {
-                    let evaluation = self.evaluate(&config, &forge, &baseline, &candidate)?;
+                    let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
+                    let evaluation = self
+                        .evaluate(&config, &forge, &baseline, &candidate, digest.clone())
+                        .unwrap_or_else(|error| Evaluation {
+                            candidate_digest: digest,
+                            generator: candidate.generator.clone(),
+                            accepted: false,
+                            reasons: vec![error.to_string()],
+                            baseline: mutation_result_summaries(&baseline),
+                            candidate: vec![],
+                            minimum_new_kills: 0,
+                        });
                     let candidate_cache = cache_root.join(&evaluation.candidate_digest);
                     fs::create_dir_all(&candidate_cache)?;
                     fs::write(
@@ -249,6 +281,7 @@ impl FuzzImproveArgs {
                 Err(error) => {
                     let evaluation = Evaluation {
                         candidate_digest: format!("round-{round}"),
+                        generator: None,
                         accepted: false,
                         reasons: vec![error.to_string()],
                         baseline: mutation_result_summaries(&baseline),
@@ -281,11 +314,13 @@ impl FuzzImproveArgs {
         forge: &Path,
         baseline: &[SeedMutation],
         candidate: &Candidate,
+        digest: String,
     ) -> Result<Evaluation> {
-        let digest = keccak256(serde_json::to_vec(candidate)?).to_string();
         let candidate_workspace =
             tempfile::Builder::new().prefix("forge-fuzz-improve-").tempdir()?;
         workspace::copy_project(config, candidate_workspace.path())?;
+        // Mutation testing copies this workspace again. Materialize project-local library
+        // symlinks so that nested copy cannot escape through links back to the source project.
         for lib in &config.libs {
             let source = if lib.is_absolute() { lib.clone() } else { config.root.join(lib) };
             let Ok(relative) = source.strip_prefix(&config.root) else { continue };
@@ -328,30 +363,54 @@ impl FuzzImproveArgs {
             for test in &candidate.tests {
                 let output =
                     self.run_candidate_test(forge, candidate_workspace.path(), config, seed, test)?;
-                if !output.status.success() {
+                if !output.status.success() && output.stdout.is_empty() {
                     reasons.push(format!(
                         "{}::{} failed on seed {seed}: {}",
                         test.contract,
                         test.name,
                         stderr(&output)
                     ));
-                } else if !String::from_utf8_lossy(&output.stdout).contains(&test.name) {
-                    reasons.push(format!(
-                        "{}::{} did not execute on seed {seed}",
+                    continue;
+                }
+                match candidate_test_result(&output, test) {
+                    Ok((TestStatus::Success, _)) if output.status.success() => {}
+                    Ok((TestStatus::Success, _)) => reasons.push(format!(
+                        "{}::{} passed but Forge exited unsuccessfully on seed {seed}: {}",
+                        test.contract,
+                        test.name,
+                        stderr(&output)
+                    )),
+                    Ok((TestStatus::Failure, reason)) => reasons.push(format!(
+                        "{}::{} failed on seed {seed}: {}",
+                        test.contract,
+                        test.name,
+                        reason.unwrap_or_else(|| stderr(&output))
+                    )),
+                    Ok((TestStatus::Skipped, reason)) => reasons.push(format!(
+                        "{}::{} was skipped on seed {seed}: {}",
+                        test.contract,
+                        test.name,
+                        reason.unwrap_or_else(|| "no reason reported".to_string())
+                    )),
+                    Err(error) => reasons.push(format!(
+                        "{}::{} could not be verified on seed {seed}: {error}",
                         test.contract, test.name
-                    ));
+                    )),
                 }
             }
         }
 
         let candidate_results = if reasons.is_empty() {
-            let contract_filter =
-                candidate_contract_filter(self.match_contract.as_deref(), candidate);
+            let base_filter = self
+                .match_contract
+                .as_deref()
+                .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
+            let contract_filter = candidate_contract_filter(base_filter, candidate);
             self.run_mutations(
                 forge,
                 candidate_workspace.path(),
                 Some(config),
-                Some(&contract_filter),
+                contract_filter.as_deref(),
             )?
         } else {
             vec![]
@@ -379,7 +438,6 @@ impl FuzzImproveArgs {
             && baseline.iter().zip(&candidate_results).any(|(before, after)| {
                 before.output.summary.total != after.output.summary.total
                     || before.output.summary.invalid != after.output.summary.invalid
-                    || before.output.summary.timed_out != after.output.summary.timed_out
             })
         {
             reasons.push("candidate changed the mutant population".to_string());
@@ -390,6 +448,7 @@ impl FuzzImproveArgs {
 
         Ok(Evaluation {
             candidate_digest: digest,
+            generator: candidate.generator.clone(),
             accepted: reasons.is_empty(),
             reasons,
             baseline: mutation_result_summaries(baseline),
@@ -403,7 +462,7 @@ impl FuzzImproveArgs {
         forge: &Path,
         workspace: &Path,
         dependency_config: &Config,
-        seed: &str,
+        seed: &U256,
         test: &CandidateTest,
     ) -> Result<Output> {
         let mut command = forge_command(forge, workspace, seed);
@@ -455,7 +514,7 @@ impl FuzzImproveArgs {
                     stderr(&output)
                 );
                 Ok(SeedMutation {
-                    seed: seed.clone(),
+                    seed: *seed,
                     output: serde_json::from_slice(&output.stdout)
                         .wrap_err_with(|| format!("invalid mutation JSON for seed {seed}"))?,
                 })
@@ -464,7 +523,37 @@ impl FuzzImproveArgs {
     }
 }
 
-fn candidate_contract_filter(base: Option<&str>, candidate: &Candidate) -> String {
+fn candidate_test_result(
+    output: &Output,
+    test: &CandidateTest,
+) -> Result<(TestStatus, Option<String>)> {
+    let suites = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .wrap_err_with(|| format!("invalid Forge JSON: {}", stderr(output)))?;
+    let suites = suites.as_object().ok_or_else(|| eyre!("Forge JSON is not an object"))?;
+    let suite_suffix = format!(":{}", test.contract);
+    let mut matches = suites
+        .iter()
+        .filter(|(suite, _)| suite.ends_with(&suite_suffix))
+        .filter_map(|(_, suite)| suite.get("test_results")?.as_object())
+        .flat_map(|tests| tests.iter())
+        .filter(|(signature, _)| {
+            if test.name.contains('(') {
+                signature.as_str() == test.name
+            } else {
+                signature.split_once('(').is_some_and(|(name, _)| name == test.name)
+            }
+        });
+    let (_, result) = matches.next().ok_or_else(|| eyre!("test did not execute"))?;
+    ensure!(matches.next().is_none(), "test name matched multiple results");
+    let status = serde_json::from_value(
+        result.get("status").ok_or_else(|| eyre!("test result has no status"))?.clone(),
+    )?;
+    let reason = result.get("reason").and_then(serde_json::Value::as_str).map(str::to_string);
+    Ok((status, reason))
+}
+
+fn candidate_contract_filter(base: Option<&str>, candidate: &Candidate) -> Option<String> {
+    let base = base?;
     let contracts = candidate
         .tests
         .iter()
@@ -474,20 +563,17 @@ fn candidate_contract_filter(base: Option<&str>, candidate: &Candidate) -> Strin
         .collect::<Vec<_>>()
         .join("|");
     let generated = format!("^(?:{contracts})$");
-    match base {
-        Some(base) => format!("(?:{base})|(?:{generated})"),
-        None => generated,
-    }
+    Some(format!("(?:{base})|(?:{generated})"))
 }
 
 fn mutation_gaps(results: &[SeedMutation]) -> Vec<MutationGap> {
-    let mut gaps = BTreeMap::<(PathBuf, usize, usize), BTreeSet<String>>::new();
+    let mut gaps = BTreeMap::<(PathBuf, usize, usize), BTreeSet<U256>>::new();
     for result in results {
         for (path, mutants) in &result.output.survived_mutants {
             for mutant in mutants {
                 gaps.entry((PathBuf::from(path), mutant.line, mutant.column))
                     .or_default()
-                    .insert(result.seed.clone());
+                    .insert(result.seed);
             }
         }
     }
@@ -505,19 +591,23 @@ fn mutation_result_summaries(results: &[SeedMutation]) -> Vec<MutationResultSumm
     results
         .iter()
         .map(|result| MutationResultSummary {
-            seed: result.seed.clone(),
+            seed: result.seed,
             summary: result.output.summary.clone(),
         })
         .collect()
 }
 
-fn read_candidate(path: &Path) -> Result<Candidate> {
+fn read_candidate(path: &Path, generated_tests: &Path) -> Result<Candidate> {
     let candidate: Candidate = serde_json::from_slice(
         &fs::read(path).wrap_err_with(|| format!("failed to read {}", path.display()))?,
     )
     .wrap_err("invalid candidate JSON")?;
     ensure!(candidate.schema == CANDIDATE_SCHEMA, "unsupported candidate schema");
     ensure!(!candidate.rationale.trim().is_empty(), "candidate rationale is empty");
+    if let Some(generator) = &candidate.generator {
+        ensure!(!generator.agent.trim().is_empty(), "candidate generator agent is empty");
+        ensure!(!generator.model.trim().is_empty(), "candidate generator model is empty");
+    }
     ensure!(!candidate.files.is_empty(), "candidate contains no files");
     ensure!(!candidate.tests.is_empty(), "candidate contains no tests");
     ensure!(candidate.files.len() <= MAX_CANDIDATE_FILES, "candidate contains too many files");
@@ -527,11 +617,11 @@ fn read_candidate(path: &Path) -> Result<Candidate> {
     );
     let mut paths = HashSet::new();
     for file in &candidate.files {
-        validate_candidate_path(&file.path)?;
+        validate_candidate_path(&file.path, generated_tests)?;
         ensure!(paths.insert(&file.path), "candidate contains duplicate file paths");
     }
     for test in &candidate.tests {
-        validate_candidate_path(&test.path)?;
+        validate_candidate_path(&test.path, generated_tests)?;
         ensure!(paths.contains(&test.path), "candidate test names a file absent from files");
         ensure!(!test.contract.is_empty(), "candidate test contract is empty");
         ensure!(!test.name.is_empty(), "candidate test name is empty");
@@ -539,12 +629,16 @@ fn read_candidate(path: &Path) -> Result<Candidate> {
     Ok(candidate)
 }
 
-fn validate_candidate_path(path: &Path) -> Result<()> {
+fn validate_candidate_path(path: &Path, generated_tests: &Path) -> Result<()> {
     ensure!(
         path.extension().is_some_and(|extension| extension == "sol"),
         "candidate files must be Solidity sources"
     );
-    ensure!(path.starts_with("test/generated"), "candidate files must be under test/generated/");
+    ensure!(
+        path.starts_with(generated_tests),
+        "candidate files must be under {}/",
+        generated_tests.display()
+    );
     ensure!(
         workspace::is_safe_relative_path(path),
         "candidate path contains a non-normal component"
@@ -564,9 +658,9 @@ fn proposal_feedback(candidate: Option<&Candidate>, evaluation: &Evaluation) -> 
     }
 }
 
-fn forge_command(forge: &Path, workspace: &Path, seed: &str) -> Command {
+fn forge_command(forge: &Path, workspace: &Path, seed: &U256) -> Command {
     let mut command = Command::new(forge);
-    command.current_dir(workspace).env("FOUNDRY_FUZZ_SEED", seed);
+    command.current_dir(workspace).env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"));
     command
 }
 

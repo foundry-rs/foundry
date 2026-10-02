@@ -6168,7 +6168,7 @@ pragma solidity ^0.8.20;
 
 library Assertions {
     function equal(uint256 left, uint256 right) internal pure {
-        require(left == right);
+        assert(left == right);
     }
 }
 "#,
@@ -6204,6 +6204,11 @@ contract ArithmeticTest {
 }
 "#,
     );
+    fs::rename(prj.root().join("test"), prj.root().join("tests")).unwrap();
+    prj.update_config(|config| config.test = "tests".into());
+    fs::create_dir_all(prj.root().join("tests/generated")).unwrap();
+    fs::write(prj.root().join("tests/generated/Existing.t.sol"), "pragma solidity ^0.8.20;\n")
+        .unwrap();
 
     let brief = prj.root().join("brief.md");
     fs::write(&brief, "Exercise every bucket boundary.").unwrap();
@@ -6217,16 +6222,28 @@ output="$2"
 grep -q '"mutation_gaps"' "$prompt"
 if grep -q '"mutant"' "$prompt"; then exit 1; fi
 if grep -q '"round": 2' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
+if grep -q '"round": 1' "$prompt"; then
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "exercise candidate rejection",
+  "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n"}],
+  "tests": [{"path": "tests/generated/Existing.t.sol", "contract": "ExistingTest", "name": "testExisting"}]
+}
+JSON
+exit 0
+fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
   "rationale": "exercise every range and comparison boundary",
+  "generator": {"agent": "fixture", "model": "deterministic"},
   "files": [{
-    "path": "test/generated/ArithmeticGenerated.t.sol",
+    "path": "tests/generated/ArithmeticGenerated.t.sol",
     "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticGeneratedTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testFuzzBucket(uint256 value) public view {\n        Assertions.equal(arithmetic.bucket(9), 1);\n        Assertions.equal(arithmetic.bucket(10), 2);\n        Assertions.equal(arithmetic.bucket(99), 2);\n        Assertions.equal(arithmetic.bucket(100), 3);\n        uint256 expected = value < 10 ? 1 : value < 100 ? 2 : 3;\n        Assertions.equal(arithmetic.bucket(value), expected);\n    }\n}\n"
   }],
   "tests": [{
-    "path": "test/generated/ArithmeticGenerated.t.sol",
+    "path": "tests/generated/ArithmeticGenerated.t.sol",
     "contract": "ArithmeticGeneratedTest",
     "name": "testFuzzBucket"
   }]
@@ -6263,7 +6280,7 @@ JSON
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x2fd98a8426d6da6c9c3a5b93b3f9e338c322d9f93baac6b747b0afbca370458f (+10 kills on every seed)
+accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8bf2460df62b08aeb9d58c552f (+10 kills on every seed)
 
 "#]]);
 
@@ -6271,6 +6288,9 @@ accepted candidate: cache/fuzz-improve/0x2fd98a8426d6da6c9c3a5b93b3f9e338c322d9f
     assert!(!rounds.contains("\"mutant\""));
     let rounds: serde_json::Value = serde_json::from_str(&rounds).unwrap();
     assert_eq!(rounds.as_array().unwrap().len(), 2);
-    assert_eq!(rounds[0]["accepted"], true);
-    assert!(rounds[0]["minimum_new_kills"].as_i64().unwrap() > 0);
+    assert_eq!(rounds[0]["accepted"], false);
+    assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
+    assert_eq!(rounds[1]["accepted"], true);
+    assert_eq!(rounds[1]["generator"]["model"], "deterministic");
+    assert!(rounds[1]["minimum_new_kills"].as_i64().unwrap() > 0);
 });
