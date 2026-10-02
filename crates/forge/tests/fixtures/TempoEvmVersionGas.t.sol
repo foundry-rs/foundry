@@ -3,16 +3,13 @@ pragma solidity >=0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 
-interface HardforkVm {
-    function _expectCheatcodeRevert(bytes calldata reason) external;
+interface EvmVersionVm {
     function setEvmVersion(string calldata version) external;
     function getEvmVersion() external pure returns (string memory);
-    function setHardfork(string calldata hardfork) external;
-    function getHardfork() external pure returns (string memory);
 }
 
-contract TempoHardforkTest is Test {
-    HardforkVm constant forks = HardforkVm(address(vm));
+contract TempoEvmVersionGasTest is Test {
+    EvmVersionVm constant forks = EvmVersionVm(address(vm));
 
     function deploy(bytes memory initcode) external returns (uint256 used) {
         address deployed;
@@ -26,10 +23,7 @@ contract TempoHardforkTest is Test {
 
     function checkGas(bytes memory initcode) internal {
         uint256 before = this.deploy(initcode);
-        string memory current = forks.getHardfork();
-        forks.setHardfork(string.concat("tempo:", current));
-        assertEq(forks.getHardfork(), current);
-        assertEq(this.deploy(initcode), before, "setHardfork changed gas");
+        string memory current = forks.getEvmVersion();
         forks.setEvmVersion(current);
         assertEq(this.deploy(initcode), before, "setEvmVersion changed gas");
     }
@@ -45,22 +39,6 @@ contract TempoHardforkTest is Test {
 
     function testEmptyAccountGas() public {
         checkGas(hex"00");
-    }
-
-    function testRejectedRequestsPreserveExecution() public {
-        string memory current = forks.getHardfork();
-        uint256 before = this.deploy(hex"615dc05ff3");
-        forks._expectCheatcodeRevert(bytes("invalid hardfork osaka for the active network"));
-        forks.setHardfork("osaka");
-        forks._expectCheatcodeRevert(
-            bytes(
-                "changing Tempo hardforks during execution is unsupported; set hardfork = \"tempo:<revision>\" before execution so instructions, precompiles, and gas parameters agree"
-            )
-        );
-        forks.setHardfork("tempo:T2");
-        assertEq(forks.getHardfork(), current);
-        assertEq(forks.getEvmVersion(), current);
-        assertEq(this.deploy(hex"615dc05ff3"), before);
     }
 
     function testLegacyEthereumAliasGas() public {

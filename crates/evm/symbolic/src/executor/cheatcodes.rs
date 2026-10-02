@@ -1632,12 +1632,6 @@ impl SymbolicExecutor {
             | warmSlotCall::SELECTOR
             | coolSlotCall::SELECTOR
             | noAccessListCall::SELECTOR => Ok(CheatcodeOutcome::Continue(Vec::new())),
-            setHardforkCall::SELECTOR => {
-                Err(SymbolicError::Unsupported("symbolic vm.setHardfork not modeled"))
-            }
-            getHardforkCall::SELECTOR => {
-                Err(SymbolicError::Unsupported("symbolic vm.getHardfork not modeled"))
-            }
             setEvmVersionCall::SELECTOR => {
                 Err(SymbolicError::Unsupported("symbolic vm.setEvmVersion not modeled"))
             }

@@ -10,11 +10,6 @@ forgetest_init!(symbolic_false_pass_prevention, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
-interface HardforkVm {
-    function setHardfork(string calldata hardfork) external;
-    function getHardfork() external pure returns (string memory);
-}
-
 contract SymbolicFalsePassPrevention is Test {
     function checkConcreteAddmodMulmodUseUnboundedIntermediate() public pure {
         uint256 max = type(uint256).max;
@@ -93,14 +88,6 @@ contract SymbolicFalsePassPrevention is Test {
         assert(ok);
     }
 
-    function checkSetHardforkFailsClosed() public {
-        HardforkVm(address(vm)).setHardfork("london");
-    }
-
-    function checkGetHardforkFailsClosed() public view {
-        assertEq(HardforkVm(address(vm)).getHardfork(), "cancun");
-    }
-
     function checkSetEvmVersionFailsClosed() public {
         vm.setEvmVersion("london");
     }
@@ -166,8 +153,6 @@ checkSymbolicMulmodFailsClosed(uint256)
 checkKzgPrecompileInvalidWitnessCounterexample(bytes32)
 unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled
 unsupported symbolic execution feature: symbolic blake2f precompile final flag not modeled
-unsupported symbolic execution feature: symbolic vm.setHardfork not modeled
-unsupported symbolic execution feature: symbolic vm.getHardfork not modeled
 unsupported symbolic execution feature: symbolic vm.setEvmVersion not modeled
 unsupported symbolic execution feature: symbolic vm.getEvmVersion not modeled
 unsupported symbolic execution feature: symbolic vm.expectSafeMemory not modeled

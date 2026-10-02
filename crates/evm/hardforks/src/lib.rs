@@ -397,15 +397,6 @@ pub trait ExecutionSpec: FromEvmVersion {
         None
     }
 
-    /// Resolves a runtime hardfork request against the currently executing spec.
-    /// Unlike compiler-target conversion, this must reject changes that cannot be applied
-    /// coherently to an already constructed EVM. `None` means the request is a no-op.
-    fn runtime_hardfork(&self, hardfork: &str) -> Result<Option<Self>, String> {
-        evm_spec_id_from_str(hardfork)
-            .map(Some)
-            .ok_or_else(|| format!("invalid evm version {hardfork}"))
-    }
-
     // Converts a namespaced Foundry hardfork if it belongs to this spec family.
     fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self>;
 
@@ -565,22 +556,6 @@ impl FromEvmVersion for TempoHardfork {
 }
 
 impl ExecutionSpec for TempoHardfork {
-    fn runtime_hardfork(&self, hardfork: &str) -> Result<Option<Self>, String> {
-        let hardfork = hardfork.trim();
-        if EvmVersion::from_str(hardfork).is_ok() {
-            return Err("Ethereum EVM versions do not select Tempo hardforks; set evm_version for the compiler and hardfork = \"tempo:<revision>\" before execution".into());
-        }
-        let next = Self::from_network_hardfork(hardfork)
-            .or_else(|| {
-                FoundryHardfork::from_str(hardfork).ok().and_then(Self::from_foundry_hardfork)
-            })
-            .ok_or_else(|| format!("invalid Tempo hardfork {hardfork}"))?;
-        if next != *self {
-            return Err("changing Tempo hardforks during execution is unsupported; set hardfork = \"tempo:<revision>\" before execution so instructions, precompiles, and gas parameters agree".into());
-        }
-        Ok(None)
-    }
-
     // Returns the user-facing name for the active execution spec.
     fn evm_version_name(&self) -> String {
         self.to_string()
@@ -733,19 +708,6 @@ mod tests {
     use super::*;
     use alloy_hardforks::ethereum::mainnet::*;
     use tempo_hardfork::constants::{mainnet::*, moderato::*};
-
-    #[test]
-    fn runtime_tempo_hardfork_requires_current_revision() {
-        let current = TempoHardfork::T7;
-        assert_eq!(current.runtime_hardfork("tempo:T7").unwrap(), None);
-        assert_eq!(current.runtime_hardfork(" t7 ").unwrap(), None);
-        assert!(current.runtime_hardfork("osaka").unwrap_err().contains("compiler"));
-        assert!(current.runtime_hardfork("prague").is_err());
-        assert!(current.runtime_hardfork("tempo:T3").unwrap_err().contains("during execution"));
-        assert!(current.runtime_hardfork("ethereum:osaka").is_err());
-        assert!(current.runtime_hardfork("not-a-hardfork").is_err());
-        assert_eq!(SpecId::CANCUN.runtime_hardfork("shanghai").unwrap(), Some(SpecId::SHANGHAI));
-    }
 
     #[test]
     fn test_ethereum_spec_id_mapping() {

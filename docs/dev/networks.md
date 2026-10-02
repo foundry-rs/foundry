@@ -125,17 +125,10 @@ revision (`hardfork`) distinct. A Tempo revision uses an Osaka instruction-set b
 Tempo's own gas schedule, precompiles, and transaction rules; an Ethereum version name does not
 identify a Tempo revision.
 
-`vm.setHardfork` selects a native protocol hardfork within the already selected execution family;
-`vm.getHardfork` returns its lowercase name. For example, `vm.setHardfork("ethereum:cancun")`
-selects Cancun on Ethereum, while `vm.setHardfork("tempo:T7")` names a Tempo revision. The new
-setter rejects Ethereum aliases on Tempo and runtime Tempo revision changes because instructions
-and precompiles are constructed for the initial revision. Naming the current Tempo revision is a
-no-op. Configure `hardfork = "tempo:T7"` (or the required revision) before execution instead.
-
-The legacy `vm.setEvmVersion` retains its accepted inputs and mappings, including Ethereum aliases
-and native revision names on Tempo. Its historical limitation remains: changing the spec does not
-rebuild network instructions or precompiles. Use the new API for stricter validation; existing tests
-and scripts do not need to migrate to receive the gas-schedule fix.
+`vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
+not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
+remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
+`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
 
 Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
 to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
