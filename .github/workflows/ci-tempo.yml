@@ -61,6 +61,9 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
+
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
