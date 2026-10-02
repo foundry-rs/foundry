@@ -12,7 +12,6 @@ use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
     CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
     debug::{ContractSources, DebugTraceIdentifier},
-    identifier::LocalTraceIdentifier,
 };
 use revm_inspectors::tracing::types::DecodedTraceStep;
 
@@ -142,15 +141,14 @@ impl DebuggerBuilder {
             layout,
         } = self;
         let slot_identifiers = contract_identifiers
-            .iter()
+            .into_iter()
             .filter_map(|(address, identifier)| {
                 let (_, contract) =
-                    known_contracts.find_by_name_or_identifier(identifier).ok().flatten()?;
+                    known_contracts.find_by_name_or_identifier(&identifier).ok().flatten()?;
                 let layout = contract.storage_layout.clone()?;
-                Some((*address, SlotIdentifier::new(layout)))
+                Some((address, SlotIdentifier::new(layout)))
             })
             .collect();
-        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let mut identified_code = HashMap::default();
         let mut debug_arena = Vec::new();
         for mut arena in trace_arenas {
@@ -160,9 +158,8 @@ impl DebuggerBuilder {
                 .map(|node| {
                     identify_node(
                         node,
-                        &local_identifier,
+                        &known_contracts,
                         &identified_contracts,
-                        &contract_identifiers,
                         &sources,
                         &mut identified_code,
                     )
@@ -191,9 +188,8 @@ impl DebuggerBuilder {
 /// execute different code over time (e.g. after `vm.etch`), and decodes its internal calls.
 fn identify_node(
     node: &mut CallTraceNode,
-    local_identifier: &LocalTraceIdentifier<'_>,
+    known_contracts: &ContractsByArtifact,
     identified_contracts: &AddressHashMap<String>,
-    contract_identifiers: &AddressHashMap<String>,
     sources: &ContractSources,
     identified_code: &mut HashMap<(Address, Bytes), Option<String>>,
 ) -> Option<String> {
@@ -202,14 +198,7 @@ fn identify_node(
     let contract_name = match &node.trace.bytecode {
         Some(code) if !code.is_empty() && !node.trace.kind.is_any_create() => identified_code
             .entry((address, code.clone()))
-            .or_insert_with(|| {
-                identify_code(
-                    local_identifier,
-                    address_name,
-                    contract_identifiers.get(&address),
-                    code,
-                )
-            })
+            .or_insert_with(|| identify_code(known_contracts, address_name, code))
             .clone(),
         _ => address_name.cloned(),
     };
@@ -234,31 +223,17 @@ fn identify_node(
     contract_name
 }
 
-/// Keeps the address identity if it matches the executed `code`, otherwise identifies `code`
-/// against local artifacts. Identities that aren't local artifacts (e.g. from Etherscan) can't be
-/// checked, so they are only replaced by an exact local match.
+/// Identifies `code` by an exact match against local artifacts. Identities that aren't local
+/// artifacts (e.g. from Etherscan) can't be checked, so they are kept when nothing matches.
 fn identify_code(
-    local_identifier: &LocalTraceIdentifier<'_>,
+    known_contracts: &ContractsByArtifact,
     address_name: Option<&String>,
-    address_identifier: Option<&String>,
     code: &[u8],
 ) -> Option<String> {
-    let known_contracts = local_identifier.contracts();
-    if let Some(address_name) = address_name {
-        let Some(identifier) = address_identifier.filter(|identifier| {
-            known_contracts.iter().any(|(id, _)| id.identifier() == **identifier)
-        }) else {
-            return Some(
-                known_contracts
-                    .find_by_deployed_code_exact(code)
-                    .map_or_else(|| address_name.clone(), |(id, _)| id.name.clone()),
-            );
-        };
-        if known_contracts.matches_deployed_code_exact(identifier, code) {
-            return Some(address_name.clone());
-        }
+    if let Some((id, _)) = known_contracts.find_by_deployed_code_exact(code) {
+        return Some(id.name.clone());
     }
-    local_identifier.identify_code(code, &[]).map(|(id, ..)| id.name.clone())
+    address_name.filter(|name| !known_contracts.iter().any(|(id, _)| id.name == **name)).cloned()
 }
 
 #[cfg(test)]
@@ -358,14 +333,19 @@ mod tests {
             build_id: String::new(),
             profile: String::new(),
         };
-        // `WithImmutable` deploys with its zeroed immutable set to `0xff`, which makes its runtime
-        // code byte-for-byte equal to `WithConstant`.
-        let initialized = hex!("60ff6000600055");
+        // `WithImmutable` deploys with its zeroed immutable set to `0xffff`, which is closer to
+        // `WithConstant` byte-wise.
+        let initialized = hex!("61ffff6000600055");
         let other = hex!("60016000600155");
+        let near_other = hex!("60016000600154");
         let known_contracts = ContractsByArtifact::new(
             [
-                ("WithImmutable", &hex!("60006000600055"), vec![Offsets { start: 1, length: 1 }]),
-                ("WithConstant", &initialized, vec![]),
+                (
+                    "WithImmutable",
+                    &hex!("6100006000600055")[..],
+                    vec![Offsets { start: 1, length: 2 }],
+                ),
+                ("WithConstant", &hex!("61fffe6000600055"), vec![]),
                 ("Other", &other, vec![]),
             ]
             .map(|(name, code, immutables)| {
@@ -386,15 +366,11 @@ mod tests {
                 (artifact(name), contract)
             }),
         );
-        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
         // `local` is identified as a local artifact, `remote` by an external identifier.
-        let (local, remote) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let (local, remote, unknown) =
+            (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
         let identified_contracts = AddressHashMap::from_iter([
             (local, "WithImmutable".to_string()),
-            (remote, "Remote".to_string()),
-        ]);
-        let contract_identifiers = AddressHashMap::from_iter([
-            (local, artifact("WithImmutable").identifier()),
             (remote, "Remote".to_string()),
         ]);
 
@@ -411,9 +387,8 @@ mod tests {
             node.trace.steps.push(step);
             let name = identify_node(
                 &mut node,
-                &local_identifier,
+                &known_contracts,
                 &identified_contracts,
-                &contract_identifiers,
                 &ContractSources::default(),
                 &mut HashMap::default(),
             );
@@ -423,13 +398,14 @@ mod tests {
         let kept = |name: &str| (Some(name.to_string()), Some(name.to_string()), true);
         let replaced = |name: Option<&str>| (name.map(String::from), name.map(String::from), false);
 
-        // The initialized immutable keeps the local identity, other code is re-identified, and
-        // unknown code is left unidentified. External identities are kept unless the code exactly
-        // matches a local artifact. Decodings from a replaced identity are dropped.
+        // Frames are identified only by exact matches, accounting for immutables. Near matches are
+        // left unidentified, while external identities are kept unless the code exactly matches a
+        // local artifact. Decodings from a replaced identity are dropped.
         assert_eq!(identify(local, &initialized), kept("WithImmutable"));
+        assert_eq!(identify(unknown, &initialized), replaced(Some("WithImmutable")));
         assert_eq!(identify(local, &other), replaced(Some("Other")));
-        assert_eq!(identify(local, &hex!("00")), replaced(None));
-        assert_eq!(identify(remote, &hex!("00")), kept("Remote"));
+        assert_eq!(identify(local, &near_other), replaced(None));
+        assert_eq!(identify(remote, &near_other), kept("Remote"));
         assert_eq!(identify(remote, &other), replaced(Some("Other")));
     }
 }
