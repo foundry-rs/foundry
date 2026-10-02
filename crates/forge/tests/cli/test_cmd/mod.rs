@@ -1706,6 +1706,70 @@ contract NonAnvilForkTest {
     cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"]).assert_success();
 });
 
+// A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
+// endpoint identity discovered for the same URL, since the credentials may reach another backend.
+forgetest_async!(fork_alias_auth_rediscovers_same_url_endpoint, |prj, cmd| {
+    let (_, anonymous) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let anonymous =
+        rpc::spawn_rpc_proxy_rejecting_method_after(anonymous.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+    let (_, authenticated) = spawn(NodeConfig::test().with_chain_id(Some(31337u64))).await;
+    let authenticated = authenticated.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap,
+                  axum::Json(request): axum::Json<serde_json::Value>| {
+                let target = if headers.contains_key("authorization") {
+                    authenticated.clone()
+                } else {
+                    anonymous.clone()
+                };
+                let client = client.clone();
+                async move {
+                    let response = client.post(target).json(&request).send().await.unwrap();
+                    axum::Json(response.json::<serde_json::Value>().await.unwrap())
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+authenticated = {{ endpoint = "{endpoint}", auth = "Bearer secret" }}
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "ForkAliasAuth.t.sol",
+        r#"
+interface Vm {
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+}
+
+contract ForkAliasAuthTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkAliasAuth() external {
+        require(block.chainid == 1, "wrong base chain");
+        vm.createSelectFork("authenticated");
+        require(block.chainid == 31337, "wrong alias chain");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testForkAliasAuth"])
+        .assert_success();
+});
+
 // <https://github.com/foundry-rs/foundry/issues/7574>
 forgetest_async!(failed_fork_test_reports_block_number, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
