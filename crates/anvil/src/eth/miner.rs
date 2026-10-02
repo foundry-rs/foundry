@@ -117,12 +117,10 @@ impl<T> Miner<T> {
             }
             return;
         }
-        match &mut *mode {
-            MiningMode::Auto(miner) | MiningMode::Mixed(miner, _) => {
-                miner.has_pending_txs = Some(false);
-                miner.coalesce = None;
-            }
-            MiningMode::None | MiningMode::FixedBlockTime(_) => {}
+        // Selecting the candidate already cleared `has_pending_txs`, so keep any retry requested
+        // since then, e.g. by a block mined via `evm_mine` before this failure was processed.
+        if let MiningMode::Auto(miner) | MiningMode::Mixed(miner, _) = &mut *mode {
+            miner.coalesce = None;
         }
         match &mut *mode {
             MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => {
@@ -146,6 +144,16 @@ impl<T> Miner<T> {
         let mut mode = self.mode.write();
         let generation = self.generation.load(Ordering::Relaxed);
         mode.poll(pool, cx).map(|transactions| MiningWork { transactions, generation })
+    }
+
+    /// Makes the instant miner select ready transactions again without waiting for a new one.
+    ///
+    /// Used when a mined block left ready transactions behind, e.g. because it ran out of gas.
+    pub(crate) fn retry_ready_transactions(&self) {
+        if let MiningMode::Auto(miner) | MiningMode::Mixed(miner, _) = &mut *self.mode.write() {
+            miner.has_pending_txs = Some(true);
+            self.inner.wake();
+        }
     }
 }
 
@@ -345,11 +353,11 @@ impl ReadyTransactionMiner {
         let transactions =
             pool.ready_transactions().take(self.max_transactions).collect::<Vec<_>>();
 
-        // there are pending transactions if we didn't drain the pool
-        self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
+        // Whether ready txs left behind are worth another block is decided once this block is
+        // mined, see `Miner::retry_ready_transactions`.
+        self.has_pending_txs = Some(false);
 
         if transactions.is_empty() {
-            self.has_pending_txs = Some(false);
             return Poll::Pending;
         }
 
@@ -375,6 +383,19 @@ mod tests {
         let (_tx, rx) = mpsc::channel(1);
         let miner = Miner::<()>::new(MiningMode::None);
         miner.set_mining_mode(MiningMode::instant(1, rx));
+
+        miner.handle_failed_candidate(0);
+
+        let mode = miner.mode.read();
+        let MiningMode::Auto(auto) = &*mode else { panic!("expected auto mining") };
+        assert_eq!(auto.has_pending_txs, Some(true));
+    }
+
+    #[test]
+    fn failure_keeps_retry_requested_after_candidate_selection() {
+        let (_tx, rx) = mpsc::channel(1);
+        let miner = Miner::<()>::new(MiningMode::instant(1, rx));
+        miner.retry_ready_transactions();
 
         miner.handle_failed_candidate(0);
 

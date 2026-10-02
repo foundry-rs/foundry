@@ -777,11 +777,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T11))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T12))
         );
 
         assert_eq!(

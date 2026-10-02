@@ -880,6 +880,65 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     assert_eq!(decrypted_private_key, test_private_key);
 });
 
+// HOME does not override the default keystore directory on Windows.
+#[cfg(not(windows))]
+casttest!(wallet_list_turnkey_skips_local_accounts, |prj, cmd| {
+    let keystores = prj.root().join(".foundry/keystores");
+    fs::create_dir_all(&keystores).unwrap();
+    fs::write(keystores.join("local-account"), "").unwrap();
+
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "list"]).assert_success().stdout_eq(str![[r#"
+local-account (Local)
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", prj.root());
+    cmd.unset_env("TURNKEY_API_PRIVATE_KEY");
+    let assert = cmd.args(["wallet", "list", "--turnkey"]).assert_success().stdout_eq(str![""]);
+    if cfg!(feature = "turnkey") {
+        assert.stderr_eq(str![[r#"
+Error: environment variable not found
+
+"#]]);
+    } else {
+        assert.stderr_eq(str![""]);
+    }
+});
+
+#[cfg(feature = "turnkey")]
+casttest!(wallet_list_turnkey, |_prj, cmd| {
+    for json in [false, true] {
+        cmd.cast_fuse();
+        cmd.envs([
+            (
+                "TURNKEY_API_PRIVATE_KEY",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+            ),
+            ("TURNKEY_ORGANIZATION_ID", "test-organization"),
+            ("TURNKEY_ADDRESS", "0x000000000000000000000000000000000000dEaD"),
+        ]);
+        cmd.args(["wallet", "list", "--turnkey"]);
+        if json {
+            cmd.arg("--json").assert_json_stdout(str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [{"address": "0x000000000000000000000000000000000000dEaD", "source": "Turnkey"}],
+  "errors": [],
+  "warnings": []
+}
+"#]]);
+        } else {
+            cmd.assert_success().stdout_eq(str![[r#"
+0x000000000000000000000000000000000000dEaD (Turnkey)
+
+"#]]);
+        }
+    }
+});
+
 casttest!(malformed_dotenv_warns_without_exposing_values, |prj, cmd| {
     fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
     cmd.args([

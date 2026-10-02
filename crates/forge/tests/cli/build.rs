@@ -663,6 +663,15 @@ Compiler run successful!
 
 "#]]);
 
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--quiet"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: some contracts exceed the initcode size limit (EIP-3860: 49152 bytes)
+
+"#]]);
+
     cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
         str![[r#"
 {
@@ -1618,4 +1627,24 @@ Error: foundry.lock does not match installed dependencies:
   lib/unmapped: dependency submodule is missing from .gitmodules
 
 "#]]);
+});
+
+forgetest!(deny_warnings_checks_warm_cache, |prj, cmd| {
+    prj.add_source(
+        "Warn.sol",
+        r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+contract Warn {
+    function f(uint256 a) public pure returns (uint256) {
+        uint256 unused;
+        return a;
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--deny", "warnings"]).assert_failure();
+    prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
+    cmd.forge_fuse().arg("build").assert_failure();
 });

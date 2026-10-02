@@ -114,7 +114,7 @@ impl SymbolicExecutor {
                 Some(value) if value.is_zero() => {}
                 Some(_) => {
                     state.return_data = SymReturnData::empty(&mut self.cx);
-                    return Ok(StepOutcome::Revert);
+                    return Ok(StepOutcome::ExceptionalHalt);
                 }
                 None => {
                     let zero = SymBoolExpr::eq_word_const(&mut self.cx, &value, U256::ZERO);
@@ -134,13 +134,13 @@ impl SymbolicExecutor {
                             worklist.push_back(zero_state);
                             state.constraints = nonzero_constraints;
                             state.return_data = SymReturnData::empty(&mut self.cx);
-                            return Ok(StepOutcome::Revert);
+                            return Ok(StepOutcome::ExceptionalHalt);
                         }
                         (true, false) => state.constraints = zero_constraints,
                         (false, true) => {
                             state.constraints = nonzero_constraints;
                             state.return_data = SymReturnData::empty(&mut self.cx);
-                            return Ok(StepOutcome::Revert);
+                            return Ok(StepOutcome::ExceptionalHalt);
                         }
                         (false, false) => return Ok(StepOutcome::AssumeRejected),
                     }
