@@ -7602,3 +7602,128 @@ contract RoundedProductTest {
         }
     }
 }
+
+// Each property is falsifiable only on a wrapping, signed, or unbounded path, so a normalizer
+// rewrite that silently assumed the missing bound would turn the replay-confirmed counterexample
+// into a false PASS.
+#[forgetest_init]
+fn symbolic_normalizer_keeps_boundary_counterexamples(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_normalizer_keeps_boundary_counterexamples because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "NormalizerBoundaries.t.sol",
+        r#"
+contract NormalizerBoundariesTest {
+    function checkMaskOutsideBoundedBranch(uint256 value) external pure {
+        if (value < 1 << 160) {
+            assert(value & type(uint160).max == value);
+        }
+        assert(value & type(uint160).max == value);
+    }
+
+    function checkScaledQuotientOutsideBoundedBranch(uint256 numerator, uint256 threshold)
+        external
+        pure
+    {
+        if (threshold <= type(uint128).max) {
+            assert(numerator / 1e18 <= threshold || numerator >= (threshold + 1) * 1e18);
+        }
+        if (numerator / 1e18 <= threshold) {
+            unchecked {
+                assert(numerator <= threshold * 1e18 + (1e18 - 1));
+            }
+        }
+    }
+
+    function checkSymbolicDivisorCeilingWraps(uint256 value, uint256 divisor) external pure {
+        require(divisor == 37);
+        unchecked {
+            uint256 rounded = (value + 36) / divisor * divisor;
+            if (rounded <= 100) {
+                assert(value <= rounded);
+            }
+        }
+    }
+
+    function checkSignedCeilingOrder(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = (value + 31) / 32 * 32;
+            assert(int256(rounded) >= int256(value));
+        }
+    }
+
+    function checkWrappedRoundedConversion(uint256 balance, uint256 rate) external pure {
+        require(rate == 2);
+        require(balance != 0);
+        unchecked {
+            require(balance * rate == 0);
+            assert((balance * rate + 1) / 2 * 2 / rate == balance);
+        }
+    }
+
+    function checkWrappedScaledDivision(uint256 value) external pure {
+        require(value != 0);
+        unchecked {
+            require(value * 2 == 0);
+            assert(value * 2 / 2 == value);
+        }
+    }
+
+    function checkWrappedRoundUpDivision(uint256 value) external pure {
+        require(value != 0);
+        unchecked {
+            require(value * 2 + 1 <= 1);
+            assert((value * 2 + 1) / 2 == value);
+        }
+    }
+
+    function checkRoundTripWithoutRateLowerBound(uint128 balance, uint256 rate) external pure {
+        require(rate != 0);
+        require(rate <= 1e27);
+        uint256 rounded = (uint256(balance) * rate + 1e18 - 1) / 1e18;
+        assert(rounded * 1e18 / rate == balance);
+    }
+
+    function checkNonnegativeSignedAdditionOverflows(int256 x, int256 y) external pure {
+        require(x >= 0 && y >= 0);
+        unchecked {
+            assert(x + y >= x);
+        }
+    }
+}
+"#,
+    );
+    let signatures = [
+        "checkMaskOutsideBoundedBranch(uint256)",
+        "checkScaledQuotientOutsideBoundedBranch(uint256,uint256)",
+        "checkSymbolicDivisorCeilingWraps(uint256,uint256)",
+        "checkSignedCeilingOrder(uint256)",
+        "checkWrappedRoundedConversion(uint256,uint256)",
+        "checkWrappedScaledDivision(uint256)",
+        "checkWrappedRoundUpDivision(uint256)",
+        "checkRoundTripWithoutRateLowerBound(uint128,uint256)",
+        "checkNonnegativeSignedAdditionOverflows(int256,int256)",
+    ];
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--symbolic-timeout", "30"])
+            .args(["--match-contract", "NormalizerBoundariesTest"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let statuses = signatures.map(|signature| {
+            (signature, json_test_result(&output, signature)["symbolic"]["status"].clone())
+        });
+        assert!(
+            statuses.iter().all(|(_, status)| status == "fail_counterexample"),
+            "optimized={optimized}: {statuses:?}"
+        );
+    }
+}
