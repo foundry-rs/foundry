@@ -2281,3 +2281,116 @@ async fn instant_mine_drains_backlog_larger_than_max_transactions() {
     assert_eq!(provider.get_transaction_count(from).await.unwrap(), 7);
     assert_eq!(api.txpool_status().await.unwrap().pending, 0);
 }
+
+/// A sync send whose tx is deferred to a follow-up block must still return its receipt.
+#[tokio::test(flavor = "multi_thread")]
+async fn tx_sync_returns_receipt_for_tx_skipped_by_block_gas_limit() {
+    // Room for exactly three transfers per block.
+    let (api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(63_000))).await;
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let sends = (0..5).map(|nonce| api.send_transaction_sync(transfer(from, to, nonce, 21_000)));
+    let enable_mining = async {
+        // All five sync sends must be waiting before the instant miner selects them.
+        while api.txpool_status().await.unwrap().pending < 5 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        api.anvil_set_auto_mine(true).await.unwrap();
+    };
+    let (receipts, ()) =
+        timeout(Duration::from_secs(5), async { tokio::join!(join_all(sends), enable_mining) })
+            .await
+            .expect("sync send of a tx skipped by the block gas limit never returned");
+
+    let blocks = receipts
+        .into_iter()
+        .map(|receipt| receipt.unwrap().block_number().unwrap())
+        .collect::<Vec<_>>();
+    let first = blocks[0];
+    assert_eq!(blocks, [first, first, first, first + 1, first + 1]);
+}
+
+/// A backlog larger than the default per-block transaction cap must be drained in capped blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_drains_backlog_larger_than_default_block_cap() {
+    const TXS_PER_SENDER: u64 = 250;
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let senders = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let to = Address::random();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    // The fee cap leaves room for the base fee to rise while the backlog fills several blocks.
+    let sends = senders.iter().map(|from| {
+        let api = &api;
+        async move {
+            for nonce in 0..TXS_PER_SENDER {
+                let tx = transfer(*from, to, nonce, 21_000)
+                    .with_max_fee_per_gas(100_000_000_000)
+                    .with_max_priority_fee_per_gas(1);
+                api.send_transaction(tx).await.unwrap();
+            }
+        }
+    });
+    join_all(sends).await;
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    timeout(Duration::from_secs(30), async {
+        for from in &senders {
+            while provider.get_transaction_count(*from).await.unwrap() < TXS_PER_SENDER {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    })
+    .await
+    .expect("backlog was not mined completely");
+
+    let mut txs_per_block = Vec::new();
+    for number in 1..=provider.get_block_number().await.unwrap() {
+        let block = provider.get_block_by_number(number.into()).await.unwrap().unwrap();
+        txs_per_block.push(block.transactions.len());
+    }
+    assert_eq!(txs_per_block, [1_000, 1_000, 500]);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
+
+/// Txs left behind by a full block must also be retried when state is fetched from a fork.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_drains_concurrent_burst_on_local_fork() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    // Room for exactly three transfers per block.
+    let fork_config = NodeConfig::test()
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+        .with_gas_limit(Some(63_000));
+    let (api, handle) = spawn(fork_config).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let senders = &accounts[..3];
+    let to = Address::random();
+
+    let mut txs = Vec::new();
+    for from in senders {
+        for nonce in 0..4 {
+            txs.push(transfer(*from, to, nonce, 21_000));
+        }
+    }
+    let pending = join_all(txs.into_iter().map(|tx| provider.send_transaction(tx)))
+        .await
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    let blocks = mined_blocks(pending).await;
+
+    assert!(max_txs_per_block(&blocks) <= 3, "block exceeded the gas limit: {blocks:?}");
+    for from in senders {
+        assert_eq!(provider.get_transaction_count(*from).await.unwrap(), 4);
+    }
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}

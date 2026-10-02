@@ -1,6 +1,7 @@
 //! CLI tests for send commands.
 
 use super::*;
+use std::{process::Stdio, time::Duration};
 
 casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -354,6 +355,59 @@ casttest!(send_sync, async |_prj, cmd| {
     assert!(output.contains("transactionHash"));
     assert!(output.contains("blockNumber"));
     assert!(output.contains("gasUsed"));
+});
+
+// Concurrent `cast send --async` processes whose txs do not fit into one block must all be mined.
+casttest!(send_async_burst_is_mined_across_full_blocks, async |prj, _cmd| {
+    // Room for exactly three transfers per block.
+    let (api, handle) = anvil::spawn(NodeConfig::test().with_gas_limit(Some(63_000))).await;
+    let endpoint = handle.http_endpoint();
+    let wallets = handle.dev_wallets().take(3).collect::<Vec<_>>();
+
+    let mut children = Vec::new();
+    for wallet in &wallets {
+        let private_key = hex::encode(wallet.credential().to_bytes());
+        for nonce in 0..3 {
+            let child = prj
+                .cast_bin()
+                .args([
+                    "send",
+                    "0x000000000000000000000000000000000000dEaD",
+                    "--value",
+                    "1",
+                    "--nonce",
+                    &nonce.to_string(),
+                    "--gas-limit",
+                    "21000",
+                    "--private-key",
+                    &private_key,
+                    "--rpc-url",
+                    &endpoint,
+                    "--async",
+                ])
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            children.push(child);
+        }
+    }
+    for mut child in children {
+        assert!(child.wait().unwrap().success());
+    }
+
+    let provider = ProviderBuilder::new().connect_http(endpoint.parse().unwrap());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for wallet in &wallets {
+            while provider.get_transaction_count(wallet.address()).await.unwrap() < 3 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    })
+    .await
+    .expect("txs left behind by a full block were never mined");
+
+    assert!(provider.get_block_number().await.unwrap() >= 3);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
 });
 
 // tests cast send gas estimate execution failure message contains decoded custom error
