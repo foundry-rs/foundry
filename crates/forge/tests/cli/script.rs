@@ -1546,6 +1546,54 @@ forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
         .await;
 });
 
+// <https://github.com/foundry-rs/foundry/issues/17264>.
+forgetest_async!(can_deploy_25_txes_concurrently_across_full_blocks, |prj, cmd| {
+    // Only a few of the deployments fit into one block, the rest must be mined in later blocks.
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000))).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
+
+forgetest_async!(can_deploy_25_txes_concurrently_with_interval_mining, |prj, cmd| {
+    // The batch is only mined on the next interval tick.
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
+
+forgetest_async!(can_deploy_25_txes_concurrently_with_mixed_mining, |prj, cmd| {
+    // The chain keeps advancing on the interval while the batch is mined instantly.
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_mixed_mining(true, Some(Duration::from_secs(1)))).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
+
 // <https://github.com/foundry-rs/foundry/issues/16851>.
 forgetest_async!(fork_nested_broadcast_nonces, |prj, cmd| {
     prj.add_script(
