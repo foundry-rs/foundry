@@ -272,7 +272,7 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, false)
+        self.find_by_deployed_code_exact_inner(code, false, |_| true)
     }
 
     /// Finds the only contract whose deployed bytecode exactly matches the given code.
@@ -280,13 +280,21 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, true)
+        self.find_by_deployed_code_exact_inner(code, true, |_| true)
+    }
+
+    /// Returns whether the artifact with the given identifier matches the given deployed code.
+    /// Accounts for link references and immutables.
+    pub fn matches_deployed_code_exact(&self, identifier: &str, code: &[u8]) -> bool {
+        self.find_by_deployed_code_exact_inner(code, false, |id| id.identifier() == identifier)
+            .is_some()
     }
 
     fn find_by_deployed_code_exact_inner(
         &self,
         code: &[u8],
         unique: bool,
+        filter: impl Fn(&ArtifactId) -> bool,
     ) -> Option<ArtifactWithContractRef<'_>> {
         // Immediately return None if the code is empty.
         if code.is_empty() {
@@ -295,7 +303,7 @@ impl ContractsByArtifact {
 
         let mut partial_match = None;
         let mut unique_match = None;
-        let matched = self.iter().find(|(id, contract)| {
+        let matched = self.iter().filter(|(id, _)| filter(id)).find(|(id, contract)| {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
                 return false;
             };

@@ -4769,6 +4769,80 @@ contract DebugStorageTest {
     );
 });
 
+// Frames executing code etched over an address are identified by the executed code.
+forgetest!(debug_dump_identifies_etched_code_by_executed_bytecode, |prj, cmd| {
+    prj.add_test(
+        "EtchDebug.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract Trusted {
+    function trustedOnly() external {}
+}
+
+contract Payload {
+    function attackerEntry() external {}
+}
+
+contract EtchDebugTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    address constant PREEXISTING = address(0xBEEF);
+    Trusted trusted;
+
+    function setUp() public {
+        trusted = new Trusted();
+        vm.etch(PREEXISTING, type(Trusted).runtimeCode);
+    }
+
+    function testEtchDeployed() public {
+        trusted.trustedOnly();
+        vm.etch(address(trusted), type(Payload).runtimeCode);
+        Payload(address(trusted)).attackerEntry();
+    }
+
+    function testEtchPreexisting() public {
+        vm.etch(PREEXISTING, type(Payload).runtimeCode);
+        Payload(PREEXISTING).attackerEntry();
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("etch_dump.json");
+    for (test, expected) in [
+        (
+            "testEtchDeployed",
+            r#"["trustedOnly()","Trusted","Trusted"] ["attackerEntry()","Payload","Payload"]"#,
+        ),
+        ("testEtchPreexisting", r#"["attackerEntry()","Payload","Payload"]"#),
+    ] {
+        cmd.forge_fuse()
+            .args(["test", "--mt", test, "--debug", "--dump", dump_path.to_str().unwrap()])
+            .assert_success();
+        let dump: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dump_path).unwrap()).unwrap();
+        let frames = dump["debug_arena"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|node| node["contract_name"] != "EtchDebugTest")
+            .map(|node| {
+                let decoded = &node["decoded"];
+                serde_json::json!([
+                    decoded["call_data"]["signature"],
+                    decoded["label"],
+                    node["contract_name"]
+                ])
+                .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(frames, expected, "{test}");
+    }
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10322>
 forgetest!(test_debug_with_dump_setup_revert, |prj, cmd| {
     prj.add_test(

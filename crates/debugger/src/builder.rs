@@ -3,13 +3,18 @@
 use crate::{
     Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace_with_precompiles,
 };
-use alloy_primitives::{Address, map::AddressHashMap};
+use alloy_primitives::{
+    Address, Bytes,
+    map::{AddressHashMap, HashMap},
+};
 use foundry_common::{ContractsByArtifact, get_contract_name, slot_identifier::SlotIdentifier};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
-    CallTraceArena, CallTraceDecoder, Traces,
+    CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
     debug::{ContractSources, DebugTraceIdentifier},
+    identifier::LocalTraceIdentifier,
 };
+use revm_inspectors::tracing::types::DecodedTraceStep;
 
 /// Debugger builder.
 #[derive(Debug, Default)]
@@ -126,7 +131,7 @@ impl DebuggerBuilder {
     #[inline]
     pub fn build(self) -> Debugger {
         let Self {
-            mut trace_arenas,
+            trace_arenas,
             stats,
             identified_contracts,
             contract_identifiers,
@@ -137,18 +142,38 @@ impl DebuggerBuilder {
             layout,
         } = self;
         let slot_identifiers = contract_identifiers
-            .into_iter()
+            .iter()
             .filter_map(|(address, identifier)| {
                 let (_, contract) =
-                    known_contracts.find_by_name_or_identifier(&identifier).ok().flatten()?;
+                    known_contracts.find_by_name_or_identifier(identifier).ok().flatten()?;
                 let layout = contract.storage_layout.clone()?;
-                Some((address, SlotIdentifier::new(layout)))
+                Some((*address, SlotIdentifier::new(layout)))
             })
             .collect();
-        identify_internal_calls(&mut trace_arenas, &identified_contracts, &sources);
+        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        let mut identified_code = HashMap::default();
         let mut debug_arena = Vec::new();
-        for arena in trace_arenas {
-            flatten_call_trace_with_precompiles(arena, &mut debug_arena, &precompile_labels);
+        for mut arena in trace_arenas {
+            let contract_names = arena
+                .nodes_mut()
+                .iter_mut()
+                .map(|node| {
+                    identify_node(
+                        node,
+                        &local_identifier,
+                        &identified_contracts,
+                        &contract_identifiers,
+                        &sources,
+                        &mut identified_code,
+                    )
+                })
+                .collect::<Vec<_>>();
+            flatten_call_trace_with_precompiles(
+                arena,
+                &mut debug_arena,
+                &precompile_labels,
+                &contract_names,
+            );
         }
         Debugger::new_with_stats(
             debug_arena,
@@ -162,32 +187,96 @@ impl DebuggerBuilder {
     }
 }
 
-fn identify_internal_calls(
-    trace_arenas: &mut [CallTraceArena],
+/// Identifies the contract executed by `node` from its recorded bytecode, since an address can
+/// execute different code over time (e.g. after `vm.etch`), and decodes its internal calls.
+fn identify_node(
+    node: &mut CallTraceNode,
+    local_identifier: &LocalTraceIdentifier<'_>,
     identified_contracts: &AddressHashMap<String>,
+    contract_identifiers: &AddressHashMap<String>,
     sources: &ContractSources,
-) {
-    if sources.artifacts_by_name.is_empty() {
-        return;
-    }
-
-    for arena in trace_arenas {
-        for node in arena.nodes_mut() {
-            let Some(contract_name) = identified_contracts.get(&node.trace.address) else {
-                continue;
-            };
-            DebugTraceIdentifier::identify_node_steps_with_sources(node, sources, contract_name);
+    identified_code: &mut HashMap<(Address, Bytes), Option<String>>,
+) -> Option<String> {
+    let address = node.trace.address;
+    let address_name = identified_contracts.get(&address);
+    let contract_name = match &node.trace.bytecode {
+        Some(code) if !code.is_empty() && !node.trace.kind.is_any_create() => identified_code
+            .entry((address, code.clone()))
+            .or_insert_with(|| {
+                identify_code(
+                    local_identifier,
+                    address_name,
+                    contract_identifiers.get(&address),
+                    code,
+                )
+            })
+            .clone(),
+        _ => address_name.cloned(),
+    };
+    if contract_name.as_ref() != address_name {
+        // Drop decodings derived from the stale address identity.
+        for step in &mut node.trace.steps {
+            if matches!(step.decoded.as_deref(), Some(DecodedTraceStep::InternalCall(..))) {
+                step.decoded = None;
+            }
+        }
+        if let Some(decoded) = node.trace.decoded.as_mut()
+            && decoded.label.as_ref() == address_name
+        {
+            decoded.label.clone_from(&contract_name);
         }
     }
+    if let Some(contract_name) = &contract_name
+        && !sources.artifacts_by_name.is_empty()
+    {
+        DebugTraceIdentifier::identify_node_steps_with_sources(node, sources, contract_name);
+    }
+    contract_name
+}
+
+/// Keeps the address identity if it matches the executed `code`, otherwise identifies `code`
+/// against local artifacts. Identities that aren't local artifacts (e.g. from Etherscan) can't be
+/// checked, so they are only replaced by an exact local match.
+fn identify_code(
+    local_identifier: &LocalTraceIdentifier<'_>,
+    address_name: Option<&String>,
+    address_identifier: Option<&String>,
+    code: &[u8],
+) -> Option<String> {
+    let known_contracts = local_identifier.contracts();
+    if let Some(address_name) = address_name {
+        let Some(identifier) = address_identifier.filter(|identifier| {
+            known_contracts.iter().any(|(id, _)| id.identifier() == **identifier)
+        }) else {
+            return Some(
+                known_contracts
+                    .find_by_deployed_code_exact(code)
+                    .map_or_else(|| address_name.clone(), |(id, _)| id.name.clone()),
+            );
+        };
+        if known_contracts.matches_deployed_code_exact(identifier, code) {
+            return Some(address_name.clone());
+        }
+    }
+    local_identifier.identify_code(code, &[]).map(|(id, ..)| id.name.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
-    use foundry_evm_traces::{CallKind, CallTrace, CallTraceNode};
+    use alloy_primitives::hex;
+    use foundry_compilers::{
+        ArtifactId,
+        artifacts::{
+            BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
+            Offsets,
+        },
+    };
+    use foundry_evm_traces::{CallKind, CallTrace};
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::{CallTraceStep, TraceMemberOrder};
+    use revm_inspectors::tracing::types::{
+        CallTraceStep, DecodedCallTrace, DecodedInternalCall, TraceMemberOrder,
+    };
 
     fn step() -> CallTraceStep {
         CallTraceStep {
@@ -257,5 +346,90 @@ mod tests {
         assert_eq!(builder.stats.session_subcalls, 3);
         assert_eq!(builder.stats.session_trace_gas_used, 300);
         assert_eq!(builder.trace_arenas.len(), 2);
+    }
+
+    #[test]
+    fn identify_node_uses_executed_code() {
+        let artifact = |name: &str| ArtifactId {
+            path: format!("{name}.json").into(),
+            name: name.to_string(),
+            source: format!("{name}.sol").into(),
+            version: "0.8.30".parse().unwrap(),
+            build_id: String::new(),
+            profile: String::new(),
+        };
+        // `WithImmutable` deploys with its zeroed immutable set to `0xff`, which makes its runtime
+        // code byte-for-byte equal to `WithConstant`.
+        let initialized = hex!("60ff6000600055");
+        let other = hex!("60016000600155");
+        let known_contracts = ContractsByArtifact::new(
+            [
+                ("WithImmutable", &hex!("60006000600055"), vec![Offsets { start: 1, length: 1 }]),
+                ("WithConstant", &initialized, vec![]),
+                ("Other", &other, vec![]),
+            ]
+            .map(|(name, code, immutables)| {
+                let bytecode = CompactBytecode {
+                    object: BytecodeObject::Bytecode(Bytes::copy_from_slice(code)),
+                    source_map: None,
+                    link_references: Default::default(),
+                };
+                let deployed_bytecode = CompactDeployedBytecode {
+                    bytecode: Some(bytecode),
+                    immutable_references: [("0".to_string(), immutables)].into(),
+                };
+                let contract = CompactContractBytecode {
+                    abi: Some(Default::default()),
+                    bytecode: None,
+                    deployed_bytecode: Some(deployed_bytecode),
+                };
+                (artifact(name), contract)
+            }),
+        );
+        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        // `local` is identified as a local artifact, `remote` by an external identifier.
+        let (local, remote) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let identified_contracts = AddressHashMap::from_iter([
+            (local, "WithImmutable".to_string()),
+            (remote, "Remote".to_string()),
+        ]);
+        let contract_identifiers = AddressHashMap::from_iter([
+            (local, artifact("WithImmutable").identifier()),
+            (remote, "Remote".to_string()),
+        ]);
+
+        let identify = |address, code: &[u8]| {
+            let mut node = CallTraceNode::default();
+            node.trace.address = address;
+            node.trace.bytecode = Some(Bytes::copy_from_slice(code));
+            let label = identified_contracts.get(&address).cloned();
+            node.trace.decoded = Some(Box::new(DecodedCallTrace { label, ..Default::default() }));
+            let mut step = step();
+            let internal_call =
+                DecodedInternalCall { func_name: "f".to_string(), args: None, return_data: None };
+            step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(internal_call, 0)));
+            node.trace.steps.push(step);
+            let name = identify_node(
+                &mut node,
+                &local_identifier,
+                &identified_contracts,
+                &contract_identifiers,
+                &ContractSources::default(),
+                &mut HashMap::default(),
+            );
+            let label = node.trace.decoded.unwrap().label;
+            (name, label, node.trace.steps[0].decoded.is_some())
+        };
+        let kept = |name: &str| (Some(name.to_string()), Some(name.to_string()), true);
+        let replaced = |name: Option<&str>| (name.map(String::from), name.map(String::from), false);
+
+        // The initialized immutable keeps the local identity, other code is re-identified, and
+        // unknown code is left unidentified. External identities are kept unless the code exactly
+        // matches a local artifact. Decodings from a replaced identity are dropped.
+        assert_eq!(identify(local, &initialized), kept("WithImmutable"));
+        assert_eq!(identify(local, &other), replaced(Some("Other")));
+        assert_eq!(identify(local, &hex!("00")), replaced(None));
+        assert_eq!(identify(remote, &hex!("00")), kept("Remote"));
+        assert_eq!(identify(remote, &other), replaced(Some("Other")));
     }
 }
