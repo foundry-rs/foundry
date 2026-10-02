@@ -496,6 +496,42 @@ Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debu
 "#]]);
 });
 
+// Without Anvil metadata the endpoint identity is discovered once and reused for the environment,
+// the fork, and the executor.
+casttest!(cast_run_discovers_fork_endpoint_once, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let endpoint = spawn_rpc_proxy_method_not_found_before(
+        handle.http_endpoint(),
+        "anvil_nodeInfo",
+        usize::MAX,
+    )
+    .await;
+    let (endpoint, chain_ids) = spawn_rpc_proxy_recording_method(endpoint, "eth_chainId").await;
+    let (endpoint, node_infos) = spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        chain_ids.lock().unwrap().clear();
+        node_infos.lock().unwrap().clear();
+
+        cmd.cast_fuse().args(["run", &tx_hash, "--rpc-url", &endpoint]).args(args).assert_success();
+
+        // Discovery reads two agreeing snapshots.
+        assert_eq!(chain_ids.lock().unwrap().len(), 2, "{args:?}");
+        assert_eq!(node_infos.lock().unwrap().len(), 2, "{args:?}");
+    }
+});
+
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
 // transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
