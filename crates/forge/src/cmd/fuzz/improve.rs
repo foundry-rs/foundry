@@ -127,6 +127,8 @@ struct MutationGap {
     path: PathBuf,
     line: usize,
     column: usize,
+    original: String,
+    mutant: String,
     seeds: Vec<U256>,
 }
 
@@ -579,21 +581,29 @@ fn candidate_contract_filter(base: Option<&str>, candidate: &Candidate) -> Optio
 }
 
 fn mutation_gaps(results: &[SeedMutation]) -> Vec<MutationGap> {
-    let mut gaps = BTreeMap::<(PathBuf, usize, usize), BTreeSet<U256>>::new();
+    let mut gaps = BTreeMap::<(PathBuf, usize, usize, String, String), BTreeSet<U256>>::new();
     for result in results {
         for (path, mutants) in &result.output.survived_mutants {
             for mutant in mutants {
-                gaps.entry((PathBuf::from(path), mutant.line, mutant.column))
-                    .or_default()
-                    .insert(result.seed);
+                gaps.entry((
+                    PathBuf::from(path),
+                    mutant.line,
+                    mutant.column,
+                    mutant.original.clone(),
+                    mutant.mutant.clone(),
+                ))
+                .or_default()
+                .insert(result.seed);
             }
         }
     }
     gaps.into_iter()
-        .map(|((path, line, column), seeds)| MutationGap {
+        .map(|((path, line, column, original, mutant), seeds)| MutationGap {
             path,
             line,
             column,
+            original,
+            mutant,
             seeds: seeds.into_iter().collect(),
         })
         .collect()

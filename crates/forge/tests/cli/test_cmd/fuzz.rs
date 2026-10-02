@@ -6220,7 +6220,8 @@ set -eu
 prompt="$1"
 output="$2"
 grep -q '"mutation_gaps"' "$prompt"
-if grep -q '"mutant"' "$prompt"; then exit 1; fi
+grep -q '"original"' "$prompt"
+grep -q '"mutant"' "$prompt"
 if grep -q '"round": 2' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
 cat > "$output" <<'JSON'
