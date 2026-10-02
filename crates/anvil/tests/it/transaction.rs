@@ -2053,3 +2053,39 @@ async fn instant_mine_does_not_group_sequential_sends_beyond_window() {
 
     assert_ne!(b1, b2, "sequential sends with delay coalesced into the same block ({b1})");
 }
+
+/// Ready txs skipped because the block ran out of gas must be mined in follow-up blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_retries_txs_skipped_by_block_gas_limit() {
+    // Room for exactly three transfers per block.
+    let (api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(63_000))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let mut pending = Vec::new();
+    for nonce in 0..5 {
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(to)
+            .value(U256::from(1))
+            .nonce(nonce)
+            .gas_limit(21_000);
+        pending.push(provider.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+    }
+
+    // The new instant miner selects all five ready txs, but only three fit in the first block.
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    for tx in pending {
+        timeout(Duration::from_secs(5), tx.get_receipt())
+            .await
+            .expect("tx skipped by the block gas limit was never mined")
+            .unwrap();
+    }
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), 5);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
