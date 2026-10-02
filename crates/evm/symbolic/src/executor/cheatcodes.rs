@@ -2934,6 +2934,21 @@ impl SymbolicExecutor {
             | envBytes32_1Call::SELECTOR
             | envString_1Call::SELECTOR
             | envBytes_1Call::SELECTOR => {
+                let element_ty = if selector == envBool_1Call::SELECTOR {
+                    DynSolType::Bool
+                } else if selector == envUint_1Call::SELECTOR {
+                    DynSolType::Uint(256)
+                } else if selector == envInt_1Call::SELECTOR {
+                    DynSolType::Int(256)
+                } else if selector == envAddress_1Call::SELECTOR {
+                    DynSolType::Address
+                } else if selector == envBytes32_1Call::SELECTOR {
+                    DynSolType::FixedBytes(32)
+                } else if selector == envString_1Call::SELECTOR {
+                    DynSolType::String
+                } else {
+                    DynSolType::Bytes
+                };
                 let values = decode_cheatcode_args(
                     &mut self.cx,
                     state,
@@ -2946,21 +2961,7 @@ impl SymbolicExecutor {
                 self.stateless_retry_safe = false;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-                let value = if selector == envBool_1Call::SELECTOR {
-                    parse_env_array(&value, &delimiter, parse_env_bool_value)?
-                } else if selector == envUint_1Call::SELECTOR {
-                    parse_env_array(&value, &delimiter, parse_env_uint_value)?
-                } else if selector == envInt_1Call::SELECTOR {
-                    parse_env_array(&value, &delimiter, parse_env_int_value)?
-                } else if selector == envAddress_1Call::SELECTOR {
-                    parse_env_array(&value, &delimiter, parse_env_address_value)?
-                } else if selector == envBytes32_1Call::SELECTOR {
-                    parse_env_array(&value, &delimiter, parse_env_bytes32_value)?
-                } else if selector == envString_1Call::SELECTOR {
-                    parse_env_array(&value, &delimiter, parse_env_string_value)?
-                } else {
-                    parse_env_array(&value, &delimiter, parse_env_bytes_value)?
-                };
+                let value = parse_env_array(&value, &delimiter, &element_ty)?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(
                     &mut self.cx,
                     value,
@@ -3088,32 +3089,14 @@ impl SymbolicExecutor {
                     vec![
                         DynSolType::String,
                         DynSolType::String,
-                        DynSolType::Array(Box::new(element_ty)),
+                        DynSolType::Array(Box::new(element_ty.clone())),
                     ],
                 )?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
                 self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
-                    Ok(value) if selector == envOr_7Call::SELECTOR => {
-                        parse_env_array(&value, &delimiter, parse_env_bool_value)?
-                    }
-                    Ok(value) if selector == envOr_8Call::SELECTOR => {
-                        parse_env_array(&value, &delimiter, parse_env_uint_value)?
-                    }
-                    Ok(value) if selector == envOr_9Call::SELECTOR => {
-                        parse_env_array(&value, &delimiter, parse_env_int_value)?
-                    }
-                    Ok(value) if selector == envOr_10Call::SELECTOR => {
-                        parse_env_array(&value, &delimiter, parse_env_address_value)?
-                    }
-                    Ok(value) if selector == envOr_11Call::SELECTOR => {
-                        parse_env_array(&value, &delimiter, parse_env_bytes32_value)?
-                    }
-                    Ok(value) if selector == envOr_12Call::SELECTOR => {
-                        parse_env_array(&value, &delimiter, parse_env_string_value)?
-                    }
-                    Ok(value) => parse_env_array(&value, &delimiter, parse_env_bytes_value)?,
+                    Ok(value) => parse_env_array(&value, &delimiter, &element_ty)?,
                     Err(_) => values[2].clone(),
                 };
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_value_return(

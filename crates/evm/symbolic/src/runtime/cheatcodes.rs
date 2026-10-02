@@ -874,46 +874,35 @@ pub(crate) fn dyn_string_array(value: &DynSolValue) -> Result<Vec<String>, Symbo
     values.iter().map(dyn_string).collect()
 }
 
-pub(crate) fn parse_env_array<F>(
+pub(crate) fn parse_env_array(
     value: &str,
     delimiter: &str,
-    mut parser: F,
-) -> Result<DynSolValue, SymbolicError>
-where
-    F: FnMut(&str) -> Result<DynSolValue, SymbolicError>,
-{
+    ty: &DynSolType,
+) -> Result<DynSolValue, SymbolicError> {
     if delimiter.is_empty() {
         return Err(SymbolicError::Unsupported("symbolic env delimiter"));
     }
-    value.split(delimiter).map(&mut parser).collect::<Result<Vec<_>, _>>().map(DynSolValue::Array)
+    value
+        .split(delimiter)
+        .map(|value| parse_env_value(value, ty))
+        .collect::<Result<Vec<_>, _>>()
+        .map(DynSolValue::Array)
 }
 
-pub(crate) fn parse_env_bool_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Bool(parse_env_bool(value)?))
-}
-
-pub(crate) fn parse_env_uint_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Uint(parse_env_uint(value)?, 256))
-}
-
-pub(crate) fn parse_env_int_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256))
-}
-
-pub(crate) fn parse_env_address_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Address(parse_env_address(value)?))
-}
-
-pub(crate) fn parse_env_bytes32_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::FixedBytes(B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()), 32))
-}
-
-pub(crate) fn parse_env_string_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::String(value.to_string()))
-}
-
-pub(crate) fn parse_env_bytes_value(value: &str) -> Result<DynSolValue, SymbolicError> {
-    Ok(DynSolValue::Bytes(parse_env_bytes(value)?))
+pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValue, SymbolicError> {
+    match ty {
+        DynSolType::Bool => Ok(DynSolValue::Bool(parse_env_bool(value)?)),
+        DynSolType::Uint(256) => Ok(DynSolValue::Uint(parse_env_uint(value)?, 256)),
+        DynSolType::Int(256) => Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256)),
+        DynSolType::Address => Ok(DynSolValue::Address(parse_env_address(value)?)),
+        DynSolType::FixedBytes(32) => Ok(DynSolValue::FixedBytes(
+            B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()),
+            32,
+        )),
+        DynSolType::String => Ok(DynSolValue::String(value.to_string())),
+        DynSolType::Bytes => Ok(DynSolValue::Bytes(parse_env_bytes(value)?)),
+        _ => Err(SymbolicError::Unsupported("symbolic env type")),
+    }
 }
 
 pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
