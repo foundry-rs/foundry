@@ -24,6 +24,8 @@ use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
+use std::time::Duration;
+use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn non_blob_receipt_omits_blob_fields() {
@@ -328,6 +330,51 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     );
     // Mined in two different blocks
     assert_eq!(first_receipt.block_number.unwrap() + 1, second_receipt.block_number.unwrap());
+}
+
+/// Blob txs deferred because the block ran out of blob gas must be auto mined in the next block.
+#[tokio::test(flavor = "multi_thread")]
+async fn auto_mine_retries_blob_tx_exceeding_max_blobs() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // Four and three blobs, which together exceed the six blobs a Cancun block can hold.
+    let mut pending = Vec::new();
+    for (nonce, blob_data_len) in [3, 2].into_iter().enumerate() {
+        let data = vec![1u8; DATA_GAS_PER_BLOB as usize * blob_data_len];
+        let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(&data).build().unwrap();
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(to)
+            .with_nonce(nonce as u64)
+            .with_max_fee_per_blob_gas(gas_price + 1)
+            .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+            .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+            .with_blob_sidecar_4844(sidecar);
+        pending.push(provider.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+    }
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let mut blocks = Vec::new();
+    for tx in pending {
+        let receipt = timeout(Duration::from_secs(5), tx.get_receipt())
+            .await
+            .expect("blob tx deferred by the blob gas limit was never mined")
+            .unwrap();
+        blocks.push(receipt.block_number.unwrap());
+    }
+    assert_eq!(blocks[0] + 1, blocks[1]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
