@@ -52,10 +52,6 @@ pub struct FuzzImproveArgs {
     #[arg(long, value_name = "SECONDS")]
     mutation_timeout: Option<u32>,
 
-    /// Parallel mutation workers.
-    #[arg(long, value_name = "JOBS")]
-    mutation_jobs: Option<usize>,
-
     /// Restrict mutation evaluation to matching test contracts.
     #[arg(long, value_name = "REGEX")]
     match_contract: Option<String>,
@@ -180,10 +176,6 @@ impl FuzzImproveArgs {
         if let Some(timeout) = self.mutation_timeout {
             ensure!(timeout > 0, "--mutation-timeout must be greater than zero");
         }
-        if let Some(jobs) = self.mutation_jobs {
-            ensure!(jobs > 0, "--mutation-jobs must be greater than zero");
-        }
-
         let root = self.root.canonicalize().wrap_err("failed to resolve project root")?;
         let config = Config::load_with_root(&root)?.sanitized();
         let generated_tests =
@@ -427,20 +419,29 @@ impl FuzzImproveArgs {
             reasons.push("candidate mutation results did not cover every seed".to_string());
         }
         if reasons.is_empty()
-            && baseline
-                .iter()
-                .chain(&candidate_results)
-                .any(|result| result.output.summary.timed_out > 0)
-        {
-            reasons.push("mutation evaluation contained timed-out mutants".to_string());
-        }
-        if reasons.is_empty()
             && baseline.iter().zip(&candidate_results).any(|(before, after)| {
                 before.output.summary.total != after.output.summary.total
                     || before.output.summary.invalid != after.output.summary.invalid
             })
         {
             reasons.push("candidate changed the mutant population".to_string());
+        }
+        if reasons.is_empty()
+            && baseline.iter().zip(&candidate_results).any(|(before, after)| {
+                introduces_mutants(&before.output.survived_mutants, &after.output.survived_mutants)
+            })
+        {
+            reasons.push("candidate introduced a surviving mutant".to_string());
+        }
+        if reasons.is_empty()
+            && baseline.iter().zip(&candidate_results).any(|(before, after)| {
+                introduces_mutants(
+                    &before.output.timed_out_mutants,
+                    &after.output.timed_out_mutants,
+                )
+            })
+        {
+            reasons.push("candidate introduced a timed-out mutant".to_string());
         }
         if reasons.is_empty() && minimum_new_kills <= 0 {
             reasons.push("candidate did not add a mutation kill on every seed".to_string());
@@ -498,9 +499,9 @@ impl FuzzImproveArgs {
                 if let Some(timeout) = self.mutation_timeout {
                     command.args(["--mutation-timeout", &timeout.to_string()]);
                 }
-                if let Some(jobs) = self.mutation_jobs {
-                    command.args(["--mutation-jobs", &jobs.to_string()]);
-                }
+                // Adaptive mutation skipping is concurrency-sensitive, so candidate comparisons
+                // must use the same stable execution order.
+                command.args(["--mutation-jobs", "1"]);
                 if let Some(contract) = contract_filter {
                     command.args(["--match-contract", contract]);
                 }
@@ -521,6 +522,17 @@ impl FuzzImproveArgs {
             })
             .collect()
     }
+}
+
+fn introduces_mutants(
+    baseline: &BTreeMap<String, Vec<crate::mutation::SurvivedMutantJson>>,
+    candidate: &BTreeMap<String, Vec<crate::mutation::SurvivedMutantJson>>,
+) -> bool {
+    candidate.iter().any(|(path, mutants)| {
+        baseline
+            .get(path)
+            .is_none_or(|baseline| mutants.iter().any(|mutant| !baseline.contains(mutant)))
+    })
 }
 
 fn candidate_test_result(
@@ -676,4 +688,37 @@ fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path)
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().chars().take(2_000).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mutation::SurvivedMutantJson;
+
+    #[test]
+    fn detects_only_new_mutant_outcomes() {
+        let existing = SurvivedMutantJson {
+            line: 1,
+            column: 2,
+            original: "left == right".to_string(),
+            mutant: "left != right".to_string(),
+        };
+        let introduced = SurvivedMutantJson {
+            line: 3,
+            column: 4,
+            original: "value > 0".to_string(),
+            mutant: "value >= 0".to_string(),
+        };
+        let baseline = BTreeMap::from([("src/Target.sol".to_string(), vec![existing.clone()])]);
+
+        assert!(!introduces_mutants(&baseline, &BTreeMap::new()));
+        assert!(!introduces_mutants(
+            &baseline,
+            &BTreeMap::from([("src/Target.sol".to_string(), vec![existing])]),
+        ));
+        assert!(introduces_mutants(
+            &baseline,
+            &BTreeMap::from([("src/Target.sol".to_string(), vec![introduced])]),
+        ));
+    }
 }

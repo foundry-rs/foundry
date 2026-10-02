@@ -6271,8 +6271,6 @@ JSON
             "0x5eed",
             "--seed",
             "0xc0ffee",
-            "--mutation-jobs",
-            "1",
             "--match-contract",
             "^ArithmeticTest$",
             "--rounds",

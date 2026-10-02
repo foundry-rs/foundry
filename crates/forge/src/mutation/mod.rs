@@ -170,30 +170,11 @@ impl MutationsSummary {
     /// Convert to JSON output format.
     ///
     /// Output is sorted deterministically: files in lexicographic order
-    /// (`BTreeMap` keys), and survived mutants within each file sorted by
+    /// (`BTreeMap` keys), and mutants within each file sorted by
     /// `(line, column, original, mutant)`. Without this, parallel worker
     /// completion order leaks into the JSON and breaks downstream diffing,
     /// snapshot tests, and reproducibility.
     pub fn to_json_output(&self, duration_secs: f64) -> MutationJsonOutput {
-        let mut survived_mutants: BTreeMap<String, Vec<SurvivedMutantJson>> = BTreeMap::new();
-
-        for mutant in &self.survived {
-            let file_path = mutant.relative_path();
-            let entry = survived_mutants.entry(file_path).or_default();
-            entry.push(SurvivedMutantJson::from_mutant(mutant));
-        }
-
-        for entries in survived_mutants.values_mut() {
-            entries.sort_by(|a, b| {
-                (a.line, a.column, &a.original, &a.mutant).cmp(&(
-                    b.line,
-                    b.column,
-                    &b.original,
-                    &b.mutant,
-                ))
-            });
-        }
-
         MutationJsonOutput {
             summary: MutationSummaryJson {
                 total: self.total_mutants(),
@@ -205,19 +186,43 @@ impl MutationsSummary {
                 mutation_score: self.mutation_score(),
                 duration_secs,
             },
-            survived_mutants,
+            survived_mutants: group_mutants(&self.survived),
+            timed_out_mutants: group_mutants(&self.timed_out),
         }
     }
 }
 
+fn group_mutants(mutants: &[Mutant]) -> BTreeMap<String, Vec<SurvivedMutantJson>> {
+    let mut grouped = BTreeMap::<String, Vec<SurvivedMutantJson>>::new();
+    for mutant in mutants {
+        grouped
+            .entry(mutant.relative_path())
+            .or_default()
+            .push(SurvivedMutantJson::from_mutant(mutant));
+    }
+    for entries in grouped.values_mut() {
+        entries.sort_by(|a, b| {
+            (a.line, a.column, &a.original, &a.mutant).cmp(&(
+                b.line,
+                b.column,
+                &b.original,
+                &b.mutant,
+            ))
+        });
+    }
+    grouped
+}
+
 /// JSON output for mutation testing results.
 ///
-/// Uses [`BTreeMap`] for `survived_mutants` so file ordering in the emitted
-/// JSON is deterministic.
+/// Uses [`BTreeMap`] for mutant groups so file ordering in the emitted JSON is
+/// deterministic.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MutationJsonOutput {
     pub summary: MutationSummaryJson,
     pub survived_mutants: BTreeMap<String, Vec<SurvivedMutantJson>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub timed_out_mutants: BTreeMap<String, Vec<SurvivedMutantJson>>,
 }
 
 /// Summary section of JSON output
@@ -233,8 +238,8 @@ pub struct MutationSummaryJson {
     pub duration_secs: f64,
 }
 
-/// Individual survived mutant in JSON output
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Individual unresolved mutant in JSON output.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SurvivedMutantJson {
     pub line: usize,
     pub column: usize,
@@ -758,5 +763,18 @@ mod tests {
         assert_eq!(summary.total_evaluated(), 0);
         assert!(!summary.has_reliable_score());
         assert_eq!(summary.mutation_score(), 0.0);
+    }
+
+    #[test]
+    fn json_output_identifies_timed_out_mutants() {
+        let mut summary = MutationsSummary::new();
+        summary.add_timed_out_mutant(mutant(30, 40, "number--"));
+        summary.add_timed_out_mutant(mutant(10, 20, "number++"));
+
+        let output = summary.to_json_output(1.0);
+        let mutants = &output.timed_out_mutants["src/Counter.sol"];
+        assert_eq!(mutants.len(), 2);
+        assert_eq!(mutants[0].original, "number++");
+        assert_eq!(mutants[1].original, "number--");
     }
 }
