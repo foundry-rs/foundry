@@ -30,29 +30,25 @@ impl SymCalldata {
             let Ok(offset) = usize::try_from(offset) else {
                 return Ok(SymExpr::zero(cx));
             };
-            self.load(cx, offset)
+            Ok(self.load(cx, offset))
         } else {
-            self.load_dynamic(cx, &offset)
+            Ok(self.load_dynamic(cx, &offset))
         }
     }
 
-    pub(crate) fn load(&self, cx: &mut SymCx, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(self.bytes.word_at(cx, offset))
+    fn load(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
+        self.bytes.word_at(cx, offset)
     }
 
-    pub(crate) fn load_dynamic(
-        &self,
-        cx: &mut SymCx,
-        offset: &SymExpr,
-    ) -> Result<SymExpr, SymbolicError> {
+    fn load_dynamic(&self, cx: &mut SymCx, offset: &SymExpr) -> SymExpr {
         let mut result = SymExpr::zero(cx);
         for candidate in (0..self.size).rev() {
             let candidate_expr = SymExpr::constant(cx, U256::from(candidate));
             let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
-            let word = self.load(cx, candidate)?;
+            let word = self.load(cx, candidate);
             result = SymExpr::ite(cx, condition, word, result);
         }
-        Ok(result)
+        result
     }
 
     pub(crate) fn read_bytes_offset(

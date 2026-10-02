@@ -61,8 +61,9 @@ impl SymExpr {
     pub(crate) fn storage_mapping_key(&self, cx: &mut SymCx) -> Option<StorageMappingKey> {
         let bytes = self.storage_mapping_key_bytes(cx)?;
         let key_bytes = &bytes[..32];
-        let preserve_key_bytes =
-            (!storage_mapping_key_bytes_form_compact_word(key_bytes)).then(|| key_bytes.to_vec());
+        let preserve_key_bytes = (!key_bytes.iter().all(|byte| byte.as_const().is_some())
+            && word_from_extracted_bytes(key_bytes).is_none())
+        .then(|| key_bytes.to_vec());
         let key = Self::from_bytes(cx, key_bytes.iter().cloned());
         let slot = Self::from_bytes(cx, bytes[32..64].iter().cloned());
         Some(StorageMappingKey { key, key_bytes: preserve_key_bytes, slot })
@@ -195,10 +196,6 @@ fn storage_mapping_key_eq(
     } else {
         SymBoolExpr::eq(cx, read.key.clone(), write.key.clone())
     }
-}
-
-fn storage_mapping_key_bytes_form_compact_word(bytes: &[SymExpr]) -> bool {
-    bytes.iter().all(|byte| byte.as_const().is_some()) || word_from_extracted_bytes(bytes).is_some()
 }
 
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
@@ -1726,17 +1723,16 @@ impl SymExpr {
     ) -> Option<Self> {
         let left = left.byte_term(cx, index)?;
         let right = right.byte_term(cx, index)?;
-        match (left.byte_const(), right.byte_const()) {
+        match (
+            left.as_const().map(|value| value.to::<u8>()),
+            right.as_const().map(|value| value.to::<u8>()),
+        ) {
             (Some(left), _) if absorbing(left) => Some(Self::constant(cx, U256::from(left))),
             (_, Some(right)) if absorbing(right) => Some(Self::constant(cx, U256::from(right))),
             (Some(left), _) if identity(left) => Some(right),
             (_, Some(right)) if identity(right) => Some(left),
             _ => Some(Self::binop(cx, op, left, right)),
         }
-    }
-
-    pub(crate) fn byte_const(&self) -> Option<u8> {
-        self.as_const().map(|value| value.to::<u8>())
     }
 
     pub(crate) fn equality_forces_const(

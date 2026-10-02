@@ -128,11 +128,11 @@ pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
 }
 
 pub(crate) fn address_word(address: Address) -> U256 {
-    U256::from_be_bytes(address.into_word().0)
+    address.into_word().into()
 }
 
 pub(crate) fn word_to_address(value: U256) -> Address {
-    Address::from_word(value.to_be_bytes::<32>().into())
+    Address::from_word(value.into())
 }
 
 pub(crate) fn stable_symbol(cx: &mut SymCx, prefix: &'static str, input: &[u8]) -> Symbol {
