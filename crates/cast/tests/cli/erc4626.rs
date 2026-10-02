@@ -161,7 +161,8 @@ async fn setup_test_vault(
     (rpc, handle)
 }
 
-forgetest_async!(erc4626_complete_synchronous_interface, |prj, cmd| {
+#[forgetest]
+async fn erc4626_complete_synchronous_interface(prj: _, cmd: _) {
     let (rpc, _handle) = setup_test_vault(&prj, &mut cmd).await;
 
     let asset = cmd
@@ -443,9 +444,10 @@ forgetest_async!(erc4626_complete_synchronous_interface, |prj, cmd| {
              Summary: 21 passed, 0 warnings, 0 failed\n",
             anvil_const::VAULT
         ));
-});
+}
 
-forgetest_async!(erc4626_check_warns_for_known_extensions, |prj, cmd| {
+#[forgetest]
+async fn erc4626_check_warns_for_known_extensions(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
@@ -520,9 +522,10 @@ PASS decimals()               call succeeded
 Summary: 14 passed, 5 warnings, 0 failed
 
 "#]]);
-});
+}
 
-forgetest_async!(erc4626_check_fails_for_missing_metadata, |prj, cmd| {
+#[forgetest]
+async fn erc4626_check_fails_for_missing_metadata(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
@@ -572,9 +575,10 @@ Summary: 11 passed, 5 warnings, 3 failed
     assert_eq!(output["data"]["read_compatible"], false);
     assert_eq!(output["data"]["failed"], 3);
     assert_eq!(output["errors"][0]["code"], "erc4626.compatibility_failed");
-});
+}
 
-casttest!(erc4626_fork_reads_multiple_production_vaults, async |_prj, cmd| {
+#[casttest]
+async fn erc4626_fork_reads_multiple_production_vaults(cmd: _) {
     let fork = NodeConfig::test()
         .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
         .with_fork_block_number(Some(ETHEREUM_FORK_BLOCK));
@@ -585,9 +589,10 @@ casttest!(erc4626_fork_reads_multiple_production_vaults, async |_prj, cmd| {
         assert_read_surface(&mut cmd, vault, &rpc);
         assert_inspection_surface(&mut cmd, vault, &rpc);
     }
-});
+}
 
-casttest!(flaky_erc4626_fork_reads_tempo_vault, async |_prj, cmd| {
+#[casttest]
+async fn flaky_erc4626_fork_reads_tempo_vault(cmd: _) {
     let fork = NodeConfig::test_tempo()
         .with_eth_rpc_url(Some(TEMPO_RPC_URL.to_string()))
         .with_fork_block_number(Some(TEMPO_FORK_BLOCK));
@@ -596,4 +601,4 @@ casttest!(flaky_erc4626_fork_reads_tempo_vault, async |_prj, cmd| {
 
     assert_read_surface(&mut cmd, &TEMPO_VAULT, &rpc);
     assert_inspection_surface(&mut cmd, &TEMPO_VAULT, &rpc);
-});
+}

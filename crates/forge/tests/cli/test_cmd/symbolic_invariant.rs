@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-forgetest_init!(symbolic_invariant_runs_before_fuzz_campaign, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_runs_before_fuzz_campaign(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_runs_before_fuzz_campaign");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -63,9 +64,10 @@ calldata=bump(uint8)
 invariant_counterStaysZero()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_invariant_ignores_bool_return, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_ignores_bool_return(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_ignores_bool_return");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -111,9 +113,10 @@ contract SymbolicInvariantBoolReturn is Test {
     let result = json_test_result(&output, "invariant_alwaysFalseButNeverAsserts()");
     assert_eq!(result["status"], "Success");
     assert_eq!(result["symbolic"]["status"], "pass", "{}", result["symbolic"]["incomplete"]);
-});
+}
 
-forgetest_init!(symbolic_invariant_safe_still_runs_fuzz_campaign, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_safe_still_runs_fuzz_campaign(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_safe_still_runs_fuzz_campaign");
 
     prj.add_test(
@@ -164,9 +167,10 @@ contract SymbolicInvariantSafeRunsFuzz is Test {
     assert_eq!(result["kind"]["Invariant"]["runs"], 1);
     assert_eq!(result["kind"]["Invariant"]["calls"], 2);
     assert_eq!(result["kind"]["Invariant"]["reverts"], 0);
-});
+}
 
-forgetest_init!(symbolic_invariant_replays_setup_arbitrary_storage, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_replays_setup_arbitrary_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_replays_setup_arbitrary_storage");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -290,9 +294,10 @@ invariant_notHit()
 invariant_notHit()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_secondary_replay_preserves_storage, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_secondary_replay_preserves_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
 
     prj.add_test(
@@ -404,9 +409,10 @@ contract SymbolicSecondaryStorage is Test {
 
         std::fs::remove_file(&persisted_anchor).unwrap();
     }
-});
+}
 
-forgetest_init!(symbolic_predicate_artifact_rejects_handler_assertion_replay, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_predicate_artifact_rejects_handler_assertion_replay(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_predicate_artifact_rejects_handler_assertion_replay");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -524,9 +530,10 @@ contract SymbolicPredicateArtifactOrigin is Test {
             .contains("different failure origin than the stored predicate"),
         "{replay_result}"
     );
-});
+}
 
-forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_handler_failure_stays_handler(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_handler_failure_stays_handler");
     prj.update_config(|config| {
         config.invariant.runs = 0;
@@ -738,9 +745,10 @@ contract SymbolicInvariantHandlerFailure is Test {
         unrelated_result["reason"].as_str().unwrap().contains("different handler failure site"),
         "{unrelated_result}"
     );
-});
+}
 
-forgetest_init!(symbolic_invariant_omits_unchecked_predicate_pass_rows, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_omits_unchecked_predicate_pass_rows(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_omits_unchecked_predicate_pass_rows");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -801,9 +809,10 @@ contract SymbolicInvariantMultiPredicate is Test {
     assert_eq!(predicates[0]["name"], "invariant_anchorBreak");
     assert_eq!(predicates[0]["status"], "Failure");
     assert!(predicates.iter().all(|predicate| predicate["status"] != "Success"));
-});
+}
 
-forgetest_init!(symbolic_invariant_replays_copied_arbitrary_storage, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_replays_copied_arbitrary_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_replays_copied_arbitrary_storage");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -880,9 +889,10 @@ calldata=useStore()
 "#]],
     );
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_invariant_replays_initial_state_failure, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_replays_initial_state_failure(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_replays_initial_state_failure");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -955,9 +965,10 @@ contract SymbolicInvariantInitialState is Test {
         replay_result["reason"].as_str().unwrap().contains("assertion failed"),
         "{replay_result}"
     );
-});
+}
 
-forgetest_init!(symbolic_after_invariant_runs_only_at_terminal_depth, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_after_invariant_runs_only_at_terminal_depth(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_after_invariant_runs_only_at_terminal_depth");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -1003,9 +1014,10 @@ contract SymbolicAfterInvariantTerminal is Test {
     let result = json_test_result(&output, "invariant_ok()");
     assert_eq!(result["status"], "Success");
     assert_eq!(result["symbolic"]["status"], "pass");
-});
+}
 
-forgetest_init!(symbolic_invariant_checks_preserve_storage_hook_registration, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_checks_preserve_storage_hook_registration(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_checks_preserve_storage_hook_registration");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -1136,9 +1148,10 @@ contract SymbolicInvariantStorageHookRegistration is Test {
     let result = json_test_result(&output, "invariant_hookReplacementPersists()");
     assert_eq!(result["status"], "Success");
     assert_eq!(result["symbolic"]["status"], "pass");
-});
+}
 
-forgetest_init!(symbolic_invariant_respects_excluded_fallback_sender, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_respects_excluded_fallback_sender(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_respects_excluded_fallback_sender");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -1189,9 +1202,10 @@ contract SymbolicExcludedFallbackSender is Test {
     let result = json_test_result(&output, "invariant_notBroken()");
     assert_eq!(result["status"], "Success");
     assert_eq!(result["symbolic"]["status"], "incomplete");
-});
+}
 
-forgetest_init!(symbolic_invariant_replay_mismatch_falls_back_to_fuzz, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_replay_mismatch_falls_back_to_fuzz(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_replay_mismatch_falls_back_to_fuzz");
 
     prj.add_test(
@@ -1254,9 +1268,10 @@ contract SymbolicInvariantReplayMismatch is Test {
     assert_eq!(result["symbolic"]["replay"]["status"], "mismatch");
     assert_eq!(result["kind"]["Invariant"]["runs"], 1);
     assert_eq!(result["kind"]["Invariant"]["calls"], 1);
-});
+}
 
-forgetest_init!(symbolic_invariant_incomplete_still_runs_fuzz_campaign, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_incomplete_still_runs_fuzz_campaign(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_incomplete_still_runs_fuzz_campaign");
 
     prj.add_test(
@@ -1306,7 +1321,7 @@ contract SymbolicInvariantIncompleteRunsFuzz is Test {
     assert_eq!(result["symbolic"]["incomplete"]["kind"], "stuck");
     assert_eq!(result["kind"]["Invariant"]["runs"], 1);
     assert_eq!(result["kind"]["Invariant"]["calls"], 2);
-});
+}
 
 // EIP-1153 transient storage is per-transaction scratch space. The symbolic
 // invariant runner must clear `state.world.transient_storage` at the boundary
@@ -1315,7 +1330,8 @@ contract SymbolicInvariantIncompleteRunsFuzz is Test {
 // if transient slot 0 is non-zero. Because each call is a fresh top-level
 // transaction, `peek` must always observe zero — regardless of how many
 // `poke(sentinel)` calls preceded it.
-forgetest_init!(symbolic_transient_storage_clears_between_sequence_steps, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_transient_storage_clears_between_sequence_steps(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_transient_storage_clears_between_sequence_steps");
 
     prj.add_test(
@@ -1366,14 +1382,15 @@ Ran 1 test for test/SymbolicTransientStorageInvariant.t.sol:SymbolicTransientSto
 [PASS] invariant_transientClearsBetweenSteps() ([METRICS])
 ...
 "#]]);
-});
+}
 
 // A target function that branches symbolically into a revert path and a
 // state-mutating path. With `fail_on_revert = false` and `invariant_depth = 2`,
 // the engine must continue exploring non-reverting symbolic branches even when
 // other branches of the same function revert; otherwise it would silently
 // under-approximate and miss the counter increment below.
-forgetest_init!(symbolic_revert_branches_do_not_swallow_non_revert_paths, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_revert_branches_do_not_swallow_non_revert_paths(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_revert_branches_do_not_swallow_non_revert_paths");
 
     prj.add_test(
@@ -1431,12 +1448,13 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
 // Reverted calls still consume invariant depth. With end-only checking, the
 // symbolic runner must carry the reverted branch forward and check the unchanged
 // state at the configured sequence end.
-forgetest_init!(symbolic_revert_branch_preserves_end_only_invariant_check, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_revert_branch_preserves_end_only_invariant_check(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_revert_branch_preserves_end_only_invariant_check");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -1489,12 +1507,13 @@ contract SymbolicTerminalRevertInvariant is Test {
     let result = json_test_result(&output, "invariant_neverBroken()");
     assert_eq!(result["status"], "Failure");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-});
+}
 
 // Foundry cheatcode effects are not journaled with EVM state. A top-level revert
 // therefore rolls back contract storage but keeps effects such as `vm.mockCall`
 // for the next invariant call.
-forgetest_init!(symbolic_reverted_handler_effect_replays_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_reverted_handler_effect_replays_counterexample(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_reverted_handler_effect_replays_counterexample");
 
     prj.add_test(
@@ -1550,9 +1569,10 @@ contract SymbolicRevertedCheatcodeEffects is Test {
     assert_eq!(result["status"], "Failure");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample", "{result}");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed", "{result}");
-});
+}
 
-forgetest_init!(symbolic_invariant_does_not_inherit_prank_into_nested_call, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_does_not_inherit_prank_into_nested_call(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_does_not_inherit_prank_into_nested_call");
 
     prj.add_test(
@@ -1640,9 +1660,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
-forgetest_init!(symbolic_invariant_zeroes_created_account_storage, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_zeroes_created_account_storage(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_zeroes_created_account_storage");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -1711,9 +1732,10 @@ contract SymbolicCreatedStorageInvariant is Test {
     let result = json_test_result(&output, "invariant_noImpossibleCreatedStorage()");
     assert_eq!(result["status"], "Success");
     assert_eq!(result["symbolic"]["status"], "pass");
-});
+}
 
-forgetest_init!(symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_aliases_concrete_mapping_write_to_symbolic_read");
     prj.update_config(|config| config.invariant.runs = 0);
 
@@ -1767,9 +1789,10 @@ contract SymbolicMappingAliasInvariant is Test {
     let result = json_test_result(&output, "invariant_notAccepted()");
     assert_eq!(result["status"], "Failure");
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
-});
+}
 
-forgetest_init!(symbolic_invariant_solves_multicall_hard_arithmetic, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_solves_multicall_hard_arithmetic(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_solves_multicall_hard_arithmetic");
 
     prj.add_test(
@@ -1862,10 +1885,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
 #[cfg(unix)]
-forgetest_init!(symbolic_invariant_checks_easy_path_before_deferred_sibling, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_checks_easy_path_before_deferred_sibling(prj: _, cmd: _) {
     let solver = prj.root().join("slow-solver");
     std::fs::write(
         &solver,
@@ -1934,7 +1958,7 @@ contract SymbolicInvariantDeferredSibling is Test {
     assert_eq!(result["symbolic"]["status"], "fail_counterexample");
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
     assert!(!solver.with_extension("query").exists());
-});
+}
 
 // Top-level invariant sequence calls must look up code through the symbolic
 // world overlay so that prior-step `vm.etch` writes are visible. The target
@@ -1943,7 +1967,8 @@ contract SymbolicInvariantDeferredSibling is Test {
 // 42 for any call. If the engine fetched code from the backend instead of the
 // overlay, the etch effect would be invisible at the next step and the
 // (intentionally false) invariant would silently hold.
-forgetest_init!(symbolic_invariant_sees_etched_code_via_overlay, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_invariant_sees_etched_code_via_overlay(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_invariant_sees_etched_code_via_overlay");
 
     prj.add_test(
@@ -2023,9 +2048,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
-forgetest_init!(symbolic_predicate_assumptions_report_incomplete, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_predicate_assumptions_report_incomplete(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_predicate_assumptions_report_incomplete");
     prj.update_config(|config| {
         config.invariant.runs = 0;
@@ -2186,9 +2212,10 @@ contract AfterPredicateAssumption is PredicateAssumptionBase {
 }
 "#]],
         );
-});
+}
 
-forgetest_init!(symbolic_predicate_assumptions_preserve_handler_filtering, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_predicate_assumptions_preserve_handler_filtering(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_predicate_assumptions_preserve_handler_filtering");
     prj.update_config(|config| {
         config.invariant.runs = 0;
@@ -2252,4 +2279,4 @@ contract SymbolicHandlerAssumptions is Test {
   }
 }
 "#]]);
-});
+}

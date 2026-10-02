@@ -9,7 +9,8 @@ use std::{fs, str::FromStr};
 use std::os::unix::fs::symlink;
 
 // Robust contract with casts + assembly passes under brutalization
-forgetest_init!(brutalize_robust_contract_passes, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_robust_contract_passes(prj: _, cmd: _) {
     prj.add_source(
         "Robust.sol",
         r#"
@@ -180,9 +181,10 @@ contract RobustTest is Test {
 Suite result: ok. [..] passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(brutalize_copies_fs_permission_fixtures, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_copies_fs_permission_fixtures(prj: _, cmd: _) {
     let fixtures = prj.root().join("fixtures");
     fs::create_dir_all(&fixtures).unwrap();
     fs::write(fixtures.join("data.txt"), "fixture-data").unwrap();
@@ -206,9 +208,10 @@ contract FixtureReadTest is Test {
 
     cmd.args(["test", "--brutalize", "--mt", "test_readFixture"]);
     cmd.assert_success();
-});
+}
 
-forgetest_init!(brutalize_creates_write_permission_dirs, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_creates_write_permission_dirs(prj: _, cmd: _) {
     let writes = prj.root().join("writes");
     fs::create_dir_all(&writes).unwrap();
     prj.update_config(|config| config.fs_permissions.add(PathPermission::write("./writes")));
@@ -234,9 +237,10 @@ contract FixtureWriteTest is Test {
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mt", "test_writeFixture"]);
     cmd.assert_success();
-});
+}
 
-forgetest_init!(brutalize_creates_write_permission_file_parents, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_creates_write_permission_file_parents(prj: _, cmd: _) {
     fs::create_dir_all(prj.root().join("logs/sub")).unwrap();
     prj.update_config(|config| {
         config.fs_permissions.add(PathPermission::write("./logs/sub/a.txt"))
@@ -263,9 +267,10 @@ contract FixtureWriteFileTest is Test {
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mt", "test_writeFixtureFile"]);
     cmd.assert_success();
-});
+}
 
-forgetest_init!(brutalize_creates_read_write_permission_file_parents, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_creates_read_write_permission_file_parents(prj: _, cmd: _) {
     fs::create_dir_all(prj.root().join("logs/sub")).unwrap();
     prj.update_config(|config| {
         config.fs_permissions.add(PathPermission::read_write("./logs/sub/a.txt"))
@@ -291,10 +296,11 @@ contract FixtureReadWriteFileTest is Test {
 
     cmd.args(["test", "--brutalize", "--mt", "test_readWriteFixtureFile"]);
     cmd.assert_success();
-});
+}
 
 #[cfg(not(target_os = "windows"))]
-forgetest_init!(brutalize_copies_in_root_symlinked_source_dirs, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_copies_in_root_symlinked_source_dirs(prj: _, cmd: _) {
     fs::create_dir_all(prj.root().join(".shared/src")).unwrap();
     fs::create_dir_all(prj.root().join(".shared/test")).unwrap();
     fs::create_dir_all(prj.root().join("src")).unwrap();
@@ -348,10 +354,11 @@ contract SymlinkTargetTest {
         .stdout_lossy();
 
     assert!(stdout.contains("[PASS] test_symlinkedSourceIsBrutalized()"), "{stdout}");
-});
+}
 
 // --brutalize and --mutate are mutually exclusive
-forgetest_init!(brutalize_conflicts_with_mutate, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_conflicts_with_mutate(prj: _, cmd: _) {
     prj.add_source(
         "Dummy.sol",
         r#"
@@ -367,10 +374,11 @@ contract Dummy { function f() external pure returns (uint256) { return 1; } }
 error: the argument '--brutalize' cannot be used with '--mutate [<PATH>...]'
 ...
 "#]]);
-});
+}
 
 // Catches uninitialized memory: assembly reads past FMP assuming zero
-forgetest_init!(brutalize_catches_uninitialized_memory_read, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_catches_uninitialized_memory_read(prj: _, cmd: _) {
     prj.add_source(
         "MemVuln.sol",
         r#"
@@ -419,10 +427,11 @@ contract MemVulnTest is Test {
     // Brutalized test fails — memory past FMP is filled with junk
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "MemVulnTest"]);
     cmd.assert_failure();
-});
+}
 
 // Catches dirty scratch space: reading 0x00 without writing first
-forgetest_init!(brutalize_catches_dirty_scratch_space, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_catches_dirty_scratch_space(prj: _, cmd: _) {
     prj.add_source(
         "ScratchVuln.sol",
         r#"
@@ -467,10 +476,11 @@ contract ScratchVulnTest is Test {
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ScratchVulnTest"]);
     cmd.assert_failure();
-});
+}
 
 // Catches dirty scratch space in the high half of the scratch word.
-forgetest_init!(brutalize_catches_dirty_scratch_space_high_half, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_catches_dirty_scratch_space_high_half(prj: _, cmd: _) {
     prj.add_source(
         "ScratchHighVuln.sol",
         r#"
@@ -515,10 +525,11 @@ contract ScratchHighVulnTest is Test {
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ScratchHighVulnTest"]);
     cmd.assert_failure();
-});
+}
 
 // Catches dirty upper bits from narrow value casts.
-forgetest_init!(brutalize_catches_dirty_value_bits, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_catches_dirty_value_bits(prj: _, cmd: _) {
     prj.add_source(
         "ValueBitsVuln.sol",
         r#"
@@ -565,9 +576,10 @@ contract ValueBitsVulnTest is Test {
 
     cmd.forge_fuse().args(["test", "--brutalize", "--mc", "ValueBitsVulnTest"]);
     cmd.assert_failure();
-});
+}
 
-forgetest_init!(brutalize_warns_via_ir_value_bits_are_ineffective, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_warns_via_ir_value_bits_are_ineffective(prj: _, cmd: _) {
     prj.add_source(
         "ValueBitsVuln.sol",
         r#"
@@ -618,10 +630,11 @@ contract ValueBitsVulnTest is Test {
         output.contains("--brutalize value cast dirty-bits checks are ineffective with via-IR"),
         "{output}"
     );
-});
+}
 
 // With src = ".", brutalization should skip tests, scripts, and libraries.
-forgetest_init!(brutalize_flat_layout_only_brutalizes_sources, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_flat_layout_only_brutalizes_sources(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.src = ".".into();
         config.test = ".".into();
@@ -692,10 +705,11 @@ contract DependencyTarget {
         .stderr_lossy();
 
     assert!(stderr.contains("Brutalized 1 source files"), "{stderr}");
-});
+}
 
 // --brutalize works with --match-test filter (regression for .sanitized() config fix)
-forgetest_init!(brutalize_with_filter, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_with_filter(prj: _, cmd: _) {
     prj.add_source(
         "FilterTarget.sol",
         r#"
@@ -739,10 +753,11 @@ contract FilterTargetTest is Test {
 
     cmd.args(["test", "--brutalize", "--mt", "test_add"]);
     cmd.assert_success();
-});
+}
 
 // --brutalize --rerun must read the original project's persisted failure list.
-forgetest_init!(brutalize_rerun_uses_original_failure_cache, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_rerun_uses_original_failure_cache(prj: _, cmd: _) {
     prj.add_source(
         "RerunTarget.sol",
         r#"
@@ -787,9 +802,10 @@ contract RerunTargetTest {
 
     assert!(stdout.contains("[FAIL: record me] test_fail()"), "{stdout}");
     assert!(!stdout.contains("[PASS] test_pass()"), "{stdout}");
-});
+}
 
-forgetest_init!(brutalize_persists_original_failure_cache, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_persists_original_failure_cache(prj: _, cmd: _) {
     prj.add_test(
         "BrutalizeFailureCache.t.sol",
         r#"
@@ -808,10 +824,11 @@ contract BrutalizeFailureCacheTest {
 
     let failures = fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
     assert!(failures.contains("test_failBrutalizedRun"), "{failures}");
-});
+}
 
 // --brutalize must preserve CLI/config overrides when compiling from the temp workspace.
-forgetest_init!(brutalize_preserves_fuzz_runs_override, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_preserves_fuzz_runs_override(prj: _, cmd: _) {
     prj.add_source(
         "FuzzTarget.sol",
         r#"
@@ -856,10 +873,11 @@ contract FuzzTargetTest is Test {
         .stdout_lossy();
 
     assert!(stdout.contains("test_fuzzIdentity(uint256) (runs: 1,"), "{stdout}");
-});
+}
 
 // --brutalize status output must not corrupt JUnit XML on stdout.
-forgetest_init!(brutalize_junit_stdout_is_xml, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_junit_stdout_is_xml(prj: _, cmd: _) {
     prj.add_source(
         "JUnitTarget.sol",
         r#"
@@ -896,10 +914,11 @@ contract JUnitTargetTest is Test {
     assert!(stdout.trim_start().starts_with("<?xml"), "{stdout}");
     assert!(!stdout.contains("Brutalizing source files"), "{stdout}");
     assert!(!stdout.contains("Brutalized 1 source files"), "{stdout}");
-});
+}
 
 // Project-local remappings must resolve to the copied/brutalized temp workspace, not the original.
-forgetest_init!(brutalize_rebases_project_local_remappings, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_rebases_project_local_remappings(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.auto_detect_remappings = false;
@@ -955,10 +974,11 @@ contract RemappedTargetTest {
         cmd.env("TMPDIR", &alias);
         cmd.assert_success();
     }
-});
+}
 
 // Nested casts should not produce overlapping replacements.
-forgetest_init!(brutalize_nested_casts_compile, |prj, cmd| {
+#[forgetest_init]
+fn brutalize_nested_casts_compile(prj: _, cmd: _) {
     prj.add_source(
         "NestedCasts.sol",
         r#"
@@ -998,4 +1018,4 @@ contract NestedCastsTest is Test {
 
     cmd.args(["test", "--brutalize", "--mc", "NestedCastsTest"]);
     cmd.assert_success();
-});
+}

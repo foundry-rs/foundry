@@ -8,7 +8,8 @@ use foundry_test_utils::TestCommand;
 
 // tests that `cast interface` excludes the constructor
 // <https://github.com/alloy-rs/core/issues/555>
-casttest!(interface_no_constructor, |prj, cmd| {
+#[casttest]
+fn interface_no_constructor(prj: _, cmd: _) {
     let interface = include_str!("../fixtures/interface.json");
 
     let path = prj.root().join("interface.json");
@@ -40,11 +41,12 @@ interface Interface {
 
 "#
     ]]);
-});
+}
 
 // tests that `cast interface --flatten` inlines inherited struct types into the interface
 // <https://github.com/foundry-rs/foundry/issues/9960>
-casttest!(interface_flatten, |prj, cmd| {
+#[casttest]
+fn interface_flatten(prj: _, cmd: _) {
     let interface = include_str!("../fixtures/interface_inherited_struct.json");
 
     let path = prj.root().join("interface_inherited_struct.json");
@@ -84,9 +86,10 @@ interface Interface {
 
 "#]
     ]);
-});
+}
 
-casttest!(interface_with_function_pointer_in_struct, |prj, cmd| {
+#[casttest]
+fn interface_with_function_pointer_in_struct(prj: _, cmd: _) {
     let abi = r#"[
         {
             "anonymous": false,
@@ -132,9 +135,10 @@ interface StructWithFunctionEvent {
 }
 
 "#]]);
-});
+}
 
-casttest!(interface_local_contract_does_not_write_artifacts, |prj, cmd| {
+#[casttest]
+fn interface_local_contract_does_not_write_artifacts(prj: _, cmd: _) {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "InterfaceTarget",
@@ -166,11 +170,12 @@ contract InterfaceTarget {
     cmd.cast_fuse().arg("interface").arg(&source).assert_success();
     let after = fs::read(&artifact).unwrap();
     assert_eq!(after, b"sentinel");
-});
+}
 
 // tests that fetches WETH interface from etherscan
 // <https://etherscan.io/token/0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2>
-casttest!(flaky_fetch_weth_interface_from_etherscan, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_weth_interface_from_etherscan(cmd: _) {
     cmd.args([
         "interface",
         "--etherscan-api-key",
@@ -204,11 +209,12 @@ interface WETH9 {
 }
 
 "#]]);
-});
+}
 
 // tests that fetches a sample contract creation code
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(flaky_fetch_creation_code_from_etherscan, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_creation_code_from_etherscan(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "creation-code",
@@ -223,11 +229,12 @@ casttest!(flaky_fetch_creation_code_from_etherscan, |_prj, cmd| {
 0x60566050600b82828239805160001a6073146043577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600080fdfea264697066735822122074c61e8e4eefd410ca92eec26e8112ec6e831d0a4bf35718fdd78b45d68220d064736f6c63430008070033
 
 "#]]);
-});
+}
 
 // tests that fetches a sample contract creation args bytes
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(flaky_fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_creation_code_only_args_from_etherscan(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "creation-code",
@@ -243,11 +250,12 @@ casttest!(flaky_fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000
 
 "#]]);
-});
+}
 
 // tests that displays a sample contract creation args
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(flaky_fetch_constructor_args_from_etherscan, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_constructor_args_from_etherscan(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "constructor-args",
@@ -262,11 +270,12 @@ casttest!(flaky_fetch_constructor_args_from_etherscan, |_prj, cmd| {
 0x00000000000000000000000000000000000014bddab3e51a57cff87a50000000 → Uint(420690000000000000000000000000000, 256)
 
 "#]]);
-});
+}
 
 // tests that displays a sample contract artifact
 // <https://etherscan.io/address/0x0923cad07f06b2d0e5e49e63b8b35738d4156b95>
-casttest!(flaky_fetch_artifact_from_etherscan, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_artifact_from_etherscan(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     cmd.args([
         "artifact",
@@ -285,10 +294,11 @@ casttest!(flaky_fetch_artifact_from_etherscan, |_prj, cmd| {
 }
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
-casttest!(flaky_fetch_src_blockscout, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_src_blockscout(cmd: _) {
     let url = "https://eth.blockscout.com/api";
 
     let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
@@ -310,9 +320,10 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+}
 
-casttest!(flaky_fetch_src_default, |_prj, cmd| {
+#[casttest]
+fn flaky_fetch_src_default(cmd: _) {
     let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
     let etherscan_api_key = next_etherscan_api_key();
 
@@ -325,9 +336,10 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
-});
+}
 
-casttest!(source_plain_and_directory, async |prj, cmd| {
+#[casttest]
+async fn source_plain_and_directory(prj: _, cmd: _) {
     let source = "pragma solidity ^0.8.0; contract Example {}";
     let response = json!({
         "status": "1", "message": "OK", "result": [{
@@ -359,10 +371,11 @@ casttest!(source_plain_and_directory, async |prj, cmd| {
     cmd.cast_fuse().args(args).arg("-d").arg(&directory).assert_empty_stdout();
     assert_eq!(fs::read_to_string(directory.join("Example/Contract.sol")).unwrap(), source);
     server.abort();
-});
+}
 
 // Tests that proxy interfaces include the implementation and remain valid Solidity.
-casttest!(interface_follows_etherscan_proxy_implementation, async |prj, cmd| {
+#[casttest]
+async fn interface_follows_etherscan_proxy_implementation(prj: _, cmd: _) {
     let orphan_proxy = Address::random();
     let unverified = Address::random();
     let malformed_proxy = Address::random();
@@ -618,4 +631,4 @@ interface Token_2 {
         .to_string(),
     );
     server.abort();
-});
+}
