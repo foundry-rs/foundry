@@ -144,6 +144,12 @@ pub trait FoundryEvmFactory:
     ) -> NestedEvmFor<'db, Self>
     where
         I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db;
+
+    /// Updates the execution spec and gas parameters using this family's configuration.
+    /// This does not reconstruct the instruction table or precompile registry.
+    fn set_execution_spec(context: &mut Self::FoundryContext<'_>, spec: Self::Spec) {
+        context.set_spec_and_gas_params(spec);
+    }
 }
 
 /// Object-safe EVM operations used by nested execution and fork replay.

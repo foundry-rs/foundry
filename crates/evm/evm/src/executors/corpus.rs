@@ -38,7 +38,11 @@ use super::corpus_io::{
     CorpusDirEntry, canonical_replay_dirs, read_corpus_dir, read_corpus_dir_strict,
 };
 use crate::{
-    executors::{Executor, RawCallResult, invariant::execute_tx},
+    executors::{
+        Executor, RawCallResult,
+        campaign::{CampaignCallKind, execute_invariant_replay_tx},
+        invariant::execute_tx,
+    },
     inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
 };
 use alloy_dyn_abi::JsonAbiExt;
@@ -788,7 +792,11 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             target.fuzzed_contracts,
             target.senders,
         ) {
-            let mut call_result = execute_tx(executor, tx)?;
+            let (kind, mut call_result) = if target.fuzzed_contracts.is_some() {
+                execute_invariant_replay_tx(executor, tx)?
+            } else {
+                (CampaignCallKind::Accepted, execute_tx(executor, tx)?)
+            };
             cmp_seq.push(
                 call_result
                     .evm_cmp_values
@@ -811,16 +819,13 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
                 }
             }
 
-            register_replay_created(
-                &call_result.state_changeset,
-                target.dynamic,
-                target.fuzzed_contracts,
-                &mut created,
-            );
-
-            // Commit only when running invariant / stateful tests.
-            if target.fuzzed_contracts.is_some() {
-                executor.commit(&mut call_result);
+            if kind == CampaignCallKind::Accepted {
+                register_replay_created(
+                    &call_result.state_changeset,
+                    target.dynamic,
+                    target.fuzzed_contracts,
+                    &mut created,
+                );
             }
 
             if trace_sync {
@@ -1921,15 +1926,18 @@ mod tests {
         inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey},
     };
     use alloy_dyn_abi::DynSolValue;
+    use foundry_cheatcodes::{Cheatcodes, CheatsConfig};
     use foundry_config::FuzzDictionaryConfig;
     use foundry_evm_core::{
         backend::Backend,
+        constants::MAGIC_ASSUME,
         evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
     };
     use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
     use revm::{
+        DatabaseRef,
         bytecode::Bytecode,
         database::{CacheDB, EmptyDB},
     };
@@ -2116,6 +2124,92 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.inner.insert(target, contract);
         FuzzRunIdentifiedContracts::new(targets, false)
+    }
+
+    #[test]
+    fn stateful_replay_restores_assumption_state_and_delays() {
+        let target = Address::repeat_byte(0x11);
+        let function = Function::parse("test(uint256)").unwrap();
+        let contracts = targeted_contracts_with_selective_functions(
+            target,
+            vec![function.clone()],
+            [function.selector()],
+        );
+        let mut rejected =
+            tx_for_function(target, &function, &[DynSolValue::Uint(U256::ZERO, 256)]);
+        rejected.warp = Some(U256::from(10));
+        rejected.roll = Some(U256::from(5));
+        let mut accepted = tx_for_function(target, &function, &[DynSolValue::Uint(U256::ONE, 256)]);
+        accepted.warp = Some(U256::from(3));
+        accepted.roll = Some(U256::from(2));
+
+        // Branch on the argument. The rejected branch writes state and returns MAGIC_ASSUME;
+        // the accepted branch writes the current timestamp. Both branches record comparisons.
+        let mut code = vec![0x60, 0x04, 0x35, 0x60, 0x00, 0x57];
+        code.extend_from_slice(&[0x60, 0x09, 0x60, 0x08, 0x10, 0x50, 0x60, 0x63, 0x5f, 0x55]);
+        code.push(0x6e); // PUSH15.
+        code.extend_from_slice(MAGIC_ASSUME);
+        code.extend_from_slice(&[0x5f, 0x52, 0x60, 0x0f, 0x60, 0x11, 0xf3]);
+        code[4] = code.len().try_into().unwrap();
+        code.extend_from_slice(&[0x5b, 0x60, 0x01, 0x60, 0x02, 0x10, 0x50, 0x42, 0x5f, 0x55, 0x00]);
+
+        for accept_last in [false, true] {
+            let mut executor = sync_test_executor(temp_corpus_dir(), target);
+            executor.inspector_mut().cheatcodes =
+                Some(Box::new(Cheatcodes::new(Arc::new(CheatsConfig::default()))));
+            executor.inspector_mut().collect_evm_cmp_log(true);
+            executor.set_code(target, Bytecode::new_raw(code.clone().into())).unwrap();
+            let initial_block = executor.evm_env().block_env.clone();
+            let initial_cheatcode_block =
+                executor.inspector().cheatcodes.as_ref().unwrap().block.clone();
+            let mut history_map = Vec::new();
+            let mut edge_indices = EdgeIndexMap::default();
+            let mut sancov_history_map = Vec::new();
+            let sequence =
+                [rejected.clone(), if accept_last { accepted.clone() } else { rejected.clone() }];
+            let outcome = replay_corpus_sequence_with_executor(
+                &sequence,
+                &mut executor,
+                ReplayTarget {
+                    stateless: None,
+                    fuzzed_contracts: Some(&contracts),
+                    dynamic: None,
+                    senders: None,
+                },
+                ReplayCoverage {
+                    history_map: &mut history_map,
+                    edge_indices: &mut edge_indices,
+                    sancov_history_map: &mut sancov_history_map,
+                    metrics: None,
+                },
+                false,
+                true,
+            )
+            .unwrap();
+            assert!(outcome.keep_entry);
+            assert_eq!(outcome.failed_replays, 0);
+            assert_eq!(outcome.cmp_seq.len(), sequence.len());
+            // Rejected inputs remain useful mutation seeds; this fix preserves their feedback.
+            assert!(outcome.cmp_seq.iter().all(|hints| !hints.is_empty()));
+            assert!(outcome.new_coverage);
+            assert!(history_map.iter().any(|&hit| hit != 0));
+            if accept_last {
+                let timestamp = initial_block.timestamp() + U256::from(3);
+                assert_eq!(executor.evm_env().block_env.timestamp(), timestamp);
+                assert_eq!(
+                    executor.evm_env().block_env.number(),
+                    initial_block.number() + U256::from(2)
+                );
+                assert_eq!(executor.backend().storage_ref(target, U256::ZERO).unwrap(), timestamp);
+            } else {
+                assert_eq!(executor.evm_env().block_env, initial_block);
+                assert_eq!(
+                    executor.inspector().cheatcodes.as_ref().unwrap().block,
+                    initial_cheatcode_block
+                );
+                assert_eq!(executor.backend().storage_ref(target, U256::ZERO).unwrap(), U256::ZERO);
+            }
+        }
     }
 
     // A corrupt/truncated corpus file (valid name, unparsable content) must surface as a per-entry
