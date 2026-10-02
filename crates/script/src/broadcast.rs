@@ -46,11 +46,14 @@ use foundry_common::{
     tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Config;
-use foundry_evm::core::{
-    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
-    evm::{FoundryEvmNetwork, TempoEvmNetwork},
-    fork::ResolvedFork,
-    opts::EvmOpts,
+use foundry_evm::{
+    core::{
+        constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+        evm::{FoundryEvmNetwork, TempoEvmNetwork},
+        fork::ResolvedFork,
+        opts::EvmOpts,
+    },
+    traces::CallKind,
 };
 use foundry_wallets::{
     TempoAccountsWallet,
@@ -58,7 +61,6 @@ use foundry_wallets::{
 };
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
-use revm_inspectors::tracing::types::CallKind;
 use tempo_alloy::{
     TempoNetwork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
