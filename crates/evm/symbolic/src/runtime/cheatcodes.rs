@@ -706,12 +706,12 @@ pub(crate) fn read_abi_string_arg(
 pub(crate) fn decode_cheatcode_args(
     cx: &mut SymCx,
     state: &PathState,
+    selector: [u8; 4],
     in_offset: usize,
     in_size: usize,
-    tys: Vec<DynSolType>,
 ) -> Result<Vec<DynSolValue>, SymbolicError> {
     let data = state.memory.read_concrete(cx, in_offset + 4, in_size.saturating_sub(4))?;
-    let value = DynSolType::Tuple(tys)
+    let value = DynSolType::Tuple(vm_params(selector))
         .abi_decode_sequence(&data)
         .map_err(|_| SymbolicError::Unsupported("symbolic cheatcode ABI decode"))?;
     let DynSolValue::Tuple(values) = value else {
@@ -720,70 +720,26 @@ pub(crate) fn decode_cheatcode_args(
     Ok(values)
 }
 
-pub(crate) const fn selector_has_string_reason(selector: [u8; 4]) -> bool {
-    matches!(
-        selector,
-        assertEq_15Call::SELECTOR
-            | assertEq_17Call::SELECTOR
-            | assertEq_19Call::SELECTOR
-            | assertEq_21Call::SELECTOR
-            | assertEq_23Call::SELECTOR
-            | assertEq_25Call::SELECTOR
-            | assertEq_27Call::SELECTOR
-            | assertNotEq_15Call::SELECTOR
-            | assertNotEq_17Call::SELECTOR
-            | assertNotEq_19Call::SELECTOR
-            | assertNotEq_21Call::SELECTOR
-            | assertNotEq_23Call::SELECTOR
-            | assertNotEq_25Call::SELECTOR
-            | assertNotEq_27Call::SELECTOR
-            | assertEqDecimal_1Call::SELECTOR
-            | assertEqDecimal_3Call::SELECTOR
-    )
-}
-
-pub(crate) const fn array_assertion_element_type(
-    selector: [u8; 4],
-) -> Result<DynSolType, SymbolicError> {
-    match selector {
-        assertEq_14Call::SELECTOR
-        | assertEq_15Call::SELECTOR
-        | assertNotEq_14Call::SELECTOR
-        | assertNotEq_15Call::SELECTOR => Ok(DynSolType::Bool),
-        assertEq_16Call::SELECTOR
-        | assertEq_17Call::SELECTOR
-        | assertNotEq_16Call::SELECTOR
-        | assertNotEq_17Call::SELECTOR => Ok(DynSolType::Uint(256)),
-        assertEq_18Call::SELECTOR
-        | assertEq_19Call::SELECTOR
-        | assertNotEq_18Call::SELECTOR
-        | assertNotEq_19Call::SELECTOR => Ok(DynSolType::Int(256)),
-        assertEq_20Call::SELECTOR
-        | assertEq_21Call::SELECTOR
-        | assertNotEq_20Call::SELECTOR
-        | assertNotEq_21Call::SELECTOR => Ok(DynSolType::Address),
-        assertEq_22Call::SELECTOR
-        | assertEq_23Call::SELECTOR
-        | assertNotEq_22Call::SELECTOR
-        | assertNotEq_23Call::SELECTOR => Ok(DynSolType::FixedBytes(32)),
-        assertEq_24Call::SELECTOR
-        | assertEq_25Call::SELECTOR
-        | assertNotEq_24Call::SELECTOR
-        | assertNotEq_25Call::SELECTOR => Ok(DynSolType::String),
-        assertEq_26Call::SELECTOR
-        | assertEq_27Call::SELECTOR
-        | assertNotEq_26Call::SELECTOR
-        | assertNotEq_27Call::SELECTOR => Ok(DynSolType::Bytes),
-        _ => Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode")),
+/// Returns the parameter types of a `Vm` cheatcode from its generated ABI signature.
+pub(crate) fn vm_params(selector: [u8; 4]) -> Vec<DynSolType> {
+    let signature = VmCalls::signature_by_selector(selector).unwrap_or_default();
+    let params = signature.find('(').map_or("()", |start| &signature[start..]);
+    match DynSolType::parse(params) {
+        Ok(DynSolType::Tuple(params)) => params,
+        _ => Vec::new(),
     }
 }
 
-pub(crate) fn is_full_word_array_assertion(selector: [u8; 4]) -> bool {
-    !selector_has_string_reason(selector)
-        && matches!(
-            array_assertion_element_type(selector),
-            Ok(DynSolType::Uint(256) | DynSolType::Int(256) | DynSolType::FixedBytes(32))
-        )
+pub(crate) const fn is_full_word_array_assertion(selector: [u8; 4]) -> bool {
+    matches!(
+        selector,
+        assertEq_16Call::SELECTOR
+            | assertEq_18Call::SELECTOR
+            | assertEq_22Call::SELECTOR
+            | assertNotEq_16Call::SELECTOR
+            | assertNotEq_18Call::SELECTOR
+            | assertNotEq_22Call::SELECTOR
+    )
 }
 
 pub(crate) fn dyn_string(value: &DynSolValue) -> Result<String, SymbolicError> {

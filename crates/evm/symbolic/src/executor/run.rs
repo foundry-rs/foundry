@@ -452,84 +452,35 @@ impl SymbolicExecutor {
                 }
                 state.depth += 1;
 
-                let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
-                    if !state.expectations_satisfied() {
-                        let Some((args, calldata_bytes)) = self
-                            .materialize_stateless_counterexample_if_branch_target_satisfied(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?
-                        else {
-                            *completed_paths += 1;
-                            break;
-                        };
-                        return Ok(SymbolicRunResult::Counterexample {
-                            args,
-                            calldata: calldata_bytes,
-                            stats: self.stats_with_paths(*completed_paths + 1),
-                        });
+                let outcome = match code.opcode(&mut self.cx, state.pc)? {
+                    Some(op) => {
+                        let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
+                        self.step(
+                            input.executor,
+                            &code,
+                            code.jump_table(),
+                            &mut state,
+                            &mut worklist,
+                            completed_paths,
+                            op,
+                        )?
                     }
-                    let candidate = self.collect_branch_candidate(
-                        branch_candidates.as_deref_mut(),
-                        input.function,
-                        &state,
-                    )?;
-                    if input.collect_success_input
-                        && state.satisfies_branch_target()
-                        && state.can_materialize_seed()
-                        && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
-                    {
-                        let input = match candidate {
-                            Some(input) => input,
-                            None => self.materialize_stateless_input(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?,
-                        };
-                        success_input = Some((state.depth, input));
-                    }
-                    *completed_paths += 1;
-                    normal_paths += 1;
-                    break;
+                    None => StepOutcome::Halt,
                 };
-
-                let _step_span = trace_span!("symbolic_step", pc = state.pc, op).entered();
-                match self.step(
-                    input.executor,
-                    &code,
-                    code.jump_table(),
-                    &mut state,
-                    &mut worklist,
-                    completed_paths,
-                    op,
-                )? {
+                match outcome {
                     StepOutcome::Continue => {}
-                    StepOutcome::Halt => {
-                        if !state.expectations_satisfied() {
-                            let Some((args, calldata_bytes)) = self
-                                .materialize_stateless_counterexample_if_branch_target_satisfied(
-                                    state.root_calldata.as_ref().ok_or_else(|| {
-                                        SymbolicError::Unsupported("missing root symbolic calldata")
-                                    })?,
-                                    input.function,
-                                    &state,
-                                )?
-                            else {
-                                *completed_paths += 1;
-                                break;
-                            };
-                            return Ok(SymbolicRunResult::Counterexample {
-                                args,
-                                calldata: calldata_bytes,
-                                stats: self.stats_with_paths(*completed_paths + 1),
-                            });
-                        }
+                    StepOutcome::AssumeRejected | StepOutcome::Forked => break,
+                    StepOutcome::Revert => {
+                        self.collect_branch_candidate(
+                            branch_candidates.as_deref_mut(),
+                            input.function,
+                            &state,
+                        )?;
+                        *completed_paths += 1;
+                        reverted_paths += 1;
+                        break;
+                    }
+                    StepOutcome::Halt if state.expectations_satisfied() => {
                         let candidate = self.collect_branch_candidate(
                             branch_candidates.as_deref_mut(),
                             input.function,
@@ -542,13 +493,7 @@ impl SymbolicExecutor {
                         {
                             let input = match candidate {
                                 Some(input) => input,
-                                None => self.materialize_stateless_input(
-                                    state.root_calldata.as_ref().ok_or_else(|| {
-                                        SymbolicError::Unsupported("missing root symbolic calldata")
-                                    })?,
-                                    input.function,
-                                    &state,
-                                )?,
+                                None => self.materialize_root_input(input.function, &state)?,
                             };
                             success_input = Some((state.depth, input));
                         }
@@ -556,34 +501,20 @@ impl SymbolicExecutor {
                         normal_paths += 1;
                         break;
                     }
-                    StepOutcome::Revert => {
-                        self.collect_branch_candidate(
-                            branch_candidates.as_deref_mut(),
-                            input.function,
-                            &state,
-                        )?;
-                        *completed_paths += 1;
-                        reverted_paths += 1;
-                        break;
-                    }
-                    StepOutcome::AssumeRejected => break,
-                    StepOutcome::Forked => break,
-                    StepOutcome::ExceptionalHalt | StepOutcome::Failure => {
-                        let Some((args, calldata_bytes)) = self
-                            .materialize_stateless_counterexample_if_branch_target_satisfied(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?
-                        else {
+                    StepOutcome::Halt | StepOutcome::ExceptionalHalt | StepOutcome::Failure => {
+                        if !state.satisfies_branch_target() {
                             *completed_paths += 1;
                             break;
-                        };
+                        }
+                        debug!(
+                            constraint_count = state.constraints.len(),
+                            "materializing counterexample from solver model"
+                        );
+                        let SymbolicConcreteInput { args, calldata } =
+                            self.materialize_root_input(input.function, &state)?;
                         return Ok(SymbolicRunResult::Counterexample {
                             args,
-                            calldata: calldata_bytes,
+                            calldata,
                             stats: self.stats_with_paths(*completed_paths + 1),
                         });
                     }
@@ -636,51 +567,21 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        let input = self.materialize_stateless_input(
-            state
-                .root_calldata
-                .as_ref()
-                .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?,
-            function,
-            state,
-        )?;
+        let input = self.materialize_root_input(function, state)?;
         candidates.push(input.clone());
         Ok(Some(input))
     }
 
-    fn materialize_stateless_counterexample_if_branch_target_satisfied(
+    /// Materializes the root call input for `state` from a solver model.
+    fn materialize_root_input(
         &mut self,
-        calldata: &SymbolicCalldata,
-        function: &Function,
-        state: &PathState,
-    ) -> Result<Option<(Vec<DynSolValue>, Bytes)>, SymbolicError> {
-        if !state.satisfies_branch_target() {
-            return Ok(None);
-        }
-        self.materialize_stateless_counterexample(calldata, function, state).map(Some)
-    }
-
-    pub(super) fn materialize_stateless_counterexample(
-        &mut self,
-        calldata: &SymbolicCalldata,
-        function: &Function,
-        state: &PathState,
-    ) -> Result<(Vec<DynSolValue>, Bytes), SymbolicError> {
-        debug!(
-            constraint_count = state.constraints.len(),
-            "materializing counterexample from solver model"
-        );
-        self.materialize_stateless_input(calldata, function, state)
-            .map(|input| (input.args, input.calldata))
-    }
-
-    /// Runs the `materialize_stateless_input` symbolic executor helper.
-    pub(super) fn materialize_stateless_input(
-        &mut self,
-        calldata: &SymbolicCalldata,
         function: &Function,
         state: &PathState,
     ) -> Result<SymbolicConcreteInput, SymbolicError> {
+        let calldata = state
+            .root_calldata
+            .as_ref()
+            .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?;
         let replayable_storage = state.world.replay_storage_symbols();
         let model = self.solver.model_with_replayable_storage(
             &mut self.cx,

@@ -609,19 +609,9 @@ impl SymbolicExecutor {
                 let filter = if selector == assumeNoRevert_0Call::SELECTOR {
                     AssumeNoRevert::Any
                 } else {
-                    let potential_revert = DynSolType::Tuple(vec![
-                        DynSolType::Address,
-                        DynSolType::Bool,
-                        DynSolType::Bytes,
-                    ]);
                     let single = selector == assumeNoRevert_1Call::SELECTOR;
-                    let ty = if single {
-                        potential_revert
-                    } else {
-                        DynSolType::Array(Box::new(potential_revert))
-                    };
                     let mut values =
-                        decode_cheatcode_args(&mut self.cx, state, in_offset, in_size, vec![ty])?;
+                        decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                     let value = values
                         .pop()
                         .ok_or(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"))?;
@@ -751,9 +741,9 @@ impl SymbolicExecutor {
                 let mut data = ExpectedRevertData::Any;
                 let mut reverter = None;
                 let mut count = 1;
-                for (index, param) in vm_params(selector).enumerate() {
+                for (index, param) in vm_params(selector).into_iter().enumerate() {
                     match param {
-                        "bytes4" => {
+                        DynSolType::FixedBytes(4) => {
                             let selector = read_abi_bytes4_words_arg(
                                 &mut self.cx,
                                 &state.memory,
@@ -763,7 +753,7 @@ impl SymbolicExecutor {
                             data =
                                 ExpectedRevertData::Prefix(SymBytes::exprs(&mut self.cx, selector));
                         }
-                        "bytes" => {
+                        DynSolType::Bytes => {
                             let bytes = read_abi_symbolic_dynamic_byte_exprs_arg(
                                 &mut self.cx,
                                 state,
@@ -774,7 +764,7 @@ impl SymbolicExecutor {
                             )?;
                             data = ExpectedRevertData::Exact(SymBytes::exprs(&mut self.cx, bytes));
                         }
-                        "address" => {
+                        DynSolType::Address => {
                             reverter = Some(read_abi_word_arg(
                                 &mut self.cx,
                                 &state.memory,
@@ -807,8 +797,9 @@ impl SymbolicExecutor {
             | expectEmit_5Call::SELECTOR
             | expectEmit_6Call::SELECTOR
             | expectEmit_7Call::SELECTOR => {
-                let params = vm_params(selector).collect::<Vec<_>>();
-                let checks = match params.iter().filter(|param| **param == "bool").count() {
+                let params = vm_params(selector);
+                let checks = match params.iter().filter(|param| **param == DynSolType::Bool).count()
+                {
                     0 => ExpectedEmitChecks::default(),
                     4 => ExpectedEmitChecks::from_non_anonymous_args(
                         &mut self.cx,
@@ -821,8 +812,8 @@ impl SymbolicExecutor {
                         args_offset,
                     )?,
                 };
-                let emitter = params.iter().position(|param| *param == "address");
-                let count = params.iter().position(|param| *param == "uint64");
+                let emitter = params.iter().position(|param| *param == DynSolType::Address);
+                let count = params.iter().position(|param| *param == DynSolType::Uint(64));
                 self.expect_emit_from_args(state, args_offset, checks, emitter, count)
             }
             expectCall_0Call::SELECTOR
@@ -838,9 +829,9 @@ impl SymbolicExecutor {
                 let mut gas = None;
                 let mut data = None;
                 let mut count = None;
-                for (index, param) in vm_params(selector).enumerate().skip(1) {
+                for (index, param) in vm_params(selector).into_iter().enumerate().skip(1) {
                     match param {
-                        "uint256" => {
+                        DynSolType::Uint(256) => {
                             value = Some(read_abi_concrete_word_arg(
                                 &mut self.cx,
                                 &state.memory,
@@ -849,7 +840,7 @@ impl SymbolicExecutor {
                                 "symbolic vm.expectCall",
                             )?);
                         }
-                        "bytes" => {
+                        DynSolType::Bytes => {
                             data = Some(read_abi_symbolic_dynamic_byte_exprs_arg(
                                 &mut self.cx,
                                 state,
@@ -919,9 +910,9 @@ impl SymbolicExecutor {
                 );
                 let message =
                     if revert { "symbolic vm.mockCallRevert" } else { "symbolic vm.mockCall" };
-                let params = vm_params(selector).collect::<Vec<_>>();
+                let params = vm_params(selector);
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
-                let value = (params[1] == "uint256")
+                let value = (params[1] == DynSolType::Uint(256))
                     .then(|| {
                         read_abi_concrete_word_arg(
                             &mut self.cx,
@@ -933,7 +924,7 @@ impl SymbolicExecutor {
                     })
                     .transpose()?;
                 let data_index = params.len() - 2;
-                let data = if params[data_index] == "bytes4" {
+                let data = if params[data_index] == DynSolType::FixedBytes(4) {
                     read_abi_bytes4_words_arg(&mut self.cx, &state.memory, args_offset, data_index)
                 } else {
                     read_abi_symbolic_dynamic_byte_exprs_arg(
@@ -1030,8 +1021,8 @@ impl SymbolicExecutor {
                 } else {
                     ("symbolic vm.prank", "symbolic vm.prank delegatecall")
                 };
-                let params = vm_params(selector).collect::<Vec<_>>();
-                if params.last() == Some(&"bool")
+                let params = vm_params(selector);
+                if params.last() == Some(&DynSolType::Bool)
                     && read_abi_bool_arg(
                         &mut self.cx,
                         &state.memory,
@@ -1048,7 +1039,7 @@ impl SymbolicExecutor {
                     args_offset,
                     0,
                 )?;
-                let origin = (params.get(1) == Some(&"address"))
+                let origin = (params.get(1) == Some(&DynSolType::Address))
                     .then(|| {
                         read_abi_address_word_or_symbolic_slot_arg(
                             &mut self.cx,
@@ -1101,7 +1092,7 @@ impl SymbolicExecutor {
             | deriveKey_1Call::SELECTOR
             | deriveKey_2Call::SELECTOR
             | deriveKey_3Call::SELECTOR => {
-                let params = vm_params(selector).collect::<Vec<_>>();
+                let params = vm_params(selector);
                 let mnemonic = read_abi_string_arg(
                     &mut self.cx,
                     &state.memory,
@@ -1109,7 +1100,7 @@ impl SymbolicExecutor {
                     0,
                     "symbolic vm.deriveKey",
                 )?;
-                let index_arg = if params[1] == "string" { 2 } else { 1 };
+                let index_arg = if params[1] == DynSolType::String { 2 } else { 1 };
                 let path = if index_arg == 2 {
                     read_abi_string_arg(
                         &mut self.cx,
@@ -1347,7 +1338,7 @@ impl SymbolicExecutor {
             makePersistent_0Call::SELECTOR
             | makePersistent_1Call::SELECTOR
             | makePersistent_2Call::SELECTOR => {
-                for index in 0..vm_params(selector).count() {
+                for index in 0..vm_params(selector).len() {
                     let account = read_abi_address_or_symbolic_slot_arg(
                         &mut self.cx,
                         state,
@@ -1359,13 +1350,8 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             makePersistent_3Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::Array(Box::new(DynSolType::Address))],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 for account in dyn_address_array(&values[0])? {
                     state.persistent_accounts.insert(account);
                 }
@@ -1378,13 +1364,8 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             revokePersistent_1Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::Array(Box::new(DynSolType::Address))],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 for account in dyn_address_array(&values[0])? {
                     state.persistent_accounts.remove(&account);
                 }
@@ -1524,13 +1505,8 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             blobhashesCall::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 state.block.set_blob_hashes(dyn_bytes32_array(&values[0])?);
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
@@ -1590,13 +1566,8 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![state.block.timestamp.clone()]))
             }
             labelCall::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::Address, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let account = dyn_address(&values[0])?;
                 let label = dyn_string(&values[1])?;
                 state.labels.insert(account, label);
@@ -1853,13 +1824,8 @@ impl SymbolicExecutor {
                 )))
             }
             replaceCall::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::String, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let output = dyn_string(&values[0])?
                     .replace(&dyn_string(&values[1])?, &dyn_string(&values[2])?);
                 Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
@@ -1868,13 +1834,8 @@ impl SymbolicExecutor {
                 )))
             }
             splitCall::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let input = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
                 let parts = if delimiter.is_empty() {
@@ -1891,26 +1852,16 @@ impl SymbolicExecutor {
                 )))
             }
             indexOfCall::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let input = dyn_string(&values[0])?;
                 let needle = dyn_string(&values[1])?;
                 let index = input.find(&needle).map(U256::from).unwrap_or(U256::MAX);
                 Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, index)]))
             }
             containsCall::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let contains = dyn_string(&values[0])?.contains(&dyn_string(&values[1])?);
                 Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(
                     &mut self.cx,
@@ -1940,8 +1891,9 @@ impl SymbolicExecutor {
                     encoded.as_bytes(),
                 )))
             }
-            bound_0Call::SELECTOR => self.handle_bound_uint(state, args_offset),
-            bound_1Call::SELECTOR => self.handle_bound_int(state, args_offset),
+            bound_0Call::SELECTOR | bound_1Call::SELECTOR => {
+                self.handle_bound(state, args_offset, selector == bound_1Call::SELECTOR)
+            }
             envExistsCall::SELECTOR => {
                 let name = read_abi_string_arg(
                     &mut self.cx,
@@ -1966,13 +1918,8 @@ impl SymbolicExecutor {
                 let name = VmCalls::name_by_selector(selector).unwrap_or_default();
                 let element_ty = DynSolType::parse(&name["env".len()..].to_ascii_lowercase())
                     .map_err(|_| SymbolicError::Unsupported("symbolic env type"))?;
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
                 self.stateless_retry_safe = false;
@@ -2033,13 +1980,8 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(&mut self.cx, value)]))
             }
             envOr_5Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::String],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 self.stateless_retry_safe = false;
                 let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
@@ -2049,13 +1991,8 @@ impl SymbolicExecutor {
                 )))
             }
             envOr_6Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::String, DynSolType::Bytes],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 self.stateless_retry_safe = false;
                 let value = match std::env::var(name) {
@@ -2071,20 +2008,12 @@ impl SymbolicExecutor {
             | envOr_11Call::SELECTOR
             | envOr_12Call::SELECTOR
             | envOr_13Call::SELECTOR => {
-                let array_ty = vm_params(selector).last().unwrap_or_default();
-                let element_ty = DynSolType::parse(array_ty.trim_end_matches("[]"))
-                    .map_err(|_| SymbolicError::Unsupported("symbolic env type"))?;
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![
-                        DynSolType::String,
-                        DynSolType::String,
-                        DynSolType::Array(Box::new(element_ty.clone())),
-                    ],
-                )?;
+                let params = vm_params(selector);
+                let Some(DynSolType::Array(element_ty)) = params.last().cloned() else {
+                    return Err(SymbolicError::Unsupported("symbolic env type"));
+                };
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let name = dyn_string(&values[0])?;
                 let delimiter = dyn_string(&values[1])?;
                 self.stateless_retry_safe = false;
@@ -2098,13 +2027,8 @@ impl SymbolicExecutor {
                 if !state.ffi_enabled {
                     return Err(SymbolicError::Unsupported("symbolic ffi disabled"));
                 }
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    vec![DynSolType::Array(Box::new(DynSolType::String))],
-                )?;
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
                 let args = dyn_string_array(&values[0])?;
                 if args.is_empty() || args[0].is_empty() {
                     return Err(SymbolicError::Unsupported("symbolic ffi empty command"));
@@ -2148,78 +2072,6 @@ impl SymbolicExecutor {
                 let condition = SymBoolExpr::eq(&mut self.cx, left, right);
                 self.handle_assertion(state, condition)
             }
-            assertEq_10Call::SELECTOR | assertEq_11Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    if selector == assertEq_10Call::SELECTOR {
-                        vec![DynSolType::String, DynSolType::String]
-                    } else {
-                        vec![DynSolType::String, DynSolType::String, DynSolType::String]
-                    },
-                )?;
-                let condition = SymBoolExpr::constant(
-                    &mut self.cx,
-                    dyn_string(&values[0])? == dyn_string(&values[1])?,
-                );
-                self.handle_assertion(state, condition)
-            }
-            assertEq_12Call::SELECTOR | assertEq_13Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    if selector == assertEq_12Call::SELECTOR {
-                        vec![DynSolType::Bytes, DynSolType::Bytes]
-                    } else {
-                        vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
-                    },
-                )?;
-                let condition = SymBoolExpr::constant(
-                    &mut self.cx,
-                    dyn_bytes(&values[0])? == dyn_bytes(&values[1])?,
-                );
-                self.handle_assertion(state, condition)
-            }
-            assertEq_14Call::SELECTOR
-            | assertEq_15Call::SELECTOR
-            | assertEq_16Call::SELECTOR
-            | assertEq_17Call::SELECTOR
-            | assertEq_18Call::SELECTOR
-            | assertEq_19Call::SELECTOR
-            | assertEq_20Call::SELECTOR
-            | assertEq_21Call::SELECTOR
-            | assertEq_22Call::SELECTOR
-            | assertEq_23Call::SELECTOR
-            | assertEq_24Call::SELECTOR
-            | assertEq_25Call::SELECTOR
-            | assertEq_26Call::SELECTOR
-            | assertEq_27Call::SELECTOR => {
-                let element_ty = array_assertion_element_type(selector)?;
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    if selector_has_string_reason(selector) {
-                        vec![
-                            DynSolType::Array(Box::new(element_ty.clone())),
-                            DynSolType::Array(Box::new(element_ty)),
-                            DynSolType::String,
-                        ]
-                    } else {
-                        vec![
-                            DynSolType::Array(Box::new(element_ty.clone())),
-                            DynSolType::Array(Box::new(element_ty)),
-                        ]
-                    },
-                )?;
-                let condition = SymBoolExpr::constant(&mut self.cx, values[0] == values[1]);
-                self.handle_assertion(state, condition)
-            }
             assertEqDecimal_0Call::SELECTOR
             | assertEqDecimal_1Call::SELECTOR
             | assertEqDecimal_2Call::SELECTOR
@@ -2245,43 +2097,29 @@ impl SymbolicExecutor {
                 let condition = condition.not(&mut self.cx);
                 self.handle_assertion(state, condition)
             }
-            assertNotEq_10Call::SELECTOR | assertNotEq_11Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    if selector == assertNotEq_10Call::SELECTOR {
-                        vec![DynSolType::String, DynSolType::String]
-                    } else {
-                        vec![DynSolType::String, DynSolType::String, DynSolType::String]
-                    },
-                )?;
-                let condition = SymBoolExpr::constant(
-                    &mut self.cx,
-                    dyn_string(&values[0])? != dyn_string(&values[1])?,
-                );
-                self.handle_assertion(state, condition)
-            }
-            assertNotEq_12Call::SELECTOR | assertNotEq_13Call::SELECTOR => {
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    if selector == assertNotEq_12Call::SELECTOR {
-                        vec![DynSolType::Bytes, DynSolType::Bytes]
-                    } else {
-                        vec![DynSolType::Bytes, DynSolType::Bytes, DynSolType::String]
-                    },
-                )?;
-                let condition = SymBoolExpr::constant(
-                    &mut self.cx,
-                    dyn_bytes(&values[0])? != dyn_bytes(&values[1])?,
-                );
-                self.handle_assertion(state, condition)
-            }
-            assertNotEq_14Call::SELECTOR
+            assertEq_10Call::SELECTOR
+            | assertEq_11Call::SELECTOR
+            | assertEq_12Call::SELECTOR
+            | assertEq_13Call::SELECTOR
+            | assertEq_14Call::SELECTOR
+            | assertEq_15Call::SELECTOR
+            | assertEq_16Call::SELECTOR
+            | assertEq_17Call::SELECTOR
+            | assertEq_18Call::SELECTOR
+            | assertEq_19Call::SELECTOR
+            | assertEq_20Call::SELECTOR
+            | assertEq_21Call::SELECTOR
+            | assertEq_22Call::SELECTOR
+            | assertEq_23Call::SELECTOR
+            | assertEq_24Call::SELECTOR
+            | assertEq_25Call::SELECTOR
+            | assertEq_26Call::SELECTOR
+            | assertEq_27Call::SELECTOR
+            | assertNotEq_10Call::SELECTOR
+            | assertNotEq_11Call::SELECTOR
+            | assertNotEq_12Call::SELECTOR
+            | assertNotEq_13Call::SELECTOR
+            | assertNotEq_14Call::SELECTOR
             | assertNotEq_15Call::SELECTOR
             | assertNotEq_16Call::SELECTOR
             | assertNotEq_17Call::SELECTOR
@@ -2295,26 +2133,11 @@ impl SymbolicExecutor {
             | assertNotEq_25Call::SELECTOR
             | assertNotEq_26Call::SELECTOR
             | assertNotEq_27Call::SELECTOR => {
-                let element_ty = array_assertion_element_type(selector)?;
-                let values = decode_cheatcode_args(
-                    &mut self.cx,
-                    state,
-                    in_offset,
-                    in_size,
-                    if selector_has_string_reason(selector) {
-                        vec![
-                            DynSolType::Array(Box::new(element_ty.clone())),
-                            DynSolType::Array(Box::new(element_ty)),
-                            DynSolType::String,
-                        ]
-                    } else {
-                        vec![
-                            DynSolType::Array(Box::new(element_ty.clone())),
-                            DynSolType::Array(Box::new(element_ty)),
-                        ]
-                    },
-                )?;
-                let condition = SymBoolExpr::constant(&mut self.cx, values[0] != values[1]);
+                let values =
+                    decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
+                let expect_equal = VmCalls::name_by_selector(selector) == Some("assertEq");
+                let condition =
+                    SymBoolExpr::constant(&mut self.cx, (values[0] == values[1]) == expect_equal);
                 self.handle_assertion(state, condition)
             }
             assertLt_0Call::SELECTOR | assertLt_1Call::SELECTOR => {
@@ -2591,11 +2414,4 @@ impl SymbolicExecutor {
             }
         }
     }
-}
-
-/// Returns the parameter types of a `Vm` cheatcode from its generated ABI signature.
-fn vm_params(selector: [u8; 4]) -> impl Iterator<Item = &'static str> {
-    let signature = VmCalls::signature_by_selector(selector).unwrap_or_default();
-    let (_, params) = signature.split_once('(').unwrap_or_default();
-    params.trim_end_matches(')').split(',').filter(|param| !param.is_empty())
 }

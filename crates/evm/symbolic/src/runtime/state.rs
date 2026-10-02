@@ -54,52 +54,13 @@ impl PathState {
         calldata: SymbolicCalldata,
         ffi_enabled: bool,
     ) -> Self {
-        let constraints = calldata.constraints().to_vec();
-        let call_data = calldata.call_data(cx);
-        let origin_word = SymExpr::constant(cx, address_word(caller));
-        let gas_price = SymExpr::zero(cx);
-        let block = SymbolicBlock::new(cx);
+        let mut state = Self::empty(cx, address, caller, ffi_enabled);
         let callvalue = SymExpr::constant(cx, callvalue);
-        let frame = CallFrame::new(cx, address, address, caller, callvalue, false, call_data);
-        Self {
-            depth: 0,
-            call_depth: 0,
-            origin: caller,
-            origin_word,
-            gas_price,
-            ffi_enabled,
-            block,
-            frame,
-            world: SymbolicWorld::default(),
-            prank: SymbolicPrank::default(),
-            constraints,
-            next_symbol: 0,
-            recorded_logs: None,
-            access_record: None,
-            root_calldata: Some(calldata),
-            invariant_predicate: false,
-            corpus_seed_models: Vec::new(),
-            branch_target: None,
-            branch_target_reached: false,
-            needs_feasibility_check: false,
-            loop_jumps: HashMap::default(),
-            expected_revert: None,
-            assume_no_revert_next_call: None,
-            expected_emit: None,
-            expected_calls: Vec::new(),
-            expected_creates: Vec::new(),
-            call_mocks: Vec::new(),
-            function_mocks: Vec::new(),
-            persistent_accounts: HashSet::default(),
-            wallets: IndexSet::default(),
-            labels: HashMap::default(),
-            storage_load_hooks: HashMap::default(),
-            storage_store_hooks: HashMap::default(),
-            mapping_storage_store_hooks: HashMap::default(),
-            mapping_hook_keccak_preimages: HashMap::default(),
-            storage_hook_active: false,
-            pending_storage_hook_revert: false,
-        }
+        let call_data = calldata.call_data(cx);
+        state.frame = CallFrame::new(cx, address, address, caller, callvalue, false, call_data);
+        state.constraints = calldata.constraints().to_vec();
+        state.root_calldata = Some(calldata);
+        state
     }
 
     pub(crate) fn empty(
