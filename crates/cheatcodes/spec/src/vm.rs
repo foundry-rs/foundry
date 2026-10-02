@@ -743,7 +743,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getEvmVersion() external pure returns (string memory evm);
 
-    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    /// Selects the test or script execution hardfork, e.g. `berlin`, `cancun`, or `tempo:T7`.
+    /// Uses the active network's version mappings and gas schedule. Does not change the network
+    /// or Solidity compiler target. On Tempo, runtime changes do not rebuild instructions or
+    /// precompiles; configure `hardfork` before execution to select a different revision.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
