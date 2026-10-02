@@ -62,6 +62,11 @@ impl<D: Database + Clone + 'static> Database for LocalState<D> {
     type Error = evm2::DatabaseError;
 
     fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
+        if self.database().bal_context.bal().is_none()
+            && let Some(account) = self.database().cache.accounts.get(address)
+        {
+            return Ok(account.clone());
+        }
         Database::get_account(self.database_mut(), address)
     }
 
@@ -69,14 +74,30 @@ impl<D: Database + Clone + 'static> Database for LocalState<D> {
         &mut self,
         code_hash: &B256,
     ) -> Result<evm2::bytecode::Bytecode, Self::Error> {
+        if let Some(code) = self.database().cache.contracts.get(code_hash) {
+            return Ok(code.clone());
+        }
         Database::get_code_by_hash(self.database_mut(), code_hash)
     }
 
     fn get_storage(&mut self, address: &Address, key: &U256) -> Result<U256, Self::Error> {
+        if self.database().bal_context.bal().is_none()
+            && let Some(value) = self
+                .database()
+                .cache
+                .storage
+                .get(address)
+                .and_then(|storage| storage.slots.get(key))
+        {
+            return Ok(*value);
+        }
         Database::get_storage(self.database_mut(), address, key)
     }
 
     fn get_block_hash(&mut self, number: &U256) -> Result<B256, Self::Error> {
+        if let Some(hash) = self.database().cache.block_hashes.get(number) {
+            return Ok(*hash);
+        }
         Database::get_block_hash(self.database_mut(), number)
     }
 }
@@ -84,7 +105,26 @@ impl<D: Database + Clone + 'static> Database for LocalState<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use evm2::{bytecode::Bytecode, evm::InMemoryDB};
+    use evm2::{
+        bytecode::Bytecode,
+        evm::{InMemoryDB, bal::Bal},
+    };
+
+    #[test]
+    fn cached_reads_respect_attached_bal() {
+        let address = Address::with_last_byte(1);
+        let key = U256::from(2);
+        let mut state = LocalState::default();
+        state.database_mut().insert_account_info(&address, AccountInfo::default().with_nonce(7));
+        state.database_mut().insert_account_storage(&address, &key, &U256::from(3));
+        assert_eq!(Database::get_account(&mut state, &address).unwrap().unwrap().nonce, 7);
+        assert_eq!(Database::get_storage(&mut state, &address, &key).unwrap(), U256::from(3));
+
+        // Strict BAL coverage takes precedence over cached account and storage values.
+        state.database_mut().bal_context.set_bal(Arc::new(Bal::new()));
+        assert!(Database::get_account(&mut state, &address).is_err());
+        assert!(Database::get_storage(&mut state, &address, &key).is_err());
+    }
 
     #[test]
     fn backing_reads_and_commits_remain_isolated_across_clones() {
