@@ -1,5 +1,6 @@
 //! Core test functionality tests
 
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_test_utils::str;
 use serde_json::Value;
 
@@ -224,6 +225,40 @@ test/ListTests.t.sol
         .arg("test/ListTests.t.sol")
         .assert_success()
         .stdout_eq("{\"test/ListTests.t.sol\":{\"ListTests\":[\"test_alpha\"]}}\n");
+});
+
+// Listing tests must not write ABI-only artifacts that later cached builds treat as fresh.
+forgetest!(test_list_does_not_poison_build_cache, |prj, cmd| {
+    let artifact = prj.root().join("out/ListCache.t.sol/ListCacheTest.json");
+    let cache = prj.root().join("cache/solidity-files-cache.json");
+    // Extra output files bypass the ABI cache and exercise the uncached fallback.
+    for extra_output_files in [vec![], vec![ContractOutputSelection::Metadata]] {
+        prj.update_config(|config| config.extra_output_files = extra_output_files.clone());
+        prj.add_test(
+            "ListCache.t.sol",
+            "contract ListCacheTest { function test_value() public pure { require(1 == 1); } }",
+        );
+        cmd.forge_fuse().arg("build").assert_success();
+        let artifact_before = std::fs::read_to_string(&artifact).unwrap();
+        let cache_before = std::fs::read_to_string(&cache).unwrap();
+
+        prj.add_test(
+            "ListCache.t.sol",
+            "contract ListCacheTest { function test_value() public pure { require(1 == 2); } }",
+        );
+        cmd.forge_fuse().args(["test", "--list"]).assert_success();
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), artifact_before);
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), cache_before);
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ListCache.t.sol:ListCacheTest
+[FAIL: EvmError: Revert] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+    }
 });
 
 forgetest_init!(evm_profile_requires_execution_trace, |prj, cmd| {

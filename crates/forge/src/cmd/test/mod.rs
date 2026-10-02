@@ -39,7 +39,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project, compile_abi_project_cached},
+    compile::{ProjectCompiler, compile_abi_project_cached},
     external_compiler::is_external_artifact,
     fs, sh_status, sh_warn, shell,
 };
@@ -1655,7 +1655,7 @@ impl TestArgs {
         self.apply_test_config_overrides(&mut config);
 
         // Set up the project.
-        let mut project = config.project()?;
+        let project = config.project()?;
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1698,7 +1698,10 @@ impl TestArgs {
             } else {
                 compiler
             };
-            (compile_abi_project(&mut project, compiler)?, BTreeSet::new(), None)
+            // Listing must not replace full artifacts with ABI-only ones, which later cached
+            // builds would treat as fresh.
+            let mut project = config.create_project(config.cache, true)?;
+            (compile_abi_project_cached(&mut project, compiler)?, BTreeSet::new(), None)
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
