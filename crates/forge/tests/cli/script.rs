@@ -1343,7 +1343,7 @@ contract InterruptedResume is Script {
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
 });
 
-forgetest_async!(resume_keeps_unseen_legacy_pending_hash, |prj, cmd| {
+forgetest_async!(resume_rebroadcasts_unseen_legacy_pending_hash, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(
         "InterruptedResume.s.sol",
@@ -1427,8 +1427,8 @@ contract InterruptedResume is Script {
     api.anvil_set_auto_mine(true).await.unwrap();
     prj.update_config(|config| config.transaction_timeout = 1);
 
-    // The endpoint no longer returns the legacy hash, which does not prove it was never accepted,
-    // so resume fails closed instead of signing a replacement.
+    // Preserve legacy resume behavior: when the endpoint no longer returns the hash,
+    // resume prepares and signs the missing transaction again.
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "InterruptedResume",
@@ -1439,15 +1439,12 @@ contract InterruptedResume is Script {
         "--resume",
         "--slow",
     ]);
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: Durable submission 0x[..] is not currently visible; refusing to discard its recovery identity
-...
-"#]]);
+    cmd.assert_success();
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
-    assert_eq!(sequence["pending"], serde_json::json!([pending_hash]));
-    assert_eq!(sequence["transactions"][0]["hash"], pending_hash);
-    assert_eq!(submissions.lock().unwrap().len(), 1);
-    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 0);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 3);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
 });
 
 forgetest_async!(resume_reconciles_receipt_visible_signed_attempt, |prj, cmd| {

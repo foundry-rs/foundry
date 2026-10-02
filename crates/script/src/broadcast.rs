@@ -564,16 +564,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
         let progress_ref = &progress;
         let config = &self.script_config.config;
-        let replayable_hashes = (0..self.sequence.sequences().len())
-            .map(|sequence| self.sequence.replayable_hashes(sequence))
+        let submission_hashes = (0..self.sequence.sequences().len())
+            .map(|sequence| self.sequence.submission_hashes(sequence))
             .collect::<Vec<_>>();
         let futs = self
             .sequence
             .sequences_mut()
             .iter_mut()
-            .zip(replayable_hashes)
+            .zip(submission_hashes)
             .enumerate()
-            .map(|(sequence_idx, (sequence, replayable_hashes))| async move {
+            .map(|(sequence_idx, (sequence, (durable_hashes, replayable_hashes)))| async move {
                 let rpc_url = sequence.rpc_url();
                 let provider =
                     Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
@@ -584,7 +584,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         &provider,
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
-                        &replayable_hashes,
+                        (&durable_hashes, &replayable_hashes),
                     )
                     .await
             })
@@ -1038,7 +1038,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
-                        let replayable_hashes = self.sequence.replayable_hashes(i);
+                        let (durable_hashes, replayable_hashes) =
+                            self.sequence.submission_hashes(i);
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                         progress
@@ -1048,7 +1049,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 &provider,
                                 self.script_config.config.transaction_timeout,
                                 self.args.confirmations,
-                                &replayable_hashes,
+                                (&durable_hashes, &replayable_hashes),
                             )
                             .await?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
@@ -2100,7 +2101,7 @@ mod tests {
         sequence.sequences_mut()[0].receipts.push(completed);
 
         assert_eq!(sequence.unrecorded_signed_attempts(0), [(0, first)]);
-        assert_eq!(sequence.replayable_hashes(0), [first, second]);
+        assert_eq!(sequence.submission_hashes(0).1, [first, second]);
 
         sequence.sequences_mut()[0].add_pending(0, first);
 
