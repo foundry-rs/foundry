@@ -37,6 +37,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | lastFrameGasCall::SELECTOR
         | stopExpectSafeMemoryCall::SELECTOR
         | stopSnapshotGas_0Call::SELECTOR
+        | getHardforkCall::SELECTOR
         | getEvmVersionCall::SELECTOR
         | getFoundryVersionCall::SELECTOR
         | projectRootCall::SELECTOR
@@ -85,6 +86,7 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
         | toBase64URL_0Call::SELECTOR
         | toBase64URL_1Call::SELECTOR
         | breakpoint_0Call::SELECTOR
+        | setHardforkCall::SELECTOR
         | setEvmVersionCall::SELECTOR
         | sleepCall::SELECTOR
         | accessListCall::SELECTOR

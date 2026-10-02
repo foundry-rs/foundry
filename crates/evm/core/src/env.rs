@@ -4,6 +4,7 @@ use alloy_consensus::{Transaction as _, Typed2718};
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
+use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::celo::CELO_DYNAMIC_FEE_TX_TYPE;
 use revm::{
     Context, Database, Journal,
@@ -18,10 +19,13 @@ use revm::{
 };
 use std::fmt::Debug;
 use tempo_alloy::primitives::{TEMPO_TX_TYPE_ID, TempoTxEnvelope};
-use tempo_revm::{TempoBlockEnv, TempoTxEnv};
+use tempo_revm::{TempoBlockEnv, TempoTxEnv, gas_params::tempo_gas_params};
 
 #[cfg(feature = "optimism")]
-use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
+use op_revm::{OpSpecId, transaction::deposit::DEPOSIT_TRANSACTION_TYPE};
+
+#[cfg(feature = "base")]
+use base_common_evm::BaseSpecId;
 
 pub use alloy_evm::EvmEnv;
 
@@ -462,19 +466,66 @@ pub trait FoundryCfg:
     /// Mutable reference to the underlying configuration.
     fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec>;
 
-    /// Updates the hardfork and its gas parameters.
-    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
-        self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
-    }
+    /// Updates the hardfork and its network-specific gas parameters.
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec);
 }
 
-impl<SPEC: Into<SpecId> + Copy + Debug> FoundryCfg for CfgEnv<SPEC> {
+impl FoundryCfg for CfgEnv<SpecId> {
     fn cfg_env(&self) -> &Self {
         self
     }
 
     fn cfg_env_mut(&mut self) -> &mut Self {
         self
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.set_spec_and_mainnet_gas_params(spec);
+    }
+}
+
+#[cfg(feature = "optimism")]
+impl FoundryCfg for CfgEnv<OpSpecId> {
+    fn cfg_env(&self) -> &Self {
+        self
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut Self {
+        self
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.set_spec_and_mainnet_gas_params(spec);
+    }
+}
+
+#[cfg(feature = "base")]
+impl FoundryCfg for CfgEnv<BaseSpecId> {
+    fn cfg_env(&self) -> &Self {
+        self
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut Self {
+        self
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.set_spec_and_mainnet_gas_params(spec);
+    }
+}
+
+impl FoundryCfg for CfgEnv<TempoHardfork> {
+    fn cfg_env(&self) -> &Self {
+        self
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut Self {
+        self
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.spec = spec;
+        self.set_gas_params(tempo_gas_params(spec));
     }
 }
 
@@ -1122,8 +1173,7 @@ mod tests {
     use alloy_serde::WithOtherFields;
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use foundry_evm_hardforks::TempoHardfork;
-    use revm::database::EmptyDB;
+    use revm::{context_interface::cfg::GasParams, database::EmptyDB};
     use std::num::NonZeroU64;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction,
@@ -1133,7 +1183,19 @@ mod tests {
     use tempo_revm::ExecutionContext;
 
     #[cfg(feature = "base")]
-    use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseTransaction, BaseUpgrade};
+    use base_common_evm::{BaseEvmFactory, BaseTransaction, BaseUpgrade};
+
+    #[test]
+    fn tempo_spec_refresh_preserves_network_gas() {
+        for spec in [TempoHardfork::T3, TempoHardfork::T7, TempoHardfork::T14] {
+            let mut evm =
+                TempoEvmFactory::default().create_evm(EmptyDB::default(), EvmEnv::default());
+            evm.ctx_mut().set_spec_and_gas_params(spec);
+            assert_eq!(evm.ctx().cfg().spec, spec);
+            assert_eq!(evm.ctx().cfg().gas_params, tempo_gas_params(spec));
+            assert_ne!(evm.ctx().cfg().gas_params, GasParams::new_spec(SpecId::OSAKA));
+        }
+    }
 
     #[test]
     fn eth_evm_foundry_context_ext_implementation() {
@@ -1721,7 +1783,6 @@ mod tests {
         use alloy_op_evm::{OpEvmFactory, OpTx};
         use op_alloy_consensus::{OpTxEnvelope, TxDeposit, transaction::OpTransactionInfo};
         use op_alloy_rpc_types::Transaction as OpRpcTransaction;
-        use op_revm::OpSpecId;
 
         #[test]
         fn op_evm_foundry_context_ext_implementation() {

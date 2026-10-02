@@ -4,6 +4,7 @@ pragma solidity >=0.8.20;
 import {Test, Vm} from "forge-std/Test.sol";
 
 interface EvmVm {
+    function _expectCheatcodeRevert(bytes calldata reason) external;
     function getEvmVersion() external pure returns (string memory evm);
     function setEvmVersion(string calldata evm) external;
     function isImplicitlyApproved(address spender) external view returns (bool);
@@ -47,14 +48,17 @@ contract TempoImplicitApprovalTest is Test {
     // Foundry's default test sender; genesis mints the fee tokens to this address.
     address constant TEST_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
-    /// On non-T5 specs the implicit list is empty.
-    function test_cheatcode_isImplicitlyApproved_reports_pre_t5() public {
+    /// A rejected revision change preserves the T5 precompiles and cheatcode semantics.
+    function test_rejected_hardfork_preserves_implicit_approval() public {
+        evm._expectCheatcodeRevert(
+            bytes(
+                "changing Tempo hardforks during execution is unsupported; set hardfork = \"tempo:<revision>\" before execution so instructions, precompiles, and gas parameters agree"
+            )
+        );
         evm.setEvmVersion("T4");
-        assertEq(evm.getEvmVersion(), "t4");
-        assertFalse(evm.isImplicitlyApproved(TIP_FEE_MANAGER));
-        assertFalse(evm.isImplicitlyApproved(STABLECOIN_DEX));
-        assertFalse(evm.isImplicitlyApproved(TIP20_CHANNEL_RESERVE));
-        assertFalse(evm.isImplicitlyApproved(address(0xBEEF)));
+        assertEq(evm.getEvmVersion(), "t5");
+        assertTrue(evm.isImplicitlyApproved(TIP_FEE_MANAGER));
+        assertTrue(IAddressRegistry(ADDRESS_REGISTRY).isImplicitlyApproved(TIP_FEE_MANAGER));
     }
 
     /// On T5 the three listed precompiles are implicitly approved; nothing else is.
@@ -183,5 +187,17 @@ contract TempoImplicitApprovalTest is Test {
     /// `assumeImplicitApproval` is a no-op for a listed spender.
     function test_assumeImplicitApproval_positive_t5() public view {
         evm.assumeImplicitApproval(TIP_FEE_MANAGER);
+    }
+}
+
+contract TempoPreT5ImplicitApprovalTest is Test {
+    EvmVm constant evm = EvmVm(address(vm));
+
+    function test_pre_t5_implicit_approval_is_empty() public view {
+        assertEq(evm.getEvmVersion(), "t4");
+        assertFalse(evm.isImplicitlyApproved(0xfeEC000000000000000000000000000000000000));
+        assertFalse(evm.isImplicitlyApproved(0xDEc0000000000000000000000000000000000000));
+        assertFalse(evm.isImplicitlyApproved(0x4d50500000000000000000000000000000000000));
+        assertFalse(evm.isImplicitlyApproved(address(0xBEEF)));
     }
 }

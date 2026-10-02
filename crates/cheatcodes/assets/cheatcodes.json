@@ -6813,6 +6813,26 @@
     },
     {
       "func": {
+        "id": "getHardfork",
+        "description": "Returns the active network's execution hardfork name in lowercase, e.g. `cancun` or `t5`.\nThis is independent of the Solidity compiler's EVM target.",
+        "declaration": "function getHardfork() external pure returns (string memory hardfork);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "getHardfork()",
+        "selector": "0x5dbcbfbc",
+        "selectorBytes": [
+          93,
+          188,
+          191,
+          188
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getLabel",
         "description": "Gets the label for the specified address.",
         "declaration": "function getLabel(address account) external view returns (string memory currentLabel);",
@@ -11142,7 +11162,7 @@
     {
       "func": {
         "id": "setEvmVersion",
-        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\n**Note:** The execution evm version is not the same as the compilation one.",
+        "description": "Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.\nPrefer `setHardfork` for explicit network hardfork selection. Tempo rejects Ethereum\nversion names and runtime revision changes; configure its hardfork before execution.\n**Note:** The execution evm version is not the same as the compilation one.",
         "declaration": "function setEvmVersion(string calldata evm) external;",
         "visibility": "external",
         "mutability": "",
@@ -11153,6 +11173,26 @@
           23,
           159,
           90
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setHardfork",
+        "description": "Selects an execution hardfork of the active network, e.g. `cancun` or `tempo:T5`.\nDoes not change the network or compiler target. Tempo only accepts its current hardfork;\nselect another Tempo revision with `hardfork` in foundry.toml before execution.",
+        "declaration": "function setHardfork(string calldata hardfork) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setHardfork(string)",
+        "selector": "0xa6633833",
+        "selectorBytes": [
+          166,
+          99,
+          56,
+          51
         ]
       },
       "group": "evm",

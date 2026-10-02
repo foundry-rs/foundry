@@ -32,7 +32,9 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor, merge_child_state, prepare_child_state},
+    evm::{
+        FoundryEvmNetwork, SpecFor, TxEnvFor, TxEnvelopeFor, merge_child_state, prepare_child_state,
+    },
     refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
@@ -56,7 +58,7 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
+use foundry_config::{ExecutionSpec, FoundryHardfork, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -1550,10 +1552,39 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { evm } = self;
-        let spec_id = evm_spec_id_from_str(evm)
-            .ok_or_else(|| Error::from(format!("invalid evm version {evm}")))?;
-        ccx.state.execution_evm_version = Some(spec_id);
+        if let Some(spec_id) = ccx.ecx.cfg().spec().runtime_hardfork(evm).map_err(Error::from)? {
+            ccx.state.execution_evm_version = Some(spec_id);
+        }
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for setHardforkCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { hardfork } = self;
+        let hardfork = hardfork.trim();
+        // Require a protocol hardfork, without the legacy compiler-target conversion.
+        SpecFor::<FEN>::from_network_hardfork(hardfork)
+            .or_else(|| {
+                FoundryHardfork::from_str(hardfork)
+                    .ok()
+                    .and_then(SpecFor::<FEN>::from_foundry_hardfork)
+            })
+            .ok_or_else(|| {
+                Error::from(format!("invalid hardfork {hardfork} for the active network"))
+            })?;
+        if let Some(spec_id) =
+            ccx.ecx.cfg().spec().runtime_hardfork(hardfork).map_err(Error::from)?
+        {
+            ccx.state.execution_evm_version = Some(spec_id);
+        }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for getHardforkCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        getEvmVersionCall {}.apply_stateful(ccx)
     }
 }
 

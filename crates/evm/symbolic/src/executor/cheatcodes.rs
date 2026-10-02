@@ -2467,6 +2467,12 @@ impl SymbolicExecutor {
             | noAccessListCall::SELECTOR => {
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
+            setHardforkCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.setHardfork not modeled"));
+            }
+            getHardforkCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.getHardfork not modeled"));
+            }
             setEvmVersionCall::SELECTOR => {
                 return Err(SymbolicError::Unsupported("symbolic vm.setEvmVersion not modeled"));
             }

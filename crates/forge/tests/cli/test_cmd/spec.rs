@@ -2076,34 +2076,58 @@ forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
+    prj.add_test("TempoHardfork.t.sol", include_str!("../../fixtures/TempoHardfork.t.sol"));
+    for hardfork in ["tempo:T3", "tempo:T7", "tempo:T14"] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--network",
+                "tempo",
+                "--hardfork",
+                hardfork,
+                "--mc",
+                "TempoHardforkTest",
+            ])
+            .assert_success();
+    }
+});
 
+forgetest_init!(test_set_hardfork_ethereum, |prj, cmd| {
     prj.add_test(
-        "TempoEvmVersion.t.sol",
+        "Hardfork.t.sol",
+        &include_str!("../../../../../testdata/default/cheats/Hardfork.t.sol")
+            .replace("utils/Test.sol", "forge-std/Test.sol"),
+    );
+    cmd.args(["test", "--mc", "HardforkTest"]).assert_success();
+});
+
+#[cfg(feature = "optimism")]
+forgetest_init!(test_set_hardfork_optimism, |prj, cmd| {
+    prj.add_test(
+        "OptimismHardfork.t.sol",
         r#"
-pragma solidity >=0.8.20;
-
 import {Test} from "forge-std/Test.sol";
-
-interface EvmVm {
-    function getEvmVersion() external pure returns (string memory evm);
-    function setEvmVersion(string calldata evm) external;
+interface HardforkVm {
+    function setHardfork(string calldata hardfork) external;
+    function getHardfork() external pure returns (string memory);
+    function setEvmVersion(string calldata version) external;
+    function _expectCheatcodeRevert(bytes calldata reason) external;
 }
-
-contract TempoEvmVersionTest is Test {
-    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
-
-    function test_set_tempo_evm_version() public {
-        evm.setEvmVersion("T3");
-        assertEq(evm.getEvmVersion(), "t3");
-
-        evm.setEvmVersion("tempo:T2");
-        assertEq(evm.getEvmVersion(), "t2");
+contract OptimismHardforkTest is Test {
+    HardforkVm constant forks = HardforkVm(address(vm));
+    function testNativeHardforkAndLegacyCompilerAlias() public {
+        forks.setHardfork("optimism:fjord");
+        assertEq(forks.getHardfork(), "fjord");
+        forks._expectCheatcodeRevert("invalid hardfork cancun for the active network");
+        forks.setHardfork("cancun");
+        assertEq(forks.getHardfork(), "fjord");
+        forks.setEvmVersion("cancun");
+        assertEq(forks.getHardfork(), "ecotone");
     }
 }
-   "#,
+"#,
     );
-
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
+    cmd.args(["test", "--network", "optimism", "--mc", "OptimismHardforkTest"]).assert_success();
 });
 
 forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
@@ -2145,9 +2169,7 @@ contract TempoDefaultEvmVersionTest is Test {{
 forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
-        // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
-        // here is what activates the T5 precompiles and selectors. `vm.setEvmVersion` only
-        // flips the cheatcode-visible spec.
+        // Tempo instructions and precompiles must be constructed for the same hardfork.
         config.hardfork = Some(FoundryHardfork::Tempo(TempoHardfork::T5));
     });
 
@@ -2155,6 +2177,17 @@ forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
     prj.add_test("TempoImplicitApproval.t.sol", fixture);
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "tempo",
+            "--hardfork",
+            "tempo:T4",
+            "--mc",
+            "TempoPreT5ImplicitApprovalTest",
+        ])
+        .assert_success();
 });
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:

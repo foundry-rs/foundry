@@ -743,7 +743,20 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getEvmVersion() external pure returns (string memory evm);
 
+    /// Returns the active network's execution hardfork name in lowercase, e.g. `cancun` or `t5`.
+    /// This is independent of the Solidity compiler's EVM target.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getHardfork() external pure returns (string memory hardfork);
+
+    /// Selects an execution hardfork of the active network, e.g. `cancun` or `tempo:T5`.
+    /// Does not change the network or compiler target. Tempo only accepts its current hardfork;
+    /// select another Tempo revision with `hardfork` in foundry.toml before execution.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function setHardfork(string calldata hardfork) external;
+
     /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    /// Prefer `setHardfork` for explicit network hardfork selection. Tempo rejects Ethereum
+    /// version names and runtime revision changes; configure its hardfork before execution.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
