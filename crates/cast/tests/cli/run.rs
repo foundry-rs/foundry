@@ -526,9 +526,8 @@ casttest!(cast_run_discovers_fork_endpoint_once, async |_prj, cmd| {
 
         cmd.cast_fuse().args(["run", &tx_hash, "--rpc-url", &endpoint]).args(args).assert_success();
 
-        // Discovery reads two agreeing snapshots.
-        assert_eq!(chain_ids.lock().unwrap().len(), 2, "{args:?}");
-        assert_eq!(node_infos.lock().unwrap().len(), 2, "{args:?}");
+        assert_eq!(chain_ids.lock().unwrap().len(), 1, "{args:?}");
+        assert_eq!(node_infos.lock().unwrap().len(), 1, "{args:?}");
     }
 });
 

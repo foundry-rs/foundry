@@ -35,7 +35,7 @@ use url::Url;
 ///
 /// Resolution revalidates the endpoint identity around its remote reads. A cached discovery that
 /// found no Anvil identity has nothing to revalidate and is reused instead, so the chain ID and
-/// the `anvil_nodeInfo` probe of such an endpoint are requested by discovery only.
+/// the `anvil_nodeInfo` probe of such an endpoint are requested once, by discovery.
 ///
 /// An implicit `latest` selector remains unchanged in these options; only the returned
 /// [`ResolvedFork`] is pinned to the exact block observed during resolution.
@@ -446,12 +446,12 @@ impl EvmOpts {
     /// Returns the chain ID of the configured endpoint if its cached discovery found no Anvil
     /// identity.
     ///
-    /// Discovery only caches an identity after two agreeing snapshots. Without Anvil node info
-    /// that identity is derived from the chain ID alone: there is no instance, hardfork, or
-    /// upstream fork that a reset could change between two reads. Later snapshots of the same
-    /// endpoint therefore reuse the discovered chain ID instead of requesting `eth_chainId` and
-    /// probing `anvil_nodeInfo` again. An endpoint that `node_info_probe` or a cached identity
-    /// identifies as Anvil is never reused and keeps its strict revalidation.
+    /// Without Anvil node info the identity is derived from the chain ID alone: there is no
+    /// instance, hardfork, or upstream fork that a reset could change between two reads. Later
+    /// snapshots of the same endpoint therefore reuse the discovered chain ID instead of
+    /// requesting `eth_chainId` and probing `anvil_nodeInfo` again. An endpoint that
+    /// `node_info_probe` or a cached identity identifies as Anvil is never reused and keeps its
+    /// strict revalidation.
     fn discovered_non_anvil_chain_id(
         &self,
         node_info_probe: AnvilNodeInfoProbe,
@@ -711,9 +711,10 @@ impl EvmOpts {
     ///
     /// Each attempt reads `eth_chainId` and the optional Anvil identity methods before and after,
     /// and returns only when both snapshots agree. Before Anvil is positively identified, a failed
-    /// `anvil_nodeInfo` probe is treated as absence of optional Anvil identity information for that
-    /// snapshot. Later probe failures are strict. This method does not mutate or cache the returned
-    /// identity in `self`.
+    /// `anvil_nodeInfo` probe is treated as absence of optional Anvil identity information: the
+    /// identity then depends on the chain ID alone and is returned from the first snapshot without
+    /// a confirming one. Later probe failures are strict. This method does not mutate or cache the
+    /// returned identity in `self`.
     pub async fn discover_fork_endpoint(&self) -> eyre::Result<ForkEndpointIdentity> {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
@@ -724,12 +725,18 @@ impl EvmOpts {
                 .get_chain_id()
                 .await
                 .wrap_err("failed to retrieve chain ID from fork endpoint")?;
-            let before_node_info = node_info_probe.request(&provider).await?;
+            let Some(before_node_info) = node_info_probe.request(&provider).await? else {
+                return Self::non_anvil_fork_endpoint_identity(
+                    fork_url,
+                    before_chain_id,
+                    Some(unknown_fallback),
+                );
+            };
             let before = Self::resolve_fork_endpoint_identity(
                 &provider,
                 fork_url,
                 before_chain_id,
-                before_node_info,
+                Some(before_node_info),
                 Some(unknown_fallback),
                 EndpointHardforkPolicy::Optional,
             )
@@ -2421,10 +2428,10 @@ mod tests {
                 .await;
         let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
-        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
 
-        assert!(identity.reported_hardfork.is_some());
-        assert!(identity.instance_id.is_some());
+        assert!(fork.context().hardfork.is_some());
+        assert!(fork.context().instance_id.is_some());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2462,9 +2469,8 @@ mod tests {
         let probes = || (chain_ids.lock().unwrap().len(), node_infos.lock().unwrap().len());
         let mut evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
 
-        // Discovery reads two agreeing snapshots.
         evm_opts.infer_network_from_fork().await.unwrap();
-        assert_eq!(probes(), (2, 2));
+        assert_eq!(probes(), (1, 1));
         assert_eq!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork, None);
 
         evm_opts.infer_network_from_fork().await.unwrap();
@@ -2478,11 +2484,11 @@ mod tests {
             .unwrap();
         let _backend =
             crate::backend::Backend::<crate::evm::EthEvmNetwork>::spawn(Some(fork)).unwrap();
-        assert_eq!(probes(), (2, 2));
+        assert_eq!(probes(), (1, 1));
 
         // Explicit discovery always inspects the endpoint.
         evm_opts.discover_fork_endpoint().await.unwrap();
-        assert_eq!(probes(), (4, 4));
+        assert_eq!(probes(), (2, 2));
     }
 
     #[test]
