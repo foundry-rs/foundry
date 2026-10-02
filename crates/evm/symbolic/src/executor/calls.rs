@@ -66,18 +66,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &in_size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &in_size,
-                            max_limit,
-                            "symbolic CALL input size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &in_size,
+                    max_limit,
+                    "symbolic CALL input size",
+                )?;
                 BoundedCopySize::Symbolic { size: in_size, max_size }
             }
         };
@@ -92,18 +86,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &out_size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &out_size,
-                            max_limit,
-                            "symbolic CALL output size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &out_size,
+                    max_limit,
+                    "symbolic CALL output size",
+                )?;
                 BoundedCopySize::Symbolic { size: out_size, max_size }
             }
         };

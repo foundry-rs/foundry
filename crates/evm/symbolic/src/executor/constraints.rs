@@ -60,6 +60,11 @@ impl SymbolicExecutor {
         max: usize,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
+        if let Some(bound) =
+            state.upper_bound_usize(&mut self.cx, expr).filter(|bound| *bound <= max)
+        {
+            return Ok(bound);
+        }
         let mut above_max = state.constraints.clone();
         above_max.push(SymBoolExpr::cmp_word_const(
             &mut self.cx,

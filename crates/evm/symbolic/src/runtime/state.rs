@@ -771,29 +771,23 @@ impl PathState {
         self.constrained_word(cx, &expr).ok_or(SymbolicError::Unsupported(reason))
     }
 
-    pub(crate) fn bin_word(
-        &mut self,
-        cx: &mut SymCx,
-        op: SymBinOp,
-    ) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn bin_word(&mut self, cx: &mut SymCx, op: SymBinOp) -> Result<(), SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        self.stack.push(SymExpr::binop(cx, op, a, b))?;
-        Ok(StepOutcome::Continue)
+        self.stack.push(SymExpr::binop(cx, op, a, b))
     }
 
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
         cx: &mut SymCx,
         op: SymBinOp,
-    ) -> Result<StepOutcome, SymbolicError> {
+    ) -> Result<(), SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
         let zero = SymExpr::zero(cx);
         let condition = SymBoolExpr::eq(cx, b.clone(), zero.clone());
         let expr = SymExpr::binop(cx, op, a, b);
-        self.stack.push(SymExpr::ite(cx, condition, zero, expr))?;
-        Ok(StepOutcome::Continue)
+        self.stack.push(SymExpr::ite(cx, condition, zero, expr))
     }
 
     pub(crate) fn cmp_word_condition(
@@ -806,25 +800,15 @@ impl PathState {
         Ok(SymBoolExpr::cmp(cx, op, a, b))
     }
 
-    pub(crate) fn shift_word(
-        &mut self,
-        cx: &mut SymCx,
-        kind: ShiftKind,
-    ) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn shift_word(&mut self, cx: &mut SymCx, op: SymBinOp) -> Result<(), SymbolicError> {
         let shift = self.stack.pop()?;
         let value = self.stack.pop()?;
-        let op = match kind {
-            ShiftKind::Shl => SymBinOp::Shl,
-            ShiftKind::Shr => SymBinOp::Shr,
-            ShiftKind::Sar => SymBinOp::Sar,
-        };
         let expr = SymExpr::binop(cx, op, value, shift);
         let result = expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr);
-        self.stack.push(result)?;
-        Ok(StepOutcome::Continue)
+        self.stack.push(result)
     }
 
-    pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn exp_word(&mut self, cx: &mut SymCx) -> Result<(), SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(cx, &exponent) {
@@ -858,8 +842,7 @@ impl PathState {
             }
             expr
         };
-        self.stack.push(result)?;
-        Ok(StepOutcome::Continue)
+        self.stack.push(result)
     }
 
     pub(crate) fn balance<FEN: FoundryEvmNetwork>(

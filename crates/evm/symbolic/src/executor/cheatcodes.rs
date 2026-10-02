@@ -2424,18 +2424,12 @@ impl SymbolicExecutor {
             randomBytesCall::SELECTOR => {
                 let len = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
                 let max_limit = self.config.max_dynamic_length as usize;
-                let max_len = state
-                    .upper_bound_usize(&mut self.cx, &len)
-                    .filter(|len| *len <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &len,
-                            max_limit,
-                            "symbolic randomBytes length",
-                        )
-                    })?;
+                let max_len = self.solver_upper_bound_usize(
+                    state,
+                    &len,
+                    max_limit,
+                    "symbolic randomBytes length",
+                )?;
                 let bytes = state.fresh_bytes(&mut self.cx, max_len);
                 Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(
                     &mut self.cx,
