@@ -278,7 +278,7 @@ fn parse_toml_document(toml: &str) -> Result<DocumentMut> {
 /// necessary.
 ///
 /// Only the item at `key` is rewritten, so comments and formatting elsewhere in the document are
-/// kept, as are the comments and whitespace around a replaced value.
+/// kept.
 fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Result<()> {
     let parts = split_value_key(key)?;
 
@@ -316,19 +316,62 @@ fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Resu
         // the comments above it.
         match parent.get_mut(key_to_insert) {
             Some(existing) if !existing.is_none() => {
-                if let (Some(old), Some(new)) = (existing.as_value(), item.as_value_mut()) {
-                    *new.decor_mut() = old.decor().clone();
-                } else if let (Some(old), Some(new)) = (existing.as_table(), item.as_table_mut()) {
-                    *new.decor_mut() = old.decor().clone();
-                    new.set_position(old.position());
+                let representation_changed =
+                    std::mem::discriminant(existing) != std::mem::discriminant(&item);
+                let new_is_value = item.is_value();
+                match (&*existing, &mut item) {
+                    (Item::Value(old), Item::Value(new)) => {
+                        *new.decor_mut() = old.decor().clone();
+                    }
+                    (Item::Table(old), Item::Table(new)) => {
+                        *new.decor_mut() = old.decor().clone();
+                        new.set_position(old.position());
+                        if !old.is_implicit() {
+                            new.set_implicit(false);
+                        }
+                    }
+                    (Item::ArrayOfTables(old), Item::ArrayOfTables(new)) => {
+                        for (old, new) in old.iter().zip(new.iter_mut()) {
+                            *new.decor_mut() = old.decor().clone();
+                            new.set_position(old.position());
+                        }
+                    }
+                    _ => {}
                 }
                 *existing = item;
+                if representation_changed {
+                    let mut key = parent.key_mut(key_to_insert).expect("replaced key must exist");
+                    key.leaf_decor_mut().clear();
+                    if new_is_value {
+                        key.leaf_decor_mut().set_suffix(" ");
+                    }
+                }
             }
             _ => {
+                let inline_key_prefix = is_inline.then(|| {
+                    parent
+                        .iter_mut()
+                        .filter_map(|(_, item)| item.as_value_mut())
+                        .last()
+                        .and_then(|value| {
+                            let suffix = value.decor().suffix()?.as_str()?;
+                            if suffix.is_empty() {
+                                return None;
+                            }
+                            let suffix = suffix.to_owned();
+                            value.decor_mut().set_suffix("");
+                            Some(suffix)
+                        })
+                        .unwrap_or_else(|| " ".to_string())
+                });
                 parent.insert(key_to_insert, item);
-                if is_inline {
-                    // Respace the inline table so the new key is separated like the others.
-                    parent.fmt();
+                if let Some(prefix) = inline_key_prefix {
+                    // Separate the new key without reformatting the existing inline table.
+                    parent
+                        .key_mut(key_to_insert)
+                        .expect("inserted key must exist")
+                        .leaf_decor_mut()
+                        .set_prefix(prefix);
                 }
             }
         }
@@ -435,6 +478,42 @@ chain_id = 8453
         assert_eq!(
             upsert(CONFIG, "{\"monthly\": 9}", ".mainnet.limits.extra").unwrap(),
             CONFIG.replace("weekly = 5_000 }", "weekly = 5_000, extra = { monthly = 9 } }")
+        );
+    }
+
+    #[test]
+    fn upsert_toml_preserves_inline_table_formatting_when_adding_keys() {
+        let toml = "limits={daily=1_000,weekly = 5_000}\n";
+        assert_eq!(
+            upsert(toml, "9000", ".limits.monthly").unwrap(),
+            "limits={daily=1_000,weekly = 5_000, monthly = 9000}\n"
+        );
+
+        let toml = "limits = {\n    # Keep this cap conservative.\n    daily  = 1_000,\n    weekly = 5_000,\n}\n";
+        assert_eq!(
+            upsert(toml, "9000", ".limits.monthly").unwrap(),
+            "limits = {\n    # Keep this cap conservative.\n    daily  = 1_000,\n    weekly = 5_000, monthly = 9000,\n}\n"
+        );
+    }
+
+    #[test]
+    fn upsert_toml_replaces_arrays_of_tables_in_place() {
+        let toml = "# Production RPC endpoints.\n[[rpc]]\nurl = \"old\"\n";
+        assert_eq!(
+            upsert(toml, r#"[{"url":"new"}]"#, ".rpc").unwrap(),
+            "# Production RPC endpoints.\n[[rpc]]\nurl = \"new\"\n"
+        );
+    }
+
+    #[test]
+    fn upsert_toml_formats_keys_when_the_item_shape_changes() {
+        let toml = "# Deployment settings.\n[deployment] # maintained by the deploy script\nchain_id = 1\n";
+        assert_eq!(upsert(toml, "disabled", ".deployment").unwrap(), "deployment = \"disabled\"\n");
+
+        let toml = "# Production RPC endpoints.\nrpc = []\n";
+        assert_eq!(
+            upsert(toml, r#"[{"url":"a"},{"url":"b"}]"#, ".rpc").unwrap(),
+            "[[rpc]]\nurl = \"a\"\n\n[[rpc]]\nurl = \"b\"\n"
         );
     }
 
