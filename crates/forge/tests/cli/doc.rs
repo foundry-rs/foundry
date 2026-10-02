@@ -748,6 +748,50 @@ function act(uint256 v) external override;
     );
 });
 
+forgetest_init!(homepage_neutralizes_esm_statement_lines, |prj, cmd| {
+    prj.add_source("Probe.sol", "contract Probe {}");
+    fs::write(
+        prj.root().join("README.md"),
+        concat!(
+            "\u{feff}",
+            r#"import fs from "node:fs"
+
+# Probe
+
+export const generated = fs.writeFileSync("marker", "")
+
+Replace <TOKEN>, see `wrapped
+import span` here.
+
+```js
+import inert from "fenced"
+```
+"#
+        ),
+    )
+    .unwrap();
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/index.mdx"), None),
+        str![[r#"
+&#105;&#109;port fs from "node:fs"
+
+# Probe
+
+&#101;xport const generated = fs.writeFileSync("marker", "")
+
+Replace &lt;TOKEN>, see `wrapped
+import span` here.
+
+```js
+import inert from "fenced"
+```
+
+"#]],
+    );
+});
+
 forgetest_init!(natspec_fences_are_limited_to_standalone_descriptions, |prj, cmd| {
     prj.add_source(
         "FenceScope.sol",
