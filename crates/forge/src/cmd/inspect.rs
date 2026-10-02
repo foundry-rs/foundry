@@ -22,7 +22,7 @@ use foundry_compilers::{
             EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
-    solc::SolcLanguage,
+    solc::{SolcCompiler, SolcLanguage},
 };
 use path_slash::PathExt;
 use regex::Regex;
@@ -75,9 +75,6 @@ impl InspectArgs {
         } else {
             build.compiler.optimize
         };
-
-        // Get the solc version if specified
-        let solc_version = build.use_solc.clone();
 
         // Build modified Args
         let modified_build_args = BuildOpts {
@@ -182,7 +179,8 @@ impl InspectArgs {
                 print_json(&artifact.userdoc)?;
             }
             ContractArtifactField::Ewasm => {
-                print_json_str(&artifact.ewasm, None)?;
+                let ewasm = artifact.ewasm.as_ref().ok_or_else(|| missing_error("EWASM output"))?;
+                print_json_str(ewasm, None)?;
             }
             ContractArtifactField::Errors => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_errors);
@@ -193,8 +191,15 @@ impl InspectArgs {
                 print_errors_events(&out, false, wrap)?;
             }
             ContractArtifactField::StandardJson => {
-                let standard_json = if let Some(version) = solc_version {
-                    let version = version.parse()?;
+                let version = match &project.compiler.solc {
+                    Some(SolcCompiler::Specific(solc)) => Some(solc.version.clone()),
+                    _ => artifact
+                        .metadata
+                        .as_ref()
+                        .map(|metadata| metadata.compiler.version.parse())
+                        .transpose()?,
+                };
+                let standard_json = if let Some(version) = version {
                     let mut standard_json =
                         project.standard_json_input(&target_path)?.normalize_evm_version(&version);
                     standard_json.settings.sanitize(&version, SolcLanguage::Solidity);

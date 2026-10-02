@@ -57,6 +57,11 @@ impl CleanArgs {
     pub fn run(self) -> Result<()> {
         let Self { chains, blocks, etherscan } = self;
 
+        eyre::ensure!(
+            blocks.is_empty() || !chains.iter().any(|chain| matches!(chain, ChainOrAll::All)),
+            "--blocks requires explicit chains and cannot be used with 'all'"
+        );
+
         for chain_or_all in chains {
             match chain_or_all {
                 ChainOrAll::NamedChain(chain) => {

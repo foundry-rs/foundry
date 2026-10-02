@@ -14,11 +14,11 @@ use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
+use foundry_evm_traces::CallKind;
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
 };
-use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
@@ -288,8 +288,9 @@ impl Cheatcode for readLineCall {
 impl Cheatcode for readLinkCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { linkPath: path } = self;
-        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-        let target = fs::read_link(path)?;
+        // Validate the resolved target, but keep the link itself for read_link.
+        state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let target = fs::read_link(state.config.root.join(path))?;
         Ok(target.display().to_string().abi_encode())
     }
 }
@@ -517,8 +518,14 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
 
-    // If active broadcast then set flag to deploy from code.
-    if let Some(broadcast) = &mut ccx.state.broadcast {
+    let depth = ccx.ecx.journal().depth();
+
+    // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
+    // depth, as for native creates.
+    if let Some(broadcast) = &mut ccx.state.broadcast
+        && depth == broadcast.depth
+        && ccx.caller == broadcast.original_caller
+    {
         broadcast.deploy_from_code = true;
     }
 
@@ -531,7 +538,6 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
     // original depth just as the native create inspector would.
-    let depth = ccx.ecx.journal().depth();
     let mut caller = ccx.caller;
     if let Some(prank) = ccx.state.get_prank(depth).copied()
         && depth >= prank.depth
@@ -567,6 +573,16 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         ),
         ccx,
     );
+
+    // Clear the flag in case the synthetic create was not broadcast, and end a single-call
+    // broadcast at the original depth as native create cleanup would.
+    if let Some(broadcast) = &mut ccx.state.broadcast {
+        broadcast.deploy_from_code = false;
+        if broadcast.single_call && depth == broadcast.depth {
+            ccx.ecx.tx_mut().set_caller(broadcast.original_origin);
+            ccx.state.broadcast = None;
+        }
+    }
 
     // Restore the prank state at the original depth as native create cleanup would.
     if let Some(prank) = ccx.state.get_prank(depth).copied()

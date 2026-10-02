@@ -5,7 +5,8 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 use super::symbolic_helpers::z3_available;
 use crate::skip_unless_z3;
 
-forgetest_init!(symbolic_opcode_byte_and_signextend_accept_symbolic_index, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_opcode_byte_and_signextend_accept_symbolic_index(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_opcode_byte_and_signextend_accept_symbolic_index because z3 is not available"
@@ -66,9 +67,10 @@ contract SymbolicByteSignextend {
     );
     assert!(!stdout.contains("symbolic BYTE index"), "{stdout}");
     assert!(!stdout.contains("symbolic SIGNEXTEND index"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_shift_opcodes_accept_symbolic_amount, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_shift_opcodes_accept_symbolic_amount(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_shift_opcodes_accept_symbolic_amount because z3 is not available"
@@ -120,9 +122,10 @@ contract SymbolicShift {
 "#]],
     );
     assert!(!stdout.contains("symbolic shift amount"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_exp_accepts_larger_bounded_symbolic_base, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_exp_accepts_larger_bounded_symbolic_base(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_exp_accepts_larger_bounded_symbolic_base because z3 is not available"
@@ -157,9 +160,10 @@ contract SymbolicExp {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXP base"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_exp_accepts_bounded_symbolic_exponent, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_exp_accepts_bounded_symbolic_exponent(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_exp_accepts_bounded_symbolic_exponent because z3 is not available"
@@ -195,9 +199,10 @@ contract SymbolicExpExponent {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_exp_accepts_wider_symbolic_exponent_for_concrete_base, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_exp_accepts_wider_symbolic_exponent_for_concrete_base(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_exp_accepts_wider_symbolic_exponent_for_concrete_base because z3 is not available"
@@ -233,12 +238,13 @@ contract SymbolicExpWideExponent {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
-});
+}
 
 // The engine does not model gas consumption, so `GAS` / `gasleft()` must fail
 // closed instead of returning a concrete max value or a symbolic approximation
 // that can produce non-replaying counterexamples.
-forgetest_init!(symbolic_gasleft_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gasleft_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gasleft_reports_unsupported");
 
     prj.add_test(
@@ -264,9 +270,10 @@ contract SymbolicGasLeftBound {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_gas_can_be_used_as_call_operand, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gas_can_be_used_as_call_operand(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gas_can_be_used_as_call_operand");
 
     prj.add_test(
@@ -319,9 +326,10 @@ contract SymbolicGasCallOperand {
 "#]],
     );
     assert!(!stdout.contains("GAS/gasleft() not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_explicit_call_gas_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_explicit_call_gas_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_explicit_call_gas_reports_unsupported");
 
     prj.add_test(
@@ -401,9 +409,10 @@ contract SymbolicExplicitCallGas {
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkTransferGasCap()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_gas_derived_call_operand_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gas_derived_call_operand_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gas_derived_call_operand_reports_unsupported");
 
     prj.add_test(
@@ -449,12 +458,13 @@ contract SymbolicDerivedGasCallOperand {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled
 "#]],
     );
-});
+}
 
 // Only the bytes that actually reach the callee matter: the 31 high bytes of a word whose
 // low byte depends on `gasleft()` are provably zero, so copying just those into CALL input
 // must stay supported.
-forgetest_init!(symbolic_gas_excluded_call_calldata_bytes_supported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gas_excluded_call_calldata_bytes_supported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gas_excluded_call_calldata_bytes_supported");
 
     prj.add_test(
@@ -509,9 +519,10 @@ contract SymbolicGasExcludedCallData {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasIncludedInCallData()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_gas_in_call_calldata_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gas_in_call_calldata_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gas_in_call_calldata_reports_unsupported");
 
     prj.add_test(
@@ -554,9 +565,10 @@ contract SymbolicGasCallData {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_gas_as_call_target_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gas_as_call_target_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gas_as_call_target_reports_unsupported");
 
     prj.add_test(
@@ -586,9 +598,10 @@ contract SymbolicGasCallTarget {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_gas_as_call_input_bounds_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gas_as_call_input_bounds_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gas_as_call_input_bounds_reports_unsupported");
 
     prj.add_test(
@@ -629,7 +642,7 @@ contract SymbolicGasCallInputBounds {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
 // Plan-compliant target behavior for the `GAS` / `gasleft()` opcode: any
 // symbolic path that branches on `gasleft()` should taint the result as
@@ -645,7 +658,8 @@ incomplete symbolic execution (Stuck): unsupported symbolic execution feature: G
 // non-replaying counterexample (if it lets Z3 pick `gasleft = 50`), it should
 // emit a `[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic
 // execution feature: GAS/gasleft() not modeled]` result.
-forgetest_init!(symbolic_gasleft_branch_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_gasleft_branch_reports_unsupported(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_gasleft_branch_reports_unsupported");
 
     prj.add_test(
@@ -678,7 +692,7 @@ contract SymbolicGasLeftIncomplete {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
 // Plan-compliant target behavior for the symbolic Keccak heuristic: any
 // result reached on a path whose proof obligation reduces to a Keccak
@@ -686,7 +700,8 @@ incomplete symbolic execution (Stuck): unsupported symbolic execution feature: G
 // must surface explicit Keccak/SHA3 vocabulary — either tainted as
 // Incomplete or carrying a user-facing warning — because the engine does
 // not model SHA3 collision resistance as a real cryptographic proof.
-forgetest_init!(symbolic_keccak_dependent_safe_result_must_taint_incomplete, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_keccak_dependent_safe_result_must_taint_incomplete(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_keccak_dependent_safe_result_must_taint_incomplete");
 
     prj.add_test(
@@ -731,4 +746,4 @@ incomplete symbolic execution (Error): solver error: solver model does not satis
         has_keccak_signal,
         "expected Keccak-heuristic taint or warning in output, got:\n{stdout}"
     );
-});
+}

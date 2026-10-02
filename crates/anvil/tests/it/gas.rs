@@ -432,7 +432,8 @@ async fn test_estimate_gas_block_precompile() {
         .await
         .unwrap();
 
-    assert_eq!(gas, U256::from(0x52a8));
+    // 21000 base, 64 for the four calldata bytes and 803 inside ArbSys.
+    assert_eq!(gas, U256::from(21_867));
 }
 
 #[tokio::test(flavor = "multi_thread")]

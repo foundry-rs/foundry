@@ -7,7 +7,8 @@ use crate::{
         backend::{
             cheats::{CheatEcrecover, CheatsManager},
             db::{
-                AnvilCacheDB, BLOCKHASH_HISTORY, Db, MaybeFullDatabase, SerializableState, StateDb,
+                AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
+                SerializableState, StateDb,
             },
             executor::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
@@ -987,6 +988,22 @@ fn call_config_from_tracer_config(
     GethDebugTracerConfig(tracer_config).into_call_config()
 }
 
+/// Builds Parity trace results for `result`, with `db` as the state before the transaction.
+///
+/// The state diff treats empty accounts as absent, so created and newly funded accounts are
+/// marked as added.
+fn parity_trace_results(
+    inspector: TracingInspector,
+    result: &ResultAndState<HaltReason>,
+    trace_types: &HashSet<TraceType>,
+    db: impl revm::DatabaseRef<Error = DatabaseError>,
+) -> Result<TraceResults, BlockchainError> {
+    inspector
+        .into_parity_builder()
+        .into_trace_results_with_state(result, trace_types, EmptyAsAbsentDb(db))
+        .map_err(Into::into)
+}
+
 pub type State = foundry_evm::utils::StateChangeset;
 
 #[derive(Clone, Debug, Default)]
@@ -1024,6 +1041,7 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time_offset: i128,
     next_block_timestamp: Option<u64>,
+    next_block_prevrandao: Option<B256>,
 }
 
 #[cfg(test)]
@@ -1330,6 +1348,13 @@ impl<N: Network> Backend<N> {
     /// Sets the balance of the given address
     pub async fn set_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
         self.db.write().await.set_balance(address, balance)
+    }
+
+    /// Increases the balance of the given address, saturating at `U256::MAX`.
+    pub(crate) async fn add_balance(&self, address: Address, balance: U256) -> DatabaseResult<()> {
+        let mut db = self.db.write().await;
+        let current_balance = db.basic(address)?.unwrap_or_default().balance;
+        db.set_balance(address, current_balance.saturating_add(balance))
     }
 
     /// Sets the code of the given address
@@ -1746,7 +1771,6 @@ impl<N: Network> Backend<N> {
         InspectorTxConfig {
             print_traces: self.print_traces,
             print_logs: self.print_logs,
-            enable_steps_tracing: self.enable_steps_tracing,
             call_trace_decoder: self.call_trace_decoder(),
         }
     }
@@ -1885,6 +1909,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time_offset,
                 next_block_timestamp,
+                next_block_prevrandao: self.cheats.next_block_prevrandao(),
             },
         );
         id
@@ -1908,6 +1933,12 @@ impl<N: Network> Backend<N> {
     fn block_env_from_header(&self, header: &impl BlockHeader) -> BlockEnv {
         let mut block = block_env_from_header::<BlockEnv>(header);
         block.number = self.evm_block_number(header.number());
+        if let Some(excess_blob_gas) = header.excess_blob_gas() {
+            block.set_blob_excess_gas_and_price(
+                excess_blob_gas,
+                self.blob_params().update_fraction as u64,
+            );
+        }
         block
     }
 
@@ -2044,9 +2075,6 @@ impl<N: Network> Backend<N> {
     /// Builds an inspector configured for block mining (tracing always enabled).
     fn build_mining_inspector(&self) -> AnvilInspector {
         let mut inspector = AnvilInspector::default().with_tracing();
-        if self.enable_steps_tracing {
-            inspector = inspector.with_steps_tracing();
-        }
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
@@ -2809,8 +2837,8 @@ impl<N: Network> Backend<N> {
         I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let tx = pending.transaction.as_ref();
-        let sender = *pending.sender();
+        #[cfg(any(feature = "base", feature = "optimism"))]
+        let (tx, sender) = (pending.transaction.as_ref(), *pending.sender());
         #[cfg(feature = "base")]
         if self.is_base() {
             let base_tx: BaseTransaction<TxEnv> =
@@ -2819,9 +2847,8 @@ impl<N: Network> Backend<N> {
             let result = self.transact_base_with_inspector_ref(db, evm_env, inspector, base_tx)?;
             return Ok((result, base));
         }
-        if tx.is_tempo() {
-            let tx_env: TempoTxEnv =
-                FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+        if self.is_tempo() {
+            let tx_env: TempoTxEnv = build_tx_env_for_pending(pending, self.cheats());
             let base = tx_env.inner.clone();
             let result = self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)?;
             return Ok((result, base));
@@ -3971,10 +3998,7 @@ impl<N: Network> Backend<N> {
                 monad_context.as_mut().map(next_monad_context),
             )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(Into::into)
+            parity_trace_results(inspector, &result, &trace_types, &cache_db)
         })
         .await
     }
@@ -4022,10 +4046,7 @@ impl<N: Network> Backend<N> {
                 hash,
                 inspector,
                 |result, cache_db, inspector, _, _| {
-                    inspector
-                        .into_parity_builder()
-                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                        .map_err(BlockchainError::from)
+                    parity_trace_results(inspector, &result, &trace_types, &cache_db)
                 },
             )?;
         }
@@ -4064,10 +4085,7 @@ impl<N: Network> Backend<N> {
                 monad_context.as_mut().map(next_monad_context),
             )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(BlockchainError::from)
+            parity_trace_results(inspector, &result, &trace_types, &cache_db)
         })
         .await
     }
@@ -4108,10 +4126,8 @@ impl<N: Network> Backend<N> {
                     monad_context.as_mut().map(next_monad_context),
                 )?;
 
-                let trace_result = inspector
-                    .into_parity_builder()
-                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                    .map_err(BlockchainError::from)?;
+                let trace_result =
+                    parity_trace_results(inspector, &result, &trace_types, &cache_db)?;
                 results.push(trace_result);
 
                 if calls.peek().is_some() {
@@ -4132,6 +4148,11 @@ impl<N: Network> Backend<N> {
     ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
         let Some(block) = self.get_block(block_number) else { return Ok(None) };
 
+        // Blocks without transactions, such as genesis, have nothing to replay.
+        if block.body.transactions.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+
         // Execute this in the context of the parent state
         let parent_hash = block.header.parent_hash;
         let trace_config = TracingInspectorConfig::from_parity_config(trace_types);
@@ -4143,7 +4164,7 @@ impl<N: Network> Backend<N> {
         } else {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let Some(state) = write_guard.get_on_disk_state(&parent_hash) else {
-                return Ok(None);
+                return Err(BlockchainError::HistoricalStateUnavailable(block.header.number()));
             };
             self.replay_block_transactions_with_inspector(&block, state, trace_config, trace_types)
                 .map(Some)
@@ -4182,10 +4203,7 @@ impl<N: Network> Backend<N> {
             )?;
 
             // Build TraceResults from the inspector and execution result
-            let full_trace = inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, trace_types, &cache_db)
-                .map_err(BlockchainError::from)?;
+            let full_trace = parity_trace_results(inspector, &result, trace_types, &cache_db)?;
 
             results.push(TraceResultsWithTransactionHash { transaction_hash: tx_hash, full_trace });
 
@@ -4249,7 +4267,7 @@ impl<N: Network> Backend<N> {
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -5290,7 +5308,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset, next_block_timestamp)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5298,6 +5316,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time_offset,
                     snapshot.next_block_timestamp,
+                    snapshot.next_block_prevrandao,
                 )
             })
         else {
@@ -5314,15 +5333,20 @@ impl<N: Network> Backend<N> {
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
         // Revert the storage that's newer than the snapshot.
-        self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
+        let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+        self.states.write().remove_block_states(&removed_hashes);
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
-        // drop any pending next-block prevrandao override so it does not leak into a block
-        self.cheats.clear_next_block_prevrandao();
+        if let Some(prevrandao) = next_block_prevrandao {
+            self.cheats.set_next_block_prevrandao(prevrandao);
+        } else {
+            self.cheats.clear_next_block_prevrandao();
+        }
 
         {
             let mut env = self.evm_env.write();
@@ -6026,6 +6050,7 @@ where
                 db_guard,
                 block_info,
                 included,
+                stale,
                 invalid,
                 not_yet_valid,
                 block_hash,
@@ -6081,6 +6106,7 @@ where
                 let block_access_list = candidate_db.take_block_access_list();
 
                 let included = pool_result.included;
+                let stale = pool_result.stale;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
 
@@ -6128,6 +6154,7 @@ where
                     db,
                     block_info,
                     included,
+                    stale,
                     invalid,
                     not_yet_valid,
                     block_hash,
@@ -6257,7 +6284,8 @@ where
                 node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
             }
 
-            let outcome = MinedBlockOutcome { block_number, included, invalid, not_yet_valid };
+            let outcome =
+                MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid };
 
             (outcome, header, block_hash)
         };
@@ -6618,7 +6646,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7249,7 +7277,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)?
         };
 
@@ -7393,7 +7421,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7590,15 +7618,34 @@ where
         }
 
         // A single transaction has no prefix replay to share.
-        if block.body.transactions.len() > 1
-            && matches!(
-                opts.tracer,
-                Some(GethDebugTracerType::BuiltInTracer(GethDebugBuiltInTracerType::CallTracer))
-            )
-            && let Ok(config) = call_config_from_tracer_config(opts.tracer_config.clone())
-            && let Ok(traces) = self.replay_block_call_traces(block, config)
-        {
-            return traces;
+        if block.body.transactions.len() > 1 {
+            let traces = match &opts.tracer {
+                Some(GethDebugTracerType::BuiltInTracer(
+                    GethDebugBuiltInTracerType::CallTracer,
+                )) => {
+                    call_config_from_tracer_config(opts.tracer_config.clone()).ok().map(|config| {
+                        self.replay_block_geth_traces(
+                            block,
+                            TracingInspectorConfig::from_geth_call_config(&config),
+                            |inspector, gas_used, _| {
+                                inspector.geth_builder().geth_call_traces(config, gas_used).into()
+                            },
+                        )
+                    })
+                }
+                // Without steps tracing, struct logs come from the traces stored while mining.
+                None if self.enable_steps_tracing => Some(self.replay_block_geth_traces(
+                    block,
+                    TracingInspectorConfig::from_geth_config(&opts.config),
+                    |inspector, gas_used, output| {
+                        inspector.geth_builder().geth_traces(gas_used, output, opts.config).into()
+                    },
+                )),
+                _ => None,
+            };
+            if let Some(Ok(traces)) = traces {
+                return traces;
+            }
         }
 
         // Preserve per-transaction errors and fork lookup when sequential replay is unavailable.
@@ -7616,12 +7663,13 @@ where
     }
 
     /// Replays a local block once, keeping each transaction's committed state for the next call.
-    fn replay_block_call_traces(
+    fn replay_block_geth_traces(
         &self,
         block: &Block,
-        config: CallConfig,
+        tracing_config: TracingInspectorConfig,
+        build_trace: impl Fn(&TracingInspector, u64, Bytes) -> GethTrace,
     ) -> Result<Vec<TraceResult>, BlockchainError> {
-        let gas_used = {
+        let outcomes = {
             let storage = self.blockchain.storage.read();
             let block_hash = block.header.hash_slow();
             block
@@ -7641,7 +7689,7 @@ where
                     {
                         return Err(BlockchainError::TransactionNotFound);
                     }
-                    Ok(mined.info.gas_used)
+                    Ok((mined.info.gas_used, mined.info.out.clone().unwrap_or_default()))
                 })
                 .collect::<Result<Vec<_>, BlockchainError>>()?
         };
@@ -7651,10 +7699,10 @@ where
                 self.prepare_block_replay(block, parent_state)?;
             let monad_context = self.active_monad_context_for_mined_block(block)?;
             let mut traces = Vec::with_capacity(block.body.transactions.len());
-            for (index, (tx, gas_used)) in block.body.transactions.iter().zip(&gas_used).enumerate()
+            for (index, (tx, (gas_used, output))) in
+                block.body.transactions.iter().zip(&outcomes).enumerate()
             {
-                let mut inspector =
-                    TracingInspector::new(TracingInspectorConfig::from_geth_call_config(&config));
+                let mut inspector = TracingInspector::new(tracing_config);
                 let pending = self.pending_mined_transaction(tx.clone())?;
                 let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
                 let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
@@ -7665,7 +7713,7 @@ where
                     EnvelopeExecution::replay(transaction_context, hardfork),
                 )?;
                 traces.push(TraceResult::Success {
-                    result: inspector.geth_builder().geth_call_traces(config, *gas_used).into(),
+                    result: build_trace(&inspector, *gas_used, output.clone()),
                     tx_hash: Some(tx.hash()),
                 });
                 cache_db.commit(result.state);
@@ -7680,7 +7728,7 @@ where
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
             let state = write_guard
                 .get_on_disk_state(&block.header.parent_hash)
-                .ok_or(BlockchainError::BlockNotFound)?;
+                .ok_or(BlockchainError::HistoricalStateUnavailable(block.header.number()))?;
             trace(state)
         }
     }
@@ -7762,8 +7810,27 @@ where
         }
 
         // default structlog tracer
-        Ok(GethTraceBuilder::new(tx.info.traces.clone())
-            .geth_traces(tx.info.gas_used, tx.info.out.clone().unwrap_or_default(), config)
+        let return_value = tx.info.out.clone().unwrap_or_default();
+
+        // Steps are not recorded when mining because they would be kept for every transaction, so
+        // replay the transaction to record only what this request asks for.
+        if self.enable_steps_tracing {
+            let inspector =
+                TracingInspector::new(TracingInspectorConfig::from_geth_config(&config));
+            return self.replay_tx_with_inspector(
+                tx.info.transaction_hash,
+                inspector,
+                |_, _, inspector, _, _| {
+                    inspector
+                        .geth_builder()
+                        .geth_traces(tx.info.gas_used, return_value, config)
+                        .into()
+                },
+            );
+        }
+
+        Ok(GethTraceBuilder::new_borrowed(&tx.info.traces)
+            .geth_traces(tx.info.gas_used, return_value, config)
             .into())
     }
 
@@ -8016,6 +8083,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         &self,
         preserve_historical_states: bool,
     ) -> Result<SerializableState, BlockchainError> {
+        // Keep account state and head metadata coherent across mining and state replacement.
+        let _mining_guard = self.mining.lock().await;
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
         let mut monad_block_participants = BTreeMap::new();
@@ -9684,13 +9753,16 @@ where
                 }
             }
 
-            // Reject if valid_after is too far in the future (> 1 hour)
-            const AA_VALID_AFTER_MAX_SECS: u64 = 3600;
+            // Reject if valid_after is too far in the future. Mirrors Tempo's default pool limit
+            // (`DEFAULT_AA_VALID_AFTER_MAX_SECS`), which is aligned with its queued transaction
+            // lifetime.
+            const AA_VALID_AFTER_MAX_SECS: u64 = 120;
             if let Some(valid_after) = tempo_tx.valid_after.map(|v| v.get()) {
                 let max_allowed = current_time.saturating_add(AA_VALID_AFTER_MAX_SECS);
                 if valid_after > max_allowed {
                     return Err(InvalidTransactionError::TempoValidAfterTooFar {
                         valid_after,
+                        max_valid_after_secs: AA_VALID_AFTER_MAX_SECS,
                         max_allowed,
                     }
                     .into());
@@ -10646,6 +10718,9 @@ mod tests {
         let mut pending_block = Box::pin(api.backend.pending_block(Vec::new()));
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
 
+        let mut state = Box::pin(api.serialized_state(false));
+        assert!(futures::poll!(state.as_mut()).is_pending());
+
         // Pause mining after the database commit but before canonical publication without locking
         // storage, so an incorrectly unblocked pending reader can observe the old parent.
         let hook =
@@ -10659,12 +10734,18 @@ mod tests {
         // neither a live call nor a pending block can observe the partially published snapshot.
         assert!(futures::poll!(call.as_mut()).is_pending());
         assert!(futures::poll!(pending_block.as_mut()).is_pending());
+        assert!(futures::poll!(state.as_mut()).is_pending());
 
         hook.resume.notify_one();
         mining.await.unwrap().unwrap();
 
         let (exit, output, _, _) = call.await.unwrap();
         let pending_block = pending_block.await.unwrap();
+        let state = state.await.unwrap();
+
+        assert_eq!(state.accounts[&recipient].balance, U256::from(1));
+        assert_eq!(state.block.unwrap().number, U256::from(1));
+        assert_eq!(state.best_block_number, Some(1));
 
         assert_eq!(exit, InstructionResult::Return);
         let Some(Output::Call(output)) = output else { panic!("call did not return data") };

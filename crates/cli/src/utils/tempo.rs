@@ -21,7 +21,7 @@ use crate::opts::TempoOpts;
 use alloy_primitives::{Address, U256};
 use eyre::{Result, eyre};
 use foundry_common::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, OUSD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
 };
 use std::{
     collections::BTreeMap,
@@ -53,7 +53,7 @@ pub fn parse_fee_token_address(symbol_or_address: &str) -> eyre::Result<Address>
             symbol_or_address.parse::<u64>().map(token_id_to_address).map_err(|e| {
                 eyre!(
                     "invalid fee token '{symbol_or_address}': expected address, numeric TIP-20 token \
-                     id, or one of PathUSD, AlphaUSD, BetaUSD, ThetaUSD: {e}"
+                     id, or one of PathUSD, AlphaUSD, BetaUSD, ThetaUSD, OUSD: {e}"
                 )
             })
         },
@@ -67,6 +67,7 @@ fn parse_fee_token_symbol(symbol: &str) -> Option<Address> {
         "alphausd" | "alpha_usd" | "alpha-usd" => Some(ALPHA_USD_ADDRESS),
         "betausd" | "beta_usd" | "beta-usd" => Some(BETA_USD_ADDRESS),
         "thetausd" | "theta_usd" | "theta-usd" => Some(THETA_USD_ADDRESS),
+        "ousd" => Some(OUSD_ADDRESS),
         _ => None,
     }
 }

@@ -3,7 +3,8 @@ use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str};
 
 // KEVM/Kontrol-style opcode semantic smoke test for CREATE2 + RETURNDATACOPY.
-forgetest_init!(kevm_create2_returndatacopy_semantics, |prj, cmd| {
+#[forgetest_init]
+fn kevm_create2_returndatacopy_semantics(prj: _, cmd: _) {
     skip_unless_z3!("kevm_create2_returndatacopy_semantics");
 
     prj.add_test(
@@ -40,4 +41,4 @@ Ran 1 test for test/KevmOpcodeSemantics.t.sol:KevmOpcodeSemantics
 [PASS] checkCreate2AndReturndata(bytes32) ([METRICS])
 ...
 "#]]);
-});
+}

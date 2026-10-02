@@ -1,11 +1,12 @@
 use super::*;
+use foundry_evm::revm::interpreter::STACK_LIMIT;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymStack(Vec<SymExpr>);
 
 impl SymStack {
     pub(crate) fn push(&mut self, value: SymExpr) -> Result<(), SymbolicError> {
-        if self.0.len() >= EVM_STACK_LIMIT {
+        if self.0.len() >= STACK_LIMIT {
             return Err(SymbolicError::StackOverflow);
         }
         self.0.push(value);
@@ -598,10 +599,6 @@ impl SymMemory {
         self.expand_to(cx, size);
     }
 
-    pub(crate) fn copy_bytes_offset(&mut self, cx: &mut SymCx, dest: SymExpr, src: SymBytes) {
-        self.store_bytes_offset(cx, dest, src);
-    }
-
     pub(crate) fn copy_bytes_size_offset(
         &mut self,
         cx: &mut SymCx,
@@ -654,21 +651,13 @@ impl SymMemory {
         offset: SymExpr,
         size: usize,
         calldata: &SymCalldata,
-    ) -> Result<(), SymbolicError> {
-        if let Some(offset) = offset.as_const() {
-            let Ok(offset) = usize::try_from(offset) else {
-                let bytes = SymBytes::concrete(cx, vec![0; size]);
-                self.copy_bytes_offset(cx, dest, bytes);
-                return Ok(());
-            };
-            let offset = SymExpr::constant(cx, U256::from(offset));
-            let bytes = calldata.read_bytes_offset(cx, offset, size);
-            self.store_bytes_offset(cx, dest, bytes);
+    ) {
+        let bytes = if offset.as_const().is_some_and(|offset| usize::try_from(offset).is_err()) {
+            SymBytes::concrete(cx, vec![0; size])
         } else {
-            let bytes = calldata.read_bytes_offset(cx, offset, size);
-            self.store_bytes_offset(cx, dest, bytes);
-        }
-        Ok(())
+            calldata.read_bytes_offset(cx, offset, size)
+        };
+        self.store_bytes_offset(cx, dest, bytes);
     }
 
     pub(crate) fn copy_calldata_symbolic_size(
@@ -680,14 +669,7 @@ impl SymMemory {
         max_size: usize,
         calldata: &SymCalldata,
     ) -> Result<(), SymbolicError> {
-        let bytes = if let Some(offset) = offset.as_const()
-            && let Ok(offset) = usize::try_from(offset)
-        {
-            let offset = SymExpr::constant(cx, U256::from(offset));
-            calldata.read_bytes_offset(cx, offset, max_size)
-        } else {
-            calldata.read_bytes_offset(cx, offset, max_size)
-        };
+        let bytes = calldata.read_bytes_offset(cx, offset, max_size);
         self.copy_bytes_size_offset(cx, dest, size, bytes)
     }
 
@@ -774,7 +756,7 @@ impl SymMemory {
             BoundedCopySize::Concrete(size) => {
                 if *size != 0 {
                     let copy_size = (*size).min(return_data.len());
-                    let bytes = if return_data.has_symbolic_len() {
+                    let bytes = if return_data.len_word.as_const().is_none() {
                         let bytes = (0..copy_size)
                             .map(|idx| self.call_output_byte(cx, &dest, idx, None, return_data))
                             .collect::<Vec<_>>();
@@ -817,9 +799,14 @@ impl SymMemory {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
             guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, output_size.clone()));
         }
-        if return_data.has_symbolic_len() {
+        if return_data.len_word.as_const().is_none() {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
-            guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, return_data.len_expr()));
+            guards.push(SymBoolExpr::cmp(
+                cx,
+                SymCmpOp::Ult,
+                idx_expr,
+                return_data.len_word.clone(),
+            ));
         }
         let guard = SymBoolExpr::and(cx, guards);
         match guard.as_const() {
@@ -896,10 +883,10 @@ impl SymMemory {
         size: SymExpr,
         max_size: usize,
     ) -> Result<SymReturnData, SymbolicError> {
-        Ok(SymReturnData::from_bytes_with_len(
-            self.read_bytes_symbolic_size(cx, offset, size.clone(), max_size),
-            size,
-        ))
+        Ok(SymReturnData {
+            bytes: self.read_bytes_symbolic_size(cx, offset, size.clone(), max_size),
+            len_word: size,
+        })
     }
 }
 
@@ -1101,8 +1088,8 @@ impl SymCode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
-    len_word: SymExpr,
-    bytes: SymBytes,
+    pub(crate) len_word: SymExpr,
+    pub(crate) bytes: SymBytes,
 }
 
 impl SymReturnData {
@@ -1131,24 +1118,8 @@ impl SymReturnData {
         Self { len_word: SymExpr::constant(cx, U256::from(len)), bytes }
     }
 
-    pub(crate) const fn from_bytes_with_len(bytes: SymBytes, len_word: SymExpr) -> Self {
-        Self { len_word, bytes }
-    }
-
-    pub(crate) fn len_word(&self) -> SymExpr {
-        self.len_word.clone()
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.bytes.len()
-    }
-
-    pub(crate) fn len_expr(&self) -> SymExpr {
-        self.len_word.clone()
-    }
-
-    pub(crate) fn has_symbolic_len(&self) -> bool {
-        self.len_word.as_const().is_none()
     }
 
     pub(crate) fn byte(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
@@ -1173,7 +1144,7 @@ impl SymReturnData {
     }
 
     pub(crate) fn to_code(&self, cx: &mut SymCx) -> Result<SymCode, SymbolicError> {
-        if self.has_symbolic_len() {
+        if self.len_word.as_const().is_none() {
             return Err(SymbolicError::Unsupported(
                 "CREATE with symbolic runtime size not modeled",
             ));
