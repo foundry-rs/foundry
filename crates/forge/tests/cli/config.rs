@@ -356,6 +356,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        evm_version_from_local_solc: false,
         hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
@@ -960,6 +961,57 @@ library EvmVersionAssert {
     cmd.forge_fuse().arg("test").args(explicit).assert_success();
     cmd.forge_fuse().arg("coverage").args(explicit).assert_success();
     cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).args(explicit).assert_success();
+});
+
+// The default EVM version follows the version of a configured local compiler when building and at
+// runtime.
+forgetest!(local_solc_derives_default_evm_version, |prj, cmd| {
+    let assertion = r#"
+pragma solidity ^0.8.0;
+
+interface Vm {
+    function getEvmVersion() external pure returns (string memory evm);
+}
+
+library EvmVersionAssert {
+    function check() internal pure {
+        string memory evm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).getEvmVersion();
+        require(keccak256(bytes(evm)) == keccak256("cancun"), evm);
+    }
+}
+"#;
+    prj.add_raw_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    prj.add_test(
+        "EvmVersion.t.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionTest {{ function test_evm_version() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+    prj.add_script(
+        "EvmVersion.s.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionScript {{ function run() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+
+    let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!(
+            r#"[profile.default]
+solc = '{}'
+compilation_restrictions = [{{ paths = "src/**", evm_version = "cancun" }}]
+"#,
+            solc.solc.display()
+        ),
+    )
+    .unwrap();
+
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+    cmd.forge_fuse().arg("test").assert_success();
+    cmd.forge_fuse().arg("coverage").assert_success();
+    cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).assert_success();
 });
 
 // test to ensure yul optimizer can be set as intended

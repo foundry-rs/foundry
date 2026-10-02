@@ -172,6 +172,7 @@ impl CoverageArgs {
 
         let (paths, mut output) = {
             let (project, output) = self.build(&config, &filter)?;
+            config.normalize_evm_version_for_project(&project);
             (project.paths, output)
         };
 
