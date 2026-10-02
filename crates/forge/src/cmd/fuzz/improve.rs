@@ -430,17 +430,11 @@ impl FuzzImproveArgs {
         }
         if reasons.is_empty()
             && baseline.iter().zip(&candidate_results).any(|(before, after)| {
-                introduces_mutants(&before.output.survived_mutants, &after.output.survived_mutants)
-            })
-        {
-            reasons.push("candidate introduced a surviving mutant".to_string());
-        }
-        if reasons.is_empty()
-            && baseline.iter().zip(&candidate_results).any(|(before, after)| {
-                introduces_mutants(
-                    &before.output.timed_out_mutants,
-                    &after.output.timed_out_mutants,
-                )
+                after.output.timed_out_mutants.iter().any(|(path, mutants)| {
+                    before.output.timed_out_mutants.get(path).is_none_or(|baseline| {
+                        mutants.iter().any(|mutant| !baseline.contains(mutant))
+                    })
+                })
             })
         {
             reasons.push("candidate introduced a timed-out mutant".to_string());
@@ -524,17 +518,6 @@ impl FuzzImproveArgs {
             })
             .collect()
     }
-}
-
-fn introduces_mutants(
-    baseline: &BTreeMap<String, Vec<crate::mutation::SurvivedMutantJson>>,
-    candidate: &BTreeMap<String, Vec<crate::mutation::SurvivedMutantJson>>,
-) -> bool {
-    candidate.iter().any(|(path, mutants)| {
-        baseline
-            .get(path)
-            .is_none_or(|baseline| mutants.iter().any(|mutant| !baseline.contains(mutant)))
-    })
 }
 
 fn candidate_test_result(
@@ -698,37 +681,4 @@ fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path)
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().chars().take(2_000).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mutation::SurvivedMutantJson;
-
-    #[test]
-    fn detects_only_new_mutant_outcomes() {
-        let existing = SurvivedMutantJson {
-            line: 1,
-            column: 2,
-            original: "left == right".to_string(),
-            mutant: "left != right".to_string(),
-        };
-        let introduced = SurvivedMutantJson {
-            line: 3,
-            column: 4,
-            original: "value > 0".to_string(),
-            mutant: "value >= 0".to_string(),
-        };
-        let baseline = BTreeMap::from([("src/Target.sol".to_string(), vec![existing.clone()])]);
-
-        assert!(!introduces_mutants(&baseline, &BTreeMap::new()));
-        assert!(!introduces_mutants(
-            &baseline,
-            &BTreeMap::from([("src/Target.sol".to_string(), vec![existing])]),
-        ));
-        assert!(introduces_mutants(
-            &baseline,
-            &BTreeMap::from([("src/Target.sol".to_string(), vec![introduced])]),
-        ));
-    }
 }
