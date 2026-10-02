@@ -6158,7 +6158,7 @@ fn random_failure_reason(stdout: &str) -> String {
 }
 
 #[cfg(unix)]
-forgetest_init!(fuzz_improve_retains_reproducible_property, |prj, cmd| {
+foundry_test_utils::forgetest_init!(fuzz_improve_retains_reproducible_property, |prj, cmd| {
     let assertion_lib = prj.root().join("lib/example");
     fs::create_dir_all(&assertion_lib).unwrap();
     fs::write(
