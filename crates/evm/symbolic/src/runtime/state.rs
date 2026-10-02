@@ -813,30 +813,13 @@ impl PathState {
     ) -> Result<StepOutcome, SymbolicError> {
         let shift = self.stack.pop()?;
         let value = self.stack.pop()?;
-        let result = if let (Some(value), Some(shift)) = (value.as_const(), shift.as_const()) {
-            let result = if shift >= U256::from(256) {
-                if matches!(kind, ShiftKind::Sar) && ((value >> 255) == U256::from(1)) {
-                    U256::MAX
-                } else {
-                    U256::ZERO
-                }
-            } else {
-                let shift = usize::try_from(shift).expect("checked word shift");
-                match kind {
-                    ShiftKind::Shl => value << shift,
-                    ShiftKind::Shr => value >> shift,
-                    ShiftKind::Sar => value.arithmetic_shr(shift),
-                }
-            };
-            SymExpr::constant(cx, result)
-        } else {
-            let expr = match kind {
-                ShiftKind::Shl => SymExpr::binop(cx, SymBinOp::Shl, value, shift),
-                ShiftKind::Shr => SymExpr::binop(cx, SymBinOp::Shr, value, shift),
-                ShiftKind::Sar => SymExpr::binop(cx, SymBinOp::Sar, value, shift),
-            };
-            expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr)
+        let op = match kind {
+            ShiftKind::Shl => SymBinOp::Shl,
+            ShiftKind::Shr => SymBinOp::Shr,
+            ShiftKind::Sar => SymBinOp::Sar,
         };
+        let expr = SymExpr::binop(cx, op, value, shift);
+        let result = expr.known_word().map(|word| SymExpr::constant(cx, word)).unwrap_or(expr);
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
     }
@@ -1317,7 +1300,9 @@ impl ExpectedCall {
         gas: &SymExpr,
         calldata: &SymBytes,
     ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        if !self.static_parts_match(value, gas)? {
+        if !self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
+            || !self.gas_matches(gas, value)?
+        {
             return Ok(None);
         }
         let Some(data_condition) = calldata.prefix_condition(cx, &self.data) else {
@@ -1325,15 +1310,6 @@ impl ExpectedCall {
         };
         let callee_condition = self.callee.address_match_condition(cx, callee);
         Ok(Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition])))
-    }
-
-    fn static_parts_match(
-        &self,
-        value: Option<U256>,
-        gas: &SymExpr,
-    ) -> Result<bool, SymbolicError> {
-        Ok(self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
-            && self.gas_matches(gas, value)?)
     }
 
     fn gas_matches(&self, gas: &SymExpr, value: Option<U256>) -> Result<bool, SymbolicError> {
@@ -1420,16 +1396,12 @@ impl CallMock {
         value: Option<U256>,
         calldata: &SymBytes,
     ) -> Option<SymBoolExpr> {
-        if !self.static_parts_match(value) {
+        if !self.value.is_none_or(|expected| value.is_some_and(|value| expected == value)) {
             return None;
         }
         let data_condition = calldata.prefix_condition(cx, &self.data)?;
         let callee_condition = self.callee.address_match_condition(cx, callee);
         Some(SymBoolExpr::and(cx, vec![callee_condition, data_condition]))
-    }
-
-    fn static_parts_match(&self, value: Option<U256>) -> bool {
-        self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
     }
 
     pub(crate) fn next_outcome(&mut self, cx: &mut SymCx) -> CallMockOutcome {
@@ -1593,7 +1565,7 @@ impl ExpectedEmitChecks {
     }
 
     pub(crate) const fn default_anonymous() -> Self {
-        Self { topics: [true, true, true, true], data: true }
+        Self::default_non_anonymous()
     }
 
     pub(crate) fn from_non_anonymous_args(
@@ -1742,17 +1714,10 @@ impl StorageWrite {
     ) -> SymExpr {
         let mut value = base;
         for write in writes.iter().filter(|write| write.address == address) {
-            value = write.select(cx, key.clone(), value);
+            value =
+                key.clone().select_storage_write(cx, write.key.clone(), write.value.clone(), value);
         }
         value
-    }
-
-    pub(crate) const fn address(&self) -> Address {
-        self.address
-    }
-
-    pub(crate) fn select(&self, cx: &mut SymCx, read_key: SymExpr, base: SymExpr) -> SymExpr {
-        read_key.select_storage_write(cx, self.key.clone(), self.value.clone(), base)
     }
 }
 
@@ -1798,16 +1763,12 @@ impl Deref for SymbolicWorld {
 }
 
 impl SymbolicWorld {
-    fn state_mut(&mut self) -> &mut SymbolicWorldState {
-        Arc::make_mut(&mut self.state)
-    }
-
     pub(crate) fn is_destroyed(&self, address: Address) -> bool {
         self.destroyed_accounts.contains(&address)
     }
 
     pub(crate) fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
         state.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
     }
@@ -1826,7 +1787,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
-        self.state_mut().storage.push(StorageWrite::new(address, key, value));
+        Arc::make_mut(&mut self.state).storage.push(StorageWrite::new(address, key, value));
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
@@ -1835,18 +1796,20 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn tstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
-        self.state_mut().transient_storage.push(StorageWrite::new(address, key, value));
+        Arc::make_mut(&mut self.state)
+            .transient_storage
+            .push(StorageWrite::new(address, key, value));
     }
 
     /// Clears transaction-scoped state at a top-level call boundary.
     pub(crate) fn clear_transaction_scoped_state(&mut self) {
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.transient_storage.clear();
         state.current_transaction_created_accounts.clear();
     }
 
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.created_accounts.insert(address);
         state.current_transaction_created_accounts.insert(address);
     }
@@ -1857,11 +1820,11 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn enable_arbitrary_storage(&mut self, address: Address, overwrite: bool) {
-        self.state_mut().arbitrary_storage_accounts.insert(address, overwrite);
+        Arc::make_mut(&mut self.state).arbitrary_storage_accounts.insert(address, overwrite);
     }
 
     pub(crate) fn enable_arbitrary_storage_copy(&mut self, source: Address, target: Address) {
-        self.state_mut().arbitrary_storage_copies.insert(target, source);
+        Arc::make_mut(&mut self.state).arbitrary_storage_copies.insert(target, source);
     }
 
     pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
@@ -1911,7 +1874,7 @@ impl SymbolicWorld {
             return address;
         }
         let address = expr.representative_symbolic_address();
-        self.state_mut().symbolic_address_aliases.insert(expr, address);
+        Arc::make_mut(&mut self.state).symbolic_address_aliases.insert(expr, address);
         address
     }
 
@@ -2051,7 +2014,7 @@ impl SymbolicWorld {
         }) {
             return;
         }
-        self.state_mut()
+        Arc::make_mut(&mut self.state)
             .replay_storage_slots
             .entry(symbol)
             .or_default()
@@ -2064,7 +2027,7 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
             }
         }
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         for (expr, address) in &other.symbolic_address_aliases {
             state.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
         }
@@ -2126,7 +2089,7 @@ impl SymbolicWorld {
 
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymExpr) {
         let account_exists = !value.as_const().is_some_and(|value| value.is_zero());
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.balances.insert(address, value);
         if account_exists {
             state.existing_accounts.insert(address);
@@ -2172,7 +2135,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn set_nonce(&mut self, address: Address, nonce: u64) {
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.nonces.insert(address, nonce);
         if nonce != 0 {
             state.existing_accounts.insert(address);
@@ -2203,7 +2166,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn install_code(&mut self, address: Address, code: SymCode) {
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.code_cache.insert(address, code);
         state.existing_accounts.insert(address);
         state.destroyed_accounts.remove(&address);
@@ -2231,14 +2194,14 @@ impl SymbolicWorld {
         };
         let zero = SymExpr::zero(cx);
         let empty_code = SymCode::empty(cx);
-        let state = self.state_mut();
+        let state = Arc::make_mut(&mut self.state);
         state.balances.insert(address, zero);
         state.code_cache.insert(address, empty_code);
         if let Some(nonce) = nonce {
             state.nonces.insert(address, nonce);
         }
-        state.storage.retain(|write| write.address() != address);
-        state.transient_storage.retain(|write| write.address() != address);
+        state.storage.retain(|write| write.address != address);
+        state.transient_storage.retain(|write| write.address != address);
         state.created_accounts.remove(&address);
         state.current_transaction_created_accounts.remove(&address);
         state.existing_accounts.remove(&address);
@@ -2263,7 +2226,7 @@ impl SymbolicWorld {
                 SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
             let zero = SymExpr::zero(cx);
-            self.state_mut().balances.insert(address, zero);
+            Arc::make_mut(&mut self.state).balances.insert(address, zero);
         }
     }
 
@@ -2289,7 +2252,7 @@ impl SymbolicWorld {
             || self.nonces.get(&address).is_some_and(|nonce| *nonce != 0)
             || self.code_cache.get(&address).is_some_and(|code| !code.is_empty())
         {
-            self.state_mut().existing_accounts.insert(address);
+            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
             return Ok(true);
         }
 
@@ -2302,7 +2265,7 @@ impl SymbolicWorld {
         };
 
         if account.nonce != 0 || !account.balance.is_zero() {
-            self.state_mut().existing_accounts.insert(address);
+            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
             return Ok(true);
         }
 
@@ -2310,7 +2273,7 @@ impl SymbolicWorld {
             && !code.is_empty()
         {
             let code = SymCode::from_bytecode(cx, code);
-            let state = self.state_mut();
+            let state = Arc::make_mut(&mut self.state);
             state.code_cache.insert(address, code);
             state.existing_accounts.insert(address);
             return Ok(true);
@@ -2347,13 +2310,13 @@ impl SymbolicWorld {
                 || !account.balance.is_zero()
                 || account.code.as_ref().is_some_and(|code| !code.is_empty()))
         {
-            self.state_mut().existing_accounts.insert(address);
+            Arc::make_mut(&mut self.state).existing_accounts.insert(address);
         }
         let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
         let code = bytecode
             .map(|bytecode| SymCode::from_bytecode(cx, bytecode))
             .unwrap_or_else(|| SymCode::empty(cx));
-        self.state_mut().code_cache.insert(address, code.clone());
+        Arc::make_mut(&mut self.state).code_cache.insert(address, code.clone());
         Ok(code)
     }
 
