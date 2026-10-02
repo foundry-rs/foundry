@@ -406,7 +406,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 if sequence.sequences()[index].pending.is_empty() {
                     continue;
                 }
-                let replayable_hashes = sequence.replayable_hashes(index);
+                let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
                 let result = progress
                     .wait_for_pending(
                         index,
@@ -414,7 +414,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         &provider,
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
-                        &replayable_hashes,
+                        (&durable_hashes, &replayable_hashes),
                     )
                     .await;
                 sequence.save(true, false)?;

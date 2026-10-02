@@ -276,8 +276,8 @@ where
         self.recovery.signed_payload(sequence, index)
     }
 
-    pub(crate) fn replayable_hashes(&self, sequence: usize) -> Vec<B256> {
-        self.recovery.replayable_hashes(sequence)
+    pub(crate) fn submission_hashes(&self, sequence: usize) -> (Vec<B256>, Vec<B256>) {
+        self.recovery.submission_hashes(sequence)
     }
 
     pub(crate) fn persist_signed_payload(
