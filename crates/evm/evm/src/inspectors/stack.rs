@@ -523,10 +523,13 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let previous = self.synthetic_create_depth;
+        let create2_redirects = self.pending_create2_redirects.len();
         self.synthetic_create_depth = (ecx.journal().depth() == 1).then_some(2);
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let result = with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f);
         self.synthetic_create_depth = previous;
+        // Drop redirects left behind if nested execution aborted before their frames ended.
+        self.pending_create2_redirects.truncate(create2_redirects);
         result
     }
 
@@ -1744,7 +1747,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // and broadcasts. Keep the trace lifecycle ordering, but remember the node so its caller
         // can be synchronized with the inputs that are actually executed.
         let trace_idx = self.tracer.as_ref().map(|tracer| tracer.traces().nodes().len() - 1);
-        let isolate = self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1;
+        // Also isolate a synthetic `deployCode` create that was rewritten to a CREATE2 factory
+        // call.
+        let isolate = self.enable_isolation
+            && !self.in_inner_context
+            && (ecx.journal().depth() == 1
+                || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.

@@ -1989,6 +1989,22 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     // read permission to file should be granted through symlink
     let permission = fs_permissions.find_permission(&config_path.join("config.json")).unwrap();
     assert_eq!(permission, FsAccessPermission::Read);
+
+    std::os::unix::fs::symlink("links/config.json", prj.root().join("config-link")).unwrap();
+    prj.add_test(
+        "ReadLink.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReadLinkTest is Test {
+    function testReadLink() public view {
+        assertEq(vm.readLink("config-link"), "links/config.json");
+        assertEq(vm.readLink(string.concat(vm.projectRoot(), "/config-link")), "links/config.json");
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success();
 });
 
 // tests if evm version is normalized for config output

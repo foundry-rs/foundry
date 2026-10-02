@@ -596,3 +596,30 @@ casttest!(cast_run_charges_fresh_eip7702_authority, async |_prj, cmd| {
         .stdout_lossy();
     assert!(output.contains("Gas used: 46064"), "{output}");
 });
+
+// Prints the ERC-8021 attribution codes appended to the transaction calldata.
+casttest!(cast_run_prints_erc8021_attribution, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    // ERC-8021 schema 2 test vector with app, wallet and service codes.
+    let tx = TransactionRequest::default().with_from(from).with_to(from).with_input(hex!(
+        "a361616762617365617070617765707269767961738269666c617368626f747365746974616e00260280218021802180218021802180218021"
+    ));
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    cmd.args([
+        "run",
+        &receipt.transaction_hash().to_string(),
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
+ERC-8021 attribution: baseapp (app), privy (wallet), flashbots (service), titan (service)
+
+"#]]);
+});

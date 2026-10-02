@@ -656,14 +656,24 @@ impl NetworkConfigs {
     /// without rebuilding the instantiated EVM.
     ///
     /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
-    /// Monad boundary. Base execution requires a Base source, while existing Ethereum, Optimism,
-    /// and Tempo execution can continue using Base as a state source without switching engines.
+    /// Monad boundary. Base execution requires a Base source. Optimism execution requires an OP
+    /// Stack source for its fee accounting. Ethereum and Tempo can use OP Stack state sources
+    /// without switching engines.
     pub const fn supports_fork_source(&self, source: &Self) -> bool {
-        #[cfg(feature = "base")]
-        if self.is_base() && !source.is_base() {
-            return false;
+        match self.execution_network() {
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => source.is_base(),
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => match source.execution_network() {
+                NetworkVariant::Optimism => true,
+                #[cfg(feature = "base")]
+                NetworkVariant::Base => true,
+                _ => false,
+            },
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => source.is_monad(),
+            _ => !source.is_monad(),
         }
-        self.is_monad() == source.is_monad()
     }
 
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
@@ -1236,14 +1246,12 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn fork_sources_only_isolate_monad() {
-        let mut non_monad = vec![
+        let non_monad = vec![
             NetworkConfigs::default(),
             NetworkConfigs::with_ethereum(),
             NetworkConfigs::with_celo(),
             NetworkConfigs::with_tempo(),
         ];
-        #[cfg(feature = "optimism")]
-        non_monad.push(NetworkConfigs::with_optimism());
 
         for execution in &non_monad {
             for source in &non_monad {
@@ -1253,6 +1261,24 @@ mod tests {
             assert!(!NetworkConfigs::with_monad().supports_fork_source(execution));
         }
         assert!(NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_monad()));
+    }
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn optimism_fork_sources_require_op_stack_state() {
+        let optimism = NetworkConfigs::with_optimism();
+        for source in [
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+        ] {
+            assert!(!optimism.supports_fork_source(&source));
+            assert!(source.supports_fork_source(&optimism));
+        }
+        assert!(optimism.supports_fork_source(&optimism));
+        #[cfg(feature = "monad")]
+        assert!(!optimism.supports_fork_source(&NetworkConfigs::with_monad()));
     }
 
     #[test]

@@ -2,11 +2,11 @@
 
 use crate::{
     constants::TEMPLATE_CONTRACT,
-    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+    utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, Bytes, U256, address, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
@@ -16,8 +16,9 @@ use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
-        self, next_http_archive_rpc_url, spawn_rpc_proxy_mapping_method,
-        spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after_when_enabled,
+        self, next_http_archive_rpc_url, spawn_rpc_proxy_blocking_first_submission,
+        spawn_rpc_proxy_mapping_method, spawn_rpc_proxy_recording_method,
+        spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -26,17 +27,13 @@ use regex::Regex;
 use serde_json::Value;
 use std::{
     env, fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    thread::{self, JoinHandle},
     time::Duration,
 };
-use tokio::sync::Notify;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -63,99 +60,6 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
         .find(|path| path.ends_with("dry-run/run-latest.json"))
         .unwrap();
     foundry_common::fs::read_json_file(&path).unwrap()
-}
-
-struct KillOnDrop {
-    child: Option<Child>,
-    stderr: Option<JoinHandle<Vec<u8>>>,
-}
-
-impl KillOnDrop {
-    fn spawn(command: &mut Command) -> Self {
-        let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
-        let mut child_stderr = child.stderr.take().unwrap();
-        let stderr = thread::spawn(move || {
-            let mut stderr = Vec::new();
-            child_stderr.read_to_end(&mut stderr).unwrap();
-            stderr
-        });
-        Self { child: Some(child), stderr: Some(stderr) }
-    }
-
-    fn is_running(&mut self) -> bool {
-        self.child.as_mut().unwrap().try_wait().unwrap().is_none()
-    }
-
-    fn kill_and_wait(mut self) -> Output {
-        let mut child = self.child.take().unwrap();
-        child.kill().unwrap();
-        let status = child.wait().unwrap();
-        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
-    }
-}
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if let Some(child) = &mut self.child {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(stderr) = self.stderr.take() {
-            let _ = stderr.join();
-        }
-    }
-}
-
-async fn spawn_rpc_proxy_blocking_first_submission(
-    endpoint: String,
-    method: &'static str,
-) -> (String, Arc<std::sync::Mutex<Vec<Value>>>, Arc<Notify>, Arc<Notify>) {
-    let client = reqwest::Client::new();
-    let submissions = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let reached = Arc::new(Notify::new());
-    let release = Arc::new(Notify::new());
-    let app = Router::new().fallback({
-        let submissions = submissions.clone();
-        let reached = reached.clone();
-        let release = release.clone();
-        move |body: BodyBytes| {
-            let client = client.clone();
-            let endpoint = endpoint.clone();
-            let submissions = submissions.clone();
-            let reached = reached.clone();
-            let release = release.clone();
-            async move {
-                let request: Value = serde_json::from_slice(&body).unwrap();
-                if request.get("method").and_then(Value::as_str) == Some(method) {
-                    let first = {
-                        let mut submissions = submissions.lock().unwrap();
-                        submissions.push(request.get("params").cloned().unwrap_or(Value::Null));
-                        submissions.len() == 1
-                    };
-                    if first {
-                        reached.notify_one();
-                        release.notified().await;
-                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                    }
-                }
-                client
-                    .post(endpoint)
-                    .header("content-type", "application/json")
-                    .body(body)
-                    .send()
-                    .await
-                    .unwrap()
-                    .bytes()
-                    .await
-                    .unwrap()
-                    .into_response()
-            }
-        }
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let rpc = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (rpc, submissions, reached, release)
 }
 
 // Tests that fork cheat codes can be used in script
@@ -1630,6 +1534,54 @@ forgetest_async!(cannot_deploy_with_nonexist_create2, |prj, cmd| {
 
 forgetest_async!(can_deploy_and_simulate_25_txes_concurrently, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
+
+// <https://github.com/foundry-rs/foundry/issues/17264>.
+forgetest_async!(can_deploy_25_txes_concurrently_across_full_blocks, |prj, cmd| {
+    // Only a few of the deployments fit into one block, the rest must be mined in later blocks.
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(1_000_000))).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
+
+forgetest_async!(can_deploy_25_txes_concurrently_with_interval_mining, |prj, cmd| {
+    // The batch is only mined on the next interval tick.
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    tester
+        .load_private_keys(&[0])
+        .await
+        .add_sig("BroadcastTestNoLinking", "deployMany()")
+        .simulate(ScriptOutcome::OkSimulation)
+        .broadcast(ScriptOutcome::OkBroadcast)
+        .assert_nonce_increment(&[(0, 25)])
+        .await;
+});
+
+forgetest_async!(can_deploy_25_txes_concurrently_with_mixed_mining, |prj, cmd| {
+    // The chain keeps advancing on the interval while the batch is mined instantly.
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_mixed_mining(true, Some(Duration::from_secs(1)))).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
@@ -4518,6 +4470,127 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
 });
 
+// Tests that sponsored EIP-7702 authorities have their nonce bumped after a broadcast
+// transaction consumes their authorization.
+// Bob sponsors two delegations for Alice in separate transactions, then Alice broadcasts herself.
+forgetest_async!(can_broadcast_txes_with_sponsored_auth_nonces, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Implementation.sol",
+        r#"
+contract Implementation {
+    event Called(uint256 id);
+
+    uint256 immutable id;
+
+    constructor(uint256 id_) {
+        id = id_;
+    }
+
+    function ping() external returns (uint256) {
+        emit Called(id);
+        return id;
+    }
+}
+   "#,
+    );
+
+    prj.add_script(
+        "SponsoredDelegationScript.s.sol",
+        r#"
+import {Script} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Implementation} from "../src/Implementation.sol";
+
+contract SponsoredDelegationScript is Script {
+    address constant ALICE_ADDRESS = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+    uint256 constant ALICE_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 constant BOB_PK = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+
+    function run() public {
+        vm.startBroadcast(BOB_PK);
+        Implementation implementation1 = new Implementation(1);
+        Implementation implementation2 = new Implementation(2);
+
+        Vm.SignedDelegation memory first = vm.signAndAttachDelegation(address(implementation1), ALICE_PK);
+        require(first.nonce == 0, "first auth nonce");
+        require(Implementation(ALICE_ADDRESS).ping() == 1, "first local call");
+
+        Vm.SignedDelegation memory second = vm.signAndAttachDelegation(address(implementation2), ALICE_PK);
+        require(second.nonce == 1, "second auth nonce");
+        require(Implementation(ALICE_ADDRESS).ping() == 2, "second local call");
+        vm.stopBroadcast();
+
+        vm.startBroadcast(ALICE_PK);
+        new Implementation(3);
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/SponsoredDelegationScript.s.sol",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--non-interactive",
+        "--slow",
+        "--broadcast",
+        "--evm-version",
+        "prague",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+
+    let alice = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    let bob = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+
+    // Alice should be delegated to the second implementation.
+    let mut expected_code = hex!("ef0100").to_vec();
+    expected_code.extend_from_slice(bob.create(1).as_slice());
+    assert_eq!(api.get_code(alice, None).await.unwrap(), Bytes::from(expected_code));
+
+    // Alice nonce should be 3 (two auths and one tx sent).
+    assert_eq!(api.get_account(alice, None).await.unwrap().nonce, 3);
+    assert!(!api.get_code(alice.create(2), None).await.unwrap().is_empty());
+});
+
 // <https://github.com/foundry-rs/foundry/issues/11159>
 forgetest_async!(check_broadcast_log_with_additional_contracts, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -4945,6 +5018,97 @@ contract SaltedSrcScript is Script {
     );
     assert_eq!(tx["contractName"], "Token");
     assert_eq!(tx["arguments"][0], "SaltedSrc");
+});
+
+// Regression: salted `vm.deployCode` must be broadcast through the CREATE2 factory so the
+// on-chain address matches the address returned to the script, and must consume a single-call
+// `vm.broadcast()`.
+forgetest_async!(can_broadcast_salted_deploy_code_in_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Child {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+    function setName(string memory _name) external { name = _name; }
+}
+
+contract Token {
+    string public name;
+    address public child;
+    constructor(string memory _name) payable {
+        name = _name;
+        child = address(new Child(_name));
+        Child(child).setName("Child");
+    }
+    function setName(string memory _name) external { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "SaltedDeployCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+contract SaltedDeployCodeScript is Script {
+    function run() external returns (address first, address second) {
+        vm.broadcast();
+        first = vm.deployCode("src/Token.sol:Token", abi.encode("First"), 1, bytes32(uint256(1)));
+        Token(first).setName("Local");
+
+        vm.startBroadcast();
+        Token(first).setName("Updated");
+        second = vm.deployCode("src/Token.sol:Token", abi.encode("Second"), bytes32(uint256(2)));
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    for isolate in [false, true] {
+        prj.update_config(|config| config.isolate = isolate);
+        let (api, handle) = spawn(NodeConfig::test()).await;
+        cmd.forge_fuse()
+            .args([
+                "script",
+                "script/SaltedDeployCode.s.sol:SaltedDeployCodeScript",
+                "--rpc-url",
+                &handle.http_endpoint(),
+                "--broadcast",
+                "--private-key",
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            ])
+            .assert_success();
+
+        let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| path.ends_with("run-latest.json"))
+            .expect("No broadcast artifacts");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        let returned = |name: &str| -> Address {
+            json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+        };
+        let (first, second) = (returned("first"), returned("second"));
+        let transactions = json["transactions"].as_array().unwrap();
+        let transaction_types = transactions
+            .iter()
+            .map(|tx| tx["transactionType"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(transaction_types, ["CREATE2", "CALL", "CREATE2"]);
+        assert_eq!(transactions[0]["contractAddress"], first.to_string().to_lowercase());
+        assert_eq!(transactions[1]["transaction"]["to"], first.to_string().to_lowercase());
+        assert_eq!(transactions[2]["contractAddress"], second.to_string().to_lowercase());
+        for (nonce, transaction) in transactions.iter().enumerate() {
+            let recorded_nonce =
+                transaction["transaction"]["nonce"].as_str().unwrap().parse::<U256>().unwrap();
+            assert_eq!(recorded_nonce, U256::from(nonce));
+        }
+
+        for deployed in [first, second] {
+            assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
+        }
+        assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
+    }
 });
 
 // Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
@@ -5395,9 +5559,12 @@ forgetest_async!(tempo_batch_resume_reuses_signed_payload, |prj, cmd| {
     let script = prj.add_source("MultiDeploy", &source);
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_set_auto_mine(false).await.unwrap();
-    let (rpc, submissions, reached, release) =
-        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendRawTransaction")
-            .await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        false,
+    )
+    .await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     cmd.env("BATCH_EXECUTION_REQUIRED", "1");
@@ -5491,9 +5658,12 @@ forgetest_async!(tempo_batch_unlocked_crash_blocks_resubmission, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let (rpc, submissions, reached, release) =
-        spawn_rpc_proxy_blocking_first_submission(handle.http_endpoint(), "eth_sendTransaction")
-            .await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        false,
+    )
+    .await;
     let sender = handle.dev_accounts().next().unwrap();
 
     cmd.arg("script").arg(&script).args([
@@ -6003,10 +6173,91 @@ contract DeployTempoAA is Script {
         .expect("no broadcast artifact found");
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
     let transactions = json["transactions"].as_array().unwrap();
-    assert_eq!(transactions.len(), 4, "expected CREATE, CALL, CREATE, and CREATE2 transactions");
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE", "CALL", "CREATE", "CREATE2"]);
     for transaction in transactions {
         assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
     }
+});
+
+forgetest_async!(tempo_batch_broadcasts_deploy_code_via_create2, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "TempoBatchCodeDeployment",
+        r#"
+contract TempoBatchCodeDeployment {
+    uint256 public calls;
+    function ping() external { calls++; }
+}
+"#,
+    );
+    let script = prj.add_script(
+        "DeployTempoBatch.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+interface ITempoBatchCodeDeployment {
+    function ping() external;
+}
+
+contract DeployTempoBatch is Script {
+    function run() external returns (address first, address second, address salted) {
+        vm.startBroadcast();
+        first = vm.deployCode("src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment");
+        second = vm.deployCode("src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment");
+        salted = vm.deployCode(
+            "src/TempoBatchCodeDeployment.sol:TempoBatchCodeDeployment", bytes32(uint256(1))
+        );
+        ITempoBatchCodeDeployment(first).ping();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--tc",
+        "DeployTempoBatch",
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no broadcast artifact found");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let returned = |name: &str| -> Address {
+        json["returns"][name]["value"].as_str().unwrap().parse().unwrap()
+    };
+    let deployed = [returned("first"), returned("second"), returned("salted")];
+    assert_ne!(deployed[0], deployed[1]);
+
+    let transactions = json["transactions"].as_array().unwrap();
+    let transaction_types =
+        transactions.iter().map(|tx| tx["transactionType"].as_str().unwrap()).collect::<Vec<_>>();
+    assert_eq!(transaction_types, ["CREATE2", "CREATE2", "CREATE2", "CALL"]);
+    let factory = foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_string().to_lowercase();
+    for (transaction, address) in transactions.iter().zip(deployed) {
+        assert_eq!(transaction["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+        assert_eq!(transaction["contractAddress"], address.to_string().to_lowercase());
+        assert!(!api.get_code(address, None).await.unwrap().is_empty());
+    }
+    assert_eq!(transactions[3]["transaction"]["to"], deployed[0].to_string().to_lowercase());
+    assert_eq!(
+        handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
+        U256::from(1)
+    );
 });
 
 forgetest_async!(tempo_script_resume_preserves_completed_prefix, |prj, cmd| {
@@ -6166,6 +6417,133 @@ contract DeploySponsoredTempoAA is Script {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
+});
+
+forgetest_async!(tempo_sponsored_resume_needs_no_credentials, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "DeploySponsoredTempoAA.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract SponsoredTempoAADeployment {}
+
+contract DeploySponsoredTempoAA is Script {
+    function run() external {
+        vm.startBroadcast();
+        new SponsoredTempoAADeployment();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        true,
+    )
+    .await;
+    let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
+    let sender = wallets[0].address();
+    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sponsor_key =
+        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+    let sponsor = format!("{:?}", wallets[1].address());
+    let path = prj.root().join("broadcast/DeploySponsoredTempoAA.s.sol/31337/run-latest.json");
+
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        &sender_key,
+        "--broadcast",
+        "--tempo.fee-token",
+        "PathUSD",
+        "--tempo.sponsor",
+        &sponsor,
+        "--tempo.sponsor-signer",
+        &sponsor_key,
+    ]);
+    let child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the sponsored transaction");
+
+    // The fully sponsored and signed attempt is durable before its response is lost.
+    let accepted = submissions.lock().unwrap()[0][0].clone();
+    let accepted_hash = keccak256(hex::decode(accepted.as_str().unwrap()).unwrap());
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .expect("no authoritative recovery snapshot");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let attempt = &recovery["deployments"][0]["attempts"][0];
+    assert_eq!(attempt["kind"]["kind"], "signed");
+    assert_eq!(attempt["kind"]["payload"]["payload"], accepted);
+    let planned: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let planned = planned["transactions"][0].clone();
+    child.kill_and_wait();
+    release.notify_one();
+    let provider = handle.http_provider();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while provider.get_transaction_receipt(accepted_hash).await.unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the sponsored transaction was not mined");
+
+    // Another operator resumes with no sender key, sponsor, fee token, or signing credentials.
+    let tempo_home = tempfile::tempdir().unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--resume",
+        "--network",
+        "tempo",
+    ]);
+    for var in [
+        "ETH_FROM",
+        "ETH_KEYSTORE",
+        "ETH_KEYSTORE_ACCOUNT",
+        "ETH_PASSWORD",
+        "TEMPO_ACCESS_KEY",
+        "TEMPO_ROOT_ACCOUNT",
+        "TEMPO_SESSION_ID",
+        "TEMPO_SPONSOR_URL",
+    ] {
+        cmd.unset_env(var);
+    }
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.assert_success();
+
+    // Any rebroadcast reuses the saved bytes; no different transaction is ever sent.
+    assert!(submissions.lock().unwrap().iter().all(|params| params[0] == accepted));
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let transaction = &sequence["transactions"][0];
+    for field in ["from", "to", "nonce", "input", "value", "gas", "chainId", "feeToken"] {
+        assert_eq!(transaction["transaction"][field], planned["transaction"][field], "{field}");
+    }
+    assert_eq!(transaction["contractAddress"], planned["contractAddress"]);
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    let receipt = &receipts[0];
+    assert_eq!(
+        receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap(),
+        accepted_hash
+    );
+    assert_eq!(receipt["status"], "0x1");
+    assert_eq!(receipt["from"].as_str().unwrap().parse::<Address>().unwrap(), sender);
+    assert_eq!(receipt["feePayer"].as_str().unwrap().to_lowercase(), sponsor.to_lowercase());
+    assert_eq!(
+        receipt["feeToken"].as_str().unwrap().to_lowercase(),
+        planned["transaction"]["feeToken"].as_str().unwrap().to_lowercase()
+    );
+    let address = planned["contractAddress"].as_str().unwrap().parse::<Address>().unwrap();
+    assert_eq!(receipt["contractAddress"].as_str().unwrap().parse::<Address>().unwrap(), address);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    assert!(!provider.get_code_at(address).await.unwrap().is_empty());
 });
 
 // Helper: write a script that deploys `LargeRuntime` with runtime > default limit via
@@ -6452,4 +6830,19 @@ contract SetStorageViaRpc {
     cmd.arg("script")
         .args(["SetStorageViaRpc", "--rpc-url", &handle.http_endpoint()])
         .assert_success();
+});
+
+// tests that `--unlocked` cannot be combined with any remote signer
+forgetest!(script_unlocked_conflicts_with_remote_signers, |_prj, cmd| {
+    for signer in ["--aws", "--gcp", "--turnkey"] {
+        cmd.forge_fuse()
+            .args(["script", "Foo", "--unlocked", "--sender"])
+            .args(["0x0000000000000000000000000000000000000001", signer])
+            .assert_failure()
+            .stderr_eq(format!(
+                "error: the argument '--unlocked' cannot be used with '{signer}'\n\n\
+                 Usage: forge[..] script --unlocked --sender <ADDRESS> <PATH> [ARGS]...\n\n\
+                 For more information, try '--help'.\n"
+            ));
+    }
 });

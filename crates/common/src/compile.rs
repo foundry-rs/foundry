@@ -21,7 +21,7 @@ use foundry_compilers::{
         remappings::Remapping,
     },
     compilers::{
-        Compiler,
+        CompilationError, Compiler,
         solc::{Solc, SolcCompiler},
     },
     info::ContractInfo as CompilerContractInfo,
@@ -84,6 +84,9 @@ pub struct ProjectCompiler {
     /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
+    /// Complete source roots to retry if filtering changed Solidity's inheritance ordering.
+    source_order_fallback: Vec<PathBuf>,
+
     /// Paths used by external adapters to select compiler-native build units.
     selected_paths: Vec<PathBuf>,
 
@@ -122,6 +125,7 @@ impl ProjectCompiler {
             ignore_eip_3860: false,
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
+            source_order_fallback: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
             abi_cache: false,
@@ -232,6 +236,13 @@ impl ProjectCompiler {
         self
     }
 
+    /// Retries once with these roots if compilation fails because a base contract is defined
+    /// after its derived contract. Removing roots can change traversal order in import cycles.
+    pub fn source_order_fallback(mut self, files: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.source_order_fallback.extend(files);
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -263,6 +274,7 @@ impl ProjectCompiler {
 
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
+        let fallback_files = std::mem::take(&mut self.source_order_fallback);
         let explicit_selection = !files.is_empty() || !self.selected_paths.is_empty();
         let selected_paths = std::mem::take(&mut self.selected_paths);
         let preprocess = self.dynamic_test_linking;
@@ -282,13 +294,22 @@ impl ProjectCompiler {
                 project.paths.read_input_files()?
             };
 
-            let mut compiler =
-                foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
-            if preprocess {
-                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+            let compile = |sources| {
+                let mut compiler =
+                    foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
+                if preprocess {
+                    compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+                }
+                if abi_cache { compiler.compile_abi_cached() } else { compiler.compile() }
+            };
+            let mut output = compile(sources)?;
+            // Solc error 2449 can be introduced by filtering compilation roots in an import
+            // cycle. Retry before reporting diagnostics or bailing on the filtered output.
+            if !fallback_files.is_empty()
+                && output.output().errors.iter().any(|error| error.error_code() == Some(2449))
+            {
+                output = compile(Source::read_all(fallback_files)?)?;
             }
-            let mut output =
-                if abi_cache { compiler.compile_abi_cached()? } else { compiler.compile()? };
             if !output.has_compiler_errors()
                 && let Some(external) = external
             {
@@ -329,30 +350,30 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
-        if !quiet {
-            if !shell::is_json() {
-                if output.is_unchanged() {
-                    sh_println!("No files changed, compilation skipped")?;
-                } else {
-                    // print the compiler output / warnings
-                    sh_println!("{output}")?;
-                }
+        if !quiet && !shell::is_json() {
+            if output.is_unchanged() {
+                sh_println!("No files changed, compilation skipped")?;
+            } else {
+                // print the compiler output / warnings
+                sh_println!("{output}")?;
             }
+        }
 
-            if !(shell::is_json() && output.has_compiler_errors()) {
-                self.handle_output(&output)?;
-            }
+        // Quiet mode suppresses reports, but size limits still apply.
+        if !(shell::is_json() && output.has_compiler_errors()) {
+            self.handle_output(&output)?;
         }
 
         Ok(output)
     }
 
-    /// If configured, this will print sizes or names
+    /// Prints requested reports and checks contract size limits.
     fn handle_output<C: Compiler<CompilerContract = Contract>>(
         &self,
         output: &ProjectCompileOutput<C>,
     ) -> Result<()> {
-        let print_names = self.print_names.unwrap_or(false);
+        let quiet = self.quiet.unwrap_or(false);
+        let print_names = self.print_names.unwrap_or(false) && !quiet;
         let print_sizes = self.print_sizes.unwrap_or(false);
 
         // print any sizes or names
@@ -461,7 +482,9 @@ impl ProjectCompiler {
                 }
             }
 
-            sh_println!("{size_report}")?;
+            if !quiet {
+                sh_println!("{size_report}")?;
+            }
 
             let runtime_eip = match size_report.limits.runtime {
                 CONTRACT_RUNTIME_SIZE_LIMIT => "EIP-170: ",

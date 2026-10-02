@@ -235,8 +235,12 @@ network_replay_tests! {
     flaky_run_mainnet => ("ethereum", "https://ethereum-rpc.publicnode.com", Exact),
     flaky_run_optimism => ("optimism", "https://mainnet.optimism.io", Exact),
     flaky_run_base => ("base", "https://mainnet.base.org", Exact),
-    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", Exact),
     flaky_run_linea => ("linea", "https://linea-rpc.publicnode.com", Exact),
+
+    // Disables gas refunds and, since Helicon, charges at least ceil(gas_limit / 2), neither of
+    // which stock revm models.
+    // TODO: Restore exact gas assertions once native Avalanche accounting is implemented.
+    flaky_run_avalanche => ("avalanche", "https://avalanche-c-chain-rpc.publicnode.com", ReplaysOnly),
 
     // Blocks carry no `parentBeaconBlockRoot` even though the EVM is Cancun or later.
     flaky_run_scroll => ("scroll", "https://rpc.scroll.io", Exact),
@@ -347,7 +351,7 @@ fn assert_arbitrum_arb_block_number(cmd: &mut TestCommand) {
         .stdout_eq(str![[r#"
 Traces:
   [..] 0xeAB71344cc3D1BF0803BbFCb36bAB6ee07650B74::01000000([..]1e5c14c0)
-    ├─ [3] 0x0000000000000000000000000000000000000064::[..] [staticcall]
+    ├─ [803] 0x0000000000000000000000000000000000000064::[..] [staticcall]
     │   └─ ← [Return] 0x000000000000000000000000000000000000000000000000000000001e5c14c1
     └─ ← [Revert] EvmError: Revert
 

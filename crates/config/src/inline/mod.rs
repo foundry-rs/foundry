@@ -411,6 +411,19 @@ forge-config: ci.fuzz.runs = 2
     }
 
     #[test]
+    fn merge_inline_provider_ignores_inline_root() {
+        let mut inline = InlineConfig::new();
+        inline.insert(&natspec(r#"forge-config: default.root = "/""#)).unwrap();
+
+        let root = std::path::PathBuf::from("project-root");
+        let config = Config { root: root.clone(), ..Default::default() }
+            .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+            .unwrap();
+
+        assert_eq!(config.root, root);
+    }
+
+    #[test]
     fn contract_symbolic_enabled_reads_contract_inline_config() {
         let mut inline = InlineConfig::new();
         inline

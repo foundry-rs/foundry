@@ -1,4 +1,6 @@
 use super::{abi::*, runtime::*, *};
+use alloy_sol_types::{Panic, PanicKind, Revert, SolError};
+use foundry_evm::revm::precompile::u64_to_address as precompile_address;
 
 fn empty_state(cx: &mut SymCx) -> PathState {
     let calldata =
@@ -25,12 +27,6 @@ macro_rules! sym_from_bytes {
     }};
 }
 
-fn precompile_address(index: u8) -> Address {
-    let mut bytes = [0u8; 20];
-    bytes[19] = index;
-    Address::from(bytes)
-}
-
 fn symbolic_model<S: AsRef<str>>(
     cx: &mut SymCx,
     values: impl IntoIterator<Item = (S, U256)>,
@@ -52,15 +48,18 @@ fn model_value(cx: &SymCx, model: &SymbolicModel, name: &str) -> Option<U256> {
 fn precompile_number_respects_active_spec() {
     for number in 1..=4 {
         assert_eq!(
-            precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER),
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::FRONTIER),
             Some(number)
         );
     }
 
     for number in 5..=8 {
-        assert_eq!(precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER), None);
         assert_eq!(
-            precompile_number_for_spec(precompile_address(number), SpecId::BYZANTIUM),
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::FRONTIER),
+            None
+        );
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number.into()), SpecId::BYZANTIUM),
             Some(number)
         );
     }
@@ -2535,35 +2534,6 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     assert_eq!(sha_word.hash_algorithm(), Some("sha256"));
 
     let input_bytes = SymBytes::exprs(&mut cx, input.clone());
-    let ecrecover = execute_symbolic_precompile(
-        &mut cx,
-        precompile_address(1),
-        input_bytes,
-        input_len.clone(),
-        SpecId::CANCUN,
-    )
-    .unwrap()
-    .unwrap();
-    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
-    let ecrecover_again = execute_symbolic_precompile(
-        &mut cx,
-        precompile_address(1),
-        input_bytes,
-        input_len.clone(),
-        SpecId::CANCUN,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(ecrecover.len(), 32);
-    for idx in 0..12 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), SymExpr::zero(&mut cx));
-    }
-    for idx in 0..32 {
-        assert_eq!(ecrecover.byte(&mut cx, idx), ecrecover_again.byte(&mut cx, idx));
-    }
-
-    let input_bytes = SymBytes::exprs(&mut cx, input.clone());
     let ripemd = execute_symbolic_precompile(
         &mut cx,
         precompile_address(3),
@@ -2591,6 +2561,95 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     for idx in 0..32 {
         assert_eq!(ripemd.byte(&mut cx, idx), ripemd_again.byte(&mut cx, idx));
     }
+}
+
+#[test]
+fn symbolic_ecrecover_rejects_invalid_recovery_ids() {
+    let mut cx = SymCx::new();
+    for (v, input_size) in [(0, 128), (29, 128), (0x11b, 128), (27, 32), (28, 63)] {
+        let words = [
+            SymExpr::var(&mut cx, "digest"),
+            SymExpr::constant(&mut cx, U256::from(v)),
+            SymExpr::var(&mut cx, "r"),
+            SymExpr::var(&mut cx, "s"),
+        ];
+        let words = words.into_iter().map(|word| word.into_bytes(&mut cx)).collect::<Vec<_>>();
+        let input = SymBytes::concat(&mut cx, words);
+        let input_len = SymExpr::constant(&mut cx, U256::from(input_size));
+        let output = execute_symbolic_precompile(
+            &mut cx,
+            precompile_address(1),
+            input,
+            input_len,
+            SpecId::CANCUN,
+        )
+        .unwrap()
+        .expect("invalid recovery is still a successful precompile call");
+        assert_eq!(output.len(), 0);
+        assert_eq!(output.len_word().as_const(), Some(U256::ZERO));
+    }
+}
+
+#[test]
+fn symbolic_ecrecover_preserves_both_recovery_outcomes() {
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    if let Err(err) = executor.solver.check_available() {
+        let _ = foundry_common::sh_eprintln!(
+            "skipping symbolic_ecrecover_preserves_both_recovery_outcomes: {err}"
+        );
+        return;
+    }
+    let (cx, solver) = (&mut executor.cx, &mut executor.solver);
+    let v = SymExpr::var(cx, "v");
+    let words =
+        [SymExpr::var(cx, "digest"), v.clone(), SymExpr::var(cx, "r"), SymExpr::var(cx, "s")];
+    let words = words.into_iter().map(|word| word.into_bytes(cx)).collect::<Vec<_>>();
+    let input = SymBytes::concat(cx, words);
+    let input_len = SymExpr::constant(cx, U256::from(128));
+    let output = execute_symbolic_precompile(
+        cx,
+        precompile_address(1),
+        input.clone(),
+        input_len,
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let trailing = SymExpr::var(cx, "ignored").into_bytes(cx);
+    let input = SymBytes::concat(cx, [input, trailing]);
+    let input_len = SymExpr::constant(cx, U256::from(160));
+    let again =
+        execute_symbolic_precompile(cx, precompile_address(1), input, input_len, SpecId::CANCUN)
+            .unwrap()
+            .unwrap();
+    assert_eq!(output.len_word(), again.len_word());
+    for idx in 0..32 {
+        assert_eq!(output.byte(cx, idx), again.byte(cx, idx));
+        if idx < 12 {
+            assert_eq!(output.byte(cx, idx).as_const(), Some(U256::ZERO));
+        }
+    }
+    for recovery_id in [27, 28, 29] {
+        for len in [0, 32] {
+            let constraints = [
+                SymBoolExpr::eq_word_const(cx, &v, U256::from(recovery_id)),
+                SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(len)),
+            ];
+            assert_eq!(solver.is_sat(cx, &constraints).unwrap(), recovery_id != 29 || len == 0);
+        }
+    }
+    // A successful recovery remains unconstrained over all 160-bit addresses, including zero.
+    let address = (0..32).map(|idx| output.byte(cx, idx)).collect::<Vec<_>>();
+    let address = SymExpr::from_bytes(cx, address);
+    let constraints = [
+        SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(32)),
+        SymBoolExpr::eq_word_const(cx, &address, U256::ZERO),
+    ];
+    assert!(solver.is_sat(cx, &constraints).unwrap());
+    let empty = SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::ZERO);
+    let full = SymBoolExpr::eq_word_const(cx, &output.len_word(), U256::from(32));
+    let other_len = [SymBoolExpr::not_bool(cx, empty), SymBoolExpr::not_bool(cx, full)];
+    assert!(!solver.is_sat(cx, &other_len).unwrap());
 }
 
 #[test]
@@ -6863,11 +6922,8 @@ outcome counts:
 
 #[test]
 fn assertion_revert_classifies_assert_panic_only() {
-    let mut assert_payload = PANIC_SELECTOR.to_vec();
-    assert_payload.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
-
-    let mut overflow_payload = PANIC_SELECTOR.to_vec();
-    overflow_payload.extend_from_slice(&U256::from(0x11).to_be_bytes::<32>());
+    let assert_payload = Panic::from(PanicKind::Assert).abi_encode();
+    let overflow_payload = Panic::from(PanicKind::UnderOverflow).abi_encode();
 
     assert!(is_assertion_revert(&assert_payload));
     assert!(!is_assertion_revert(&overflow_payload));
@@ -6883,12 +6939,45 @@ fn assertion_revert_accepts_forge_assertion_reverts() {
     assert!(is_assertion_revert(&error_payload("assertion failed: expected 1 to equal 2")));
 }
 
+#[test]
+fn assertion_revert_preserves_noncanonical_encoding() {
+    let message = "assertion failed: expected 1 to equal 2";
+    let mut payload = error_payload(message);
+    payload.truncate(68 + message.len());
+    assert!(is_assertion_revert(&payload));
+    payload.extend_from_slice(&[0xff; 5]);
+    assert!(is_assertion_revert(&payload));
+
+    // Dynamic offsets need not be canonical to identify an assertion message.
+    payload[4..36].copy_from_slice(&U256::from(64).to_be_bytes::<32>());
+    payload.splice(36..36, [0; 32]);
+    assert!(is_assertion_revert(&payload));
+
+    let mut panic = Panic::from(PanicKind::Assert).abi_encode();
+    panic.extend_from_slice(&[0xff; 5]);
+    assert!(is_assertion_revert(&panic));
+}
+
+#[test]
+fn assertion_revert_rejects_malformed_encoding() {
+    let message = "assertion failed";
+    let payload = error_payload(message);
+    for len in [0, 3, 4, 35, 36, 67, 68, 68 + message.len() - 1] {
+        assert!(!is_assertion_revert(&payload[..len]));
+    }
+    let mut invalid_utf8 = payload.clone();
+    invalid_utf8[68 + message.len() - 1] = 0xff;
+    assert!(!is_assertion_revert(&invalid_utf8));
+    for start in [4, 36] {
+        let mut invalid_word = payload.clone();
+        invalid_word[start..start + 32].fill(0xff);
+        assert!(!is_assertion_revert(&invalid_word));
+    }
+    let panic = Panic::from(PanicKind::Assert).abi_encode();
+    assert!(!is_assertion_revert(&panic[..35]));
+    assert!(!is_assertion_revert(&Panic { code: U256::MAX }.abi_encode()));
+}
+
 fn error_payload(message: &str) -> Vec<u8> {
-    let mut payload = ERROR_SELECTOR.to_vec();
-    payload.extend_from_slice(&U256::from(32).to_be_bytes::<32>());
-    payload.extend_from_slice(&U256::from(message.len()).to_be_bytes::<32>());
-    payload.extend_from_slice(message.as_bytes());
-    let padded_len = message.len().div_ceil(32) * 32;
-    payload.resize(4 + 64 + padded_len, 0);
-    payload
+    Revert::from(message).abi_encode()
 }

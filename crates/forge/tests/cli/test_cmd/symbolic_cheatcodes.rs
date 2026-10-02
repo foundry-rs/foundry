@@ -657,7 +657,9 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(s != bytes32(0));
         (bytes32 compactR, bytes32 vs) = vm.signCompact(1, keccak256("foundry-symbolic"));
         assertEq(compactR, r);
-        assertTrue(vs != bytes32(0));
+        uint8 compactV = uint8(27 + (uint256(vs) >> 255));
+        bytes32 compactS = bytes32(uint256(vs) & (type(uint256).max >> 1));
+        assertEq(ecrecover(keccak256("foundry-symbolic"), compactV, compactR, compactS), keyAddress);
         address remembered = vm.rememberKey(2);
         assertEq(remembered, vm.addr(2));
         address[] memory wallets = vm.getWallets();

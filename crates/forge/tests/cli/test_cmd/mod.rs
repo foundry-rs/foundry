@@ -3,13 +3,14 @@
 use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
-use anvil::{NodeConfig, spawn};
+use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
-    TestCommand,
+    TestCommand, assert_data_eq,
     rpc::{self, next_etherscan_api_key, rpc_endpoints},
+    snapbox::IntoData,
     str,
-    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, get_vyper},
 };
 use similar_asserts::assert_eq;
 use std::{io::Write, path::PathBuf, str::FromStr};
@@ -240,6 +241,92 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
+});
+
+forgetest_init!(broadcast_deploy_code_cleans_up_after_revert, |prj, cmd| {
+    prj.add_source(
+        "DeployCodeCleanup.sol",
+        r#"
+contract DeployCodeCleanup {
+    address public caller;
+
+    constructor(bool shouldRevert) {
+        require(!shouldRevert, "constructor reverted");
+        caller = msg.sender;
+    }
+
+    function recordCaller() external {
+        caller = msg.sender;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "DeployCodeCleanup.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {DeployCodeCleanup} from "../src/DeployCodeCleanup.sol";
+
+contract DeployCodeCleanupTest is Test {
+    function testBroadcastCleanupAfterRevert() public {
+        DeployCodeCleanup local = new DeployCodeCleanup(false);
+
+        vm.broadcast(address(0xA11CE));
+        try vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(true),
+            bytes32(uint256(1))
+        ) returns (address) {
+            fail();
+        } catch {}
+
+        local.recordCaller();
+        assertEq(local.caller(), address(this));
+
+        vm.broadcast(address(0xB0B));
+        address deployed = vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(2))
+        );
+        assertGt(deployed.code.length, 0);
+
+        vm.broadcast(address(0xB0B));
+        try vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(2))
+        ) returns (address) {
+            fail();
+        } catch {}
+
+        local.recordCaller();
+        assertEq(local.caller(), address(this));
+
+        vm.broadcast(address(0xCAFE));
+        address finalDeployment = vm.deployCode(
+            "src/DeployCodeCleanup.sol:DeployCodeCleanup",
+            abi.encode(false),
+            bytes32(uint256(3))
+        );
+        assertGt(finalDeployment.code.length, 0);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "DeployCodeCleanupTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/DeployCodeCleanup.t.sol:DeployCodeCleanupTest
+[PASS] testBroadcastCleanupAfterRevert() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
 });
 
 // tests that test filters are handled correctly
@@ -512,6 +599,62 @@ Warning: no tests match the provided pattern:
 	no-match-path: `*TestF*`
 
 Did you mean `test1`?
+
+"#]]);
+});
+
+// Tests that ABI discovery preserves diagnostics for excluded test contracts.
+forgetest!(warn_when_filtered_tests_are_not_compiled, |prj, cmd| {
+    prj.add_source("Dummy.sol", "contract Dummy {}");
+    prj.add_test("Filtered.t.sol", "contract Filtered { function testFoo(uint256) public {} }");
+
+    for (dynamic_test_linking, cache) in
+        [(false, true), (true, true), (false, false), (true, false)]
+    {
+        prj.update_config(|config| {
+            config.dynamic_test_linking = dynamic_test_linking;
+            config.cache = cache;
+        });
+        cmd.forge_fuse().args(["test", "--mt", "testFoo$"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-test: `testFoo$`
+
+Did you mean `testFoo`?
+
+"#]]);
+        cmd.forge_fuse().args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-contract: `Missing`
+
+
+"#]]);
+    }
+});
+
+forgetest!(do_not_count_non_runnable_tests, |prj, cmd| {
+    prj.add_source("Dummy.sol", "contract Dummy {}");
+    prj.add_test(
+        "NotRunnable.t.sol",
+        r#"
+interface TestInterface { function testInterface() external; }
+abstract contract AbstractTest { function testAbstract() public {} }
+contract ConstructorTest {
+    constructor(uint256) {}
+    function testConstructor() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: No tests found in project! Forge looks for functions that start with `test`
+
+"#]]);
+
+    prj.add_test("Library.t.sol", "library LibraryTest { function testLibrary() public pure {} }");
+    cmd.forge_fuse().args(["test", "--mc", "Missing"]).assert_success().stderr_eq(str![[r#"
+Warning: no tests match the provided pattern:
+	match-contract: `Missing`
+
 
 "#]]);
 });
@@ -1982,6 +2125,190 @@ contract EIP2935Test is Test {
     );
 
     cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
+});
+
+// Replacing the history contract clears its ring buffer; reverts must restore that storage.
+forgetest_init!(eip2935_history_storage_etch_rollback, |prj, cmd| {
+    prj.add_test(
+        "EIP2935EtchRollback.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract EIP2935EtchRollbackTest is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+    // Seeded ring slot that is read before the etch.
+    bytes32 constant LOADED = bytes32(uint256(1));
+    // Seeded ring slot that is never read before the etch.
+    bytes32 constant UNLOADED = bytes32(uint256(50));
+    // Ring slot written by the test.
+    bytes32 constant WRITTEN = bytes32(uint256(7000));
+    // Slot outside the ring buffer.
+    bytes32 constant OUTSIDE = bytes32(uint256(9000));
+
+    bytes original;
+    bytes32 loadedValue;
+    uint64 nonce;
+
+    function setUp() public {
+        original = HISTORY.code;
+        nonce = vm.getNonce(HISTORY);
+        loadedValue = vm.load(HISTORY, LOADED);
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(17)));
+        vm.store(HISTORY, OUTSIDE, bytes32(uint256(18)));
+    }
+
+    function child(bool fail) external {
+        vm.etch(HISTORY, hex"00");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "loaded slot not cleared");
+        assertEq(vm.load(HISTORY, UNLOADED), bytes32(0), "unloaded slot not cleared");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "written slot not cleared");
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x22)));
+        if (fail) revert("child");
+    }
+
+    function parent(bool childFail, bool parentFail) external {
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x44)));
+        if (childFail) {
+            try this.child(true) {
+                revert("child did not revert");
+            } catch Error(string memory reason) {
+                assertEq(reason, "child");
+            }
+        } else {
+            this.child(false);
+        }
+        if (parentFail) revert("parent");
+    }
+
+    function assertRestored() internal view {
+        assertEq(keccak256(HISTORY.code), keccak256(original), "code not restored");
+        assertEq(vm.getNonce(HISTORY), nonce, "nonce changed");
+        assertNotEq(loadedValue, bytes32(0), "loaded slot not seeded");
+        assertEq(vm.load(HISTORY, LOADED), loadedValue, "loaded slot not restored");
+        assertEq(vm.load(HISTORY, UNLOADED), blockhash(50), "unloaded slot not restored");
+        assertEq(vm.load(HISTORY, OUTSIDE), bytes32(uint256(18)), "outside slot changed");
+    }
+
+    function testChildRevertRestoresHistoryStorage() public {
+        this.parent(true, false);
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x44)), "parent write lost");
+    }
+
+    function testParentRevertRestoresHistoryStorage() public {
+        try this.parent(false, true) {
+            revert("parent did not revert");
+        } catch Error(string memory reason) {
+            assertEq(reason, "parent");
+        }
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(17)), "written slot not restored");
+    }
+
+    function testSuccessfulEtchClearsHistoryStorage() public {
+        this.parent(false, false);
+        assertEq(HISTORY.code, hex"00", "code not replaced");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "loaded slot not cleared");
+        assertEq(vm.load(HISTORY, UNLOADED), bytes32(0), "unloaded slot not cleared");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x22)), "child write lost");
+        assertEq(vm.load(HISTORY, OUTSIDE), bytes32(uint256(18)), "outside slot changed");
+
+        // Replacing a replacement keeps its storage.
+        vm.etch(HISTORY, hex"01");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(0x22)), "replacement storage lost");
+
+        // Reinstalling the history contract and replacing it again clears the ring buffer again.
+        vm.etch(HISTORY, original);
+        vm.store(HISTORY, LOADED, bytes32(uint256(0x55)));
+        vm.etch(HISTORY, hex"00");
+        assertEq(vm.load(HISTORY, LOADED), bytes32(0), "ring buffer not cleared again");
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "written slot not cleared again");
+    }
+
+    function testStateSnapshotsAroundHistoryEtch() public {
+        uint256 beforeEtch = vm.snapshotState();
+        vm.etch(HISTORY, hex"00");
+        uint256 afterEtch = vm.snapshotState();
+        vm.store(HISTORY, WRITTEN, bytes32(uint256(0x22)));
+
+        vm.revertToState(afterEtch);
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(0), "post-etch snapshot not restored");
+
+        vm.revertToState(beforeEtch);
+        assertRestored();
+        assertEq(vm.load(HISTORY, WRITTEN), bytes32(uint256(17)), "pre-etch snapshot not restored");
+    }
+}
+
+contract EIP2935EtchInSetUpTest is Test {
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+
+    function setUp() public {
+        vm.etch(HISTORY, hex"00");
+        vm.store(HISTORY, bytes32(uint256(7000)), bytes32(uint256(0x22)));
+    }
+
+    function testHistoryEtchInSetUpPersists() public view {
+        assertEq(HISTORY.code, hex"00", "code not replaced");
+        assertEq(vm.load(HISTORY, bytes32(uint256(50))), bytes32(0), "seeded slot exposed");
+        assertEq(vm.load(HISTORY, bytes32(uint256(7000))), bytes32(uint256(0x22)), "write lost");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version", "prague", "--block-number", "100"]).assert_success();
+});
+
+// On a fork the history storage is the chain's real storage, so replacing the contract keeps it.
+forgetest_async!(eip2935_history_storage_etch_keeps_fork_storage, |prj, cmd| {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    api.anvil_mine(Some(U256::from(10)), None).await.unwrap();
+    let endpoint = handle.http_endpoint();
+
+    prj.add_test(
+        "EIP2935EtchForkStorage.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+    function load(address target, bytes32 slot) external view returns (bytes32 data);
+}
+
+contract EIP2935EtchForkStorageTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+    bytes32 constant SLOT = bytes32(uint256(5));
+
+    function child() external {
+        vm.etch(HISTORY, hex"00");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot cleared");
+        revert("child");
+    }
+
+    function testForkHistoryEtchKeepsStorage() public {
+        require(blockhash(5) != bytes32(0), "block hash unavailable");
+        vm.etch(HISTORY, hex"00");
+        require(keccak256(HISTORY.code) == keccak256(hex"00"), "code not replaced");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot cleared");
+    }
+
+    function testForkHistoryEtchRevertRestoresCode() public {
+        bytes32 codehash = HISTORY.codehash;
+        require(blockhash(5) != bytes32(0), "block hash unavailable");
+        try this.child() {
+            revert("child did not revert");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("child"), reason);
+        }
+        require(HISTORY.codehash == codehash, "code not restored");
+        require(vm.load(HISTORY, SLOT) == blockhash(5), "fork slot changed");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--evm-version", "prague"]).assert_success();
 });
 
 forgetest_init!(eip2935_history_storage_not_deployed_before_prague, |prj, cmd| {
@@ -4443,6 +4770,321 @@ contract DebugStorageTest {
     );
 });
 
+// Resolve the executed contract before decoding internal calls in tests and scripts.
+forgetest!(debug_dump_identifies_etched_code_by_executed_bytecode, |prj, cmd| {
+    prj.update_config(|config| {
+        config.bytecode_hash = "none".parse().unwrap();
+        config.optimizer = Some(false);
+        config.tracing.decode_internal = true;
+    });
+    prj.add_test(
+        "EtchDebug.t.sol",
+        r#"
+interface Vm {
+    function etch(address target, bytes calldata newRuntimeBytecode) external;
+}
+
+contract Trusted {
+    function trustedOnly() external pure returns (uint256) { return trustedInternal(); }
+    function trustedInternal() internal pure returns (uint256) { return 1; }
+}
+
+contract Payload {
+    function attackerEntry() external pure returns (uint256) { return payloadInternal(); }
+    function payloadInternal() internal pure returns (uint256) { return 42; }
+}
+
+contract A {
+    uint256 private stored;
+    constructor() { stored = 1; }
+    function value() external pure returns (uint256) { return 7; }
+}
+
+contract B {
+    uint256 private stored;
+    constructor() { stored = 2; }
+    function value() external pure returns (uint256) { return 7; }
+}
+
+contract WithImmutable {
+    uint256 private immutable stored;
+    constructor(uint256 value_) { stored = value_; }
+    function value() external view returns (uint256) { return stored; }
+}
+
+contract WithConstant {
+    function value() external pure returns (uint256) { return 65534; }
+}
+
+contract EtchDebugTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    address constant PREEXISTING = address(0xBEEF);
+    Trusted trusted;
+    B b;
+    WithImmutable initialized;
+
+    function setUp() public {
+        trusted = new Trusted();
+        b = new B();
+        initialized = new WithImmutable(65535);
+        vm.etch(PREEXISTING, type(Trusted).runtimeCode);
+    }
+
+    function testEtchDeployed() public {
+        require(trusted.trustedOnly() == 1);
+        vm.etch(address(trusted), type(Payload).runtimeCode);
+        require(Payload(address(trusted)).attackerEntry() == 42);
+    }
+
+    function testEtchPreexisting() public {
+        vm.etch(PREEXISTING, type(Payload).runtimeCode);
+        require(Payload(PREEXISTING).attackerEntry() == 42);
+    }
+
+    function testIdenticalRuntime() public view {
+        require(keccak256(type(A).runtimeCode) == keccak256(type(B).runtimeCode));
+        require(b.value() == 7);
+    }
+
+    function testEtchImmutable() public {
+        vm.etch(address(trusted), address(initialized).code);
+        require(WithImmutable(address(trusted)).value() == 65535);
+    }
+
+    function testEtchUnknown() public {
+        bytes memory code = type(Trusted).runtimeCode;
+        // Change the internal function's return value without changing its jump structure.
+        bool changed;
+        for (uint256 i; i + 1 < code.length; ++i) {
+            if (code[i] == 0x60 && code[i + 1] == 0x01) {
+                code[i + 1] = 0x02;
+                changed = true;
+                break;
+            }
+        }
+        require(changed);
+        vm.etch(address(trusted), code);
+        (bool ok, bytes memory output) = address(trusted).call(abi.encodeCall(Trusted.trustedOnly, ()));
+        require(ok && abi.decode(output, (uint256)) == 2);
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("etch_dump.json");
+    for (test, expected, expected_decoded) in [
+        (
+            "testEtchDeployed",
+            str![[r#"
+[
+  ["Trusted", ["Trusted::trustedInternal()"]],
+  ["Payload", ["Payload::payloadInternal()"]]
+]
+"#]],
+            str![[r#"[["trustedOnly()", "Trusted"], ["attackerEntry()", "Payload"]]"#]],
+        ),
+        (
+            "testEtchPreexisting",
+            str![[r#"
+[["Payload", ["Payload::payloadInternal()"]]]
+"#]],
+            str![[r#"[["attackerEntry()", "Payload"]]"#]],
+        ),
+        ("testIdenticalRuntime", str![[r#"[["B", []]]"#]], str![[r#"[["value()", "B"]]"#]]),
+        (
+            "testEtchImmutable",
+            str![[r#"[["WithImmutable", []]]"#]],
+            str![[r#"[["value()", "WithImmutable"]]"#]],
+        ),
+        ("testEtchUnknown", str![[r#"[[null, []]]"#]], str![[r#"[["trustedOnly()", null]]"#]]),
+    ] {
+        for command in ["test", "script"] {
+            let args = if command == "test" {
+                vec!["test".to_string(), "--mt".to_string(), test.to_string()]
+            } else {
+                vec![
+                    "script".to_string(),
+                    "test/EtchDebug.t.sol:EtchDebugTest".to_string(),
+                    "--sig".to_string(),
+                    format!("{test}()"),
+                ]
+            };
+            cmd.forge_fuse()
+                .args(args)
+                .args(["--debug", "--dump", dump_path.to_str().unwrap()])
+                .assert_success();
+            let dump: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&dump_path).unwrap()).unwrap();
+            let nodes = dump["debug_arena"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|node| node["contract_name"] != "EtchDebugTest")
+                .collect::<Vec<_>>();
+            let frames = nodes
+                .iter()
+                .map(|node| {
+                    let mut calls = Vec::new();
+                    collect_debug_dump_internal_calls(node, &mut calls);
+                    let functions = calls.iter().map(|call| &call["func_name"]).collect::<Vec<_>>();
+                    serde_json::json!([node["contract_name"], functions])
+                })
+                .collect::<Vec<_>>();
+            assert_data_eq!(
+                serde_json::to_string(&frames).unwrap().is_json(),
+                expected.clone().is_json()
+            );
+            if command == "test" {
+                let decoded = nodes
+                    .iter()
+                    .map(|node| {
+                        serde_json::json!([
+                            node["decoded"]["call_data"]["signature"],
+                            node["decoded"]["label"]
+                        ])
+                    })
+                    .collect::<Vec<_>>();
+                assert_data_eq!(
+                    serde_json::to_string(&decoded).unwrap().is_json(),
+                    expected_decoded.clone().is_json()
+                );
+            }
+        }
+    }
+});
+
+// Metadata-exact matches outrank the old address identity after an etch.
+forgetest!(debug_dump_prefers_exact_metadata, |prj, cmd| {
+    for name in ["Trusted", "Payload"] {
+        prj.add_source(
+            name,
+            &format!(
+                "contract {name} {{ function value() external pure returns (uint256) {{ return 7; }} }}"
+            ),
+        );
+    }
+    prj.add_test(
+        "MetadataDebug.t.sol",
+        r#"
+import "../src/Trusted.sol";
+import "../src/Payload.sol";
+
+interface Vm {
+    function etch(address target, bytes calldata code) external;
+}
+
+contract MetadataDebugTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Trusted target;
+
+    function setUp() public { target = new Trusted(); }
+
+    function testMetadata() public {
+        require(keccak256(type(Trusted).runtimeCode) != keccak256(type(Payload).runtimeCode));
+        require(target.value() == 7);
+        vm.etch(address(target), type(Payload).runtimeCode);
+        require(Payload(address(target)).value() == 7);
+    }
+}
+"#,
+    );
+    let dump_path = prj.root().join("metadata_dump.json");
+    cmd.args(["test", "--mt", "testMetadata", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .assert_success();
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let frames = dump["debug_arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["contract_name"] != "MetadataDebugTest")
+        .map(|node| serde_json::json!([node["contract_name"], node["decoded"]["label"]]))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&frames).unwrap().is_json(),
+        str![[r#"[["Trusted", "Trusted"], ["Payload", "Payload"]]"#]].is_json()
+    );
+});
+
+// Vyper runtime artifacts omit immutable data, but changes to the runtime must still be rejected.
+forgetest!(debug_dump_identifies_vyper_immutables, |prj, cmd| {
+    prj.update_config(|config| config.vyper.path = Some(get_vyper().path));
+    for (name, value, result) in [("Immutable", 42, "value"), ("Replacement", 99, "value + 1")] {
+        prj.add_raw_source(
+            &format!("{name}.vy"),
+            &format!(
+                r#"
+value: immutable(uint256)
+
+@deploy
+def __init__():
+    value = {value}
+
+@external
+@view
+def read() -> uint256:
+    return {result}
+"#
+            ),
+        );
+    }
+    prj.add_test(
+        "VyperDebug.t.sol",
+        r#"
+interface Vm {
+    function getCode(string calldata artifact) external view returns (bytes memory);
+    function etch(address target, bytes calldata code) external;
+}
+interface IImmutable { function read() external view returns (uint256); }
+
+contract VyperDebugTest {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    address target;
+    address replacement;
+
+    function setUp() public {
+        target = deploy("Immutable.vy");
+        replacement = deploy("Replacement.vy");
+    }
+
+    function deploy(string memory artifact) internal returns (address deployed) {
+        bytes memory code = vm.getCode(artifact);
+        assembly { deployed := create(0, add(code, 32), mload(code)) }
+        require(deployed != address(0));
+    }
+
+    function testImmutables() public {
+        require(IImmutable(target).read() == 42);
+        vm.etch(target, replacement.code);
+        require(IImmutable(target).read() == 100);
+        bytes memory unknown = replacement.code;
+        unknown[0] = 0x00;
+        vm.etch(target, unknown);
+        (bool ok,) = target.call(abi.encodeCall(IImmutable.read, ()));
+        require(ok);
+    }
+}
+"#,
+    );
+    let dump_path = prj.root().join("vyper_dump.json");
+    cmd.args(["test", "--mt", "testImmutables", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .assert_success();
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let frames = dump["debug_arena"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["contract_name"] != "VyperDebugTest")
+        .map(|node| serde_json::json!([node["contract_name"], node["decoded"]["label"]]))
+        .collect::<Vec<_>>();
+    assert_data_eq!(
+        serde_json::to_string(&frames).unwrap().is_json(),
+        str![[r#"[["Immutable", "Immutable"], ["Replacement", "Replacement"], [null, null]]"#]]
+            .is_json()
+    );
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10322>
 forgetest!(test_debug_with_dump_setup_revert, |prj, cmd| {
     prj.add_test(
@@ -6595,10 +7237,10 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [350673] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350661] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286918] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code

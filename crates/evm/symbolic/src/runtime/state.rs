@@ -1,4 +1,5 @@
 use super::*;
+use foundry_evm::revm::context_interface::cfg::gas::CALL_STIPEND;
 
 const MAX_BOUND_ANALYSIS_VISITS: usize = 256;
 
@@ -1298,8 +1299,8 @@ impl ExpectedCall {
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
             (
-                gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
-                min_gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
+                gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
+                min_gas.map(|gas| gas.saturating_add(CALL_STIPEND)),
             )
         } else {
             (gas, min_gas)
@@ -1353,7 +1354,7 @@ impl ExpectedCall {
         }
         let mut gas = gas.as_const_or("symbolic expected call gas")?;
         if value.is_some_and(|value| !value.is_zero()) {
-            gas = gas.saturating_add(U256::from(CALL_VALUE_STIPEND));
+            gas = gas.saturating_add(U256::from(CALL_STIPEND));
         }
         Ok(self.gas.is_none_or(|expected| gas == U256::from(expected))
             && self.min_gas.is_none_or(|expected| gas >= U256::from(expected)))
@@ -2309,8 +2310,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        let spec_id: SpecId = executor.spec_id().into();
-        if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
+        if is_known_cheatcode(address) {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {
@@ -2533,6 +2533,144 @@ impl SymbolicWorld {
 
 fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> Symbol {
     stable_symbol(cx, "storage", format!("{address:?}:{key:?}").as_bytes())
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SymbolicBlock {
+    pub(crate) chain_id: SymExpr,
+    pub(crate) coinbase: Address,
+    pub(crate) timestamp: SymExpr,
+    pub(crate) number: SymExpr,
+    pub(crate) difficulty: SymExpr,
+    pub(crate) gaslimit: SymExpr,
+    pub(crate) basefee: SymExpr,
+    pub(crate) blob_basefee: SymExpr,
+    pub(crate) block_hashes: HashMap<U256, SymExpr>,
+    pub(crate) blob_hashes: Vec<B256>,
+}
+
+impl SymbolicBlock {
+    pub(crate) fn new(cx: &mut SymCx) -> Self {
+        Self {
+            chain_id: SymExpr::constant(cx, U256::from(1)),
+            coinbase: Address::ZERO,
+            timestamp: SymExpr::zero(cx),
+            number: SymExpr::zero(cx),
+            difficulty: SymExpr::zero(cx),
+            gaslimit: SymExpr::zero(cx),
+            basefee: SymExpr::zero(cx),
+            blob_basefee: SymExpr::zero(cx),
+            block_hashes: HashMap::default(),
+            blob_hashes: Vec::new(),
+        }
+    }
+
+    pub(crate) fn from_executor<FEN: FoundryEvmNetwork>(
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+    ) -> Self {
+        let evm_env = executor.evm_env();
+        let block = executor
+            .inspector()
+            .cheatcodes
+            .as_ref()
+            .and_then(|cheats| cheats.block.as_ref())
+            .unwrap_or(&evm_env.block_env);
+        let difficulty = block
+            .prevrandao()
+            .map(|hash| U256::from_be_bytes(hash.0))
+            .unwrap_or_else(|| block.difficulty());
+
+        Self {
+            chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),
+            coinbase: block.beneficiary(),
+            timestamp: SymExpr::constant(cx, block.timestamp()),
+            number: SymExpr::constant(cx, block.number()),
+            difficulty: SymExpr::constant(cx, difficulty),
+            gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit())),
+            basefee: SymExpr::constant(cx, U256::from(block.basefee())),
+            blob_basefee: SymExpr::constant(
+                cx,
+                U256::from(block.blob_gasprice().unwrap_or_default()),
+            ),
+            block_hashes: HashMap::default(),
+            blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
+        }
+    }
+
+    pub(crate) fn set_block_hash(
+        &mut self,
+        block_number: U256,
+        block_hash: SymExpr,
+    ) -> Result<(), SymbolicError> {
+        let current = self.number.as_const_or("symbolic vm.setBlockhash current number")?;
+        if block_number < current && current - block_number <= U256::from(256) {
+            self.block_hashes.insert(block_number, block_hash);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn block_hash<FEN: FoundryEvmNetwork>(
+        &self,
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+        block_number: U256,
+    ) -> Result<SymExpr, SymbolicError> {
+        let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
+        if block_number >= current || current - block_number > U256::from(256) {
+            return Ok(SymExpr::zero(cx));
+        }
+        if let Some(hash) = self.block_hashes.get(&block_number) {
+            return Ok(hash.clone());
+        }
+        let Ok(block_number) = u64::try_from(block_number) else {
+            return Ok(SymExpr::zero(cx));
+        };
+        let hash = executor
+            .backend()
+            .block_hash_ref(block_number)
+            .map_err(|err| SymbolicError::Backend(err.to_string()))?;
+        Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))
+    }
+
+    pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
+        &self,
+        cx: &mut SymCx,
+        executor: &Executor<FEN>,
+        block_number: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
+        if let Some(block_number) = block_number.as_const() {
+            return self.block_hash(cx, executor, block_number);
+        }
+        let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
+        if current.is_zero() {
+            return Ok(SymExpr::zero(cx));
+        }
+
+        let mut result = SymExpr::zero(cx);
+        let max_distance =
+            usize::try_from(current.min(U256::from(256))).expect("checked blockhash distance");
+        for distance in (1..=max_distance).rev() {
+            let candidate = current - U256::from(distance);
+            let hash = self.block_hash(cx, executor, candidate)?;
+            if hash.as_const().is_some_and(|hash| hash.is_zero()) {
+                continue;
+            }
+            let candidate = SymExpr::constant(cx, candidate);
+            let condition = SymBoolExpr::eq(cx, block_number.clone(), candidate);
+            result = SymExpr::ite(cx, condition, hash, result);
+        }
+
+        Ok(result)
+    }
+
+    pub(crate) fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>) {
+        self.blob_hashes = blob_hashes;
+    }
+
+    pub(crate) fn blob_hash(&self, index: usize) -> B256 {
+        self.blob_hashes.get(index).copied().unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -2892,143 +3030,5 @@ mod tests {
         assert!(
             matches!(err, SymbolicError::Solver(message) if message.contains("conflicting symbolic storage replay assignments"))
         );
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SymbolicBlock {
-    pub(crate) chain_id: SymExpr,
-    pub(crate) coinbase: Address,
-    pub(crate) timestamp: SymExpr,
-    pub(crate) number: SymExpr,
-    pub(crate) difficulty: SymExpr,
-    pub(crate) gaslimit: SymExpr,
-    pub(crate) basefee: SymExpr,
-    pub(crate) blob_basefee: SymExpr,
-    pub(crate) block_hashes: HashMap<U256, SymExpr>,
-    pub(crate) blob_hashes: Vec<B256>,
-}
-
-impl SymbolicBlock {
-    pub(crate) fn new(cx: &mut SymCx) -> Self {
-        Self {
-            chain_id: SymExpr::constant(cx, U256::from(1)),
-            coinbase: Address::ZERO,
-            timestamp: SymExpr::zero(cx),
-            number: SymExpr::zero(cx),
-            difficulty: SymExpr::zero(cx),
-            gaslimit: SymExpr::zero(cx),
-            basefee: SymExpr::zero(cx),
-            blob_basefee: SymExpr::zero(cx),
-            block_hashes: HashMap::default(),
-            blob_hashes: Vec::new(),
-        }
-    }
-
-    pub(crate) fn from_executor<FEN: FoundryEvmNetwork>(
-        cx: &mut SymCx,
-        executor: &Executor<FEN>,
-    ) -> Self {
-        let evm_env = executor.evm_env();
-        let block = executor
-            .inspector()
-            .cheatcodes
-            .as_ref()
-            .and_then(|cheats| cheats.block.as_ref())
-            .unwrap_or(&evm_env.block_env);
-        let difficulty = block
-            .prevrandao()
-            .map(|hash| U256::from_be_bytes(hash.0))
-            .unwrap_or_else(|| block.difficulty());
-
-        Self {
-            chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),
-            coinbase: block.beneficiary(),
-            timestamp: SymExpr::constant(cx, block.timestamp()),
-            number: SymExpr::constant(cx, block.number()),
-            difficulty: SymExpr::constant(cx, difficulty),
-            gaslimit: SymExpr::constant(cx, U256::from(block.gas_limit())),
-            basefee: SymExpr::constant(cx, U256::from(block.basefee())),
-            blob_basefee: SymExpr::constant(
-                cx,
-                U256::from(block.blob_gasprice().unwrap_or_default()),
-            ),
-            block_hashes: HashMap::default(),
-            blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
-        }
-    }
-
-    pub(crate) fn set_block_hash(
-        &mut self,
-        block_number: U256,
-        block_hash: SymExpr,
-    ) -> Result<(), SymbolicError> {
-        let current = self.number.as_const_or("symbolic vm.setBlockhash current number")?;
-        if block_number < current && current - block_number <= U256::from(256) {
-            self.block_hashes.insert(block_number, block_hash);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn block_hash<FEN: FoundryEvmNetwork>(
-        &self,
-        cx: &mut SymCx,
-        executor: &Executor<FEN>,
-        block_number: U256,
-    ) -> Result<SymExpr, SymbolicError> {
-        let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
-        if block_number >= current || current - block_number > U256::from(256) {
-            return Ok(SymExpr::zero(cx));
-        }
-        if let Some(hash) = self.block_hashes.get(&block_number) {
-            return Ok(hash.clone());
-        }
-        let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(SymExpr::zero(cx));
-        };
-        let hash = executor
-            .backend()
-            .block_hash_ref(block_number)
-            .map_err(|err| SymbolicError::Backend(err.to_string()))?;
-        Ok(SymExpr::constant(cx, U256::from_be_slice(hash.as_slice())))
-    }
-
-    pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
-        &self,
-        cx: &mut SymCx,
-        executor: &Executor<FEN>,
-        block_number: SymExpr,
-    ) -> Result<SymExpr, SymbolicError> {
-        if let Some(block_number) = block_number.as_const() {
-            return self.block_hash(cx, executor, block_number);
-        }
-        let current = self.number.as_const_or("symbolic BLOCKHASH current number")?;
-        if current.is_zero() {
-            return Ok(SymExpr::zero(cx));
-        }
-
-        let mut result = SymExpr::zero(cx);
-        let max_distance =
-            usize::try_from(current.min(U256::from(256))).expect("checked blockhash distance");
-        for distance in (1..=max_distance).rev() {
-            let candidate = current - U256::from(distance);
-            let hash = self.block_hash(cx, executor, candidate)?;
-            if hash.as_const().is_some_and(|hash| hash.is_zero()) {
-                continue;
-            }
-            let candidate = SymExpr::constant(cx, candidate);
-            let condition = SymBoolExpr::eq(cx, block_number.clone(), candidate);
-            result = SymExpr::ite(cx, condition, hash, result);
-        }
-
-        Ok(result)
-    }
-
-    pub(crate) fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>) {
-        self.blob_hashes = blob_hashes;
-    }
-
-    pub(crate) fn blob_hash(&self, index: usize) -> B256 {
-        self.blob_hashes.get(index).copied().unwrap_or_default()
     }
 }
