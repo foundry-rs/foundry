@@ -360,8 +360,8 @@ pub(crate) struct WorkerCorpusSeed {
     metrics: CorpusMetrics,
     replay_dirs: Option<Vec<PathBuf>>,
     failed_replays: usize,
-    optimization_best_value: Option<I256>,
-    optimization_best_sequence: Vec<BasicTxDetails>,
+    pub(crate) optimization_best_value: Option<I256>,
+    pub(crate) optimization_best_sequence: Vec<BasicTxDetails>,
     /// Set if persisted-corpus replay hit a first-time edge, so the timer starts at the baseline
     /// load instead of reading "never" while `cumulative_edges_seen` is non-zero.
     last_new_edge_at: Option<Instant>,
@@ -438,17 +438,9 @@ impl WorkerCorpusSeed {
         if !self.optimization_best_sequence.is_empty()
             && !is_replayable(&self.optimization_best_sequence)
         {
-            self.discard_optimization_best();
+            self.optimization_best_value = None;
+            self.optimization_best_sequence.clear();
         }
-    }
-
-    pub(crate) fn discard_optimization_best(&mut self) {
-        self.optimization_best_value = None;
-        self.optimization_best_sequence.clear();
-    }
-
-    pub(crate) fn optimization_initial_state(&self) -> (Option<I256>, &[BasicTxDetails]) {
-        (self.optimization_best_value, &self.optimization_best_sequence)
     }
 
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
@@ -468,7 +460,8 @@ impl WorkerCorpusSeed {
         if let Some(senders) = target.senders
             && !seed.optimization_best_sequence.iter().all(|tx| senders.allows(tx.sender))
         {
-            seed.discard_optimization_best();
+            seed.optimization_best_value = None;
+            seed.optimization_best_sequence.clear();
         }
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation

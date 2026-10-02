@@ -949,21 +949,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 senders: Some(&campaign_seed.sender_filters),
             },
         )?;
-        if invariant_contract.is_optimization() {
-            let (best_value, best_sequence) = corpus_seed.optimization_initial_state();
-            if let Some(best_value) = best_value {
-                let sequence = (0..best_sequence.len()).collect::<Vec<_>>();
-                let replayed = check_sequence_value(
-                    self.executor.clone(),
-                    best_sequence,
-                    &sequence,
-                    invariant_contract.address,
-                    invariant_contract.anchor_calldata(),
-                );
-                if !matches!(replayed, Ok(Some(value)) if value == best_value) {
-                    // Keep the sequence in the mutation corpus, but do not report its stale value.
-                    corpus_seed.discard_optimization_best();
-                }
+        if invariant_contract.is_optimization()
+            && let Some(best_value) = corpus_seed.optimization_best_value
+        {
+            let sequence = (0..corpus_seed.optimization_best_sequence.len()).collect::<Vec<_>>();
+            let replayed = check_sequence_value(
+                self.executor.clone(),
+                &corpus_seed.optimization_best_sequence,
+                &sequence,
+                invariant_contract.address,
+                invariant_contract.anchor_calldata(),
+            );
+            if !matches!(replayed, Ok(Some(value)) if value == best_value) {
+                // Keep the sequence in the mutation corpus, but do not report its stale value.
+                corpus_seed.optimization_best_value = None;
+                corpus_seed.optimization_best_sequence.clear();
             }
         }
         let mut runner = self.runner.clone();
