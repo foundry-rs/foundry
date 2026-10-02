@@ -1507,7 +1507,7 @@ impl SymbolicExecutor {
             blobhashesCall::SELECTOR => {
                 let values =
                     decode_cheatcode_args(&mut self.cx, state, selector, in_offset, in_size)?;
-                state.block.set_blob_hashes(dyn_bytes32_array(&values[0])?);
+                state.block.blob_hashes = dyn_bytes32_array(&values[0])?;
                 Ok(CheatcodeOutcome::Continue(Vec::new()))
             }
             getBlobhashesCall::SELECTOR => {

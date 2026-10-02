@@ -672,7 +672,7 @@ impl SymbolicExecutor {
                             offset,
                             size,
                         )?;
-                        state.memory.copy_bytes_offset(&mut self.cx, dest, bytes);
+                        state.memory.store_bytes_offset(&mut self.cx, dest, bytes);
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -721,7 +721,14 @@ impl SymbolicExecutor {
                 match state.constrained_usize_checked(&mut self.cx, &size) {
                     Some(Ok(size)) => {
                         if size != 0 {
-                            state.copy_calldata_to_offset(&mut self.cx, dest, offset, size)?;
+                            let CallFrame { memory, calldata, .. } = &mut state.frame;
+                            memory.copy_calldata_to_offset(
+                                &mut self.cx,
+                                dest,
+                                offset,
+                                size,
+                                calldata,
+                            );
                         }
                     }
                     Some(Err(_)) => {
@@ -736,12 +743,14 @@ impl SymbolicExecutor {
                             "symbolic CALLDATACOPY size",
                         )?;
                         if max_size != 0 {
-                            state.copy_calldata_symbolic_size(
+                            let CallFrame { memory, calldata, .. } = &mut state.frame;
+                            memory.copy_calldata_symbolic_size(
                                 &mut self.cx,
                                 dest,
                                 offset,
                                 size,
                                 max_size,
+                                calldata,
                             )?;
                         }
                     }
@@ -765,7 +774,7 @@ impl SymbolicExecutor {
                 match state.constrained_usize_checked(&mut self.cx, &size) {
                     Some(Ok(size)) => {
                         let bytes = code.read_bytes_offset(&mut self.cx, offset, size);
-                        state.memory.copy_bytes_offset(&mut self.cx, dest, bytes);
+                        state.memory.store_bytes_offset(&mut self.cx, dest, bytes);
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -808,7 +817,14 @@ impl SymbolicExecutor {
                 let size = state.stack.pop()?;
                 match state.constrained_usize_checked(&mut self.cx, &size) {
                     Some(Ok(size)) => {
-                        state.copy_return_data_to_offset(&mut self.cx, dest, offset, size)?;
+                        let CallFrame { memory, return_data, .. } = &mut state.frame;
+                        memory.copy_return_data_to_offset(
+                            &mut self.cx,
+                            dest,
+                            offset,
+                            size,
+                            return_data,
+                        )?;
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -825,12 +841,14 @@ impl SymbolicExecutor {
                             max_limit,
                             "symbolic RETURNDATACOPY size",
                         )?;
-                        state.copy_return_data_symbolic_size(
+                        let CallFrame { memory, return_data, .. } = &mut state.frame;
+                        memory.copy_return_data_symbolic_size(
                             &mut self.cx,
                             dest,
                             offset,
                             size,
                             max_size,
+                            return_data,
                         )?;
                     }
                 }
@@ -1035,7 +1053,7 @@ impl SymbolicExecutor {
             opcode::JUMPI => {
                 let dest = state.stack.pop()?;
                 let cond = state.stack.pop()?;
-                match cond.truth() {
+                match cond.as_const().map(|value| !value.is_zero()) {
                     Some(true) => {
                         let Some(dest) = self.resolve_jump_destination(
                             state,
@@ -1276,7 +1294,7 @@ impl SymbolicExecutor {
                     index,
                     "symbolic BLOBHASH index",
                 )?;
-                let hash = state.block.blob_hash(index);
+                let hash = state.block.blob_hashes.get(index).copied().unwrap_or_default();
                 let hash = SymExpr::constant(&mut self.cx, U256::from_be_slice(hash.as_slice()));
                 state.stack.push(hash)?;
             }

@@ -599,10 +599,6 @@ impl SymMemory {
         self.expand_to(cx, size);
     }
 
-    pub(crate) fn copy_bytes_offset(&mut self, cx: &mut SymCx, dest: SymExpr, src: SymBytes) {
-        self.store_bytes_offset(cx, dest, src);
-    }
-
     pub(crate) fn copy_bytes_size_offset(
         &mut self,
         cx: &mut SymCx,
@@ -655,21 +651,13 @@ impl SymMemory {
         offset: SymExpr,
         size: usize,
         calldata: &SymCalldata,
-    ) -> Result<(), SymbolicError> {
-        if let Some(offset) = offset.as_const() {
-            let Ok(offset) = usize::try_from(offset) else {
-                let bytes = SymBytes::concrete(cx, vec![0; size]);
-                self.copy_bytes_offset(cx, dest, bytes);
-                return Ok(());
-            };
-            let offset = SymExpr::constant(cx, U256::from(offset));
-            let bytes = calldata.read_bytes_offset(cx, offset, size);
-            self.store_bytes_offset(cx, dest, bytes);
+    ) {
+        let bytes = if offset.as_const().is_some_and(|offset| usize::try_from(offset).is_err()) {
+            SymBytes::concrete(cx, vec![0; size])
         } else {
-            let bytes = calldata.read_bytes_offset(cx, offset, size);
-            self.store_bytes_offset(cx, dest, bytes);
-        }
-        Ok(())
+            calldata.read_bytes_offset(cx, offset, size)
+        };
+        self.store_bytes_offset(cx, dest, bytes);
     }
 
     pub(crate) fn copy_calldata_symbolic_size(
@@ -681,14 +669,7 @@ impl SymMemory {
         max_size: usize,
         calldata: &SymCalldata,
     ) -> Result<(), SymbolicError> {
-        let bytes = if let Some(offset) = offset.as_const()
-            && let Ok(offset) = usize::try_from(offset)
-        {
-            let offset = SymExpr::constant(cx, U256::from(offset));
-            calldata.read_bytes_offset(cx, offset, max_size)
-        } else {
-            calldata.read_bytes_offset(cx, offset, max_size)
-        };
+        let bytes = calldata.read_bytes_offset(cx, offset, max_size);
         self.copy_bytes_size_offset(cx, dest, size, bytes)
     }
 

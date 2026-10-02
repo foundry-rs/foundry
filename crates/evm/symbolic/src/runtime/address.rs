@@ -26,7 +26,9 @@ impl SymExpr {
         if let Some(word) = self.as_const() {
             return SymBoolExpr::constant(cx, word == address_word(address));
         }
-        let Some(terms) = self.address_byte_terms(cx) else {
+        let Some(terms) =
+            (12..32).map(|index| self.byte_term(cx, index)).collect::<Option<Vec<_>>>()
+        else {
             let address = Self::constant(cx, address_word(address));
             return SymBoolExpr::eq(cx, self.clone(), address);
         };
@@ -99,10 +101,6 @@ impl SymExpr {
             }
             _ => self,
         }
-    }
-
-    fn address_byte_terms(&self, cx: &mut SymCx) -> Option<Vec<Self>> {
-        (12..32).map(|index| self.byte_term(cx, index)).collect()
     }
 
     fn address_byte_terms_for_equivalence(&self) -> Option<Vec<Self>> {

@@ -135,7 +135,9 @@ impl PathState {
                 self.world.enable_arbitrary_storage(target, overwrite);
             }
             for (target, source) in cheats.arbitrary_storage_copied_target_sources() {
-                self.world.enable_arbitrary_storage_copy(source, target);
+                Arc::make_mut(&mut self.world.state)
+                    .arbitrary_storage_copies
+                    .insert(target, source);
             }
             self.storage_load_hooks.extend(cheats.storage_load_hooks().map(|(target, hook)| {
                 (
@@ -204,52 +206,6 @@ impl PathState {
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
         memory.copy_call_output_offset(cx, dest, size, return_data)
-    }
-
-    pub(crate) fn copy_calldata_to_offset(
-        &mut self,
-        cx: &mut SymCx,
-        dest: SymExpr,
-        offset: SymExpr,
-        size: usize,
-    ) -> Result<(), SymbolicError> {
-        let CallFrame { memory, calldata, .. } = &mut self.frame;
-        memory.copy_calldata_to_offset(cx, dest, offset, size, calldata)
-    }
-
-    pub(crate) fn copy_calldata_symbolic_size(
-        &mut self,
-        cx: &mut SymCx,
-        dest: SymExpr,
-        offset: SymExpr,
-        size: SymExpr,
-        max_size: usize,
-    ) -> Result<(), SymbolicError> {
-        let CallFrame { memory, calldata, .. } = &mut self.frame;
-        memory.copy_calldata_symbolic_size(cx, dest, offset, size, max_size, calldata)
-    }
-
-    pub(crate) fn copy_return_data_to_offset(
-        &mut self,
-        cx: &mut SymCx,
-        dest: SymExpr,
-        offset: SymExpr,
-        size: usize,
-    ) -> Result<(), SymbolicError> {
-        let CallFrame { memory, return_data, .. } = &mut self.frame;
-        memory.copy_return_data_to_offset(cx, dest, offset, size, return_data)
-    }
-
-    pub(crate) fn copy_return_data_symbolic_size(
-        &mut self,
-        cx: &mut SymCx,
-        dest: SymExpr,
-        offset: SymExpr,
-        size: SymExpr,
-        max_size: usize,
-    ) -> Result<(), SymbolicError> {
-        let CallFrame { memory, return_data, .. } = &mut self.frame;
-        memory.copy_return_data_symbolic_size(cx, dest, offset, size, max_size, return_data)
     }
 
     pub(crate) fn constrained_usize(&self, cx: &mut SymCx, expr: &SymExpr) -> Option<usize> {
@@ -1755,10 +1711,6 @@ impl SymbolicWorld {
         Arc::make_mut(&mut self.state).arbitrary_storage_accounts.insert(address, overwrite);
     }
 
-    pub(crate) fn enable_arbitrary_storage_copy(&mut self, source: Address, target: Address) {
-        Arc::make_mut(&mut self.state).arbitrary_storage_copies.insert(target, source);
-    }
-
     pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
         self.replay_storage_slots.keys().copied().collect()
     }
@@ -2523,13 +2475,5 @@ impl SymbolicBlock {
         }
 
         Ok(result)
-    }
-
-    pub(crate) fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>) {
-        self.blob_hashes = blob_hashes;
-    }
-
-    pub(crate) fn blob_hash(&self, index: usize) -> B256 {
-        self.blob_hashes.get(index).copied().unwrap_or_default()
     }
 }

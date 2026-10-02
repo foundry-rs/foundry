@@ -1328,10 +1328,6 @@ impl SymExpr {
         }
     }
 
-    pub(crate) fn truth(&self) -> Option<bool> {
-        self.as_const().map(|value| !value.is_zero())
-    }
-
     pub(crate) fn into_zero_bool(self, cx: &mut SymCx) -> SymBoolExpr {
         match self.kind() {
             SymExprKind::Const(value) => SymBoolExpr::constant(cx, value.is_zero()),
