@@ -211,7 +211,7 @@ fn runtime_exceeds_code_size_limit(
     runtime: &SymReturnData,
 ) -> bool {
     spec_id >= SpecId::SPURIOUS_DRAGON
-        && !runtime.has_symbolic_len()
+        && runtime.len_word.as_const().is_some()
         && runtime.len() > cfg.max_code_size()
 }
 

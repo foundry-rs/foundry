@@ -13,31 +13,19 @@ impl SymCalldata {
         Self { size_word: SymExpr::constant(cx, U256::from(size)), size, bytes }
     }
 
-    pub(crate) fn from_bytes_with_size(bytes: SymBytes, size_word: SymExpr) -> Self {
-        Self { size: bytes.len(), size_word, bytes }
-    }
-
     pub(crate) fn size_word(&self) -> SymExpr {
         self.size_word.clone()
     }
 
-    pub(crate) fn load_word(
-        &self,
-        cx: &mut SymCx,
-        offset: SymExpr,
-    ) -> Result<SymExpr, SymbolicError> {
+    pub(crate) fn load_word(&self, cx: &mut SymCx, offset: SymExpr) -> SymExpr {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else {
-                return Ok(SymExpr::zero(cx));
+                return SymExpr::zero(cx);
             };
-            Ok(self.load(cx, offset))
+            self.bytes.word_at(cx, offset)
         } else {
-            Ok(self.load_dynamic(cx, &offset))
+            self.load_dynamic(cx, &offset)
         }
-    }
-
-    fn load(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
-        self.bytes.word_at(cx, offset)
     }
 
     fn load_dynamic(&self, cx: &mut SymCx, offset: &SymExpr) -> SymExpr {
@@ -45,7 +33,7 @@ impl SymCalldata {
         for candidate in (0..self.size).rev() {
             let candidate_expr = SymExpr::constant(cx, U256::from(candidate));
             let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
-            let word = self.load(cx, candidate);
+            let word = self.bytes.word_at(cx, candidate);
             result = SymExpr::ite(cx, condition, word, result);
         }
         result
@@ -98,7 +86,9 @@ impl BoundedCopySize {
     pub(crate) fn calldata(&self, cx: &mut SymCx, input: SymBytes) -> SymCalldata {
         match self {
             Self::Concrete(_) => SymCalldata::from_bytes(cx, input),
-            Self::Symbolic { size, .. } => SymCalldata::from_bytes_with_size(input, size.clone()),
+            Self::Symbolic { size, .. } => {
+                SymCalldata { size: input.len(), size_word: size.clone(), bytes: input }
+            }
         }
     }
 }

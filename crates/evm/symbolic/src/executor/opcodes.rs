@@ -750,7 +750,7 @@ impl SymbolicExecutor {
             }
             opcode::CALLDATALOAD => {
                 let offset = state.stack.pop()?;
-                let value = state.calldata.load_word(&mut self.cx, offset)?;
+                let value = state.calldata.load_word(&mut self.cx, offset);
                 state.stack.push(value)?;
             }
             opcode::CALLDATASIZE => {
@@ -848,7 +848,7 @@ impl SymbolicExecutor {
                 }
             }
             opcode::RETURNDATASIZE => {
-                let size = state.return_data.len_word();
+                let size = state.return_data.len_word.clone();
                 state.stack.push(size)?;
             }
             opcode::RETURNDATACOPY => {
@@ -1502,7 +1502,7 @@ impl SymbolicExecutor {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let return_data_len = state.return_data.len_expr();
+        let return_data_len = state.return_data.len_word.clone();
         let offset_in_bounds =
             SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), return_data_len.clone());
         let remaining =

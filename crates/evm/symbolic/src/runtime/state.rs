@@ -1174,7 +1174,7 @@ impl ExpectedRevert {
                 conditions.push(SymBoolExpr::cmp(
                     cx,
                     SymCmpOp::Uge,
-                    return_data.len_expr(),
+                    return_data.len_word.clone(),
                     prefix_len,
                 ));
                 conditions.extend((0..prefix.len()).map(|offset| {
@@ -1188,7 +1188,7 @@ impl ExpectedRevert {
                     return None;
                 }
                 let len = SymExpr::constant(cx, U256::from(data.len()));
-                conditions.push(SymBoolExpr::eq(cx, return_data.len_expr(), len));
+                conditions.push(SymBoolExpr::eq(cx, return_data.len_word.clone(), len));
                 conditions.extend((0..data.len()).map(|offset| {
                     let expected = data.byte(cx, offset);
                     let actual = return_data.byte(cx, offset);
@@ -2236,7 +2236,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        if is_known_cheatcode(address) {
+        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {
@@ -2288,11 +2288,11 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<SymCode, SymbolicError> {
-        if is_known_cheatcode(address) {
+        if address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS {
             return Ok(SymCode::concrete(cx, vec![0]));
         }
         let spec_id: SpecId = executor.spec_id().into();
-        if is_supported_precompile(address, spec_id) {
+        if precompile_number_for_spec(address, spec_id).is_some() {
             return Ok(SymCode::empty(cx));
         }
         if self.destroyed_accounts.contains(&address) {
@@ -2446,7 +2446,10 @@ impl SymbolicWorld {
         let mut targets = Vec::new();
         let spec_id: SpecId = executor.spec_id().into();
         for address in addresses {
-            if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
+            if address == CHEATCODE_ADDRESS
+                || address == SYMBOLIC_VM_COMPAT_ADDRESS
+                || precompile_number_for_spec(address, spec_id).is_some()
+            {
                 continue;
             }
             if !self.extcode(cx, executor, address)?.is_empty() {

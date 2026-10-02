@@ -775,7 +775,7 @@ impl SymMemory {
             BoundedCopySize::Concrete(size) => {
                 if *size != 0 {
                     let copy_size = (*size).min(return_data.len());
-                    let bytes = if return_data.has_symbolic_len() {
+                    let bytes = if return_data.len_word.as_const().is_none() {
                         let bytes = (0..copy_size)
                             .map(|idx| self.call_output_byte(cx, &dest, idx, None, return_data))
                             .collect::<Vec<_>>();
@@ -818,9 +818,14 @@ impl SymMemory {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
             guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, output_size.clone()));
         }
-        if return_data.has_symbolic_len() {
+        if return_data.len_word.as_const().is_none() {
             let idx_expr = SymExpr::constant(cx, U256::from(idx));
-            guards.push(SymBoolExpr::cmp(cx, SymCmpOp::Ult, idx_expr, return_data.len_expr()));
+            guards.push(SymBoolExpr::cmp(
+                cx,
+                SymCmpOp::Ult,
+                idx_expr,
+                return_data.len_word.clone(),
+            ));
         }
         let guard = SymBoolExpr::and(cx, guards);
         match guard.as_const() {
@@ -897,10 +902,10 @@ impl SymMemory {
         size: SymExpr,
         max_size: usize,
     ) -> Result<SymReturnData, SymbolicError> {
-        Ok(SymReturnData::from_bytes_with_len(
-            self.read_bytes_symbolic_size(cx, offset, size.clone(), max_size),
-            size,
-        ))
+        Ok(SymReturnData {
+            bytes: self.read_bytes_symbolic_size(cx, offset, size.clone(), max_size),
+            len_word: size,
+        })
     }
 }
 
@@ -1102,8 +1107,8 @@ impl SymCode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
-    len_word: SymExpr,
-    bytes: SymBytes,
+    pub(crate) len_word: SymExpr,
+    pub(crate) bytes: SymBytes,
 }
 
 impl SymReturnData {
@@ -1132,24 +1137,8 @@ impl SymReturnData {
         Self { len_word: SymExpr::constant(cx, U256::from(len)), bytes }
     }
 
-    pub(crate) const fn from_bytes_with_len(bytes: SymBytes, len_word: SymExpr) -> Self {
-        Self { len_word, bytes }
-    }
-
-    pub(crate) fn len_word(&self) -> SymExpr {
-        self.len_word.clone()
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.bytes.len()
-    }
-
-    pub(crate) fn len_expr(&self) -> SymExpr {
-        self.len_word.clone()
-    }
-
-    pub(crate) fn has_symbolic_len(&self) -> bool {
-        self.len_word.as_const().is_none()
     }
 
     pub(crate) fn byte(&self, cx: &mut SymCx, offset: usize) -> SymExpr {
@@ -1174,7 +1163,7 @@ impl SymReturnData {
     }
 
     pub(crate) fn to_code(&self, cx: &mut SymCx) -> Result<SymCode, SymbolicError> {
-        if self.has_symbolic_len() {
+        if self.len_word.as_const().is_none() {
             return Err(SymbolicError::Unsupported(
                 "CREATE with symbolic runtime size not modeled",
             ));
