@@ -42,7 +42,9 @@ impl SymbolicExecutor {
         ensure_expr_not_gasleft(&target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
-            (CallKind::Call, Some(to)) if is_known_cheatcode(to) => {
+            (CallKind::Call, Some(to))
+                if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS =>
+            {
                 let value = state.stack.pop()?;
                 let value =
                     state.expect_constrained_word(&mut self.cx, value, "symbolic CALL value")?;
@@ -64,18 +66,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &in_size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &in_size,
-                            max_limit,
-                            "symbolic CALL input size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &in_size,
+                    max_limit,
+                    "symbolic CALL input size",
+                )?;
                 BoundedCopySize::Symbolic { size: in_size, max_size }
             }
         };
@@ -90,18 +86,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &out_size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &out_size,
-                            max_limit,
-                            "symbolic CALL output size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &out_size,
+                    max_limit,
+                    "symbolic CALL output size",
+                )?;
                 BoundedCopySize::Symbolic { size: out_size, max_size }
             }
         };
@@ -701,7 +691,7 @@ impl SymbolicExecutor {
         out_offset: SymExpr,
         out_size: BoundedCopySize,
     ) -> Result<StepOutcome, SymbolicError> {
-        if is_known_cheatcode(to) {
+        if to == CHEATCODE_ADDRESS || to == SYMBOLIC_VM_COMPAT_ADDRESS {
             if !state.constrained_word(&mut self.cx, &value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
@@ -835,7 +825,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        if is_console(to) {
+        if to == HARDHAT_CONSOLE_ADDRESS {
             state.return_data = SymReturnData::empty(&mut self.cx);
             state.copy_call_output_offset(&mut self.cx, out_offset, &out_size)?;
             state.stack.push(SymExpr::one(&mut self.cx))?;
@@ -899,7 +889,7 @@ impl SymbolicExecutor {
             call_context.unwrap_or_else(|| state.prank_for_next_call());
 
         let spec_id: SpecId = executor.spec_id().into();
-        if is_supported_precompile(code_address, spec_id) {
+        if precompile_number_for_spec(code_address, spec_id).is_some() {
             let input_len = in_size.size_word(&mut self.cx);
             let input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {

@@ -25,9 +25,7 @@ use foundry_evm::{
     },
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use foundry_evm_symbolic::{
-    PortfolioDiagnostics, SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment,
-};
+use foundry_evm_symbolic::{SymbolicStats, SymbolicStopReason, SymbolicStorageAssignment};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap as Map},
@@ -1347,14 +1345,6 @@ pub struct TestResult {
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
-
-    /// Staged solver portfolio diagnostics collected during symbolic execution.
-    #[serde(skip)]
-    pub symbolic_portfolio_diagnostics: Option<PortfolioDiagnostics>,
-
-    /// Verbose symbolic solver diagnostics deferred until test output rendering.
-    #[serde(skip)]
-    pub symbolic_diagnostics: Option<String>,
 }
 
 impl fmt::Display for TestResult {
