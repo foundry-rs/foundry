@@ -68,7 +68,7 @@ struct Candidate {
 }
 
 /// Self-reported metadata from the external generator.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct GeneratorMetadata {
     agent: String,
     model: String,
@@ -97,7 +97,10 @@ struct GeneratorPrompt<'a> {
     mutate: &'a [PathBuf],
     seeds: &'a [U256],
     baseline: &'a [PromptMutation<'a>],
+    current_results: &'a [PromptMutation<'a>],
     mutation_gaps: &'a [MutationGap],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_candidate: Option<&'a Candidate>,
     previous_feedback: &'a [ProposalFeedback],
     output_contract: OutputContract,
 }
@@ -145,6 +148,7 @@ struct ProposalFeedback {
     reasons: Vec<String>,
     candidate_results: Vec<MutationResultSummary>,
     resolved_survivors: usize,
+    newly_resolved_survivors: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,7 +167,10 @@ struct Evaluation {
     baseline: Vec<MutationResultSummary>,
     candidate: Vec<MutationResultSummary>,
     resolved_survivors: usize,
+    newly_resolved_survivors: usize,
 }
+
+type MutationIdentity = (String, usize, usize, String, String);
 
 impl FuzzImproveArgs {
     pub fn run(self) -> Result<()> {
@@ -199,34 +206,51 @@ impl FuzzImproveArgs {
             .iter()
             .map(|result| PromptMutation { seed: &result.seed, summary: &result.output.summary })
             .collect::<Vec<_>>();
-        let mutation_gaps = mutation_gaps(&config.root, &baseline);
         let cache_root = config.cache_path.join("fuzz-improve");
         fs::create_dir_all(&cache_root)?;
 
         let mut evaluations = Vec::new();
         let mut feedback = Vec::new();
-        let mut best = None;
+        let mut current_candidate = None::<Candidate>;
+        let mut current_results = baseline.clone();
+        let mut resolved_survivors = BTreeSet::new();
+        let mut accepted = None;
         for round in 1..=self.rounds {
             let round_dir = tempfile::Builder::new().prefix("forge-fuzz-improve-").tempdir()?;
             let prompt_path = round_dir.path().join("prompt.json");
             let candidate_path = round_dir.path().join("candidate.json");
+            let prompt_current_results = current_results
+                .iter()
+                .map(|result| PromptMutation {
+                    seed: &result.seed,
+                    summary: &result.output.summary,
+                })
+                .collect::<Vec<_>>();
+            let mutation_gaps = mutation_gaps(&config.root, &current_results);
+            let retained_files =
+                current_candidate.as_ref().map_or(0, |candidate| candidate.files.len());
+            let retained_bytes = current_candidate
+                .as_ref()
+                .map_or(0, |candidate| candidate.files.iter().map(|file| file.content.len()).sum());
             let prompt = GeneratorPrompt {
                 schema: PROMPT_SCHEMA,
                 round,
                 project: &config.root,
                 brief: &brief,
-                guidance: "Prioritize mutations that survive all seeds and inspect their numbered source context. Propose a property only when a concrete input or sequence can distinguish the original from the mutant; surviving mutants may be semantically equivalent.",
+                guidance: "Prioritize mutations that survive all seeds and inspect their numbered source context. Propose a property only when a concrete input or sequence can distinguish the original from the mutant; surviving mutants may be semantically equivalent. The current candidate is retained automatically, so return only new files with distinct paths.",
                 mutate: &self.mutate,
                 seeds: &self.seed,
                 baseline: &prompt_baseline,
+                current_results: &prompt_current_results,
                 mutation_gaps: &mutation_gaps,
+                current_candidate: current_candidate.as_ref(),
                 previous_feedback: &feedback,
                 output_contract: OutputContract {
                     schema: CANDIDATE_SCHEMA,
                     allowed_path_prefix: generated_tests.clone(),
-                    maximum_files: MAX_CANDIDATE_FILES,
-                    maximum_total_bytes: MAX_CANDIDATE_BYTES,
-                    note: "Generated assertions are candidates for human review, not proofs. An optional generator object may record self-reported agent and model names.",
+                    maximum_files: MAX_CANDIDATE_FILES - retained_files,
+                    maximum_total_bytes: MAX_CANDIDATE_BYTES - retained_bytes,
+                    note: "Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. An optional generator object may record self-reported agent and model names.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
@@ -238,45 +262,78 @@ impl FuzzImproveArgs {
                 .current_dir(&config.root)
                 .output()
                 .wrap_err("failed to invoke generator")?;
-            let candidate = if output.status.success() {
+            let proposal = if output.status.success() {
                 read_candidate(&candidate_path, &generated_tests)
             } else {
                 Err(eyre!("generator failed: {}", stderr(&output)))
             };
-            let evaluation = match candidate {
-                Ok(candidate) => {
-                    let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
-                    let evaluation = self
-                        .evaluate(&config, &forge, &baseline, &candidate, digest.clone())
-                        .unwrap_or_else(|error| Evaluation {
-                            candidate_digest: digest,
-                            generator: candidate.generator.clone(),
+            let evaluation = match proposal {
+                Ok(proposal) => match accumulate_candidate(
+                    current_candidate.as_ref(),
+                    &proposal,
+                    &generated_tests,
+                ) {
+                    Ok(candidate) => {
+                        let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
+                        let evaluated = self.evaluate(
+                            &config,
+                            &forge,
+                            &baseline,
+                            &current_results,
+                            &resolved_survivors,
+                            &candidate,
+                        );
+                        let (evaluation, candidate_results, newly_resolved) = evaluated
+                            .unwrap_or_else(|error| {
+                                (
+                                    Evaluation {
+                                        candidate_digest: digest,
+                                        generator: candidate.generator.clone(),
+                                        accepted: false,
+                                        reasons: vec![error.to_string()],
+                                        baseline: mutation_result_summaries(&baseline),
+                                        candidate: vec![],
+                                        resolved_survivors: 0,
+                                        newly_resolved_survivors: 0,
+                                    },
+                                    vec![],
+                                    BTreeSet::new(),
+                                )
+                            });
+                        let candidate_cache = cache_root.join(&evaluation.candidate_digest);
+                        fs::create_dir_all(&candidate_cache)?;
+                        fs::write(
+                            candidate_cache.join("candidate.json"),
+                            serde_json::to_vec_pretty(&candidate)?,
+                        )?;
+                        fs::write(
+                            candidate_cache.join("evaluation.json"),
+                            serde_json::to_vec_pretty(&evaluation)?,
+                        )?;
+                        if evaluation.accepted {
+                            current_candidate = Some(candidate);
+                            current_results = candidate_results;
+                            resolved_survivors.extend(newly_resolved);
+                            accepted = Some(candidate_cache);
+                        }
+                        feedback.push(proposal_feedback(Some(&proposal), &evaluation));
+                        evaluation
+                    }
+                    Err(error) => {
+                        let evaluation = Evaluation {
+                            candidate_digest: format!("round-{round}"),
+                            generator: proposal.generator.clone(),
                             accepted: false,
                             reasons: vec![error.to_string()],
                             baseline: mutation_result_summaries(&baseline),
                             candidate: vec![],
                             resolved_survivors: 0,
-                        });
-                    let candidate_cache = cache_root.join(&evaluation.candidate_digest);
-                    fs::create_dir_all(&candidate_cache)?;
-                    fs::write(
-                        candidate_cache.join("candidate.json"),
-                        serde_json::to_vec_pretty(&candidate)?,
-                    )?;
-                    fs::write(
-                        candidate_cache.join("evaluation.json"),
-                        serde_json::to_vec_pretty(&evaluation)?,
-                    )?;
-                    if evaluation.accepted
-                        && best.as_ref().is_none_or(|(score, _): &(usize, PathBuf)| {
-                            evaluation.resolved_survivors > *score
-                        })
-                    {
-                        best = Some((evaluation.resolved_survivors, candidate_cache));
+                            newly_resolved_survivors: 0,
+                        };
+                        feedback.push(proposal_feedback(Some(&proposal), &evaluation));
+                        evaluation
                     }
-                    feedback.push(proposal_feedback(Some(&candidate), &evaluation));
-                    evaluation
-                }
+                },
                 Err(error) => {
                     let evaluation = Evaluation {
                         candidate_digest: format!("round-{round}"),
@@ -286,6 +343,7 @@ impl FuzzImproveArgs {
                         baseline: mutation_result_summaries(&baseline),
                         candidate: vec![],
                         resolved_survivors: 0,
+                        newly_resolved_survivors: 0,
                     };
                     feedback.push(proposal_feedback(None, &evaluation));
                     evaluation
@@ -295,11 +353,12 @@ impl FuzzImproveArgs {
         }
 
         fs::write(cache_root.join("rounds.json"), serde_json::to_vec_pretty(&evaluations)?)?;
-        if let Some((resolved_survivors, path)) = best {
+        if let Some(path) = accepted {
             let path = path.strip_prefix(&config.root).unwrap_or(&path);
             sh_println!(
-                "accepted candidate: {} (reproducibly resolved {resolved_survivors} baseline survivor(s))",
-                path.display()
+                "accepted candidate: {} (reproducibly resolved {} survivor(s) across rounds)",
+                path.display(),
+                resolved_survivors.len(),
             )?;
         } else {
             sh_println!("no candidate reproducibly resolved a mutation survivor")?;
@@ -312,9 +371,10 @@ impl FuzzImproveArgs {
         config: &Config,
         forge: &Path,
         baseline: &[SeedMutation],
+        current_results: &[SeedMutation],
+        previously_resolved: &BTreeSet<MutationIdentity>,
         candidate: &Candidate,
-        digest: String,
-    ) -> Result<Evaluation> {
+    ) -> Result<(Evaluation, Vec<SeedMutation>, BTreeSet<MutationIdentity>)> {
         let candidate_workspace =
             tempfile::Builder::new().prefix("forge-fuzz-improve-").tempdir()?;
         workspace::copy_project(config, candidate_workspace.path())?;
@@ -406,7 +466,7 @@ impl FuzzImproveArgs {
                 .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
             let contract_filter = candidate_contract_filter(base_filter, candidate);
             let mut results = Vec::with_capacity(self.seed.len());
-            for before in baseline {
+            for before in current_results {
                 let after = self.run_mutation(
                     forge,
                     candidate_workspace.path(),
@@ -449,27 +509,40 @@ impl FuzzImproveArgs {
         // Adaptive span skipping can expose a new surviving sibling and skip mutants that the
         // baseline killed, so aggregate kill counts are not monotonic. Compare stable survivor
         // identities instead: candidate files cannot alter the mutated sources. A useful property
-        // must eliminate an identity on every seed where that identity survived; it need not add a
-        // new kill on seeds where the baseline already killed that mutant.
-        let resolved_survivors = if reasons.is_empty() {
-            resolved_survivor_count(baseline, &candidate_results)
+        // must eliminate an identity on every seed without reviving it on another seed; it need not
+        // add a new kill on seeds where the baseline already killed that mutant.
+        let newly_resolved = if reasons.is_empty() {
+            resolved_survivor_identities(current_results, &candidate_results)
         } else {
-            0
+            BTreeSet::new()
         };
-        if reasons.is_empty() && resolved_survivors == 0 {
+        if reasons.is_empty() && newly_resolved.is_empty() {
             reasons.push(
-                "candidate did not reproducibly resolve a baseline mutation survivor".to_string(),
+                "candidate did not reproducibly resolve a current mutation survivor".to_string(),
             );
         }
-        Ok(Evaluation {
-            candidate_digest: digest,
-            generator: candidate.generator.clone(),
-            accepted: reasons.is_empty(),
-            reasons,
-            baseline: mutation_result_summaries(baseline),
-            candidate: mutation_result_summaries(&candidate_results),
-            resolved_survivors,
-        })
+        if reasons.is_empty()
+            && candidate_results.iter().any(|result| {
+                !previously_resolved.is_disjoint(&survivor_identities(&result.output))
+            })
+        {
+            reasons.push("candidate revived a survivor resolved by an earlier round".to_string());
+        }
+        Ok((
+            Evaluation {
+                candidate_digest: keccak256(serde_json::to_vec(candidate)?).to_string(),
+                generator: candidate.generator.clone(),
+                accepted: reasons.is_empty(),
+                reasons,
+                baseline: mutation_result_summaries(baseline),
+                candidate: mutation_result_summaries(&candidate_results),
+                resolved_survivors: resolved_survivor_identities(baseline, &candidate_results)
+                    .len(),
+                newly_resolved_survivors: newly_resolved.len(),
+            },
+            candidate_results,
+            newly_resolved,
+        ))
     }
 
     fn run_candidate_test(
@@ -659,7 +732,10 @@ fn mutation_result_summaries(results: &[SeedMutation]) -> Vec<MutationResultSumm
         .collect()
 }
 
-fn resolved_survivor_count(baseline: &[SeedMutation], candidate: &[SeedMutation]) -> usize {
+fn resolved_survivor_identities(
+    baseline: &[SeedMutation],
+    candidate: &[SeedMutation],
+) -> BTreeSet<MutationIdentity> {
     let baseline = baseline
         .iter()
         .map(|result| (result.seed, survivor_identities(&result.output)))
@@ -668,22 +744,18 @@ fn resolved_survivor_count(baseline: &[SeedMutation], candidate: &[SeedMutation]
         .iter()
         .map(|result| (result.seed, survivor_identities(&result.output)))
         .collect::<BTreeMap<_, _>>();
+    if baseline.keys().ne(candidate.keys()) {
+        return BTreeSet::new();
+    }
     let identities = baseline.values().flatten().cloned().collect::<BTreeSet<_>>();
 
     identities
         .into_iter()
-        .filter(|identity| {
-            baseline.iter().all(|(seed, survivors)| {
-                !survivors.contains(identity)
-                    || candidate.get(seed).is_some_and(|after| !after.contains(identity))
-            })
-        })
-        .count()
+        .filter(|identity| candidate.values().all(|survivors| !survivors.contains(identity)))
+        .collect()
 }
 
-fn survivor_identities(
-    output: &MutationJsonOutput,
-) -> BTreeSet<(String, usize, usize, String, String)> {
+fn survivor_identities(output: &MutationJsonOutput) -> BTreeSet<MutationIdentity> {
     output
         .survived_mutants
         .iter()
@@ -701,11 +773,48 @@ fn survivor_identities(
         .collect()
 }
 
+fn accumulate_candidate(
+    current: Option<&Candidate>,
+    proposal: &Candidate,
+    generated_tests: &Path,
+) -> Result<Candidate> {
+    let Some(current) = current else { return Ok(proposal.clone()) };
+    let existing_paths = current.files.iter().map(|file| &file.path).collect::<HashSet<_>>();
+    for file in &proposal.files {
+        ensure!(
+            !existing_paths.contains(&file.path),
+            "candidate path {} was retained by an earlier round",
+            file.path.display()
+        );
+    }
+
+    let mut candidate = Candidate {
+        schema: CANDIDATE_SCHEMA.to_string(),
+        rationale: format!("{}\n\n{}", current.rationale, proposal.rationale),
+        generator: if current.generator == proposal.generator {
+            proposal.generator.clone()
+        } else {
+            None
+        },
+        files: current.files.clone(),
+        tests: current.tests.clone(),
+    };
+    candidate.files.extend(proposal.files.iter().cloned());
+    candidate.tests.extend(proposal.tests.iter().cloned());
+    validate_candidate(&candidate, generated_tests)?;
+    Ok(candidate)
+}
+
 fn read_candidate(path: &Path, generated_tests: &Path) -> Result<Candidate> {
     let candidate: Candidate = serde_json::from_slice(
         &fs::read(path).wrap_err_with(|| format!("failed to read {}", path.display()))?,
     )
     .wrap_err("invalid candidate JSON")?;
+    validate_candidate(&candidate, generated_tests)?;
+    Ok(candidate)
+}
+
+fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<()> {
     ensure!(candidate.schema == CANDIDATE_SCHEMA, "unsupported candidate schema");
     ensure!(!candidate.rationale.trim().is_empty(), "candidate rationale is empty");
     if let Some(generator) = &candidate.generator {
@@ -730,7 +839,7 @@ fn read_candidate(path: &Path, generated_tests: &Path) -> Result<Candidate> {
         ensure!(!test.contract.is_empty(), "candidate test contract is empty");
         ensure!(!test.name.is_empty(), "candidate test name is empty");
     }
-    Ok(candidate)
+    Ok(())
 }
 
 fn validate_candidate_path(path: &Path, generated_tests: &Path) -> Result<()> {
@@ -759,6 +868,7 @@ fn proposal_feedback(candidate: Option<&Candidate>, evaluation: &Evaluation) -> 
         reasons: evaluation.reasons.clone(),
         candidate_results: evaluation.candidate.clone(),
         resolved_survivors: evaluation.resolved_survivors,
+        newly_resolved_survivors: evaluation.newly_resolved_survivors,
     }
 }
 
@@ -820,13 +930,19 @@ mod tests {
     }
 
     #[test]
-    fn counts_survivors_resolved_where_they_existed() {
+    fn counts_survivors_resolved_across_all_seeds() {
         let baseline = [
             mutation_result(1, &[(1, "a", "b"), (2, "c", "d")]),
             mutation_result(2, &[(1, "a", "b")]),
         ];
         let candidate = [mutation_result(1, &[(2, "c", "d")]), mutation_result(2, &[])];
 
-        assert_eq!(resolved_survivor_count(&baseline, &candidate), 1);
+        assert_eq!(resolved_survivor_identities(&baseline, &candidate).len(), 1);
+
+        let shifted = [mutation_result(1, &[(2, "c", "d")]), mutation_result(2, &[(1, "a", "b")])];
+        assert!(resolved_survivor_identities(&baseline, &shifted).is_empty());
+
+        let partial = [mutation_result(1, &[])];
+        assert!(resolved_survivor_identities(&baseline, &partial).is_empty());
     }
 }

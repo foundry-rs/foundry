@@ -6308,6 +6308,7 @@ set -eu
 prompt="$1"
 output="$2"
 grep -q '"mutation_gaps"' "$prompt"
+grep -q '"current_results"' "$prompt"
 grep -q '"original"' "$prompt"
 grep -q '"mutant"' "$prompt"
 grep -q '"survives_all_seeds": true' "$prompt"
@@ -6344,19 +6345,51 @@ cat > "$output" <<'JSON'
 JSON
 exit 0
 fi
+if grep -q '"round": 3' "$prompt"; then
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
-  "rationale": "exercise every range and comparison boundary",
+  "rationale": "exercise the lower comparison boundary",
   "generator": {"agent": "fixture", "model": "deterministic"},
   "files": [{
-    "path": "tests/generated/ArithmeticGenerated.t.sol",
-    "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticGeneratedTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testFuzzBucket(uint256 value) public view {\n        Assertions.equal(arithmetic.bucket(9), 1);\n        Assertions.equal(arithmetic.bucket(10), 2);\n        Assertions.equal(arithmetic.bucket(99), 2);\n        Assertions.equal(arithmetic.bucket(100), 3);\n        uint256 expected = value < 10 ? 1 : value < 100 ? 2 : 3;\n        Assertions.equal(arithmetic.bucket(value), expected);\n    }\n}\n"
+    "path": "tests/generated/ArithmeticLower.t.sol",
+    "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1);\n        Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"
   }],
   "tests": [{
-    "path": "tests/generated/ArithmeticGenerated.t.sol",
-    "contract": "ArithmeticGeneratedTest",
-    "name": "testFuzzBucket"
+    "path": "tests/generated/ArithmeticLower.t.sol",
+    "contract": "ArithmeticLowerTest",
+    "name": "testLowerBoundary"
+  }]
+}
+JSON
+exit 0
+fi
+grep -q '"current_candidate"' "$prompt"
+grep -q 'ArithmeticLowerTest' "$prompt"
+if grep -q '"round": 4' "$prompt"; then
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "try to replace an accepted property",
+  "files": [{"path": "tests/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\n"}],
+  "tests": [{"path": "tests/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
+}
+JSON
+exit 0
+fi
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "exercise the upper comparison boundary",
+  "generator": {"agent": "fixture", "model": "deterministic"},
+  "files": [{
+    "path": "tests/generated/ArithmeticUpper.t.sol",
+    "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticUpperTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testUpperBoundary() public view {\n        Assertions.equal(arithmetic.bucket(99), 2);\n        Assertions.equal(arithmetic.bucket(100), 3);\n    }\n}\n"
+  }],
+  "tests": [{
+    "path": "tests/generated/ArithmeticUpper.t.sol",
+    "contract": "ArithmeticUpperTest",
+    "name": "testUpperBoundary"
   }]
 }
 JSON
@@ -6368,35 +6401,35 @@ JSON
     fs::set_permissions(&generator, permissions).unwrap();
 
     cmd.args([
-            "fuzz",
-            "improve",
-            "--root",
-            prj.root().to_str().unwrap(),
-            "--mutate",
-            "src/Arithmetic.sol",
-            "--brief",
-            brief.to_str().unwrap(),
-            "--generator",
-            generator.to_str().unwrap(),
-            "--seed",
-            "0x5eed",
-            "--seed",
-            "0xc0ffee",
-            "--match-contract",
-            "^ArithmeticTest$",
-            "--rounds",
-            "3",
+        "fuzz",
+        "improve",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+        "--rounds",
+        "5",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8bf2460df62b08aeb9d58c552f (reproducibly resolved 6 baseline survivor(s))
+accepted candidate: cache/fuzz-improve/0x86baaa33c9eb6ccc1a31ef1518b82d78f1d0db2a4e6b4187c5f78a763960ed51 (reproducibly resolved 6 survivor(s) across rounds)
 
 "#]]);
 
     let rounds = fs::read_to_string(prj.root().join("cache/fuzz-improve/rounds.json")).unwrap();
     assert!(!rounds.contains("\"mutant\""));
     let rounds: serde_json::Value = serde_json::from_str(&rounds).unwrap();
-    assert_eq!(rounds.as_array().unwrap().len(), 3);
+    assert_eq!(rounds.as_array().unwrap().len(), 5);
     assert_eq!(rounds[0]["accepted"], false);
     assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
     assert_eq!(rounds[1]["accepted"], false);
@@ -6405,9 +6438,23 @@ accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8
         rounds[1]["reasons"][0]
             .as_str()
             .unwrap()
-            .contains("did not reproducibly resolve a baseline mutation survivor")
+            .contains("did not reproducibly resolve a current mutation survivor")
     );
     assert_eq!(rounds[2]["accepted"], true);
     assert_eq!(rounds[2]["generator"]["model"], "deterministic");
     assert!(rounds[2]["resolved_survivors"].as_u64().unwrap() > 0);
+    assert_eq!(rounds[2]["resolved_survivors"], rounds[2]["newly_resolved_survivors"]);
+    assert_eq!(rounds[3]["accepted"], false);
+    assert!(rounds[3]["reasons"][0].as_str().unwrap().contains("retained by an earlier round"));
+    assert_eq!(rounds[4]["accepted"], true);
+    assert!(rounds[4]["resolved_survivors"].as_u64().unwrap() > 0);
+    assert!(rounds[4]["newly_resolved_survivors"].as_u64().unwrap() > 0);
+
+    let digest = rounds[4]["candidate_digest"].as_str().unwrap();
+    let candidate = fs::read_to_string(
+        prj.root().join("cache/fuzz-improve").join(digest).join("candidate.json"),
+    )
+    .unwrap();
+    assert!(candidate.contains("ArithmeticLowerTest"));
+    assert!(candidate.contains("ArithmeticUpperTest"));
 }
