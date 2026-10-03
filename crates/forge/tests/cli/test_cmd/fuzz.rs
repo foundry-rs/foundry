@@ -6311,7 +6311,7 @@ grep -q '"mutation_gaps"' "$prompt"
 grep -q '"original"' "$prompt"
 grep -q '"mutant"' "$prompt"
 grep -q 'surviving mutants may be semantically equivalent' "$prompt"
-if grep -q '"round": 2' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
+if ! grep -q '"round": 1' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
 cat > "$output" <<'JSON'
 {
@@ -6319,6 +6319,24 @@ cat > "$output" <<'JSON'
   "rationale": "exercise candidate rejection",
   "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n"}],
   "tests": [{"path": "tests/generated/Existing.t.sol", "contract": "ExistingTest", "name": "testExisting"}]
+}
+JSON
+exit 0
+fi
+if grep -q '"round": 2' "$prompt"; then
+cat > "$output" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "duplicate the existing small-value example",
+  "files": [{
+    "path": "tests/generated/ArithmeticNoGain.t.sol",
+    "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
+  }],
+  "tests": [{
+    "path": "tests/generated/ArithmeticNoGain.t.sol",
+    "contract": "ArithmeticNoGainTest",
+    "name": "testSmallValue"
+  }]
 }
 JSON
 exit 0
@@ -6364,7 +6382,7 @@ JSON
             "--match-contract",
             "^ArithmeticTest$",
             "--rounds",
-            "2",
+            "3",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -6375,10 +6393,13 @@ accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8
     let rounds = fs::read_to_string(prj.root().join("cache/fuzz-improve/rounds.json")).unwrap();
     assert!(!rounds.contains("\"mutant\""));
     let rounds: serde_json::Value = serde_json::from_str(&rounds).unwrap();
-    assert_eq!(rounds.as_array().unwrap().len(), 2);
+    assert_eq!(rounds.as_array().unwrap().len(), 3);
     assert_eq!(rounds[0]["accepted"], false);
     assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
-    assert_eq!(rounds[1]["accepted"], true);
-    assert_eq!(rounds[1]["generator"]["model"], "deterministic");
-    assert!(rounds[1]["minimum_new_kills"].as_i64().unwrap() > 0);
+    assert_eq!(rounds[1]["accepted"], false);
+    assert_eq!(rounds[1]["candidate"].as_array().unwrap().len(), 1);
+    assert!(rounds[1]["reasons"][0].as_str().unwrap().contains("did not add a mutation kill"));
+    assert_eq!(rounds[2]["accepted"], true);
+    assert_eq!(rounds[2]["generator"]["model"], "deterministic");
+    assert!(rounds[2]["minimum_new_kills"].as_i64().unwrap() > 0);
 }

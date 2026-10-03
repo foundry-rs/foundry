@@ -402,12 +402,50 @@ impl FuzzImproveArgs {
                 .as_deref()
                 .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
             let contract_filter = candidate_contract_filter(base_filter, candidate);
-            self.run_mutations(
-                forge,
-                candidate_workspace.path(),
-                Some(config),
-                contract_filter.as_deref(),
-            )?
+            let mut results = Vec::with_capacity(self.seed.len());
+            // Candidates must improve every seed, so the first failing seed is decisive.
+            for before in baseline {
+                let after = self.run_mutation(
+                    forge,
+                    candidate_workspace.path(),
+                    Some(config),
+                    contract_filter.as_deref(),
+                    &before.seed,
+                )?;
+                let changed_population = before.output.summary.total != after.output.summary.total
+                    || before.output.summary.invalid != after.output.summary.invalid;
+                let introduced_timeout =
+                    after.output.timed_out_mutants.iter().any(|(path, mutants)| {
+                        before.output.timed_out_mutants.get(path).is_none_or(|baseline| {
+                            mutants.iter().any(|mutant| !baseline.contains(mutant))
+                        })
+                    });
+                let added_kill = after.output.summary.killed > before.output.summary.killed;
+                results.push(after);
+
+                if changed_population {
+                    reasons.push(format!(
+                        "candidate changed the mutant population on seed {}",
+                        before.seed
+                    ));
+                    break;
+                }
+                if introduced_timeout {
+                    reasons.push(format!(
+                        "candidate introduced a timed-out mutant on seed {}",
+                        before.seed
+                    ));
+                    break;
+                }
+                if !added_kill {
+                    reasons.push(format!(
+                        "candidate did not add a mutation kill on seed {}",
+                        before.seed
+                    ));
+                    break;
+                }
+            }
+            results
         } else {
             vec![]
         };
@@ -422,29 +460,6 @@ impl FuzzImproveArgs {
         if reasons.is_empty() && candidate_results.len() != baseline.len() {
             reasons.push("candidate mutation results did not cover every seed".to_string());
         }
-        if reasons.is_empty()
-            && baseline.iter().zip(&candidate_results).any(|(before, after)| {
-                before.output.summary.total != after.output.summary.total
-                    || before.output.summary.invalid != after.output.summary.invalid
-            })
-        {
-            reasons.push("candidate changed the mutant population".to_string());
-        }
-        if reasons.is_empty()
-            && baseline.iter().zip(&candidate_results).any(|(before, after)| {
-                after.output.timed_out_mutants.iter().any(|(path, mutants)| {
-                    before.output.timed_out_mutants.get(path).is_none_or(|baseline| {
-                        mutants.iter().any(|mutant| !baseline.contains(mutant))
-                    })
-                })
-            })
-        {
-            reasons.push("candidate introduced a timed-out mutant".to_string());
-        }
-        if reasons.is_empty() && minimum_new_kills <= 0 {
-            reasons.push("candidate did not add a mutation kill on every seed".to_string());
-        }
-
         Ok(Evaluation {
             candidate_digest: digest,
             generator: candidate.generator.clone(),
@@ -490,35 +505,44 @@ impl FuzzImproveArgs {
     ) -> Result<Vec<SeedMutation>> {
         self.seed
             .iter()
-            .map(|seed| {
-                let mut command = forge_command(forge, root, seed);
-                command.args(["test", "--json", "--mutate"]);
-                command.args(&self.mutate);
-                if let Some(timeout) = self.mutation_timeout {
-                    command.args(["--mutation-timeout", &timeout.to_string()]);
-                }
-                // Adaptive mutation skipping is concurrency-sensitive, so candidate comparisons
-                // must use the same stable execution order.
-                command.args(["--mutation-jobs", "1"]);
-                if let Some(contract) = contract_filter {
-                    command.args(["--match-contract", contract]);
-                }
-                if let Some(config) = dependency_config {
-                    add_dependency_args(&mut command, config, root);
-                }
-                let output = command.output().wrap_err("failed to run mutation testing")?;
-                ensure!(
-                    output.status.success(),
-                    "mutation testing failed for seed {seed}: {}",
-                    stderr(&output)
-                );
-                Ok(SeedMutation {
-                    seed: *seed,
-                    output: serde_json::from_slice(&output.stdout)
-                        .wrap_err_with(|| format!("invalid mutation JSON for seed {seed}"))?,
-                })
-            })
+            .map(|seed| self.run_mutation(forge, root, dependency_config, contract_filter, seed))
             .collect()
+    }
+
+    fn run_mutation(
+        &self,
+        forge: &Path,
+        root: &Path,
+        dependency_config: Option<&Config>,
+        contract_filter: Option<&str>,
+        seed: &U256,
+    ) -> Result<SeedMutation> {
+        let mut command = forge_command(forge, root, seed);
+        command.args(["test", "--json", "--mutate"]);
+        command.args(&self.mutate);
+        if let Some(timeout) = self.mutation_timeout {
+            command.args(["--mutation-timeout", &timeout.to_string()]);
+        }
+        // Adaptive mutation skipping is concurrency-sensitive, so candidate comparisons must use
+        // the same stable execution order.
+        command.args(["--mutation-jobs", "1"]);
+        if let Some(contract) = contract_filter {
+            command.args(["--match-contract", contract]);
+        }
+        if let Some(config) = dependency_config {
+            add_dependency_args(&mut command, config, root);
+        }
+        let output = command.output().wrap_err("failed to run mutation testing")?;
+        ensure!(
+            output.status.success(),
+            "mutation testing failed for seed {seed}: {}",
+            stderr(&output)
+        );
+        Ok(SeedMutation {
+            seed: *seed,
+            output: serde_json::from_slice(&output.stdout)
+                .wrap_err_with(|| format!("invalid mutation JSON for seed {seed}"))?,
+        })
     }
 }
 
