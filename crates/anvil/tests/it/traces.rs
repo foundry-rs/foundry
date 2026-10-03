@@ -249,6 +249,34 @@ async fn test_trace_raw_transaction_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_raw_transaction_rejects_code_sender() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(accounts[1].address())
+        .value(U256::from(1))
+        .with_gas_limit(21_000)
+        .max_fee_per_gas(20_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000);
+    let signed_tx = api.sign_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let raw_tx = hex::decode(&signed_tx[2..]).unwrap();
+
+    api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
+    let err = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap_err();
+    assert!(err.to_string().contains("sender not an eoa"), "{err}");
+
+    // An EIP-7702 delegation keeps the account an EOA.
+    let delegation = [&[0xef, 0x01, 0x00][..], accounts[2].address().as_slice()].concat();
+    api.anvil_set_code(from, delegation.into()).await.unwrap();
+    let traces = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap();
+    assert_eq!(traces.trace.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_account_info_at_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
