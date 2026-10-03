@@ -24,13 +24,6 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 filter = "test(/symbolic_conformance::|symbolic_limits::/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
-# `cast vaddr` end-to-end tests mine a 4-byte TIP-1022 PoW salt (CPU-bound,
-# minutes in debug mode) before exercising register/resolve/forward/watch
-# against an in-process Anvil Tempo node.
-[[profile.default.overrides]]
-filter = "test(/vaddr_e2e::/)"
-slow-timeout = { period = "5m", terminate-after = 4 }
-
 # Integration-style CLI tests can exceed the default 90s timeout on slower
 # Windows, macOS, and ARM runners while shelling out to forge/solc/git.
 [[profile.default.overrides]]

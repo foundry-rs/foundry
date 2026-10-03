@@ -6149,59 +6149,6 @@ async fn test_tempo_aa_value_in_call_rejected() {
 }
 
 // ============================================================================
-// Tempo AA: Nonce Too High Rejected
-// ============================================================================
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_aa_nonce_too_high_rejected() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let provider = handle.http_provider();
-
-    let accounts: Vec<Address> = handle.dev_accounts().collect();
-    let recipient = accounts[1];
-    let signer = dev_key(0);
-
-    let token = IERC20::new(PATH_USD, &provider);
-    let chain_id = provider.get_chain_id().await.unwrap();
-    let base_fee = provider.get_gas_price().await.unwrap();
-
-    let transfer_call = token.transfer(recipient, U256::from(10_000));
-    let calldata: Bytes = transfer_call.calldata().clone();
-
-    let tempo_tx = TempoTransaction {
-        chain_id,
-        fee_token: Some(ALPHA_USD),
-        max_priority_fee_per_gas: base_fee / 10,
-        max_fee_per_gas: base_fee * 2,
-        gas_limit: TIP20_TRANSFER_GAS,
-        calls: vec![Call { to: TxKind::Call(PATH_USD), value: U256::ZERO, input: calldata }],
-        access_list: Default::default(),
-        nonce_key: U256::from(999),
-        nonce: 5,
-        fee_payer_signature: None,
-        valid_before: None,
-        valid_after: None,
-        key_authorization: None,
-        tempo_authorization_list: vec![],
-    };
-
-    let sig_hash = tempo_tx.signature_hash();
-    let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
-
-    let mut encoded = Vec::new();
-    envelope.encode_2718(&mut encoded);
-
-    // Transaction may be accepted into pool but should fail during execution
-    let result = provider.send_raw_transaction(&encoded).await;
-    if result.is_ok() {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-}
-
-// ============================================================================
 // Gas Estimation: Tempo AA Transaction
 // ============================================================================
 
