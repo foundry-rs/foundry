@@ -17,12 +17,13 @@ use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
-    BlockResponse, NetworkTransactionBuilder, TransactionBuilder, primitives::HeaderResponse,
+    BlockResponse, Ethereum, NetworkTransactionBuilder, TransactionBuilder,
+    primitives::HeaderResponse,
 };
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
     trace::geth::{
         GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions,
@@ -444,7 +445,7 @@ impl CallArgs {
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
-            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
+            if debug_trace_call { Some(evm_opts.fork_endpoint_identity().await?) } else { None };
         let sender = match auth_sender {
             Some(sender) => sender,
             None => {
@@ -596,7 +597,7 @@ impl CallArgs {
             } else {
                 Default::default()
             };
-            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
             ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
             // The remote node executed this trace, so its reported family is authoritative for
@@ -839,27 +840,20 @@ impl CallArgs {
             }
         }).transpose()?;
 
-        // Build eth_call params. `--curl` builds the request offline, so the fields the
-        // RPC-backed builder would resolve against the node (fee style, blob sidecars,
-        // authorization lists) are left to the node's defaults; the scalar fields given on the
-        // command line are forwarded as-is so the printed request runs the same call as the
-        // non-curl command.
-        let mut call_object = serde_json::json!({
-            "to": to,
-            "data": format!("0x{}", hex::encode(&data)),
-        });
-        if let Some(from) = self.wallet.from {
-            call_object["from"] = serde_json::json!(from);
-        }
-        if let Some(value) = self.tx.value {
-            call_object["value"] = serde_json::json!(value);
-        }
-        if let Some(gas_limit) = self.tx.gas_limit {
-            call_object["gas"] = serde_json::json!(gas_limit);
-        }
-        if let Some(nonce) = self.tx.nonce {
-            call_object["nonce"] = serde_json::json!(nonce);
-        }
+        // Apply explicit transaction options offline, using the configured chain's fee style
+        // when available. Blob sidecars and authorization lists still require the RPC builder.
+        let legacy = self.tx.legacy
+            || (config.chain.is_some_and(|chain| chain.is_legacy()) && self.tx.auth.is_empty());
+        let mut call_request = TransactionRequest {
+            to: Some(to.map_or(TxKind::Create, TxKind::Call)),
+            from: self.wallet.from,
+            input: TransactionInput::new(data.into()).normalized_data(),
+            ..Default::default()
+        };
+        // Curl currently emits Ethereum-compatible fields only. Keep Tempo options from changing
+        // the nonce without their accompanying network-specific fields.
+        let tx_opts = TransactionOpts { tempo: Default::default(), ..self.tx };
+        tx_opts.apply::<Ethereum>(&mut call_request, legacy);
 
         let block_param = self
             .block
@@ -878,9 +872,9 @@ impl CallArgs {
             if let Some(block_overrides) = self.overrides.get_block_overrides()? {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
-            ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
+            ("debug_traceCall", serde_json::json!([call_request, block_param, call_options]))
         } else {
-            ("eth_call", serde_json::json!([call_object, block_param]))
+            ("eth_call", serde_json::json!([call_request, block_param]))
         };
 
         let curl_cmd = generate_curl_command(

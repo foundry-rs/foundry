@@ -1435,7 +1435,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.set_spec_and_gas_params(spec_id);
+            EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -1736,15 +1736,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
                     let fee_token = ecx.tx().fee_token();
-                    let account =
-                        ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
+                    let nonce =
+                        ecx.journal().evm_state().get(&broadcast.new_origin).unwrap().info.nonce;
 
                     let mut tx_req = TransactionRequestFor::<FEN>::default()
                         .with_from(broadcast.new_origin)
                         .with_to(call.target_address)
                         .with_value(call.transfer_value().unwrap_or_default())
                         .with_input(input)
-                        .with_nonce(account.info.nonce)
+                        .with_nonce(nonce)
                         .with_chain_id(chain_id);
                     if is_fixed_gas_limit {
                         tx_req.set_gas_limit(call.gas_limit)
@@ -1773,15 +1773,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     // Apply active EIP-7702 delegations, if any.
                     if !active_delegations.is_empty() {
-                        for auth in &active_delegations {
-                            let Ok(authority) = auth.recover_authority() else {
-                                continue;
-                            };
-                            if authority == broadcast.new_origin {
-                                // Increment nonce of broadcasting account to reflect signed
-                                // authorization.
-                                account.info.nonce += 1;
-                            }
+                        if let Err(err) = apply_authorization_nonces::<FEN>(
+                            ecx,
+                            &active_delegations,
+                            broadcast.new_origin,
+                            chain_id,
+                        ) {
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: InstructionResult::Revert,
+                                    output: err.abi_encode().into(),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
+                            });
                         }
                         tx_req.set_authorization_list(active_delegations);
                     }
@@ -1797,6 +1805,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Isolated transactions increment the nonce during execution. Nested
                     // broadcasts do not start a separate transaction and need this increment.
                     if !isolate_call {
+                        let account = ecx
+                            .journal_mut()
+                            .evm_state_mut()
+                            .get_mut(&broadcast.new_origin)
+                            .unwrap();
                         let prev = account.info.nonce;
                         account.info.nonce += 1;
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
@@ -2925,7 +2938,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.set_spec_and_gas_params(spec_id);
+            EvmFactoryFor::<FEN>::set_execution_spec(ecx, spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());
@@ -4256,6 +4269,35 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
     );
 
     result
+}
+
+/// Increments the nonce of every authority whose authorization would be applied on-chain.
+///
+/// Mirrors EIP-7702 processing: authorizations are checked in order after the transaction has
+/// incremented the sender nonce, and invalid authorizations are skipped without changing the
+/// authority nonce.
+fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    authorizations: &[SignedAuthorization],
+    sender: Address,
+    chain_id: u64,
+) -> Result<()> {
+    for auth in authorizations {
+        if (!auth.chain_id.is_zero() && auth.chain_id != U256::from(chain_id))
+            || auth.nonce == u64::MAX
+        {
+            continue;
+        }
+        let Ok(authority) = auth.recover_authority() else { continue };
+        // The authority code check is skipped because attaching the delegation already replaced
+        // the local code that EIP-7702 validates.
+        let account = journaled_account(ecx, authority)?;
+        // The sender nonce has not been incremented for the transaction yet.
+        if auth.nonce == account.info.nonce + u64::from(authority == sender) {
+            account.info.nonce += 1;
+        }
+    }
+    Ok(())
 }
 
 /// Helper function to check if frame execution will exit.

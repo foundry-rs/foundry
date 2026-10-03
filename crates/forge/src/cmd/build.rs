@@ -183,7 +183,7 @@ impl BuildArgs {
                             .lint
                             .exclude_lints
                             .iter()
-                            .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
+                            .filter_map(|s| s.parse::<forge_lint::sol::SolLint>().ok())
                             .collect(),
                     )
                 })

@@ -1,8 +1,10 @@
 //! CLI tests for send commands.
 
 use super::*;
+use std::{process::Stdio, time::Duration};
 
-casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
+#[casttest]
+async fn send_rejects_invalid_eip1559_fees_before_access_list(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -31,10 +33,11 @@ casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd
         stderr.contains("Error: max priority fee per gas (2) cannot exceed max fee per gas (1)"),
         "{stderr}"
     );
-});
+}
 
 // ensure receipt or code is required
-casttest!(send_requires_to, |_prj, cmd| {
+#[casttest]
+fn send_requires_to(cmd: _) {
     cmd.args([
         "send",
         "--private-key",
@@ -46,10 +49,11 @@ casttest!(send_requires_to, |_prj, cmd| {
 Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/9918>
-casttest!(send_7702_conflicts_with_create, |_prj, cmd| {
+#[casttest]
+fn send_7702_conflicts_with_create(cmd: _) {
     cmd.args([
         "send", "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" ,"--auth", "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576", "--create",  "0x60806040523373ffffffffffffffffffffffffffffffffffffffff163273ffffffffffffffffffffffffffffffffffffffff1614610072576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610069906100e5565b60405180910390fd5b3373ffffffffffffffffffffffffffffffffffffffff16ff5b5f82825260208201905092915050565b7f74782e6f726967696e203d3d206d73672e73656e6465720000000000000000005f82015250565b5f6100cf60178361008b565b91506100da8261009b565b602082019050919050565b5f6020820190508181035f8301526100fc816100c3565b905091905056fe"
     ]);
@@ -57,9 +61,10 @@ casttest!(send_7702_conflicts_with_create, |_prj, cmd| {
 Error: EIP-7702 transactions can't be CREATE transactions and require a destination address
 
 "#]]);
-});
+}
 
-casttest!(send_eip7702, async |_prj, cmd| {
+#[casttest]
+async fn send_eip7702(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
@@ -86,9 +91,10 @@ casttest!(send_eip7702, async |_prj, cmd| {
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
-});
+}
 
-casttest!(send_eip7702_without_recipient_targets_sender, async |_prj, cmd| {
+#[casttest]
+async fn send_eip7702_without_recipient_targets_sender(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
@@ -125,9 +131,10 @@ to                   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
-});
+}
 
-casttest!(send_eip7702_auth_disclosure_declined, |_prj, cmd| {
+#[casttest]
+fn send_eip7702_auth_disclosure_declined(cmd: _) {
     cmd.args([
         "send",
         "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
@@ -149,9 +156,10 @@ Warning: This command will send a signed EIP-7702 authorization to the RPC endpo
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
-casttest!(send_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+#[casttest]
+async fn send_eip7702_auth_disclosure_forced(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
 
@@ -173,9 +181,10 @@ casttest!(send_eip7702_auth_disclosure_forced, async |_prj, cmd| {
 
 "#]])
     .stderr_eq(str![""]);
-});
+}
 
-casttest!(send_sponsor_hash_supports_address_auth, async |_prj, cmd| {
+#[casttest]
+async fn send_sponsor_hash_supports_address_auth(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
 
     cmd.args([
@@ -196,9 +205,10 @@ casttest!(send_sponsor_hash_supports_address_auth, async |_prj, cmd| {
 
 "#]])
     .stderr_eq(str![""]);
-});
+}
 
-casttest!(batch_send_eip7702_auth_disclosure, async |_prj, cmd| {
+#[casttest]
+async fn batch_send_eip7702_auth_disclosure(cmd: _) {
     let args = [
         "batch-send",
         "--call",
@@ -235,9 +245,10 @@ Continue anyway? [y/N] Aborted.
 Building batch transaction with 1 call(s)...
 
 "#]]);
-});
+}
 
-casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
+#[casttest]
+async fn send_eip7702_multiple_auth(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
@@ -305,10 +316,11 @@ casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
     let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
     let field_auth_list = field_envelope["data"].as_array().unwrap();
     assert_eq!(field_auth_list.len(), 2, "Expected authorizationList field data to be an array");
-});
+}
 
 // Test that multiple address-based authorizations are rejected
-casttest!(send_eip7702_multiple_address_auth_rejected, async |_prj, cmd| {
+#[casttest]
+async fn send_eip7702_multiple_address_auth_rejected(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
@@ -329,9 +341,10 @@ casttest!(send_eip7702_multiple_address_auth_rejected, async |_prj, cmd| {
 Error: Multiple address-based authorizations provided. Only one address can be specified; use pre-signed authorizations (hex-encoded) for multiple authorizations.
 
 "#]]);
-});
+}
 
-casttest!(send_sync, async |_prj, cmd| {
+#[casttest]
+async fn send_sync(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
@@ -354,14 +367,68 @@ casttest!(send_sync, async |_prj, cmd| {
     assert!(output.contains("transactionHash"));
     assert!(output.contains("blockNumber"));
     assert!(output.contains("gasUsed"));
-});
+}
+
+// Concurrent `cast send --async` processes whose txs do not fit into one block must all be mined.
+#[casttest]
+async fn send_async_burst_is_mined_across_full_blocks(prj: _) {
+    // Room for exactly three transfers per block.
+    let (api, handle) = anvil::spawn(NodeConfig::test().with_gas_limit(Some(63_000))).await;
+    let endpoint = handle.http_endpoint();
+    let wallets = handle.dev_wallets().take(3).collect::<Vec<_>>();
+
+    let mut children = Vec::new();
+    for wallet in &wallets {
+        let private_key = hex::encode(wallet.credential().to_bytes());
+        for nonce in 0..3 {
+            let child = prj
+                .cast_bin()
+                .args([
+                    "send",
+                    "0x000000000000000000000000000000000000dEaD",
+                    "--value",
+                    "1",
+                    "--nonce",
+                    &nonce.to_string(),
+                    "--gas-limit",
+                    "21000",
+                    "--private-key",
+                    &private_key,
+                    "--rpc-url",
+                    &endpoint,
+                    "--async",
+                ])
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            children.push(child);
+        }
+    }
+    for mut child in children {
+        assert!(child.wait().unwrap().success());
+    }
+
+    let provider = ProviderBuilder::new().connect_http(endpoint.parse().unwrap());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for wallet in &wallets {
+            while provider.get_transaction_count(wallet.address()).await.unwrap() < 3 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    })
+    .await
+    .expect("txs left behind by a full block were never mined");
+
+    assert!(provider.get_block_number().await.unwrap() >= 3);
+    assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
-forgetest_async!(cast_send_estimate_gas_error, |prj, cmd| {
+#[forgetest_init]
+async fn cast_send_estimate_gas_error(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "SimpleStorage",
         r#"
@@ -423,11 +490,12 @@ contract SimpleStorageScript is Script {
 Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8"[..]
 
 "#]]);
-});
+}
 
 // Test that cast send --create works correctly with constructor arguments
 // <https://github.com/foundry-rs/foundry/issues/10947>
-forgetest_async!(cast_send_create_with_constructor_args, |prj, cmd| {
+#[forgetest]
+async fn cast_send_create_with_constructor_args(prj: _, cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
@@ -514,11 +582,12 @@ contract ConstructorContract {
 ]
 
 "#]]);
-});
+}
 
 // Test edge case: empty constructor arguments
 // <https://github.com/foundry-rs/foundry/issues/10947>
-forgetest_async!(cast_send_create_empty_constructor, |prj, cmd| {
+#[forgetest]
+async fn cast_send_create_empty_constructor(prj: _, cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
@@ -560,11 +629,12 @@ contract SimpleContract {
 
     // Verify deployment succeeded
     assert!(output.contains("contractAddress"));
-});
+}
 
 // Test complex constructor arguments (multiple types)
 // <https://github.com/foundry-rs/foundry/issues/10947>
-forgetest_async!(cast_send_create_complex_constructor, |prj, cmd| {
+#[forgetest]
+async fn cast_send_create_complex_constructor(prj: _, cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
@@ -646,13 +716,13 @@ contract ComplexContract {
         length_output
             .contains("0x0000000000000000000000000000000000000000000000000000000000000005")
     );
-});
+}
 
 // Test cast send with raw --data flag using encoded calldata
-forgetest_async!(cast_send_with_data, |prj, cmd| {
+#[forgetest_init]
+async fn cast_send_with_data(prj: _, cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
     // Deploy counter contract
@@ -719,9 +789,10 @@ Executing previous transactions from the block.
 ...
 
 "#]]);
-});
+}
 
-casttest!(publish_raw_transaction, async |_prj, cmd| {
+#[casttest]
+async fn publish_raw_transaction(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let signer = handle.dev_wallets().next().unwrap();
     let raw = cmd
@@ -743,4 +814,4 @@ casttest!(publish_raw_transaction, async |_prj, cmd| {
         .args(["publish", &raw, "--async", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(format!("{hash}\n"));
-});
+}

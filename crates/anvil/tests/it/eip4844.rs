@@ -24,6 +24,8 @@ use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_test_utils::rpc;
 use serde_json::{Value, json};
+use std::time::Duration;
+use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn non_blob_receipt_omits_blob_fields() {
@@ -328,6 +330,51 @@ async fn can_mine_blobs_when_exceeds_max_blobs() {
     );
     // Mined in two different blocks
     assert_eq!(first_receipt.block_number.unwrap() + 1, second_receipt.block_number.unwrap());
+}
+
+/// Blob txs deferred because the block ran out of blob gas must be auto mined in the next block.
+#[tokio::test(flavor = "multi_thread")]
+async fn auto_mine_retries_blob_tx_exceeding_max_blobs() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    // Four and three blobs, which together exceed the six blobs a Cancun block can hold.
+    let mut pending = Vec::new();
+    for (nonce, blob_data_len) in [3, 2].into_iter().enumerate() {
+        let data = vec![1u8; DATA_GAS_PER_BLOB as usize * blob_data_len];
+        let sidecar = SidecarBuilder::<SimpleCoder>::from_slice(&data).build().unwrap();
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(to)
+            .with_nonce(nonce as u64)
+            .with_max_fee_per_blob_gas(gas_price + 1)
+            .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+            .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+            .with_blob_sidecar_4844(sidecar);
+        pending.push(provider.send_transaction(WithOtherFields::new(tx)).await.unwrap());
+    }
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+
+    let mut blocks = Vec::new();
+    for tx in pending {
+        let receipt = timeout(Duration::from_secs(5), tx.get_receipt())
+            .await
+            .expect("blob tx deferred by the blob gas limit was never mined")
+            .unwrap();
+        blocks.push(receipt.block_number.unwrap());
+    }
+    assert_eq!(blocks[0] + 1, blocks[1]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -965,4 +1012,48 @@ async fn simulate_v1_advances_excess_blob_gas() {
     assert_eq!(response[0]["excessBlobGas"], "0x0");
     assert_eq!(response[1]["blobGasUsed"], format!("0x{DATA_GAS_PER_BLOB:x}"));
     assert_eq!(response[1]["excessBlobGas"], format!("0x{TARGET_DATA_GAS_PER_BLOCK_DENCUN:x}"));
+}
+
+// Gas estimation must leave room for the blob fee when capping gas by the sender's balance, but
+// only for requests that execute as blob transactions.
+#[tokio::test(flavor = "multi_thread")]
+async fn estimate_gas_reserves_blob_fee() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = provider.get_accounts().await.unwrap();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+
+    let from = Address::random();
+    // 0.01 ETH pays for exactly 5M gas at 2 gwei, well below the block gas limit, so the balance
+    // caps the estimate and nothing is left for the blob fee unless it is reserved.
+    api.anvil_set_balance(from, U256::from(10_000_000_000_000_000u128)).await.unwrap();
+    let blob_request = TransactionRequest {
+        from: Some(from),
+        to: Some(alloy_primitives::TxKind::Call(Address::random())),
+        max_fee_per_gas: Some(2_000_000_000),
+        max_priority_fee_per_gas: Some(1),
+        blob_versioned_hashes: Some(vec![b256!(
+            "0x01d5446006b21888d0267829344ab8624fdf1b425445a8ae1ca831bf1b8fbcd4"
+        )]),
+        ..Default::default()
+    };
+
+    // With an explicit blob fee cap, and with the block's blob gas price as the fallback.
+    for max_fee_per_blob_gas in [Some(2_000_000_000), None] {
+        let tx = TransactionRequest { max_fee_per_blob_gas, ..blob_request.clone() };
+        let gas = provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap();
+        assert!(gas >= 21_000);
+    }
+
+    // An authorization list makes the request execute as EIP-7702, which pays no blob fee.
+    let authorization =
+        Authorization { chain_id: U256::from(31337), address: accounts[2], nonce: 0 };
+    let signature = wallets[1].sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let tx = TransactionRequest {
+        max_fee_per_blob_gas: Some(u128::from(u64::MAX)),
+        authorization_list: Some(vec![authorization.into_signed(signature)]),
+        ..blob_request
+    };
+    provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap();
 }

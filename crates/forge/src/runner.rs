@@ -451,425 +451,6 @@ fn select_invariant_campaigns<'a>(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_common::EmptyTestFilter;
-    use foundry_config::NatSpec;
-
-    const CONTRACT_NAME: &str = "src/Test.t.sol:InvariantTest";
-
-    fn stateful_frontier_record(
-        id: u64,
-        sequence_index: usize,
-        call_index: usize,
-        both_results_retained: bool,
-    ) -> FuzzBranchFrontierRecord {
-        FuzzBranchFrontierRecord {
-            id,
-            both_results_retained,
-            call_index,
-            sequence: Vec::new(),
-            sequence_index: Some(sequence_index),
-            site: FuzzBranchFrontierSite {
-                address: Address::ZERO,
-                pc: id as usize,
-                opcode: opcode::EQ,
-            },
-            operands: FuzzBranchFrontierOperands { result: false },
-        }
-    }
-
-    #[test]
-    fn symbolic_artifact_file_name_hashes_full_identity() {
-        let single = symbolic_artifact_file_name(
-            "src/A.t.sol:Contract",
-            "test_collision()",
-            SymbolicCounterexampleArtifactKind::SingleCall,
-        );
-        let same_file_component_different_contract = symbolic_artifact_file_name(
-            "src/B.t.sol:Contract",
-            "test_collision()",
-            SymbolicCounterexampleArtifactKind::SingleCall,
-        );
-        let same_contract_different_kind = symbolic_artifact_file_name(
-            "src/A.t.sol:Contract",
-            "test_collision()",
-            SymbolicCounterexampleArtifactKind::Sequence,
-        );
-
-        assert_ne!(single, same_file_component_different_contract);
-        assert_ne!(single, same_contract_different_kind);
-
-        let hash = single
-            .strip_prefix("test_collision__-")
-            .and_then(|value| value.strip_suffix(".json"))
-            .expect("file name should include sanitized value prefix and json suffix");
-        assert_eq!(hash.len(), 32);
-    }
-
-    #[test]
-    fn stateful_frontier_paths_include_artifact_pass_and_campaign() {
-        let root = Path::new("/tmp/frontiers");
-        let first =
-            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "single");
-        let other_artifact =
-            invariant_frontier_dir(root, "src/b/Same.t.sol:Same", None, "ethereum", "single");
-        let other_profile =
-            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "tempo", "override");
-        let default_pass =
-            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "default");
-        let override_pass =
-            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "override");
-        let isolated = invariant_frontier_dir(
-            root,
-            "src/a/Same.t.sol:Same",
-            Some("invariant_one"),
-            "ethereum",
-            "single",
-        );
-
-        assert_ne!(first, other_artifact);
-        assert_ne!(first, other_profile);
-        assert_ne!(default_pass, override_pass);
-        assert_ne!(first, isolated);
-        assert!(first.ends_with("ethereum/single/shared"));
-        assert!(isolated.ends_with("ethereum/single/isolated/invariant_one"));
-
-        let mut corpus = FuzzCorpusConfig {
-            corpus_dir: Some(PathBuf::from("/tmp/corpus")),
-            frontier_dir: Some(root.to_path_buf()),
-            ..Default::default()
-        };
-        let failures = invariant_suite_paths(
-            &mut corpus,
-            PathBuf::from("/tmp/persist"),
-            "src/a/Same.t.sol:Same",
-            Some("invariant_one"),
-            "ethereum",
-            "single",
-        );
-        assert_eq!(
-            corpus.corpus_dir,
-            Some(canonicalized(PathBuf::from("/tmp/corpus/Same/invariant_one")))
-        );
-        assert_eq!(corpus.frontier_dir, Some(canonicalized(isolated)));
-        assert_eq!(failures, canonicalized(PathBuf::from("/tmp/persist/failures/Same")));
-    }
-
-    #[test]
-    fn symbolic_sequence_failure_identity_includes_failure_site() {
-        let outcome = |site: CheckSequenceFailureSite| CheckSequenceOutcome {
-            success: false,
-            replayed_entirely: false,
-            reason: Some("same reason".to_string()),
-            calls_count: 1,
-            reverts: 0,
-            failure_site: Some(site),
-            sequence_assertion_failure: true,
-            sequence_reverter: None,
-        };
-        let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
-            target: Address::with_last_byte(target),
-            selector: Selector::from([0, 0, 0, 1]),
-            fingerprint: B256::from([fingerprint; 32]),
-        };
-        let expected = outcome(site(1, 1));
-
-        assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
-        assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
-        assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
-    }
-
-    #[test]
-    fn stateful_frontiers_sample_sequence_depth() {
-        let frontiers =
-            [(6, 7), (0, 1), (8, 9), (3, 4), (9, 9), (2, 3), (5, 6), (1, 2), (7, 8), (4, 5)]
-                .into_iter()
-                .map(|(id, call_index)| {
-                    stateful_frontier_record(id, id as usize, call_index, false)
-                })
-                .collect();
-
-        let ids = select_stateful_frontiers(frontiers, 5, false)
-            .into_iter()
-            .map(|frontier| frontier.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, [1, 3, 5, 7, 9]);
-    }
-
-    #[test]
-    fn stateful_frontiers_reserve_deep_retained_context() {
-        let frontiers = || {
-            (0..12)
-                .map(|id| stateful_frontier_record(id, id as usize, id as usize, id >= 10))
-                .collect()
-        };
-
-        let single_id = select_stateful_frontiers(frontiers(), 1, false)[0].id;
-        assert_eq!(single_id, 5);
-
-        let ids = select_stateful_frontiers(frontiers(), 5, false)
-            .into_iter()
-            .map(|frontier| frontier.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, [1, 3, 5, 7, 11]);
-    }
-
-    #[test]
-    fn stateful_frontiers_prioritize_distinct_call_contexts() {
-        let frontiers = [(0, 0, 0), (1, 0, 0), (2, 1, 1), (3, 1, 1), (4, 2, 2)]
-            .into_iter()
-            .map(|(id, sequence_index, call_index)| {
-                stateful_frontier_record(id, sequence_index, call_index, false)
-            })
-            .collect();
-
-        let ids = select_stateful_frontiers(frontiers, 3, false)
-            .into_iter()
-            .map(|frontier| frontier.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, [1, 3, 4]);
-    }
-
-    #[test]
-    fn stateful_frontier_reservation_keeps_primary_contexts() {
-        let frontiers = [
-            (0, 0, 0, false),
-            (1, 0, 0, false),
-            (2, 1, 1, false),
-            (3, 2, 2, false),
-            (4, 3, 3, true),
-        ]
-        .into_iter()
-        .map(|(id, sequence_index, call_index, both_results_retained)| {
-            stateful_frontier_record(id, sequence_index, call_index, both_results_retained)
-        })
-        .collect();
-
-        let ids = select_stateful_frontiers(frontiers, 4, false)
-            .into_iter()
-            .map(|frontier| frontier.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, [1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn stateful_frontier_reservation_keeps_fallback_contexts() {
-        let frontiers =
-            [(0, 0, 0, false), (1, 1, 1, true), (2, 1, 1, true), (3, 2, 2, true), (4, 3, 3, true)]
-                .into_iter()
-                .map(|(id, sequence_index, call_index, both_results_retained)| {
-                    stateful_frontier_record(id, sequence_index, call_index, both_results_retained)
-                })
-                .collect();
-
-        let ids = select_stateful_frontiers(frontiers, 4, false)
-            .into_iter()
-            .map(|frontier| frontier.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, [0, 2, 3, 4]);
-    }
-
-    #[test]
-    fn stateful_frontiers_fill_from_retained_outcomes() {
-        let frontiers =
-            (0..5).map(|id| stateful_frontier_record(id, id as usize, id as usize, true)).collect();
-
-        let ids = select_stateful_frontiers(frontiers, 4, false)
-            .into_iter()
-            .map(|frontier| frontier.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, [0, 1, 3, 4]);
-    }
-
-    #[test]
-    fn stateful_frontier_replay_requires_opposite_result_at_same_site() {
-        let address = Address::with_last_byte(1);
-        let site = FuzzBranchFrontierSite { address, pc: 7, opcode: opcode::LT };
-        let comparison = |address, pc, op1, op2| CmpOperands {
-            address,
-            pc,
-            opcode: opcode::LT,
-            op1: U256::from(op1),
-            op2: U256::from(op2),
-        };
-
-        assert!(frontier_comparison_flipped(site, true, &[comparison(address, 7, 2, 1)]));
-        assert!(!frontier_comparison_flipped(site, true, &[comparison(address, 7, 1, 2)]));
-        assert!(!frontier_comparison_flipped(
-            site,
-            true,
-            &[comparison(Address::with_last_byte(2), 7, 2, 1)]
-        ));
-        assert!(!frontier_comparison_flipped(site, true, &[comparison(address, 8, 2, 1)]));
-    }
-
-    fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
-        let config = Config::default();
-        count_runnable_invariant_campaign_anchors(
-            abi,
-            &EmptyTestFilter::default(),
-            InvariantCampaignScope {
-                config: &config,
-                inline_config,
-                contract_name: CONTRACT_NAME,
-                all_override_networks: &[],
-                pass_network: None,
-            },
-        )
-    }
-
-    #[test]
-    fn runnable_campaign_anchor_count_merges_boolean_suite_and_counts_optimizations() {
-        let abi = JsonAbi::parse([
-            "function invariantOne() external",
-            "function invariantTwo() external",
-            "function invariantOptimizeA() external returns (int256)",
-            "function invariantOptimizeB() external returns (int256)",
-        ])
-        .unwrap();
-
-        assert_eq!(count_anchors(&abi, &InlineConfig::new()), 3);
-    }
-
-    #[test]
-    fn runnable_campaign_anchor_count_splits_boolean_suite_when_configs_differ() {
-        let abi = JsonAbi::parse([
-            "function invariantOne() external",
-            "function invariantTwo() external",
-        ])
-        .unwrap();
-        let mut inline_config = InlineConfig::new();
-        inline_config
-            .insert(&NatSpec {
-                contract: CONTRACT_NAME.to_string(),
-                function: Some("invariantTwo".to_string()),
-                line: "1:1".to_string(),
-                docs: "forge-config: default.invariant.depth = 1".to_string(),
-            })
-            .unwrap();
-
-        assert_eq!(count_anchors(&abi, &inline_config), 2);
-    }
-
-    #[test]
-    fn selected_campaign_merges_without_changing_namespace() {
-        let abi = JsonAbi::parse([
-            "function invariantOne() external",
-            "function invariantTwo() external",
-            "function invariantThree() external",
-        ])
-        .unwrap();
-        let functions = abi.functions().collect::<Vec<_>>();
-        let selected = functions
-            .iter()
-            .copied()
-            .filter(|func| func.name != "invariantThree")
-            .collect::<Vec<_>>();
-        let mut inline_config = InlineConfig::new();
-        inline_config
-            .insert(&NatSpec {
-                contract: CONTRACT_NAME.to_string(),
-                function: Some("invariantThree".to_string()),
-                line: "1:1".to_string(),
-                docs: "forge-config: default.invariant.fail-on-revert = true".to_string(),
-            })
-            .unwrap();
-        let config = Config::default();
-        let selection = select_invariant_campaigns(
-            &functions,
-            &selected,
-            &config,
-            &inline_config,
-            CONTRACT_NAME,
-        );
-        assert_eq!(selection.anchor_count(), 1);
-        assert!(selection.merge_boolean_suite);
-        assert!(!selection.shared_boolean_namespace);
-
-        let uniform = select_invariant_campaigns(
-            &functions,
-            &selected,
-            &config,
-            &InlineConfig::new(),
-            CONTRACT_NAME,
-        );
-        assert_eq!(uniform.anchor_count(), 1);
-        assert!(uniform.merge_boolean_suite);
-        assert!(uniform.shared_boolean_namespace);
-    }
-
-    #[test]
-    fn runnable_campaign_anchor_count_splits_boolean_suite_when_corpus_weight_provenance_differs() {
-        let abi = JsonAbi::parse([
-            "function invariantOne() external",
-            "function invariantTwo() external",
-        ])
-        .unwrap();
-        let mut inline_config = InlineConfig::new();
-        inline_config
-            .insert(&NatSpec {
-                contract: CONTRACT_NAME.to_string(),
-                function: Some("invariantTwo".to_string()),
-                line: "1:1".to_string(),
-                docs: "forge-config: default.invariant.corpus_random_sequence_weight = 10"
-                    .to_string(),
-            })
-            .unwrap();
-
-        assert_eq!(count_anchors(&abi, &inline_config), 2);
-    }
-
-    #[test]
-    fn runnable_campaign_anchor_count_respects_network_pass() {
-        let abi = JsonAbi::parse(["function invariantTempoOnly() external"]).unwrap();
-        let mut inline_config = InlineConfig::new();
-        inline_config
-            .insert(&NatSpec {
-                contract: CONTRACT_NAME.to_string(),
-                function: Some("invariantTempoOnly".to_string()),
-                line: "1:1".to_string(),
-                docs: r#"forge-config: default.networks.network = "tempo""#.to_string(),
-            })
-            .unwrap();
-        let config = Config::default();
-        let override_networks = [NetworkVariant::Tempo];
-
-        let default_pass = count_runnable_invariant_campaign_anchors(
-            &abi,
-            &EmptyTestFilter::default(),
-            InvariantCampaignScope {
-                config: &config,
-                inline_config: &inline_config,
-                contract_name: CONTRACT_NAME,
-                all_override_networks: &override_networks,
-                pass_network: None,
-            },
-        );
-        let tempo_pass = count_runnable_invariant_campaign_anchors(
-            &abi,
-            &EmptyTestFilter::default(),
-            InvariantCampaignScope {
-                config: &config,
-                inline_config: &inline_config,
-                contract_name: CONTRACT_NAME,
-                all_override_networks: &override_networks,
-                pass_network: Some(&NetworkVariant::Tempo),
-            },
-        );
-
-        assert_eq!(default_pass, 0);
-        assert_eq!(tempo_pass, 1);
-    }
-}
-
 /// A type that executes all tests of a contract
 pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// The name of the contract.
@@ -2831,14 +2412,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         let symbolic_config = self.config.symbolic.clone();
         let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
-        // Progress rendering must finish before verbose SMT diagnostics are printed.
-        if self.cr.progress.is_some() && symbolic_config.dump_smt {
-            symbolic.capture_diagnostics();
-        }
         let result =
             symbolic.run(self.symbolic_run_input(func, self.sender, false, corpus_seeds, None));
-        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
-        let symbolic_diagnostics = symbolic.take_diagnostics();
 
         let (status, reason, counterexample, symbolic_result) = match result {
             SymbolicRunResult::Safe { stats, .. } => {
@@ -2867,8 +2442,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             None => symbolic_result,
         };
         self.result.symbolic_result(status, reason, counterexample, symbolic_result);
-        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-        self.result.symbolic_diagnostics = symbolic_diagnostics;
         self.result
     }
 
@@ -6359,5 +5932,424 @@ fn replay_fuzz_minimize<FEN: FoundryEvmNetwork>(
             result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
         }
         Err(e) => result.single_fail(Some(e.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_common::EmptyTestFilter;
+    use foundry_config::NatSpec;
+
+    const CONTRACT_NAME: &str = "src/Test.t.sol:InvariantTest";
+
+    fn stateful_frontier_record(
+        id: u64,
+        sequence_index: usize,
+        call_index: usize,
+        both_results_retained: bool,
+    ) -> FuzzBranchFrontierRecord {
+        FuzzBranchFrontierRecord {
+            id,
+            both_results_retained,
+            call_index,
+            sequence: Vec::new(),
+            sequence_index: Some(sequence_index),
+            site: FuzzBranchFrontierSite {
+                address: Address::ZERO,
+                pc: id as usize,
+                opcode: opcode::EQ,
+            },
+            operands: FuzzBranchFrontierOperands { result: false },
+        }
+    }
+
+    #[test]
+    fn symbolic_artifact_file_name_hashes_full_identity() {
+        let single = symbolic_artifact_file_name(
+            "src/A.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::SingleCall,
+        );
+        let same_file_component_different_contract = symbolic_artifact_file_name(
+            "src/B.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::SingleCall,
+        );
+        let same_contract_different_kind = symbolic_artifact_file_name(
+            "src/A.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::Sequence,
+        );
+
+        assert_ne!(single, same_file_component_different_contract);
+        assert_ne!(single, same_contract_different_kind);
+
+        let hash = single
+            .strip_prefix("test_collision__-")
+            .and_then(|value| value.strip_suffix(".json"))
+            .expect("file name should include sanitized value prefix and json suffix");
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn stateful_frontier_paths_include_artifact_pass_and_campaign() {
+        let root = Path::new("/tmp/frontiers");
+        let first =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "single");
+        let other_artifact =
+            invariant_frontier_dir(root, "src/b/Same.t.sol:Same", None, "ethereum", "single");
+        let other_profile =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "tempo", "override");
+        let default_pass =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "default");
+        let override_pass =
+            invariant_frontier_dir(root, "src/a/Same.t.sol:Same", None, "ethereum", "override");
+        let isolated = invariant_frontier_dir(
+            root,
+            "src/a/Same.t.sol:Same",
+            Some("invariant_one"),
+            "ethereum",
+            "single",
+        );
+
+        assert_ne!(first, other_artifact);
+        assert_ne!(first, other_profile);
+        assert_ne!(default_pass, override_pass);
+        assert_ne!(first, isolated);
+        assert!(first.ends_with("ethereum/single/shared"));
+        assert!(isolated.ends_with("ethereum/single/isolated/invariant_one"));
+
+        let mut corpus = FuzzCorpusConfig {
+            corpus_dir: Some(PathBuf::from("/tmp/corpus")),
+            frontier_dir: Some(root.to_path_buf()),
+            ..Default::default()
+        };
+        let failures = invariant_suite_paths(
+            &mut corpus,
+            PathBuf::from("/tmp/persist"),
+            "src/a/Same.t.sol:Same",
+            Some("invariant_one"),
+            "ethereum",
+            "single",
+        );
+        assert_eq!(
+            corpus.corpus_dir,
+            Some(canonicalized(PathBuf::from("/tmp/corpus/Same/invariant_one")))
+        );
+        assert_eq!(corpus.frontier_dir, Some(canonicalized(isolated)));
+        assert_eq!(failures, canonicalized(PathBuf::from("/tmp/persist/failures/Same")));
+    }
+
+    #[test]
+    fn symbolic_sequence_failure_identity_includes_failure_site() {
+        let outcome = |site: CheckSequenceFailureSite| CheckSequenceOutcome {
+            success: false,
+            replayed_entirely: false,
+            reason: Some("same reason".to_string()),
+            calls_count: 1,
+            reverts: 0,
+            failure_site: Some(site),
+            sequence_assertion_failure: true,
+            sequence_reverter: None,
+        };
+        let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
+            target: Address::with_last_byte(target),
+            selector: Selector::from([0, 0, 0, 1]),
+            fingerprint: B256::from([fingerprint; 32]),
+        };
+        let expected = outcome(site(1, 1));
+
+        assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
+        assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
+        assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
+    }
+
+    #[test]
+    fn stateful_frontiers_sample_sequence_depth() {
+        let frontiers =
+            [(6, 7), (0, 1), (8, 9), (3, 4), (9, 9), (2, 3), (5, 6), (1, 2), (7, 8), (4, 5)]
+                .into_iter()
+                .map(|(id, call_index)| {
+                    stateful_frontier_record(id, id as usize, call_index, false)
+                })
+                .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 5, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 3, 5, 7, 9]);
+    }
+
+    #[test]
+    fn stateful_frontiers_reserve_deep_retained_context() {
+        let frontiers = || {
+            (0..12)
+                .map(|id| stateful_frontier_record(id, id as usize, id as usize, id >= 10))
+                .collect()
+        };
+
+        let single_id = select_stateful_frontiers(frontiers(), 1, false)[0].id;
+        assert_eq!(single_id, 5);
+
+        let ids = select_stateful_frontiers(frontiers(), 5, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 3, 5, 7, 11]);
+    }
+
+    #[test]
+    fn stateful_frontiers_prioritize_distinct_call_contexts() {
+        let frontiers = [(0, 0, 0), (1, 0, 0), (2, 1, 1), (3, 1, 1), (4, 2, 2)]
+            .into_iter()
+            .map(|(id, sequence_index, call_index)| {
+                stateful_frontier_record(id, sequence_index, call_index, false)
+            })
+            .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 3, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontier_reservation_keeps_primary_contexts() {
+        let frontiers = [
+            (0, 0, 0, false),
+            (1, 0, 0, false),
+            (2, 1, 1, false),
+            (3, 2, 2, false),
+            (4, 3, 3, true),
+        ]
+        .into_iter()
+        .map(|(id, sequence_index, call_index, both_results_retained)| {
+            stateful_frontier_record(id, sequence_index, call_index, both_results_retained)
+        })
+        .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 4, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontier_reservation_keeps_fallback_contexts() {
+        let frontiers =
+            [(0, 0, 0, false), (1, 1, 1, true), (2, 1, 1, true), (3, 2, 2, true), (4, 3, 3, true)]
+                .into_iter()
+                .map(|(id, sequence_index, call_index, both_results_retained)| {
+                    stateful_frontier_record(id, sequence_index, call_index, both_results_retained)
+                })
+                .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 4, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [0, 2, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontiers_fill_from_retained_outcomes() {
+        let frontiers =
+            (0..5).map(|id| stateful_frontier_record(id, id as usize, id as usize, true)).collect();
+
+        let ids = select_stateful_frontiers(frontiers, 4, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [0, 1, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontier_replay_requires_opposite_result_at_same_site() {
+        let address = Address::with_last_byte(1);
+        let site = FuzzBranchFrontierSite { address, pc: 7, opcode: opcode::LT };
+        let comparison = |address, pc, op1, op2| CmpOperands {
+            address,
+            pc,
+            opcode: opcode::LT,
+            op1: U256::from(op1),
+            op2: U256::from(op2),
+        };
+
+        assert!(frontier_comparison_flipped(site, true, &[comparison(address, 7, 2, 1)]));
+        assert!(!frontier_comparison_flipped(site, true, &[comparison(address, 7, 1, 2)]));
+        assert!(!frontier_comparison_flipped(
+            site,
+            true,
+            &[comparison(Address::with_last_byte(2), 7, 2, 1)]
+        ));
+        assert!(!frontier_comparison_flipped(site, true, &[comparison(address, 8, 2, 1)]));
+    }
+
+    fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
+        let config = Config::default();
+        count_runnable_invariant_campaign_anchors(
+            abi,
+            &EmptyTestFilter::default(),
+            InvariantCampaignScope {
+                config: &config,
+                inline_config,
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &[],
+                pass_network: None,
+            },
+        )
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_merges_boolean_suite_and_counts_optimizations() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+            "function invariantOptimizeA() external returns (int256)",
+            "function invariantOptimizeB() external returns (int256)",
+        ])
+        .unwrap();
+
+        assert_eq!(count_anchors(&abi, &InlineConfig::new()), 3);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_splits_boolean_suite_when_configs_differ() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+        ])
+        .unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTwo".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.depth = 1".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
+    fn selected_campaign_merges_without_changing_namespace() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+            "function invariantThree() external",
+        ])
+        .unwrap();
+        let functions = abi.functions().collect::<Vec<_>>();
+        let selected = functions
+            .iter()
+            .copied()
+            .filter(|func| func.name != "invariantThree")
+            .collect::<Vec<_>>();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantThree".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.fail-on-revert = true".to_string(),
+            })
+            .unwrap();
+        let config = Config::default();
+        let selection = select_invariant_campaigns(
+            &functions,
+            &selected,
+            &config,
+            &inline_config,
+            CONTRACT_NAME,
+        );
+        assert_eq!(selection.anchor_count(), 1);
+        assert!(selection.merge_boolean_suite);
+        assert!(!selection.shared_boolean_namespace);
+
+        let uniform = select_invariant_campaigns(
+            &functions,
+            &selected,
+            &config,
+            &InlineConfig::new(),
+            CONTRACT_NAME,
+        );
+        assert_eq!(uniform.anchor_count(), 1);
+        assert!(uniform.merge_boolean_suite);
+        assert!(uniform.shared_boolean_namespace);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_splits_boolean_suite_when_corpus_weight_provenance_differs() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+        ])
+        .unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTwo".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.corpus_random_sequence_weight = 10"
+                    .to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_respects_network_pass() {
+        let abi = JsonAbi::parse(["function invariantTempoOnly() external"]).unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTempoOnly".to_string()),
+                line: "1:1".to_string(),
+                docs: r#"forge-config: default.networks.network = "tempo""#.to_string(),
+            })
+            .unwrap();
+        let config = Config::default();
+        let override_networks = [NetworkVariant::Tempo];
+
+        let default_pass = count_runnable_invariant_campaign_anchors(
+            &abi,
+            &EmptyTestFilter::default(),
+            InvariantCampaignScope {
+                config: &config,
+                inline_config: &inline_config,
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &override_networks,
+                pass_network: None,
+            },
+        );
+        let tempo_pass = count_runnable_invariant_campaign_anchors(
+            &abi,
+            &EmptyTestFilter::default(),
+            InvariantCampaignScope {
+                config: &config,
+                inline_config: &inline_config,
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &override_networks,
+                pass_network: Some(&NetworkVariant::Tempo),
+            },
+        );
+
+        assert_eq!(default_pass, 0);
+        assert_eq!(tempo_pass, 1);
     }
 }

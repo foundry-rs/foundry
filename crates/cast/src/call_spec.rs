@@ -3,11 +3,14 @@
 //! Parses call specs in the format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xrawdata>]`
 //!
 //! Examples:
-//! - `0x123` - Just an address (empty call)
-//! - `0x123:0.1ether` - ETH transfer
-//! - `0x123::transfer(address,uint256):0x789,1000` - Contract call with signature
-//! - `0x123::batch(uint256[],(uint256,uint256)):[1,2],(3,4)` - Array and tuple arguments
-//! - `0x123::0xabcdef` - Contract call with raw calldata
+//! - `0x1234567890123456789012345678901234567890` - Just an address (empty call)
+//! - `0x1234567890123456789012345678901234567890:0.1ether` - ETH transfer
+//! - `0x1234567890123456789012345678901234567890::transfer(address,uint256):
+//!   0x0987654321098765432109876543210987654321,1000` - Contract call with signature
+//! - `0x1234567890123456789012345678901234567890::batch(uint256[],(uint256,uint256)): [1,2],(3,4)`
+//!   - Array and tuple arguments.
+//! - `0x1234567890123456789012345678901234567890::0x123def` - Contract call with raw calldata
+//! - `0x1234567890123456789012345678901234567890:1ether:deposit()` - Value + function call
 
 use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, U256, hex};

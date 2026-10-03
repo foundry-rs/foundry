@@ -196,7 +196,8 @@ fn run(cmd: &mut TestCommand, hash: B256, endpoint: &str, flags: &[&str]) -> Out
     run_command(cmd, hash, endpoint, flags).assert_success().get_output().clone()
 }
 
-casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_matches_replay_at_every_position(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let (endpoint, calls) = spawn_rpc_proxy_canned_method(
         fixture.handle.http_endpoint(),
@@ -221,9 +222,10 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
 "#]]);
     }
     assert_eq!(calls.load(Ordering::Relaxed), 3);
-});
+}
 
-casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
@@ -249,9 +251,10 @@ casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, asy
     OutputAssert::new(output).stdout_eq(replay.stdout).stderr_eq("");
     assert_eq!(prestate_calls.load(Ordering::Relaxed), 1);
     assert_eq!(calls.load(Ordering::Relaxed), 1);
-});
+}
 
-casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_unavailable_falls_back_to_replay(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
@@ -275,9 +278,10 @@ casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| 
     OutputAssert::new(output)
         .stdout_eq(replay.stdout)
         .stderr_eq("Executing previous transactions from the block.\n");
-});
+}
 
-casttest!(cast_run_fork_bal_is_checked_against_the_header_hash, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_is_checked_against_the_header_hash(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
@@ -314,9 +318,10 @@ Executing previous transactions from the block.
         }
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
-});
+}
 
-casttest!(cast_run_fork_bal_uses_anvil_block_access_list, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_uses_anvil_block_access_list(cmd: _) {
     // Amsterdam anvil serves the BAL of its own blocks, so no canned response is needed.
     let fixture = Fixture::new(EthereumHardfork::Amsterdam).await;
     let endpoint = fixture.handle.http_endpoint();
@@ -333,9 +338,10 @@ casttest!(cast_run_fork_bal_uses_anvil_block_access_list, async |_prj, cmd| {
 
 "#]]);
     }
-});
+}
 
-casttest!(cast_run_fork_bal_replays_prefix_for_execution_overrides, async |prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_replays_prefix_for_execution_overrides(prj: _, cmd: _) {
     let (api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into())))
             .await;
@@ -418,4 +424,4 @@ Gas used: 23152
             .stderr_eq(replay.stderr);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
-});
+}

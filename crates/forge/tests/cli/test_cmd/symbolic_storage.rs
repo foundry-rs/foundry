@@ -5,7 +5,8 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use super::symbolic_helpers::{assert_symbolic, z3_available};
 use crate::skip_unless_z3;
 
-forgetest_init!(symbolic_mapping_storage_finds_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mapping_storage_finds_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mapping_storage_finds_counterexample because z3 is not available"
@@ -56,9 +57,10 @@ args=[
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_nested_mapping_storage_round_trips, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_nested_mapping_storage_round_trips(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_nested_mapping_storage_round_trips because z3 is not available"
@@ -93,9 +95,10 @@ contract SymbolicNestedMappingStorage {
 "#]],
     );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_store_load_accepts_symbolic_slot, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_store_load_accepts_symbolic_slot(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_store_load_accepts_symbolic_slot because z3 is not available"
@@ -131,9 +134,10 @@ contract SymbolicVmStoreLoadSlot is Test {
     );
     assert!(!stdout.contains("symbolic vm.store slot"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.load slot"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_mapping_dynamic_array_storage_round_trips, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mapping_dynamic_array_storage_round_trips(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mapping_dynamic_array_storage_round_trips because z3 is not available"
@@ -177,9 +181,10 @@ contract SymbolicMappingDynamicArrayStorage is Test {
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_packed_storage_round_trips, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_packed_storage_round_trips(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_packed_storage_round_trips because z3 is not available"
@@ -223,9 +228,10 @@ contract SymbolicPackedStorage {
 [PASS] checkPacked(uint128,uint128,bool,address)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_erc20_storage_paths_round_trip, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_erc20_storage_paths_round_trip(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_erc20_storage_paths_round_trip because z3 is not available"
@@ -267,9 +273,10 @@ contract SymbolicErc20Storage {
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_erc20_transfer_from_storage_paths_do_not_alias, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_erc20_transfer_from_storage_paths_do_not_alias(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_erc20_transfer_from_storage_paths_do_not_alias because z3 is not available"
@@ -317,9 +324,10 @@ Ran 1 test for test/SymbolicErc20TransferFromStorage.t.sol:SymbolicErc20Transfer
 [PASS] checkTransferFromStorage(address,address,address,uint96,uint96,uint96) ([METRICS])
 ...
 "#]]);
-});
+}
 
-forgetest_init!(symbolic_svm_storage_helpers_are_supported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_svm_storage_helpers_are_supported(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_svm_storage_helpers_are_supported because z3 is not available"
@@ -372,9 +380,10 @@ contract SymbolicSvmStorageHelpers {
 "#]],
     );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_generic_storage_exposes_arbitrary_uninitialized_reads, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_generic_storage_exposes_arbitrary_uninitialized_reads(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_generic_storage_exposes_arbitrary_uninitialized_reads because z3 is not available"
@@ -433,7 +442,7 @@ checkSvmArbitraryStorage(address)
     );
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
-});
+}
 
 // Reading an unwritten mapping at a symbolic key must yield a fresh symbolic
 // value, not a concrete zero. The assertion below claims that no caller is an
@@ -441,7 +450,8 @@ checkSvmArbitraryStorage(address)
 // `isAdmin[user] == true`. That candidate does not replay concretely from the
 // default concrete storage value, so Forge must report Incomplete instead of a
 // user-facing counterexample.
-forgetest_init!(symbolic_sload_unwritten_mapping_default_layout, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_sload_unwritten_mapping_default_layout(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
 
     prj.add_test(
@@ -475,4 +485,4 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

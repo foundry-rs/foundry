@@ -437,7 +437,13 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
     evm_opts.fork_retries = rpc_endpoint.config.retries;
     evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
     if let Some(Ok(auth)) = rpc_endpoint.auth {
-        evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
+        let fork_headers = Some(vec![format!("Authorization: {auth}")]);
+        // The cached identity was discovered with other credentials, which may reach another
+        // backend behind the same URL.
+        if evm_opts.fork_headers != fork_headers {
+            evm_opts.fork_endpoint = None;
+        }
+        evm_opts.fork_headers = fork_headers;
     }
     let fork = CreateFork {
         enable_caching: !ccx.state.config.no_storage_caching

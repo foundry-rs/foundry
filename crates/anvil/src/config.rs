@@ -15,7 +15,7 @@ use crate::{
     },
     mem::{self, in_memory_db::StateRootDb},
 };
-use alloy_chains::{Chain, NamedChain};
+use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -77,6 +77,9 @@ use tempo_hardfork::{
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
+
+#[cfg(feature = "base")]
+use alloy_chains::NamedChain;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 
@@ -1536,14 +1539,11 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
-        // Fork setup initializes its own timestamp. For a local BSC chain, keep the initial EVM
-        // and genesis block on the same resolved timestamp so chain precompiles are available
-        // immediately. Preserve the default timestamp behavior for all other local chains.
-        let is_bsc = matches!(
-            NamedChain::try_from(evm_env.cfg_env.chain_id),
-            Ok(NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet)
-        );
-        if fork.is_none() && (self.genesis_timestamp.is_some() || is_bsc) {
+        // Fork setup initializes its own timestamp. For a local chain, keep the initial EVM and
+        // genesis block on the same resolved timestamp, so that calls against the latest block
+        // observe the genesis time, and timestamp-activated precompiles and validity windows
+        // behave the same before and after the first mined block.
+        if fork.is_none() {
             evm_env.block_env.timestamp = U256::from(genesis_timestamp);
         }
 
@@ -2662,6 +2662,9 @@ mod tests {
 
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
+
+    #[cfg(not(feature = "base"))]
+    use alloy_chains::NamedChain;
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
