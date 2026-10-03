@@ -14,7 +14,7 @@ use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
-    map::{B256HashMap, HashMap},
+    map::{AddressHashSet, B256HashMap, HashMap},
 };
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
@@ -29,7 +29,9 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::MemDb,
-    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
+    traces::{
+        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
+    },
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -641,10 +643,13 @@ pub struct MinedTransaction<N: Network> {
 }
 
 impl<N: Network> MinedTransaction<N> {
-    /// Returns the traces of the transaction for `trace_transaction`
-    pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
+    /// Returns the traces of the transaction for `trace_transaction`.
+    ///
+    /// Like simulated traces, these omit nested zero-value calls to `precompiles`, the precompiles
+    /// active in the transaction's block.
+    pub fn parity_traces(&self, precompiles: &AddressHashSet) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(
-            self.info.traces.clone(),
+            exclude_precompile_calls(self.info.traces.clone(), precompiles),
             None,
             TracingInspectorConfig::default_parity(),
         )
@@ -683,6 +688,40 @@ impl<N: Network> MinedTransaction<N> {
             })
             .collect()
     }
+}
+
+/// Detaches nested zero-value calls to `precompiles` from the call graph, as the tracing inspector
+/// does when configured to exclude precompile calls.
+///
+/// Mined transactions keep these calls for the Geth-style traces, which include them.
+fn exclude_precompile_calls(
+    mut nodes: Vec<CallTraceNode>,
+    precompiles: &AddressHashSet,
+) -> Vec<CallTraceNode> {
+    for idx in 0..nodes.len() {
+        let trace = &nodes[idx].trace;
+        if let Some(parent) = nodes[idx].parent
+            && !trace.kind.is_any_create()
+            && trace.value.is_zero()
+            && precompiles.contains(&trace.address)
+            && let Some(position) = nodes[parent].children.iter().position(|&child| child == idx)
+        {
+            nodes[idx].trace.maybe_precompile = Some(true);
+            let parent = &mut nodes[parent];
+            parent.children.remove(position);
+            parent.ordering.retain_mut(|member| match member {
+                TraceMemberOrder::Call(child) if *child == position => false,
+                TraceMemberOrder::Call(child) => {
+                    if *child > position {
+                        *child -= 1;
+                    }
+                    true
+                }
+                _ => true,
+            });
+        }
+    }
+    nodes
 }
 
 /// Intermediary Anvil representation of a receipt

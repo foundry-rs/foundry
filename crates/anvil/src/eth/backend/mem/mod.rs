@@ -79,7 +79,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxKind, U256, address, hex, keccak256,
-    map::{AddressMap, B256Set, HashMap, HashSet},
+    map::{AddressHashSet, AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
@@ -2189,7 +2189,15 @@ impl<N: Network> Backend<N> {
         &self,
         hash: B256,
     ) -> Option<Vec<LocalizedTransactionTrace>> {
-        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
+        let block_hash = self.blockchain.storage.read().transactions.get(&hash)?.block_hash;
+        let precompiles =
+            self.get_block(block_hash).map(|block| self.mined_block_precompiles(&block));
+        self.blockchain
+            .storage
+            .read()
+            .transactions
+            .get(&hash)
+            .map(|tx| tx.parity_traces(&precompiles.unwrap_or_default()))
     }
 
     /// Returns the traces for the given block
@@ -2198,14 +2206,25 @@ impl<N: Network> Backend<N> {
         block: u64,
     ) -> Option<Vec<LocalizedTransactionTrace>> {
         let block = self.get_block(block)?;
+        let precompiles = self.mined_block_precompiles(&block);
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
         for tx in block.body.transactions {
             if let Some(mined_tx) = storage.transactions.get(&tx.hash()) {
-                traces.extend(mined_tx.parity_traces());
+                traces.extend(mined_tx.parity_traces(&precompiles));
             }
         }
         Some(traces)
+    }
+
+    /// Returns the precompile addresses that were active while executing the given mined block.
+    fn mined_block_precompiles(&self, block: &Block) -> AddressHashSet {
+        let (evm_env, _) = self.tx_replay_evm_env(block);
+        let mut precompiles = PrecompilesMap::from_static(Precompiles::new(
+            PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
+        ));
+        self.inject_precompiles(&mut precompiles, &evm_env);
+        precompiles.addresses().copied().collect()
     }
 
     /// Returns the mined transaction for the given hash
