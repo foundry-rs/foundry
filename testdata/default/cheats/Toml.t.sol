@@ -471,4 +471,18 @@ contract WriteTomlTest is Test {
         vm.removeFile(path);
         vm.writeToml("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
     }
+
+    function test_writeToml_keepsFormatting() public {
+        string memory path = "fixtures/Toml/write_formatted_test.toml";
+        vm.copyFile("fixtures/Toml/write_formatted.toml", path);
+
+        vm.writeToml(vm.toString(address(0xBEEF)), path, ".mainnet.token");
+        vm.writeToml("2000", path, ".mainnet.limits.daily");
+        vm.writeToml("30000000", path, ".base.gas_limit");
+
+        // Only the written values change: comments, blank lines, the datetime, the hex integer, the
+        // literal string and the inline table are kept as written.
+        assertEq(vm.readFile(path), vm.readFile("fixtures/Toml/write_formatted_expected.toml"));
+        vm.removeFile(path);
+    }
 }

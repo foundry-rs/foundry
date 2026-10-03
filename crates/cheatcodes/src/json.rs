@@ -843,18 +843,7 @@ pub(super) fn resolve_type(
 ///   JSON, and if that fails, it's treated as a plain JSON string.
 /// * `key` - A dot-separated string representing the path to the location for upserting.
 pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Result<()> {
-    // Parse the path key into segments.
-    let canonical_key = canonicalize_json_path(key);
-    let parts: Vec<&str> = canonical_key
-        .strip_prefix("$.")
-        .unwrap_or(key)
-        .split('.')
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if parts.is_empty() {
-        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
-    }
+    let parts = split_value_key(key)?;
 
     // Separate the final key from the path.
     // Traverse the objects, creating intermediary ones if necessary.
@@ -868,14 +857,14 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
             current_level = current_level
                 .as_object_mut()
                 .unwrap()
-                .entry(segment.to_string())
+                .entry(segment.clone())
                 .or_insert(Value::Object(Map::new()));
         }
 
         // Upsert the new value
         if let Some(parent_obj) = current_level.as_object_mut() {
             parent_obj.insert(
-                key_to_insert.to_string(),
+                key_to_insert.clone(),
                 serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned())),
             );
         } else {
@@ -884,6 +873,25 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
     }
 
     Ok(())
+}
+
+/// Splits the `valueKey` of a write cheatcode into the object keys leading to the value.
+pub(super) fn split_value_key(key: &str) -> Result<Vec<String>> {
+    // Parse the path key into segments.
+    let canonical_key = canonicalize_json_path(key);
+    let parts = canonical_key
+        .strip_prefix("$.")
+        .unwrap_or(key)
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
+    }
+
+    Ok(parts)
 }
 
 /// Recursively traverses a `DynSolType` and reorders the fields of any
