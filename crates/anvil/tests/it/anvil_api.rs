@@ -936,6 +936,49 @@ async fn test_set_next_block_parent_beacon_block_root() {
     assert_eq!(next.header.parent_beacon_block_root, Some(B256::ZERO));
 }
 
+// Tests that a parent beacon block root override is dropped by `evm_revert` when set after the
+// snapshot and by `anvil_reset`, and restored by `evm_revert` when set before the snapshot.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_reset_and_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    let mined_root = async || {
+        let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        block.header.parent_beacon_block_root
+    };
+
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(B256::ZERO));
+
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(root));
+
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(B256::ZERO));
+}
+
+// Tests that blocks before Cancun have no parent beacon block root to override.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_pre_cancun() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()));
+    let (api, _handle) = spawn(config).await;
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, None);
+}
+
 // test that after a snapshot revert, the env block is reset
 // to its correct value (block number, etc.)
 #[tokio::test(flavor = "multi_thread")]
