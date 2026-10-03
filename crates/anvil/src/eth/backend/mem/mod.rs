@@ -6857,30 +6857,40 @@ where
             return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
         }
 
-        if block_number < current_number {
-            if let Some((block_hash, block)) = self
-                .block_by_number(BlockNumber::Number(block_number))
-                .await?
-                .map(|block| (block.header.hash, block))
+        // The head can advance while waiting for the database lock. Serve the live state only if
+        // the requested block is still the head or no state history is kept. Otherwise hold the
+        // lock so the requested block's state cannot be pruned before it is read below.
+        let _head_guard = if block_number == current_number {
+            let db = self.db.read().await;
+            if self.best_number() == block_number
+                || !self.prune_state_history_config.is_state_history_supported()
             {
-                let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
-                }
+                let block = self.evm_env.read().block_env.clone();
+                return Ok(f(Box::new(&**db), block));
+            }
+            Some(db)
+        } else {
+            None
+        };
 
-                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
-                }
+        if let Some((block_hash, block)) = self
+            .block_by_number(BlockNumber::Number(block_number))
+            .await?
+            .map(|block| (block.header.hash, block))
+        {
+            let read_guard = self.states.upgradable_read();
+            if let Some(state_db) = read_guard.get_state(&block_hash) {
+                return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
             }
 
-            warn!(target: "backend", "Not historic state found for block={}", block_number);
-            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
+            }
         }
 
-        let db = self.db.read().await;
-        let block = self.evm_env.read().block_env.clone();
-        Ok(f(Box::new(&**db), block))
+        warn!(target: "backend", "Not historic state found for block={}", block_number);
+        Err(BlockchainError::BlockOutOfRange(self.best_number(), block_number))
     }
 
     /// Executes a closure with both state and network context at a specific block.
@@ -6928,34 +6938,38 @@ where
         #[cfg(not(feature = "monad"))]
         let context = None;
 
-        if block_number < current_number {
-            if let Some((block_hash, block)) = self
-                .block_by_number(BlockNumber::Number(block_number))
-                .await?
-                .map(|block| (block.header.hash, block))
+        // See `with_database_at`: re-check the head under the read guard.
+        let _head_guard = if block_number == current_number {
+            let db = self.db.read().await;
+            if self.best_number() == block_number
+                || !self.prune_state_history_config.is_state_history_supported()
             {
-                let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return f(
-                        Box::new(state_db),
-                        self.block_env_from_header(&block.header),
-                        context,
-                    );
-                }
+                let block = self.evm_env.read().block_env.clone();
+                return f(Box::new(&**db), block, context);
+            }
+            Some(db)
+        } else {
+            None
+        };
 
-                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return f(Box::new(state), self.block_env_from_header(&block.header), context);
-                }
+        if let Some((block_hash, block)) = self
+            .block_by_number(BlockNumber::Number(block_number))
+            .await?
+            .map(|block| (block.header.hash, block))
+        {
+            let read_guard = self.states.upgradable_read();
+            if let Some(state_db) = read_guard.get_state(&block_hash) {
+                return f(Box::new(state_db), self.block_env_from_header(&block.header), context);
             }
 
-            warn!(target: "backend", "Not historic state found for block={}", block_number);
-            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                return f(Box::new(state), self.block_env_from_header(&block.header), context);
+            }
         }
 
-        let db = self.db.read().await;
-        let block = self.evm_env.read().block_env.clone();
-        f(Box::new(&**db), block, context)
+        warn!(target: "backend", "Not historic state found for block={}", block_number);
+        Err(BlockchainError::BlockOutOfRange(self.best_number(), block_number))
     }
 
     pub async fn storage_at(
@@ -10683,8 +10697,8 @@ mod tests {
         let recipient = Address::repeat_byte(0x11);
         let contract = Address::repeat_byte(0x22);
 
-        // Return the recipient balance followed by NUMBER. Before mining both are zero; after the
-        // queued transfer is mined both are one.
+        // Return the recipient balance followed by NUMBER. At block 0 both are zero; at block 1,
+        // after the queued transfer is mined, both are one.
         let mut code = vec![0x73];
         code.extend_from_slice(recipient.as_slice());
         code.extend_from_slice(&[
@@ -10752,11 +10766,60 @@ mod tests {
         assert_eq!(output.len(), 64);
         let balance = U256::from_be_slice(&output[..32]);
         let block_number = U256::from_be_slice(&output[32..]);
-        assert_eq!((balance, block_number), (U256::from(1), U256::from(1)));
+        // The call requested block 0, so it sees block 0's balance and number.
+        assert_eq!((balance, block_number), (U256::ZERO, U256::ZERO));
 
         assert_eq!(pending_block.block.header.number, api.backend.best_number() + 1);
         assert_eq!(pending_block.block.header.parent_hash, api.backend.best_hash());
         assert_eq!(pending_block.block.header.base_fee_per_gas, Some(875_175_000));
+    }
+
+    /// Reads the recipient balance at head block 0 while block 1, which funds it, is being mined.
+    async fn read_head_balance_while_mining(config: NodeConfig) -> U256 {
+        let (api, handle) = spawn(config.with_no_mining(true)).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let recipient = Address::repeat_byte(0x11);
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+        // Pause mining after the next block's state is committed while it still holds the
+        // database write lock and before it publishes the new head.
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        let mining_api = api.clone();
+        let mining = tokio::spawn(async move { mining_api.mine_one().await });
+        hook.reached.notified().await;
+
+        // The read names the current head, block 0, and queues behind the miner's write lock.
+        let head = api.backend.best_number();
+        assert_eq!(head, 0);
+        let mut balance =
+            Box::pin(api.backend.get_balance(recipient, Some(BlockRequest::Number(head))));
+        assert!(futures::poll!(balance.as_mut()).is_pending());
+
+        hook.resume.notify_one();
+        mining.await.unwrap().unwrap();
+        assert_eq!(api.backend.best_number(), 1);
+
+        balance.await.unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_number_read_waiting_on_mining_keeps_requested_state() {
+        // The read must be answered from block 0, not from block 1 mined while it waited.
+        assert_eq!(read_head_balance_while_mining(NodeConfig::test()).await, U256::ZERO);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_number_read_waiting_on_mining_without_history_reads_live_state() {
+        // Without state history block 0's state is gone, so the read is served from the live state
+        // instead of failing.
+        let config = NodeConfig::test().set_pruned_history(Some(None));
+        assert_eq!(read_head_balance_while_mining(config).await, U256::from(1));
     }
 
     struct CacheFlushingDb(BlockchainDb);
