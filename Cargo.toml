@@ -559,7 +559,9 @@ base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "2aa8b
 base-common-network = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
+base-consensus-upgrades = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-execution-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
+base-protocol = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
