@@ -875,6 +875,16 @@ async fn test_trace_get_local() {
     for missing in [&[2][..], &[0, 0], &[1, 1], &[1, 0, 0]] {
         assert_eq!(trace_get(missing).await, None);
     }
+
+    let unknown = provider
+        .client()
+        .request::<_, Option<LocalizedTransactionTrace>>(
+            "trace_get",
+            (B256::ZERO, Vec::<Index>::new()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
