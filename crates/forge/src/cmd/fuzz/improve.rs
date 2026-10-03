@@ -131,6 +131,9 @@ struct MutationGap {
     original: String,
     mutant: String,
     seeds: Vec<U256>,
+    survives_all_seeds: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_context: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,7 +144,7 @@ struct ProposalFeedback {
     tests: Vec<CandidateTest>,
     reasons: Vec<String>,
     candidate_results: Vec<MutationResultSummary>,
-    minimum_new_kills: i64,
+    minimum_resolved_survivors: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -159,7 +162,7 @@ struct Evaluation {
     reasons: Vec<String>,
     baseline: Vec<MutationResultSummary>,
     candidate: Vec<MutationResultSummary>,
-    minimum_new_kills: i64,
+    minimum_resolved_survivors: usize,
 }
 
 impl FuzzImproveArgs {
@@ -196,7 +199,7 @@ impl FuzzImproveArgs {
             .iter()
             .map(|result| PromptMutation { seed: &result.seed, summary: &result.output.summary })
             .collect::<Vec<_>>();
-        let mutation_gaps = mutation_gaps(&baseline);
+        let mutation_gaps = mutation_gaps(&config.root, &baseline);
         let cache_root = config.cache_path.join("fuzz-improve");
         fs::create_dir_all(&cache_root)?;
 
@@ -212,7 +215,7 @@ impl FuzzImproveArgs {
                 round,
                 project: &config.root,
                 brief: &brief,
-                guidance: "Inspect each mutation in its enclosing source context. Propose a property only when a concrete input or sequence can distinguish the original from the mutant; surviving mutants may be semantically equivalent.",
+                guidance: "Prioritize mutations that survive all seeds and inspect their numbered source context. Propose a property only when a concrete input or sequence can distinguish the original from the mutant; surviving mutants may be semantically equivalent.",
                 mutate: &self.mutate,
                 seeds: &self.seed,
                 baseline: &prompt_baseline,
@@ -252,7 +255,7 @@ impl FuzzImproveArgs {
                             reasons: vec![error.to_string()],
                             baseline: mutation_result_summaries(&baseline),
                             candidate: vec![],
-                            minimum_new_kills: 0,
+                            minimum_resolved_survivors: 0,
                         });
                     let candidate_cache = cache_root.join(&evaluation.candidate_digest);
                     fs::create_dir_all(&candidate_cache)?;
@@ -265,11 +268,11 @@ impl FuzzImproveArgs {
                         serde_json::to_vec_pretty(&evaluation)?,
                     )?;
                     if evaluation.accepted
-                        && best.as_ref().is_none_or(|(score, _): &(i64, PathBuf)| {
-                            evaluation.minimum_new_kills > *score
+                        && best.as_ref().is_none_or(|(score, _): &(usize, PathBuf)| {
+                            evaluation.minimum_resolved_survivors > *score
                         })
                     {
-                        best = Some((evaluation.minimum_new_kills, candidate_cache));
+                        best = Some((evaluation.minimum_resolved_survivors, candidate_cache));
                     }
                     feedback.push(proposal_feedback(Some(&candidate), &evaluation));
                     evaluation
@@ -282,7 +285,7 @@ impl FuzzImproveArgs {
                         reasons: vec![error.to_string()],
                         baseline: mutation_result_summaries(&baseline),
                         candidate: vec![],
-                        minimum_new_kills: 0,
+                        minimum_resolved_survivors: 0,
                     };
                     feedback.push(proposal_feedback(None, &evaluation));
                     evaluation
@@ -292,14 +295,14 @@ impl FuzzImproveArgs {
         }
 
         fs::write(cache_root.join("rounds.json"), serde_json::to_vec_pretty(&evaluations)?)?;
-        if let Some((new_kills, path)) = best {
+        if let Some((resolved_survivors, path)) = best {
             let path = path.strip_prefix(&config.root).unwrap_or(&path);
             sh_println!(
-                "accepted candidate: {} (+{new_kills} kills on every seed)",
+                "accepted candidate: {} (resolved at least {resolved_survivors} baseline survivor(s) per seed)",
                 path.display()
             )?;
         } else {
-            sh_println!("no candidate improved mutation kills on every seed")?;
+            sh_println!("no candidate resolved a mutation survivor on every seed")?;
         }
         Ok(())
     }
@@ -396,13 +399,14 @@ impl FuzzImproveArgs {
             }
         }
 
-        let candidate_results = if reasons.is_empty() {
+        let (candidate_results, resolved_survivors) = if reasons.is_empty() {
             let base_filter = self
                 .match_contract
                 .as_deref()
                 .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
             let contract_filter = candidate_contract_filter(base_filter, candidate);
             let mut results = Vec::with_capacity(self.seed.len());
+            let mut resolved_survivors = Vec::with_capacity(self.seed.len());
             // Candidates must improve every seed, so the first failing seed is decisive.
             for before in baseline {
                 let after = self.run_mutation(
@@ -420,8 +424,37 @@ impl FuzzImproveArgs {
                             mutants.iter().any(|mutant| !baseline.contains(mutant))
                         })
                     });
-                let added_kill = after.output.summary.killed > before.output.summary.killed;
+                // Adaptive span skipping can expose a new surviving sibling and skip mutants that
+                // the baseline killed, so aggregate kill counts are not monotonic. Compare stable
+                // survivor identities instead: candidate files cannot alter the mutated sources.
+                let mut after_survivors = BTreeSet::new();
+                for (path, mutants) in &after.output.survived_mutants {
+                    for mutant in mutants {
+                        after_survivors.insert((
+                            path.as_str(),
+                            mutant.line,
+                            mutant.column,
+                            mutant.original.as_str(),
+                            mutant.mutant.as_str(),
+                        ));
+                    }
+                }
+                let mut resolved = 0;
+                for (path, mutants) in &before.output.survived_mutants {
+                    for mutant in mutants {
+                        if !after_survivors.contains(&(
+                            path.as_str(),
+                            mutant.line,
+                            mutant.column,
+                            mutant.original.as_str(),
+                            mutant.mutant.as_str(),
+                        )) {
+                            resolved += 1;
+                        }
+                    }
+                }
                 results.push(after);
+                resolved_survivors.push(resolved);
 
                 if changed_population {
                     reasons.push(format!(
@@ -437,26 +470,19 @@ impl FuzzImproveArgs {
                     ));
                     break;
                 }
-                if !added_kill {
+                if resolved == 0 {
                     reasons.push(format!(
-                        "candidate did not add a mutation kill on seed {}",
+                        "candidate did not resolve a baseline mutation survivor on seed {}",
                         before.seed
                     ));
                     break;
                 }
             }
-            results
+            (results, resolved_survivors)
         } else {
-            vec![]
+            (vec![], vec![])
         };
-        let minimum_new_kills = baseline
-            .iter()
-            .zip(&candidate_results)
-            .map(|(before, after)| {
-                after.output.summary.killed as i64 - before.output.summary.killed as i64
-            })
-            .min()
-            .unwrap_or_default();
+        let minimum_resolved_survivors = resolved_survivors.into_iter().min().unwrap_or_default();
         if reasons.is_empty() && candidate_results.len() != baseline.len() {
             reasons.push("candidate mutation results did not cover every seed".to_string());
         }
@@ -467,7 +493,7 @@ impl FuzzImproveArgs {
             reasons,
             baseline: mutation_result_summaries(baseline),
             candidate: mutation_result_summaries(&candidate_results),
-            minimum_new_kills,
+            minimum_resolved_survivors,
         })
     }
 
@@ -589,7 +615,7 @@ fn candidate_contract_filter(base: Option<&str>, candidate: &Candidate) -> Optio
     Some(format!("(?:{base})|(?:{generated})"))
 }
 
-fn mutation_gaps(results: &[SeedMutation]) -> Vec<MutationGap> {
+fn mutation_gaps(root: &Path, results: &[SeedMutation]) -> Vec<MutationGap> {
     let mut gaps = BTreeMap::<(PathBuf, usize, usize, String, String), BTreeSet<U256>>::new();
     for result in results {
         for (path, mutants) in &result.output.survived_mutants {
@@ -606,16 +632,46 @@ fn mutation_gaps(results: &[SeedMutation]) -> Vec<MutationGap> {
             }
         }
     }
-    gaps.into_iter()
+    let mut source_files = BTreeMap::<PathBuf, Option<Vec<String>>>::new();
+    let mut gaps = gaps
+        .into_iter()
         .map(|((path, line, column, original, mutant), seeds)| MutationGap {
+            source_context: None,
             path,
             line,
             column,
             original,
             mutant,
+            survives_all_seeds: seeds.len() == results.len(),
             seeds: seeds.into_iter().collect(),
         })
-        .collect()
+        .collect::<Vec<_>>();
+    for gap in &mut gaps {
+        let lines = source_files.entry(gap.path.clone()).or_insert_with(|| {
+            fs::read_to_string(root.join(&gap.path))
+                .ok()
+                .map(|source| source.lines().map(str::to_string).collect())
+        });
+        let Some(lines) = lines else { continue };
+        let start = gap.line.saturating_sub(4);
+        let end = gap.line.saturating_add(3).min(lines.len());
+        gap.source_context = Some(
+            (start..end)
+                .map(|index| format!("{:>4}: {}", index + 1, lines[index]))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    gaps.sort_by(|a, b| {
+        b.survives_all_seeds
+            .cmp(&a.survives_all_seeds)
+            .then_with(|| a.path.cmp(&b.path))
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.original.cmp(&b.original))
+            .then_with(|| a.mutant.cmp(&b.mutant))
+    });
+    gaps
 }
 
 fn mutation_result_summaries(results: &[SeedMutation]) -> Vec<MutationResultSummary> {
@@ -685,7 +741,7 @@ fn proposal_feedback(candidate: Option<&Candidate>, evaluation: &Evaluation) -> 
         tests: candidate.map(|candidate| candidate.tests.clone()).unwrap_or_default(),
         reasons: evaluation.reasons.clone(),
         candidate_results: evaluation.candidate.clone(),
-        minimum_new_kills: evaluation.minimum_new_kills,
+        minimum_resolved_survivors: evaluation.minimum_resolved_survivors,
     }
 }
 

@@ -6310,6 +6310,9 @@ output="$2"
 grep -q '"mutation_gaps"' "$prompt"
 grep -q '"original"' "$prompt"
 grep -q '"mutant"' "$prompt"
+grep -q '"survives_all_seeds": true' "$prompt"
+grep -q '"source_context"' "$prompt"
+grep -q 'function bucket' "$prompt"
 grep -q 'surviving mutants may be semantically equivalent' "$prompt"
 if ! grep -q '"round": 1' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
@@ -6386,7 +6389,7 @@ JSON
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8bf2460df62b08aeb9d58c552f (+10 kills on every seed)
+accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8bf2460df62b08aeb9d58c552f (resolved at least 6 baseline survivor(s) per seed)
 
 "#]]);
 
@@ -6398,8 +6401,13 @@ accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8
     assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
     assert_eq!(rounds[1]["accepted"], false);
     assert_eq!(rounds[1]["candidate"].as_array().unwrap().len(), 1);
-    assert!(rounds[1]["reasons"][0].as_str().unwrap().contains("did not add a mutation kill"));
+    assert!(
+        rounds[1]["reasons"][0]
+            .as_str()
+            .unwrap()
+            .contains("did not resolve a baseline mutation survivor")
+    );
     assert_eq!(rounds[2]["accepted"], true);
     assert_eq!(rounds[2]["generator"]["model"], "deterministic");
-    assert!(rounds[2]["minimum_new_kills"].as_i64().unwrap() > 0);
+    assert!(rounds[2]["minimum_resolved_survivors"].as_u64().unwrap() > 0);
 }
