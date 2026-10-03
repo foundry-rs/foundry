@@ -1055,6 +1055,30 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             )
                             .await?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
+
+                        // A submitted transaction that the endpoint stopped returning has no
+                        // outcome yet, so later work must not be sent or reported as successful.
+                        let unresolved = remaining_operation_indices(&self.sequence, i)
+                            .into_iter()
+                            .filter(|index| {
+                                batch.iter().any(|(_, _, batch_index)| batch_index == index)
+                            })
+                            .collect::<Vec<_>>();
+                        if !unresolved.is_empty() {
+                            self.sequence.save(true, false)?;
+                            let deployment = &self.sequence.sequences()[i];
+                            let hashes = unresolved.iter().filter_map(|&index| {
+                                self.sequence
+                                    .signed_payload(i, index)
+                                    .map(|signed| signed.hash)
+                                    .or(deployment.transactions[index].hash)
+                            });
+                            bail!(
+                                "submitted transactions on chain {} have no receipt and are no longer visible to the RPC endpoint: {}\n\nStopped before sending later transactions. Add `--resume` to your command to resend them.",
+                                deployment.chain,
+                                hashes.format(", ")
+                            );
+                        }
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
