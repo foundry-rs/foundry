@@ -1805,3 +1805,41 @@ async fn base_denim_system_deposits_do_not_retry_unfittable_transaction() {
     assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_none());
     assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_denim_memory_reset_reinstalls_base_time() {
+    let config = NodeConfig::test_base()
+        .with_hardfork(Some(BaseUpgrade::Denim.into()))
+        .with_genesis_timestamp(Some(1_000u64));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+
+    api.anvil_reset(None).await.unwrap();
+    for expected in [1_000_200, 1_000_400, 1_000_600, 1_000_800, 1_001_000] {
+        api.mine_one().await.unwrap();
+        assert_eq!(base_time_ms(&provider, BlockId::latest()).await, expected);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_denim_load_pre_denim_state_installs_base_time() {
+    let (source, _source_handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;
+    source.mine_one().await.unwrap();
+    let dump = source.anvil_dump_state(Some(true)).await.unwrap();
+
+    let (api, handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()))).await;
+    let provider = handle.http_provider();
+    api.anvil_load_state(dump).await.unwrap();
+    let parent = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.timestamp;
+    for (index, millis) in [200, 400, 600, 800, 1_000].into_iter().enumerate() {
+        api.mine_one().await.unwrap();
+        assert_eq!(
+            base_time_ms(&provider, BlockId::latest()).await,
+            parent * 1_000 + millis,
+            "block {index} after loading a pre-Denim dump"
+        );
+    }
+}

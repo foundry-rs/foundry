@@ -5326,6 +5326,12 @@ impl<N: Network> Backend<N> {
             staged_storage.genesis_hash,
             install_create2_deployer,
         )?;
+        #[cfg(feature = "base")]
+        if self.is_base()
+            && matches!(local_hardfork, FoundryHardfork::Base(upgrade) if upgrade >= BaseUpgrade::Denim)
+        {
+            ensure_base_time_predeploy(&mut *staged_db, true)?;
+        }
 
         Ok(StagedMemoryReset {
             node_config: staged_config,
@@ -8441,6 +8447,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 "Loading state not supported with the current configuration",
             )
             .into());
+        }
+        // A pre-Denim dump has no BaseTime deployment, but Denim blocks still send its deposit.
+        #[cfg(feature = "base")]
+        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+            ensure_base_time_predeploy(&mut **self.db.write().await, false)?;
         }
 
         // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
