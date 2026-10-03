@@ -3954,7 +3954,7 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_block(number).await?);
         }
 
-        Ok(vec![])
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Executes a transaction call and returns requested parity trace results.
@@ -4025,15 +4025,16 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
         }
 
-        Ok(vec![])
+        Err(BlockchainError::BlockNotFound)
     }
 
-    /// Replays a mined transaction and returns the requested traces.
+    /// Replays a mined transaction and returns the requested traces, or `None` if the transaction
+    /// is unknown.
     pub async fn trace_replay_transaction(
         &self,
         hash: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResultsWithTransactionHash, BlockchainError> {
+    ) -> Result<Option<TraceResultsWithTransactionHash>, BlockchainError> {
         let mined = self.blockchain.storage.read().transactions.contains_key(&hash);
 
         // If the transaction was mined locally, replay it locally. Do not fall
@@ -4047,12 +4048,15 @@ impl<N: Network> Backend<N> {
             })??
         } else if let Some(fork) = self.get_fork() {
             // Not known locally: forward to the fork if present.
-            fork.trace_replay_transaction(hash, trace_types).await?
+            let Some(full_trace) = fork.trace_replay_transaction(hash, trace_types).await? else {
+                return Ok(None);
+            };
+            full_trace
         } else {
-            return Err(BlockchainError::TransactionNotFound);
+            return Ok(None);
         };
 
-        Ok(TraceResultsWithTransactionHash { transaction_hash: hash, full_trace })
+        Ok(Some(TraceResultsWithTransactionHash { transaction_hash: hash, full_trace }))
     }
 
     /// Traces a raw transaction without committing it to the chain state or mempool.
@@ -4282,6 +4286,11 @@ impl<N: Network> Backend<N> {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "invalid block range, ensure that to block is greater than from block".to_string(),
             )));
+        }
+        if end > best_number {
+            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
+                "block range extends beyond current head block {best_number}"
+            ))));
         }
 
         let dist = end - start;
