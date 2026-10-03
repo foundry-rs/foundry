@@ -17,6 +17,13 @@ default-filter = "not test(/flaky_/) and not test(/deploy_verify_/)"
 filter = "test(/ext_integration/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
+# The symbolic conformance and limits suites only do work with SYMBOLIC_CONFORMANCE and
+# SYMBOLIC_LIMITS set, as the nightly test-flaky workflow does; the stateful invariant cases there
+# take minutes in debug builds.
+[[profile.default.overrides]]
+filter = "test(/symbolic_conformance::|symbolic_limits::/)"
+slow-timeout = { period = "5m", terminate-after = 4 }
+
 # `cast vaddr` end-to-end tests mine a 4-byte TIP-1022 PoW salt (CPU-bound,
 # minutes in debug mode) before exercising register/resolve/forward/watch
 # against an in-process Anvil Tempo node.
