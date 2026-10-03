@@ -463,6 +463,10 @@ pub struct CampaignArgs {
     /// Maximum number of fuzz branch frontier records to write per test.
     #[arg(long, value_name = "COUNT")]
     pub frontier_limit: Option<usize>,
+
+    /// JSON guidance file with extra dictionary values and invariant selector weights.
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub guidance: Option<PathBuf>,
 }
 
 /// CLI arguments for `forge test`.
@@ -712,6 +716,10 @@ pub struct TestArgs {
         conflicts_with_all = ["fuzz_run", "list"]
     )]
     pub fuzz_input_file: Option<PathBuf>,
+
+    /// JSON guidance file with extra dictionary values and invariant selector weights.
+    #[arg(long, env = "FOUNDRY_FUZZ_GUIDANCE", value_name = "PATH", value_hint = ValueHint::FilePath)]
+    pub fuzz_guidance: Option<PathBuf>,
 
     /// Number of calls executed to try to break invariants in one run.
     #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH", value_name = "DEPTH")]
@@ -1383,6 +1391,7 @@ impl TestArgs {
             invariant_min_depth: campaign.min_depth,
             invariant_depth_mode: campaign.depth_mode,
             invariant_workers: campaign.workers,
+            fuzz_guidance: campaign.guidance,
             ..Self::default()
         }
     }
@@ -3070,6 +3079,7 @@ impl Provider for TestArgs {
             "mutation_weight_suffix" => self.fuzz_mutation_weight_suffix,
             "mutation_weight_abi" => self.fuzz_mutation_weight_abi,
             "mutation_weight_cmp" => self.fuzz_mutation_weight_cmp,
+            "guidance" => path_string(&self.fuzz_guidance),
         };
         let invariant = dict! {
             "runs" => self.invariant_runs_override,
@@ -3736,6 +3746,8 @@ mod tests {
             "frontiers",
             "--frontier-limit",
             "17",
+            "--guidance",
+            "guidance.json",
         ]);
         let args = TestArgs::from_fuzz_run(args);
         let figment = figment::Figment::from(&args);
@@ -3759,6 +3771,10 @@ mod tests {
         assert_eq!(
             figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
             InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
+        );
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("fuzz.guidance").unwrap(),
+            PathBuf::from("guidance.json")
         );
     }
 
