@@ -451,30 +451,37 @@ fn remaining_operation_indices<N: Network>(
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
-    let deployment = &sequence.sequences()[sequence_index];
-    deployment
-        .transactions
-        .iter()
-        .enumerate()
-        .filter_map(|(index, transaction)| {
-            let hash = sequence
-                .signed_payload(sequence_index, index)
-                .map(|signed| signed.hash)
-                .or_else(|| match sequence.delegated_status(sequence_index, index) {
-                    Some(DelegatedStatus::Pending { hash }) => Some(hash),
-                    _ => None,
-                })
-                .or(transaction.hash)
-                .or_else(|| match transaction.tx() {
-                    TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
-                    TransactionMaybeSigned::Unsigned(_) => None,
-                });
-            let completed = hash.is_some_and(|hash| {
-                deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
-            });
-            (!completed).then_some(index)
-        })
+    (0..sequence.sequences()[sequence_index].transactions.len())
+        .filter(|&index| !is_operation_confirmed(sequence, sequence_index, index))
         .collect()
+}
+
+/// Returns whether the operation at `index` has a receipt for its submission hash.
+fn is_operation_confirmed<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+    index: usize,
+) -> bool
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    let deployment = &sequence.sequences()[sequence_index];
+    let transaction = &deployment.transactions[index];
+    let hash = sequence
+        .signed_payload(sequence_index, index)
+        .map(|signed| signed.hash)
+        .or_else(|| match sequence.delegated_status(sequence_index, index) {
+            Some(DelegatedStatus::Pending { hash }) => Some(hash),
+            _ => None,
+        })
+        .or(transaction.hash)
+        .or_else(|| match transaction.tx() {
+            TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
+            TransactionMaybeSigned::Unsigned(_) => None,
+        });
+    hash.is_some_and(|hash| {
+        deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+    })
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -1058,6 +1065,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
+                    // Do not release later batches while an operation of this batch lacks a
+                    // receipt, e.g. after the RPC discarded it.
+                    if batch
+                        .iter()
+                        .any(|(_, _, index)| !is_operation_confirmed(&self.sequence, i, *index))
+                    {
+                        bail!(
+                            "Some transactions were not confirmed. Add `--resume` to your command to retry them."
+                        );
+                    }
                     sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
                 }
             }
