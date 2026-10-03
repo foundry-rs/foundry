@@ -6292,11 +6292,28 @@ contract ArithmeticTest {
 }
 "#,
     );
+    let test_path = prj.root().join("test/Arithmetic.t.sol");
+    let mut test_source = fs::read_to_string(&test_path).unwrap();
+    test_source.push_str("/*x");
+    test_source.push_str(&"€".repeat(6_000));
+    test_source.push_str("*/\n");
+    fs::write(test_path, test_source).unwrap();
     fs::rename(prj.root().join("test"), prj.root().join("tests")).unwrap();
-    prj.update_config(|config| config.test = "tests".into());
+    prj.update_config(|config| {
+        config.test = "tests".into();
+        config.remappings = vec![
+            "example/=lib/example/"
+                .parse::<foundry_compilers::artifacts::remappings::Remapping>()
+                .unwrap()
+                .into(),
+        ];
+    });
     fs::create_dir_all(prj.root().join("tests/generated")).unwrap();
-    fs::write(prj.root().join("tests/generated/Existing.t.sol"), "pragma solidity ^0.8.20;\n")
-        .unwrap();
+    fs::write(
+        prj.root().join("tests/generated/Existing.t.sol"),
+        "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\n",
+    )
+    .unwrap();
 
     let brief = prj.root().join("brief.md");
     fs::write(&brief, "Exercise every bucket boundary.").unwrap();
@@ -6315,6 +6332,14 @@ grep -q '"survives_all_seeds": true' "$prompt"
 grep -q '"source_context"' "$prompt"
 grep -q 'function bucket' "$prompt"
 grep -q 'surviving mutants may be semantically equivalent' "$prompt"
+grep -q 'example/=lib/example/' "$prompt"
+grep -q '"path": "tests/Arithmetic.t.sol"' "$prompt"
+grep -q 'contract ArithmeticTest' "$prompt"
+grep -q '"truncated": true' "$prompt"
+if grep -q '"round": 1' "$prompt" &&
+    grep -q '"path": "tests/generated/Existing.t.sol"' "$prompt"; then
+    exit 1
+fi
 if ! grep -q '"round": 1' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
 grep -q '"contract": "GeneratedRound1Test"' "$prompt"
