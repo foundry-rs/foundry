@@ -8,13 +8,14 @@ use crate::{
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
+    expected_emit::ExpectedEmitTracker,
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
         expect::{
             self, ExpectedCallData, ExpectedCallTracker, ExpectedCallType, ExpectedCreate,
-            ExpectedEmitTracker, ExpectedRevert, ExpectedRevertKind,
+            ExpectedRevert, ExpectedRevertKind,
         },
         revert_handlers,
     },
@@ -2790,7 +2791,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 let error_msg = mismatch_error
                     .as_ref()
                     .map(|mismatch| {
-                        mismatch.to_error_msg(self, checks, expected_log.as_ref(), anonymous)
+                        mismatch.to_error_msg(
+                            || self.signatures_identifier(),
+                            checks,
+                            expected_log.as_ref(),
+                            anonymous,
+                        )
                     })
                     .unwrap_or_else(|| "log != expected log".to_string());
                 outcome.result.output = error_msg.abi_encode().into();
@@ -4418,7 +4424,7 @@ mod tests {
 
         cheats.recorded_logs = None;
         cheats.expected_emits.push_back((
-            expect::ExpectedEmit {
+            crate::expected_emit::ExpectedEmit {
                 depth: 0,
                 log: None,
                 checks: [false; 5],
