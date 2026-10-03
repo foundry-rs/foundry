@@ -1057,3 +1057,49 @@ async fn estimate_gas_reserves_blob_fee() {
     };
     provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap();
 }
+
+// Like geth's eth_call, a blob call without a blob fee cap runs at a zero blob base fee, while
+// calls with a cap and non-blob calls see the block's blob base fee.
+#[tokio::test(flavor = "multi_thread")]
+async fn call_defaults_blob_fee_cap_to_zero() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+    let accounts = provider.get_accounts().await.unwrap();
+
+    // Returns BLOBBASEFEE.
+    let contract = Address::with_last_byte(0x42);
+    api.anvil_set_code(contract, Bytes::from_static(&[0x4a, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]))
+        .await
+        .unwrap();
+    let blob_base_fee = U256::from(provider.get_blob_base_fee().await.unwrap());
+    assert!(!blob_base_fee.is_zero());
+
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let blob_call = TransactionRequest {
+        from: Some(accounts[0]),
+        to: Some(contract.into()),
+        blob_versioned_hashes: Some(vec![sidecar.versioned_hash_for_blob(0).unwrap()]),
+        max_fee_per_gas: Some(2_000_000_000),
+        max_priority_fee_per_gas: Some(0),
+        ..Default::default()
+    };
+    let plain_call = TransactionRequest {
+        blob_versioned_hashes: None,
+        max_fee_per_blob_gas: None,
+        ..blob_call.clone()
+    };
+    for (request, expected) in [
+        (blob_call.clone(), U256::ZERO),
+        (TransactionRequest { max_fee_per_blob_gas: Some(0), ..blob_call.clone() }, U256::ZERO),
+        (
+            TransactionRequest { max_fee_per_blob_gas: Some(1_000_000_000), ..blob_call },
+            blob_base_fee,
+        ),
+        (plain_call, blob_base_fee),
+    ] {
+        let output = provider.call(WithOtherFields::new(request)).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), expected);
+    }
+}

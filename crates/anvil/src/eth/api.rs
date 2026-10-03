@@ -110,7 +110,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv},
+    context::BlockEnv,
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{HaltReason, Output},
@@ -1918,14 +1918,11 @@ impl EthApi<FoundryNetwork> {
             }
             if gas_price > 0 {
                 // Blob gas is paid on top of execution gas, so reserve its maximum cost first. Like
-                // the call itself, fall back to the block's blob gas price when no cap is given.
+                // the call itself, pay no blob fee when no cap is given.
                 if inner.minimal_tx_type() == TxType::Eip4844
                     && let Some(hashes) = &inner.blob_versioned_hashes
                 {
-                    let max_fee_per_blob_gas = fees
-                        .max_fee_per_blob_gas
-                        .or_else(|| block_env.blob_gasprice())
-                        .unwrap_or_default();
+                    let max_fee_per_blob_gas = fees.max_fee_per_blob_gas.unwrap_or_default();
                     let blob_gas = U256::from(hashes.len() as u64 * DATA_GAS_PER_BLOB);
                     let blob_cost = blob_gas.saturating_mul(U256::from(max_fee_per_blob_gas));
                     if blob_cost >= available_funds {
