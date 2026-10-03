@@ -36,7 +36,7 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use revm::context_interface::block::BlobExcessGasAndPrice;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -861,6 +861,44 @@ async fn test_trace_get_local() {
         .await
         .unwrap();
     assert_eq!(invalid_indices, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_calls_reject_conflicting_fields() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let client = handle.http_provider();
+    let client = client.client();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let input_error = "Invalid transaction request: both \"data\" and \"input\" are set and not \
+                       equal. Please use \"input\" to pass transaction call data";
+    let fee_error = "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified";
+
+    for (call, message) in [
+        (json!({ "from": from, "data": "0x602a", "input": "0x6001" }), input_error),
+        (json!({ "from": from, "gasPrice": "0x1", "maxFeePerGas": "0x2" }), fee_error),
+        (json!({ "from": from, "gasPrice": "0x1", "maxPriorityFeePerGas": "0x1" }), fee_error),
+    ] {
+        let errors = [
+            client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap_err(),
+            client
+                .request::<_, Value>("trace_call", (&call, ["trace"], "latest"))
+                .await
+                .unwrap_err(),
+        ];
+        for error in errors {
+            let error = error.as_error_resp().unwrap();
+            assert_eq!((error.code, error.message.as_ref()), (-32602, message), "{call}");
+        }
+    }
+
+    let call = json!({ "from": from, "to": from, "data": "0x602a", "input": "0x6001" });
+    let error = client.request::<_, Value>("eth_sendTransaction", (&call,)).await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!((error.code, error.message.as_ref()), (-32602, input_error));
+
+    let call = json!({ "from": from, "data": "0x602a", "input": "0x602a" });
+    client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap();
+    client.request::<_, Value>("trace_call", (&call, ["trace"], "latest")).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
