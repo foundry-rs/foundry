@@ -2,16 +2,17 @@ use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_rec
 use alloy_chains::Chain;
 use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{
-    B256,
+    Address, B256,
     map::{B256HashMap, HashMap},
 };
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
 use foundry_common::shell;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use yansi::Paint;
@@ -198,9 +199,9 @@ impl ScriptProgress {
         provider: &RootProvider<N>,
         timeout: u64,
         confirmations: u64,
-        submission_hashes: (&[B256], &[B256]),
+        submission_hashes: (&[B256], &[B256], &[Option<B256>]),
     ) -> Result<()> {
-        let (durable_hashes, replayable_hashes) = submission_hashes;
+        let (durable_hashes, replayable_hashes, operation_hashes) = submission_hashes;
         if deployment_sequence.pending.is_empty() {
             return Ok(());
         }
@@ -212,6 +213,14 @@ impl ScriptProgress {
 
         trace!("Checking status of {count} pending transactions");
 
+        let waits = deployment_sequence
+            .pending
+            .iter()
+            .map(|&tx| (tx, predecessors(deployment_sequence, operation_hashes, tx)))
+            .filter(|(_, predecessors)| !predecessors.operations.is_empty())
+            .collect::<Vec<_>>();
+        let blocked = blocked_transaction(provider, &waits, timeout);
+        tokio::pin!(blocked);
         let futs = deployment_sequence
             .pending
             .clone()
@@ -222,7 +231,20 @@ impl ScriptProgress {
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
 
-        while let Some((tx_hash, result)) = tasks.next().await {
+        loop {
+            let (tx_hash, result) = tokio::select! {
+                next = tasks.next() => {
+                    let Some(next) = next else { break };
+                    next
+                }
+                // Stop waiting entirely: the sequence cannot complete while a transaction is
+                // queued behind a missing predecessor. Unresolved hashes stay in `pending`.
+                (tx_hash, error) = &mut blocked => {
+                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &error)?;
+                    errors.push(error);
+                    break;
+                }
+            };
             match result {
                 Err(err) => {
                     // Check if this is a retry error for pending receipts
@@ -319,5 +341,159 @@ Add `--resume` to your command to try and continue broadcasting the transactions
         }
 
         Ok(())
+    }
+}
+
+/// Earlier operations from the sender of a pending transaction that have no receipt.
+#[derive(Debug, Default)]
+struct Predecessors {
+    sender: Address,
+    /// Nonce and latest known submission hash of each operation, in ascending nonce order.
+    operations: Vec<(u64, Option<B256>)>,
+}
+
+/// Collects the unreceipted operations from the same sender with a lower nonce than the operation
+/// submitted as `hash`.
+fn predecessors<N: Network>(
+    sequence: &ScriptSequence<N>,
+    operation_hashes: &[Option<B256>],
+    hash: B256,
+) -> Predecessors {
+    let receipted = |hash: Option<B256>| {
+        hash.is_some_and(|hash| {
+            sequence.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+        })
+    };
+    let Some(index) = operation_hashes.iter().position(|operation| *operation == Some(hash)) else {
+        return Predecessors::default();
+    };
+    let transaction = sequence.transactions[index].tx();
+    let (Some(sender), Some(nonce)) = (transaction.from(), transaction.nonce()) else {
+        return Predecessors::default();
+    };
+    let operations = sequence
+        .transactions
+        .iter()
+        .zip(operation_hashes)
+        .filter_map(|(transaction, &hash)| {
+            let transaction = transaction.tx();
+            (transaction.from() == Some(sender) && !receipted(hash))
+                .then(|| transaction.nonce())
+                .flatten()
+                .filter(|&earlier| earlier < nonce)
+                .map(|earlier| (earlier, hash))
+        })
+        .sorted_by_key(|&(nonce, _)| nonce)
+        .collect();
+    Predecessors { sender, operations }
+}
+
+/// Resolves once a pending transaction waits on an earlier operation from its sender that is
+/// neither mined nor visible to the node, since it can then never be mined.
+///
+/// Each check runs after a full receipt-watcher timeout, matching the evidence used to treat a
+/// transaction as dropped.
+async fn blocked_transaction<N: Network>(
+    provider: &RootProvider<N>,
+    waits: &[(B256, Predecessors)],
+    timeout: u64,
+) -> (B256, String) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(timeout.max(1))).await;
+        for (hash, predecessors) in waits {
+            if let Some(nonce) = missing_predecessor(provider, predecessors).await {
+                return (
+                    *hash,
+                    format!(
+                        "transaction {hash} cannot be mined until nonce {nonce} from {} is submitted, and that transaction is not visible to the RPC endpoint",
+                        predecessors.sender
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Returns the lowest predecessor nonce whose known submission is neither mined nor visible to
+/// the node.
+///
+/// A predecessor without a known hash, or whose lookup fails, is not evidence of absence.
+async fn missing_predecessor<N: Network>(
+    provider: &RootProvider<N>,
+    predecessors: &Predecessors,
+) -> Option<u64> {
+    let mined = provider.get_transaction_count(predecessors.sender).latest().await.ok()?;
+    for &(nonce, hash) in predecessors.operations.iter().filter(|(nonce, _)| *nonce >= mined) {
+        if let Some(hash) = hash
+            && matches!(provider.get_transaction_by_hash(hash).await, Ok(None))
+        {
+            return Some(nonce);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::{Ethereum, TransactionBuilder};
+    use alloy_primitives::{U64, U256};
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types::TransactionRequest;
+
+    async fn send(provider: &impl Provider, from: Address, nonce: u64) -> B256 {
+        let tx = TransactionRequest::default()
+            .with_from(from)
+            .with_to(from)
+            .with_value(U256::from(1))
+            .with_nonce(nonce);
+        *provider.send_transaction(tx).await.unwrap().tx_hash()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn missing_predecessor_requires_known_invisible_unmined_submission() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let provider = ProviderBuilder::new()
+            .connect_http(handle.http_endpoint().parse().unwrap())
+            .root()
+            .clone();
+        let sender = handle.dev_accounts().next().unwrap();
+        let unknown = B256::repeat_byte(0xab);
+        let missing = |operations| async {
+            missing_predecessor::<Ethereum>(&provider, &Predecessors { sender, operations }).await
+        };
+
+        // A known submission the node does not return blocks its successors.
+        assert_eq!(missing(vec![(0, Some(unknown))]).await, Some(0));
+        // An unknown submission hash is not evidence that the predecessor is absent.
+        assert_eq!(missing(vec![(0, None)]).await, None);
+        assert_eq!(missing(vec![(0, None), (1, Some(unknown))]).await, Some(1));
+
+        // A visible predecessor can still be mined.
+        let visible = send(&provider, sender, 0).await;
+        assert_eq!(missing(vec![(0, Some(visible))]).await, None);
+
+        // A mined predecessor is skipped even when its recorded hash is not returned.
+        api.mine_one().await.unwrap();
+        assert_eq!(missing(vec![(0, Some(unknown))]).await, None);
+    }
+
+    #[tokio::test]
+    async fn missing_predecessor_continues_past_failed_lookup() {
+        let asserter = Asserter::new();
+        let provider =
+            ProviderBuilder::<_, _, Ethereum>::default().connect_mocked_client(asserter.clone());
+        asserter.push_success(&U64::ZERO);
+        asserter.push_failure_msg("lookup unavailable");
+        asserter.push_success(&Option::<serde_json::Value>::None);
+
+        let predecessors = Predecessors {
+            sender: Address::repeat_byte(0x11),
+            operations: vec![
+                (0, Some(B256::repeat_byte(0xaa))),
+                (1, Some(B256::repeat_byte(0xbb))),
+            ],
+        };
+        assert_eq!(missing_predecessor(provider.root(), &predecessors).await, Some(1));
     }
 }

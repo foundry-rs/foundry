@@ -9,7 +9,7 @@ use alloy_primitives::{B256, Bytes};
 use eyre::{ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
-use foundry_common::{FoundryTransactionBuilder, fmt::UIfmt};
+use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned, fmt::UIfmt};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -301,6 +301,28 @@ where
         self.recovery.delegated_status(sequence, index)
     }
 
+    /// Returns the hash of an operation's latest known submission.
+    pub(crate) fn operation_hash(&self, sequence: usize, index: usize) -> Option<B256> {
+        let transaction = &self.sequences()[sequence].transactions[index];
+        self.signed_payload(sequence, index)
+            .map(|signed| signed.hash)
+            .or_else(|| match self.delegated_status(sequence, index) {
+                Some(DelegatedStatus::Pending { hash }) => Some(hash),
+                _ => None,
+            })
+            .or(transaction.hash)
+            .or_else(|| match transaction.tx() {
+                TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
+                TransactionMaybeSigned::Unsigned(_) => None,
+            })
+    }
+
+    pub(crate) fn operation_hashes(&self, sequence: usize) -> Vec<Option<B256>> {
+        (0..self.sequences()[sequence].transactions.len())
+            .map(|index| self.operation_hash(sequence, index))
+            .collect()
+    }
+
     pub(crate) fn persist_delegated_request(
         &mut self,
         sequence: usize,
@@ -561,7 +583,6 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
-    use foundry_common::TransactionMaybeSigned;
 
     fn unknown_delegated_sequence() -> (tempfile::TempDir, ScriptSequenceKind<Ethereum>, B256) {
         let dir = tempfile::tempdir().unwrap();
