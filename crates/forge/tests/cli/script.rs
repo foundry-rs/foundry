@@ -63,31 +63,6 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
     foundry_common::fs::read_json_file(&path).unwrap()
 }
 
-// Tests that fork cheat codes can be used in script
-#[forgetest_init]
-#[ignore]
-fn can_use_fork_cheat_codes_in_script(prj: _, cmd: _) {
-    let script = prj.add_source(
-        "Foo",
-        r#"
-import "forge-std/Script.sol";
-
-contract ContractScript is Script {
-    function setUp() public {}
-
-    function run() public {
-        uint256 fork = vm.activeFork();
-        vm.rollFork(11469702);
-    }
-}
-   "#,
-    );
-
-    let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
-
-    cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
-}
-
 #[forgetest]
 async fn script_debug_dump_identifies_contracts_loaded_from_fork(prj: _, cmd: _) {
     prj.add_source(
@@ -6081,26 +6056,6 @@ async fn tempo_batch_resume_waits_for_pending_hash(prj: _, cmd: _) {
     let receipts = sequence["receipts"].as_array().unwrap();
     assert_eq!(receipts.len(), 3);
     assert!(receipts.iter().all(|receipt| receipt["transactionHash"] == hash));
-}
-
-// Same dry-run assertions against the live Moderato testnet.
-#[forgetest_init]
-#[ignore]
-async fn script_batch_rewrites_creates_to_create2_moderato(prj: _, cmd: _) {
-    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
-
-    cmd.arg("script").arg(script).args([
-        "--tc",
-        "MultiDeploy",
-        "--rpc-url",
-        "https://rpc.moderato.tempo.xyz",
-        "--batch",
-        "--network",
-        "tempo",
-    ]);
-    cmd.assert_success();
-
-    assert_create2_rewrite_dry_run(prj.root());
 }
 
 // Tests that `forge script` works in Tempo mode without CreateCollision.
