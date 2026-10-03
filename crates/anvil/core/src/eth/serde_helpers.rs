@@ -88,3 +88,26 @@ pub mod lenient_block_number {
         Ok(num)
     }
 }
+
+/// Deserializes a `trace_get` trace address, whose indices must be quantity strings.
+pub mod trace_address {
+    use alloy_rpc_types::Index;
+    use serde::{
+        Deserialize, Deserializer,
+        de::{IntoDeserializer, value::StrDeserializer},
+    };
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Index>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<String>::deserialize(deserializer)?
+            .iter()
+            .map(|index| {
+                Index::deserialize::<StrDeserializer<'_, D::Error>>(
+                    index.as_str().into_deserializer(),
+                )
+            })
+            .collect()
+    }
+}
