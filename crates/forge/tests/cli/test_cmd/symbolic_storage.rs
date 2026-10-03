@@ -1,8 +1,7 @@
-use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
-use super::symbolic_helpers::{assert_symbolic, z3_available};
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
 use crate::skip_unless_z3;
 
 #[forgetest_init]
@@ -30,30 +29,18 @@ contract SymbolicMappingStorage {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMapping"])
-        .assert_failure()
+    let stdout = assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkMapping"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMappingStorage.t.sol:SymbolicMappingStorage
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMapping(address,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
         .get_output()
         .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkMapping(address,uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[
-"#]],
-    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -82,18 +69,23 @@ contract SymbolicNestedMappingStorage {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkNestedMapping"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkNestedMapping",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicNestedMappingStorage.t.sol:SymbolicNestedMappingStorage
+[PASS] checkNestedMapping(address,address,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkNestedMapping(address,address,uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
 }
 
@@ -120,18 +112,19 @@ contract SymbolicVmStoreLoadSlot is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkStoreLoad"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkStoreLoad"]))
+            .success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicVmStoreLoadSlot.t.sol:SymbolicVmStoreLoadSlot
+[PASS] checkStoreLoad(bytes32,bytes32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkStoreLoad(bytes32,bytes32)
-"#]],
-    );
     assert!(!stdout.contains("symbolic vm.store slot"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.load slot"), "{stdout}");
 }
@@ -166,18 +159,23 @@ contract SymbolicMappingDynamicArrayStorage is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMappingArray"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMappingArray",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMappingDynamicArrayStorage.t.sol:SymbolicMappingDynamicArrayStorage
+[PASS] checkMappingArray(address,uint256,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkMappingArray(address,uint256,uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -216,18 +214,15 @@ contract SymbolicPackedStorage {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkPacked"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkPacked(uint128,uint128,bool,address)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkPacked"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPackedStorage.t.sol:SymbolicPackedStorage
+[PASS] checkPacked(uint128,uint128,bool,address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -258,18 +253,23 @@ contract SymbolicErc20Storage {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkErc20Storage"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkErc20Storage",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicErc20Storage.t.sol:SymbolicErc20Storage
+[PASS] checkErc20Storage(address,address,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkErc20Storage(address,address,uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -367,18 +367,23 @@ contract SymbolicSvmStorageHelpers {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSvmStorageHelpers"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSvmStorageHelpers",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSvmStorageHelpers.t.sol:SymbolicSvmStorageHelpers
+[PASS] checkSvmStorageHelpers(bytes32,bytes32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSvmStorageHelpers(bytes32,bytes32)
-"#]],
-    );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
 }
 
@@ -416,30 +421,24 @@ contract SymbolicGenericStorage {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicGenericStorage"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicGenericStorage",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicGenericStorage.t.sol:SymbolicGenericStorage
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNativeGenericStorage(address) ([METRICS])
+[FAIL: EvmError: Revert; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSvmArbitraryStorage(address) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkNativeGenericStorage(address)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkSvmArbitraryStorage(address)
-"#]],
-    );
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
 }
