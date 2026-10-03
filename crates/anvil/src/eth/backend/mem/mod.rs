@@ -3088,6 +3088,8 @@ impl<N: Network> Backend<N> {
     ///
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
+    ///  - the base fee is zero for a zero-fee call, and the blob base fee is zero for a blob call
+    ///    without a blob fee cap
     ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
     ///  - `nonce` check is skipped
     fn build_call_env_with_base(
@@ -3150,19 +3152,30 @@ impl<N: Network> Backend<N> {
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
+        // A zero-fee call runs with a zero base fee, as in geth's eth_call, so BASEFEE never
+        // exceeds the price the call pays.
+        if gas_price == 0 {
+            evm_env.block_env.basefee = 0;
+        }
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
+        // As in geth's eth_call, a blob call without a blob fee cap runs at a zero blob base fee
+        // and pays no blob fee, while other calls keep the block's blob base fee.
+        let is_blob_call = !blob_hashes.is_empty() || max_fee_per_blob_gas.is_some();
+        let max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
+        if is_blob_call
+            && max_fee_per_blob_gas == 0
+            && let Some(blob) = evm_env.block_env.blob_excess_gas_and_price.as_mut()
+        {
+            blob.blob_gasprice = 0;
+        }
         let mut tx_env = TxEnv {
             caller,
             gas_limit,
             gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
-            max_fee_per_blob_gas: max_fee_per_blob_gas
-                .or_else(|| {
-                    if blob_hashes.is_empty() { Some(0) } else { evm_env.block_env.blob_gasprice() }
-                })
-                .unwrap_or_default(),
+            max_fee_per_blob_gas,
             kind: match to {
                 Some(addr) => TxKind::Call(*addr),
                 None => TxKind::Create,
@@ -8956,6 +8969,11 @@ impl Backend<FoundryNetwork> {
                     // Always disable EIP-3607
                     evm_env.cfg_env.disable_eip3607 = true;
 
+                    // Simulated blocks keep their own base and blob base fees, which are what
+                    // BASEFEE and BLOBBASEFEE read and what validation checks fees against.
+                    evm_env.block_env.basefee = block_env.basefee;
+                    evm_env.block_env.blob_excess_gas_and_price =
+                        block_env.blob_excess_gas_and_price;
                     if validation {
                         evm_env.cfg_env.disable_nonce_check = false;
                         evm_env.cfg_env.disable_base_fee = false;
