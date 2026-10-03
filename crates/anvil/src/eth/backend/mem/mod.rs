@@ -3303,6 +3303,10 @@ impl<N: Network> Backend<N> {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<FoundryTransactionRequest, BlockchainError> {
+        request
+            .input
+            .unique_input()
+            .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()))?;
         let transaction_type = request.transaction_type;
         #[cfg(feature = "base")]
         if self.is_base() {

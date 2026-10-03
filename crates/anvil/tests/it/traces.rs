@@ -864,6 +864,33 @@ async fn test_trace_get_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_call_rejects_conflicting_fields() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    for call in [
+        json!({ "from": from, "data": "0x602a", "input": "0x6001" }),
+        json!({ "from": from, "gasPrice": "0x1", "maxFeePerGas": "0x2" }),
+        json!({ "from": from, "gasPrice": "0x1", "maxPriorityFeePerGas": "0x1" }),
+    ] {
+        let error = provider
+            .client()
+            .request::<_, TraceResults>("trace_call", (&call, vec![TraceType::Trace]))
+            .await
+            .unwrap_err();
+        assert_eq!(error.as_error_resp().unwrap().code, -32602, "{call}");
+    }
+
+    let call = json!({ "from": from, "data": "0x602a", "input": "0x602a" });
+    provider
+        .client()
+        .request::<_, TraceResults>("trace_call", (&call, vec![TraceType::Trace]))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_unknown_hash_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
