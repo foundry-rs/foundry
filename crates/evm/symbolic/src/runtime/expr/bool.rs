@@ -811,11 +811,6 @@ impl SymBoolExpr {
         expr
     }
 
-    #[cfg(test)]
-    pub(crate) fn raw_and(cx: &mut SymCx, values: Vec<Self>) -> Self {
-        Self::from_kind(cx, SymBoolExprKind::And(values.into()))
-    }
-
     pub(crate) fn cmp_word_expr(
         cx: &mut SymCx,
         op: SymCmpOp,
@@ -914,102 +909,5 @@ impl SymCmpOp {
             Self::Slt => i256_cmp(&left, &right).is_lt(),
             Self::Sgt => i256_cmp(&left, &right).is_gt(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unique_word_visitor_deduplicates_shared_dag() {
-        let mut cx = SymCx::new();
-        let mut shared = SymExpr::var(&mut cx, "shared");
-        for _ in 0..16 {
-            shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
-        }
-        let zero = SymExpr::zero(&mut cx);
-        let condition = SymBoolExpr::eq(&mut cx, shared, zero);
-        let mut visits = 0;
-
-        assert!(!condition.visit_unique_bool(|_| {
-            visits += 1;
-            false
-        }));
-        assert_eq!(visits, 18);
-    }
-
-    #[test]
-    fn constant_ite_equality_rejects_exponential_shared_dag() {
-        let mut cx = SymCx::new();
-        let x = SymExpr::var(&mut cx, "x");
-        let y = SymExpr::var(&mut cx, "y");
-        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
-        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), y.clone());
-        let third = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
-        let zero = SymExpr::zero(&mut cx);
-        let one = SymExpr::one(&mut cx);
-        let mut shared = SymExpr::ite(&mut cx, first.clone(), zero.clone(), one.clone());
-
-        for _ in 0..32 {
-            let left = SymExpr::ite(&mut cx, first.clone(), shared.clone(), zero.clone());
-            let right = SymExpr::ite(&mut cx, second.clone(), shared.clone(), one.clone());
-            shared = SymExpr::ite(&mut cx, third.clone(), left, right);
-        }
-
-        let raw = SymBoolExpr::from_kind(
-            &mut cx,
-            SymBoolExprKind::Cmp(SymCmpOp::Eq, shared.clone(), one.clone()),
-        );
-        let expanded = SymBoolExpr::eq(&mut cx, shared, one);
-        assert_eq!(expanded, raw);
-    }
-
-    #[test]
-    fn constant_ite_equality_keeps_linear_chain_linear() {
-        let mut cx = SymCx::new();
-        let zero = SymExpr::zero(&mut cx);
-        let one = SymExpr::one(&mut cx);
-        let mut value = zero.clone();
-        for index in 0..64 {
-            let selector = SymExpr::var(&mut cx, &format!("selector_{index}"));
-            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
-            value = SymExpr::ite(&mut cx, condition, value, one.clone());
-        }
-
-        let expanded = SymBoolExpr::eq(&mut cx, value, zero);
-        let mut pending = vec![expanded];
-        let mut visited = HashSet::<SymBoolExpr>::default();
-        while let Some(expr) = pending.pop() {
-            if !visited.insert(expr.clone()) {
-                continue;
-            }
-            match expr.kind() {
-                SymBoolExprKind::Not(value) => pending.push(value.clone()),
-                SymBoolExprKind::And(values) => {
-                    assert!(values.len() <= 2);
-                    pending.extend(values.iter().cloned());
-                }
-                SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) => {}
-            }
-        }
-        assert!(visited.len() < 2 * 64);
-    }
-
-    #[test]
-    fn constant_ite_equality_stops_at_expansion_budget() {
-        let mut cx = SymCx::new();
-        let zero = SymExpr::zero(&mut cx);
-        let one = SymExpr::one(&mut cx);
-        let mut value = zero;
-        for index in 0..MAX_CONSTANT_ITE_EQ_NODES {
-            let selector = SymExpr::var(&mut cx, &format!("selector_{index}"));
-            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
-            value = SymExpr::ite(&mut cx, condition, value, one.clone());
-        }
-        let two = SymExpr::constant(&mut cx, U256::from(2));
-        let comparison = SymBoolExpr::eq(&mut cx, value, two);
-
-        assert!(matches!(comparison.kind(), SymBoolExprKind::Cmp(SymCmpOp::Eq, _, _)));
     }
 }

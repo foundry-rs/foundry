@@ -434,8 +434,8 @@ mod tests {
     use alloy_primitives::{B256, Bytes};
     use foundry_evm_coverage::HitMap;
     use foundry_evm_fuzz::CallDetails;
+    use foundry_evm_traces::CallTraceArena;
     use proptest::test_runner::TestError;
-    use revm_inspectors::tracing::CallTraceArena;
 
     fn empty_result(reverts: usize, failed_corpus_replays: usize) -> InvariantFuzzTestResult {
         InvariantFuzzTestResult::new(

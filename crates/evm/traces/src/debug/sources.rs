@@ -1,6 +1,7 @@
 use eyre::{Context, Result};
 use foundry_common::{
-    compact_to_contract, external_compiler::is_external_artifact, strip_bytecode_placeholders,
+    compact_to_contract, external_compiler::is_external_artifact, is_deploy_helper_path,
+    strip_bytecode_placeholders,
 };
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
@@ -433,7 +434,10 @@ impl ContractSources {
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
                 if !path.exists() {
-                    removed_files.insert(path);
+                    // Preprocessor deploy helpers are compiled from memory and never exist on disk.
+                    if !is_deploy_helper_path(path) {
+                        removed_files.insert(path);
+                    }
                     continue;
                 }
 

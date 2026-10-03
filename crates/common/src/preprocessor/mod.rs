@@ -4,18 +4,27 @@ use foundry_compilers::{
     artifacts::{EvmVersion, SolcLanguage},
     error::Result,
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
-    project::{NativeDependencyState, Preprocessor, PreprocessorState},
+    project::{
+        NativeDependencies, NativeDependencyState, Preprocessor, PreprocessorState,
+        merge_native_dependencies,
+    },
+    resolver::{
+        Graph,
+        parse::{SolData, SolParser},
+    },
     solc::{SolcCompiler, SolcVersionedInput},
 };
 use solar::parse::{ast::Span, interface::SourceMap};
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     ops::{ControlFlow, Range},
     path::PathBuf,
 };
 
 mod data;
 use data::{collect_preprocessor_data, create_deploy_helpers};
+
+pub use data::is_deploy_helper_path;
 
 mod deps;
 use deps::{ConstructorContext, PreprocessorDependencies, remove_bytecode_dependencies};
@@ -31,7 +40,7 @@ pub struct DynamicTestLinkingPreprocessor;
 
 impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        7
+        8
     }
 
     fn preprocess(
@@ -111,6 +120,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             // Parse and preprocess.
             pcx.parse();
             let ControlFlow::Continue(()) = compiler.lower_asts()? else { return Ok(()) };
+            compiler.dcx().has_errors()?;
             let gcx = compiler.gcx();
             // Collect tests and scripts dependencies and identify mock contracts.
             // Script paths are passed separately so salted new-expressions are left untouched
@@ -145,13 +155,27 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
         let diagnostics = convert_solar_errors(compiler.dcx());
         if result.is_err() || diagnostics.is_err() {
-            if let Err(err) = diagnostics {
+            let reason = diagnostics.err().map(|err| err.to_string());
+            if let Some(err) = &reason {
                 warn!(%err, "dynamic test linking analysis failed; using native bytecode");
             } else {
                 warn!("dynamic test linking analysis failed; using native bytecode");
             }
             input.input.sources = original_sources;
-            mark_conservative(paths, &input.input.sources, preprocessor_state);
+            let dependencies = native_import_dependencies(&parser_paths, &input.input.sources);
+            let affected = dependencies.len();
+            for (path, state) in dependencies {
+                if preprocessor_state.update(path.clone(), Some(state)) {
+                    mocks.remove(&path);
+                }
+            }
+            if affected > 0 {
+                let reason = reason
+                    .as_deref()
+                    .and_then(solar_error_summary)
+                    .unwrap_or_else(|| "Solar analysis failed".to_string());
+                let _ = sh_warn!("dynamic test linking disabled for {affected} files: {reason}");
+            }
         }
 
         Ok(())
@@ -160,7 +184,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
 
 impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn cache_version(&self) -> u64 {
-        7
+        8
     }
 
     fn preprocess(
@@ -213,16 +237,64 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     }
 }
 
-/// Falls back to native bytecode and invalidates affected files after any project source change.
-fn mark_conservative(
+/// Tracks transitive imports of unmodified tests and scripts after analysis fails.
+fn native_import_dependencies(
     paths: &ProjectPathsConfig<SolcLanguage>,
     sources: &foundry_compilers::artifacts::Sources,
-    preprocessor_state: &mut PreprocessorState,
-) {
-    for path in sources.keys().filter(|path| paths.is_test_or_script(path)) {
-        let path = normalize_path(&paths.root.join(path));
-        preprocessor_state.update(path, Some(NativeDependencyState::Conservative));
+) -> NativeDependencies {
+    let Ok(graph) = Graph::<SolParser>::resolve_sources(paths, sources.clone()) else {
+        return sources
+            .keys()
+            .filter(|path| paths.is_test_or_script(path))
+            .map(|path| {
+                (normalize_path(&paths.root.join(path)), NativeDependencyState::Conservative)
+            })
+            .collect();
+    };
+
+    // Keep conservative invalidation only where import extraction itself is incomplete.
+    let mut incomplete = HashSet::new();
+    if graph.nodes.iter().any(|node| node.data.parse_result.is_err()) {
+        incomplete.extend(
+            graph
+                .nodes
+                .iter()
+                .filter(|node| SolData::parse(node.content(), node.path()).parse_result.is_err())
+                .map(|node| normalize_path(node.path())),
+        );
     }
+    let graph_paths = graph.files().keys().cloned().collect::<HashSet<_>>();
+    let (_, edges) = graph.into_sources();
+    incomplete.extend(edges.unresolved_imports().iter().map(|(_, path)| normalize_path(path)));
+
+    let mut dependencies = NativeDependencies::new();
+    for path in sources.keys().filter(|path| paths.is_test_or_script(path)) {
+        let graph_path = paths.root.join(path);
+        let path = normalize_path(&graph_path);
+        let state = if graph_paths.contains(&graph_path) {
+            let imports =
+                edges.imports(&graph_path).into_iter().map(normalize_path).collect::<BTreeSet<_>>();
+            if incomplete.contains(&path) || incomplete.iter().any(|path| imports.contains(path)) {
+                NativeDependencyState::Conservative
+            } else {
+                NativeDependencyState::Known(imports)
+            }
+        } else {
+            NativeDependencyState::Conservative
+        };
+        merge_native_dependencies(&mut dependencies, NativeDependencies::from([(path, state)]));
+    }
+    dependencies
+}
+
+/// Extracts the first rendered Solar error header without ANSI codes.
+fn solar_error_summary(reason: &str) -> Option<String> {
+    anstream::adapter::strip_str(reason)
+        .to_string()
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("error:") || line.starts_with("error["))
+        .map(str::to_string)
 }
 
 /// Returns the range of the given span in the source map.
@@ -554,5 +626,150 @@ mod tests {
             let actual = &input.input.sources[&PathBuf::from("test/Case.sol")].content;
             assert_eq!(actual.contains("new Dep();"), native, "{namespace}: {expression}");
         }
+    }
+
+    #[test]
+    fn analysis_fallback_tracks_transitive_imports() {
+        let (_root, mut paths, mut input) = input();
+        paths.remappings.push("dep/=lib/dep/".parse().unwrap());
+        input.input.sources = [
+            ("lib/dep/Leaf.sol", "contract Leaf {}"),
+            ("src/Middle.sol", "import 'dep/Leaf.sol'; contract Middle {}"),
+            ("src/Unrelated.sol", "contract Unrelated {}"),
+            ("test/Fallback.sol", "import '../src/Middle.sol'; contract Fallback is Missing {}"),
+            ("test/Independent.sol", "contract Independent {}"),
+            ("script/Deploy.sol", "import '../src/Middle.sol'; contract Deploy {}"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (PathBuf::from(path), Source::new(source)))
+        .collect();
+        for (path, source) in &input.input.sources {
+            let path = paths.root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, source.content.as_str()).unwrap();
+        }
+        let original = input.input.sources.clone();
+        let mut mocks = HashSet::from([paths.root.join("test/Fallback.sol")]);
+        <DynamicTestLinkingPreprocessor as Preprocessor<SolcCompiler>>::preprocess(
+            &DynamicTestLinkingPreprocessor,
+            &SolcCompiler::default(),
+            &mut input,
+            &paths,
+            &mut mocks,
+        )
+        .unwrap();
+        assert_eq!(input.input.sources, original);
+        assert!(mocks.is_empty());
+        let dependencies = native_import_dependencies(&paths, &input.input.sources);
+        let imports = BTreeSet::from([
+            paths.root.join("src/Middle.sol"),
+            paths.root.join("lib/dep/Leaf.sol"),
+        ]);
+        assert_eq!(
+            dependencies,
+            NativeDependencies::from([
+                (
+                    paths.root.join("test/Fallback.sol"),
+                    NativeDependencyState::Known(imports.clone())
+                ),
+                (paths.root.join("script/Deploy.sol"), NativeDependencyState::Known(imports)),
+                (
+                    paths.root.join("test/Independent.sol"),
+                    NativeDependencyState::Known(BTreeSet::new())
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn analysis_fallback_limits_incomplete_imports_to_consumers() {
+        let (_root, paths, mut input) = input();
+        input.input.sources = [
+            ("src/AHealthy.sol", "contract AHealthy {}"),
+            (
+                "test/Fallback.sol",
+                "import /* Solar's regex fallback cannot recover this */ '../src/AHealthy.sol'; contract Fallback { function fail() public { throw; } }",
+            ),
+            (
+                "test/Healthy.sol",
+                "import '../src/AHealthy.sol'; contract Healthy is AHealthy {}",
+            ),
+            ("test/Independent.sol", "contract Independent {}"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (PathBuf::from(path), Source::new(source)))
+        .collect();
+        for (path, source) in &input.input.sources {
+            let path = paths.root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, source.content.as_str()).unwrap();
+        }
+        let dependencies = native_import_dependencies(&paths, &input.input.sources);
+        assert_eq!(
+            dependencies,
+            NativeDependencies::from([
+                (paths.root.join("test/Fallback.sol"), NativeDependencyState::Conservative),
+                (
+                    paths.root.join("test/Healthy.sol"),
+                    NativeDependencyState::Known(BTreeSet::from([paths
+                        .root
+                        .join("src/AHealthy.sol")]))
+                ),
+                (
+                    paths.root.join("test/Independent.sol"),
+                    NativeDependencyState::Known(BTreeSet::new())
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn analysis_fallback_merges_normalized_graph_paths() {
+        let (_root, mut paths, mut input) = input();
+        paths.remappings.push("test/z/:src/=lib/alternate/".parse().unwrap());
+        input.input.sources = [
+            ("src/Dep.sol", "contract Dep {}"),
+            ("lib/alternate/Dep.sol", "contract Dep {}"),
+            ("test/A.sol", "import '../src/Dep.sol'; contract A is Dep {}"),
+            ("test/z/../A.sol", "import '../src/Dep.sol'; contract A is Dep {}"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (PathBuf::from(path), Source::new(source)))
+        .collect();
+        for (path, source) in &input.input.sources {
+            let path = paths.root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, source.content.as_str()).unwrap();
+        }
+        let dependencies = native_import_dependencies(&paths, &input.input.sources);
+        assert_eq!(
+            dependencies,
+            NativeDependencies::from([(
+                paths.root.join("test/A.sol"),
+                NativeDependencyState::Known(BTreeSet::from([
+                    paths.root.join("src/Dep.sol"),
+                    paths.root.join("lib/alternate/Dep.sol")
+                ]))
+            )])
+        );
+    }
+
+    #[test]
+    fn solar_error_summary_accepts_coded_and_colored_errors() {
+        assert_eq!(
+            solar_error_summary(
+                "solar reported errors:\n\n\u{1b}[1;91merror\u{1b}[0m\u{1b}[1m: boom\u{1b}[0m"
+            ),
+            Some("error: boom".to_string())
+        );
+        assert_eq!(
+            solar_error_summary("solar reported errors:\n\n\u{1b}[31merror[1234]: boom\u{1b}[0m"),
+            Some("error[1234]: boom".to_string())
+        );
+        assert_eq!(
+            solar_error_summary("solar reported errors:\n\nerror: boom"),
+            Some("error: boom".to_string())
+        );
+        assert_eq!(solar_error_summary("solar reported 1 error"), None);
     }
 }

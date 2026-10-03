@@ -3,7 +3,8 @@
 use super::*;
 
 // tests that `cast create2` writes `address\tsalt` to stdout and prose to stderr
-casttest!(create2_output_channels, |_prj, cmd| {
+#[casttest]
+fn create2_output_channels(cmd: _) {
     cmd.args([
         "create2",
         "--starts-with",
@@ -16,48 +17,47 @@ casttest!(create2_output_channels, |_prj, cmd| {
 0x[..]	0x[..]
 
 "#]]);
-});
+}
 
 // tests that the machine-readable stdout record is omitted on an interactive terminal, where it
 // would duplicate the stderr prose
-casttest!(
-    #[cfg(unix)]
-    create2_tty_omits_stdout_record,
-    |_prj, _cmd| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
-        command.env("NO_COLOR", "1").env("TERM", "dumb").args([
-            "create2",
-            "--starts-with",
-            "cc",
-            "--init-code-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000000",
-        ]);
+#[test]
+#[cfg(unix)]
+fn create2_tty_omits_stdout_record() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+    command.env("NO_COLOR", "1").env("TERM", "dumb").args([
+        "create2",
+        "--starts-with",
+        "cc",
+        "--init-code-hash",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ]);
 
-        let mut session = spawn_with_options(
-            command,
-            Options {
-                timeout_ms: Some(30_000),
-                strip_ansi_escape_codes: true,
-                encoding: Encoding::UTF8,
-            },
-        )
-        .unwrap();
+    let mut session = spawn_with_options(
+        command,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
 
-        session.exp_string("Successfully found contract address").unwrap();
-        session.exp_string("Address: 0x").unwrap();
-        session.exp_string("Salt: 0x").unwrap();
-        // Only the salt value and its decimal representation may follow; the `address\tsalt`
-        // record must not be printed to a tty.
-        let rest = session.exp_eof().unwrap();
-        assert!(
-            !rest.contains("0x") && !rest.contains('\t'),
-            "unexpected stdout record on tty: {rest:?}"
-        );
-    }
-);
+    session.exp_string("Successfully found contract address").unwrap();
+    session.exp_string("Address: 0x").unwrap();
+    session.exp_string("Salt: 0x").unwrap();
+    // Only the salt value and its decimal representation may follow; the `address\tsalt`
+    // record must not be printed to a tty.
+    let rest = session.exp_eof().unwrap();
+    assert!(
+        !rest.contains("0x") && !rest.contains('\t'),
+        "unexpected stdout record on tty: {rest:?}"
+    );
+}
 
 // tests that `cast create2 --salt` writes `address\tsalt` to stdout
-casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
+#[casttest]
+fn create2_fixed_salt_output_channels(cmd: _) {
     cmd.args([
         "create2",
         "--salt",
@@ -70,9 +70,10 @@ casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
 0x[..]	0x0000000000000000000000000000000000000000000000000000000000000001
 
 "#]]);
-});
+}
 
-casttest!(create2_init_code_hash, |prj, cmd| {
+#[casttest]
+fn create2_init_code_hash(prj: _, cmd: _) {
     prj.add_source(
         "InitCodeHash",
         r#"
@@ -143,9 +144,10 @@ contract InitCodeHash {
         .assert_json_stdout(format!(
             r#"{{"schema_version":1,"success":true,"data":"{expected}","errors":[],"warnings":[]}}"#
         ));
-});
+}
 
-casttest!(create2_init_code_hash_rejects_abstract_contract, |prj, cmd| {
+#[casttest]
+fn create2_init_code_hash_rejects_abstract_contract(prj: _, cmd: _) {
     prj.add_source(
         "AbstractInitCodeHash",
         r#"
@@ -163,9 +165,10 @@ abstract contract AbstractInitCodeHash {
 Error: no bytecode found in bin object for AbstractInitCodeHash
 
 "#]]);
-});
+}
 
-casttest!(compute_address, async |_prj, cmd| {
+#[casttest]
+async fn compute_address(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "compute-address",
@@ -177,4 +180,4 @@ casttest!(compute_address, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(format!("{}\n", Address::ZERO.create(0).to_checksum(None)));
-});
+}

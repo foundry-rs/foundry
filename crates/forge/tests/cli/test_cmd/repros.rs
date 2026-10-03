@@ -1,9 +1,11 @@
 //! Regression tests for specific GitHub issues
 
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::str;
 
 // https://github.com/foundry-rs/foundry/issues/3055
-forgetest_init!(issue_3055, |prj, cmd| {
+#[forgetest_init]
+fn issue_3055(prj: _, cmd: _) {
     prj.add_test(
         "Issue3055.t.sol",
         r#"
@@ -67,9 +69,10 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
-forgetest_init!(isolated_snapshot_enclosing_revert, |prj, cmd| {
+#[forgetest_init]
+fn isolated_snapshot_enclosing_revert(prj: _, cmd: _) {
     prj.add_test(
         "IsolatedSnapshotEnclosingRevert.t.sol",
         r#"
@@ -257,10 +260,11 @@ contract SuccessfulDeployment {}
 [PASS] test_successful_restore_survives_reverted_sibling() ([GAS])
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/3189
-forgetest_init!(issue_3189, |prj, cmd| {
+#[forgetest_init]
+fn issue_3189(prj: _, cmd: _) {
     prj.add_test(
         "Issue3189.t.sol",
         r#"
@@ -312,10 +316,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/3596
-forgetest_init!(issue_3596, |prj, cmd| {
+#[forgetest_init]
+fn issue_3596(prj: _, cmd: _) {
     prj.add_test(
         "Issue3596.t.sol",
         r#"
@@ -364,10 +369,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/2851
-forgetest_init!(issue_2851, |prj, cmd| {
+#[forgetest_init]
+fn issue_2851(prj: _, cmd: _) {
     prj.add_test(
         "Issue2851.t.sol",
         r#"
@@ -411,10 +417,11 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6170
-forgetest_init!(issue_6170, |prj, cmd| {
+#[forgetest_init]
+fn issue_6170(prj: _, cmd: _) {
     prj.add_test(
         "Issue6170.t.sol",
         r#"
@@ -463,10 +470,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6355
-forgetest_init!(issue_6355, |prj, cmd| {
+#[forgetest_init]
+fn issue_6355(prj: _, cmd: _) {
     prj.add_test(
         "Issue6355.t.sol",
         r#"
@@ -527,10 +535,11 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/3347
-forgetest_init!(issue_3347, |prj, cmd| {
+#[forgetest_init]
+fn issue_3347(prj: _, cmd: _) {
     prj.add_test(
         "Issue3347.t.sol",
         r#"
@@ -563,11 +572,12 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/6501
 // Make sure we decode Hardhat-style `console.log`s correctly, in both logs and traces.
-forgetest_init!(issue_6501, |prj, cmd| {
+#[forgetest_init]
+fn issue_6501(prj: _, cmd: _) {
     prj.add_test(
         "Issue6501.t.sol",
         r#"
@@ -607,10 +617,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/8383
-forgetest_init!(issue_8383, |prj, cmd| {
+#[forgetest_init]
+fn issue_8383(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.optimizer = Some(true);
         config.optimizer_runs = Some(200);
@@ -948,10 +959,11 @@ Ran 1 test for test/Issue8383.t.sol:Issue8383Test
 [PASS] testP256VerifyOutOfBounds() (gas: 3139)
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/9272
-forgetest_init!(issue_9272, |prj, cmd| {
+#[forgetest_init]
+fn issue_9272(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.allow_paths.push("..".into());
     });
@@ -976,10 +988,11 @@ ParserError: Source "Missing.sol" not found: File not found. Searched the follow
   | ^^^^^^^^^^^^^^^^^^^^^^^^
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/10463
-forgetest_init!(issue_10463, |prj, cmd| {
+#[forgetest_init]
+fn issue_10463(prj: _, cmd: _) {
     prj.add_test(
         "Issue10463.t.sol",
         r#"
@@ -1036,11 +1049,12 @@ Ran 3 tests for test/Issue10463.t.sol:Issue10463Test
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Cancun (no EIP-7702 gas floor)
-forgetest_init!(issue_12803_cancun, |prj, cmd| {
+#[forgetest_init]
+fn issue_12803_cancun(prj: _, cmd: _) {
     prj.add_test(
         "Issue12803.t.sol",
         r#"
@@ -1066,11 +1080,12 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
 ...
 "#
     ]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Shanghai (also no EIP-7702 gas floor)
-forgetest_init!(issue_12803_shanghai, |prj, cmd| {
+#[forgetest_init]
+fn issue_12803_shanghai(prj: _, cmd: _) {
     prj.add_test(
         "Issue12803.t.sol",
         r#"
@@ -1096,14 +1111,15 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
 ...
 "#]
     ]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/13766
 // vm.expectRevert(bytes("")) should not panic when actual revert has data.
 // https://github.com/foundry-rs/foundry/issues/15545
 // An expected reason shorter than 4 bytes (e.g. bytes("C38")) must not panic
 // when it cannot be decoded as an `Error(string)`; it should report a mismatch.
-forgetest_init!(issue_13766, |prj, cmd| {
+#[forgetest_init]
+fn issue_13766(prj: _, cmd: _) {
     prj.add_test(
         "Issue13766.t.sol",
         r#"
@@ -1138,11 +1154,12 @@ contract Issue13766Test is Test {
 [FAIL: Error != expected error: some other message != C38] test_expectRevertShortReason() ([GAS])
 ...
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test multiple storage deletions (higher refund) don't cause underflow
-forgetest_init!(issue_12803_multiple_deletes, |prj, cmd| {
+#[forgetest_init]
+fn issue_12803_multiple_deletes(prj: _, cmd: _) {
     prj.add_test(
         "Issue12803Multi.t.sol",
         r#"
@@ -1174,7 +1191,66 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 ...
 "#
     ]]);
-});
+}
+
+#[forgetest]
+async fn revert_in_memory_snapshot_clears_active_fork(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test().with_chain_id(Some(4242u64))).await;
+    let rpc = handle.http_endpoint();
+
+    prj.add_test(
+        "RevertInMemorySnapshot.t.sol",
+        &r#"
+interface Vm {
+    function activeFork() external view returns (uint256);
+    function chainId(uint256) external;
+    function createSelectFork(string calldata) external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+}
+
+contract RevertInMemorySnapshotTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant ANVIL_DEFAULT_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function test_revertInMemorySnapshotClearsActiveFork() public {
+        vm.chainId(7777);
+        uint256 snapshotId = vm.snapshotState();
+
+        uint256 forkId = vm.createSelectFork("<rpc>");
+        require(vm.activeFork() == forkId, "fork was not selected");
+        require(block.chainid == 4242, "fork chain ID was not installed");
+        require(ANVIL_DEFAULT_ACCOUNT.balance > 0, "fork account was not funded");
+
+        require(vm.revertToState(snapshotId), "snapshot revert failed");
+        require(block.chainid == 7777, "local chain ID was not restored");
+        (bool hasActiveFork,) = address(vm).call(abi.encodeWithSignature("activeFork()"));
+        require(!hasActiveFork, "fork remained active");
+        require(ANVIL_DEFAULT_ACCOUNT.balance == 0, "read still used fork database");
+
+        vm.selectFork(forkId);
+        require(vm.activeFork() == forkId, "fork could not be reselected");
+        require(ANVIL_DEFAULT_ACCOUNT.balance > 0, "reselected fork lost state");
+    }
+}
+"#
+        .replace("<rpc>", &rpc),
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/RevertInMemorySnapshot.t.sol:RevertInMemorySnapshotTest
+[PASS] test_revertInMemorySnapshotClearsActiveFork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
 
 // Regression: `revertToState` / `revertToStateAndDelete` taken before any
 // `vm.blobhashes` override must exercise the `None` arm of
@@ -1185,7 +1261,8 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 // NOTE: Testing restoration of *non-empty* native blob hashes (EIP-4844 fork
 // mode where tx.blob_hashes is non-empty without a cheatcode) is not reachable
 // from Solidity.
-forgetest_init!(issue_blobhashes_pre_override_snapshot, |prj, cmd| {
+#[forgetest_init]
+fn issue_blobhashes_pre_override_snapshot(prj: _, cmd: _) {
     prj.add_test(
         "BlobhashesPreOverride.t.sol",
         r#"
@@ -1237,11 +1314,12 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-});
+}
 
 // Regression: `revertToState` taken before `vm.txGasPrice` must restore the
 // configured pre override gas price, not zero.
-forgetest_init!(issue_txgasprice_pre_override_snapshot, |prj, cmd| {
+#[forgetest_init]
+fn issue_txgasprice_pre_override_snapshot(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.gas_price = Some(10_000_000_000); // 10 gwei
     });
@@ -1291,10 +1369,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/16197
-forgetest_init!(issue_16197, |prj, cmd| {
+#[forgetest_init]
+fn issue_16197(prj: _, cmd: _) {
     prj.add_test(
         "Issue16197.t.sol",
         r#"
@@ -1341,4 +1420,4 @@ Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
-});
+}

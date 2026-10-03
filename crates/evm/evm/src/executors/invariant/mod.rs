@@ -887,6 +887,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.config.clone()
     }
 
+    /// Retains corpus replay and result aggregation without starting fresh invariant runs.
+    pub const fn skip_fresh_runs(&mut self) {
+        self.config.runs = 0;
+        self.config.timeout = None;
+    }
+
     /// Refs for tracking contracts deployed mid-sequence during corpus replay.
     pub const fn dynamic_target_ctx(&self) -> DynamicTargetCtx<'_> {
         DynamicTargetCtx {
@@ -932,7 +938,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             invariant_worker_collects_evm_cmp_log(&self.config, 0, actual_worker_count),
         );
         let dynamic = self.dynamic_target_ctx();
-        let corpus_seed = WorkerCorpusSeed::load_from_disk(
+        let mut corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
             None,
             Some(&corpus_replay_executor),
@@ -940,8 +946,26 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 stateless: None,
                 fuzzed_contracts: Some(&replay_targets),
                 dynamic: Some(&dynamic),
+                senders: Some(&campaign_seed.sender_filters),
             },
         )?;
+        if invariant_contract.is_optimization()
+            && let Some(best_value) = corpus_seed.optimization_best_value
+        {
+            let sequence = (0..corpus_seed.optimization_best_sequence.len()).collect::<Vec<_>>();
+            let replayed = check_sequence_value(
+                self.executor.clone(),
+                &corpus_seed.optimization_best_sequence,
+                &sequence,
+                invariant_contract.address,
+                invariant_contract.anchor_calldata(),
+            );
+            if !matches!(replayed, Ok(Some(value)) if value == best_value) {
+                // Keep the sequence in the mutation corpus, but do not report its stale value.
+                corpus_seed.optimization_best_value = None;
+                corpus_seed.optimization_best_sequence.clear();
+            }
+        }
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -1510,6 +1534,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
+                    &campaign_seed.sender_filters,
                     CorpusInsertionMode::Live,
                 );
             }
@@ -1847,9 +1872,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
 
-        if let Err(err) =
-            worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
-        {
+        if let Err(err) = worker.seed_from_test_traces(
+            invariant_contract,
+            &targeted_contracts,
+            &campaign_seed.sender_filters,
+            executor,
+        ) {
             debug!(target: "corpus", %err, "failed to seed corpus from test traces");
         }
 

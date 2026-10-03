@@ -7,8 +7,15 @@ use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
 use foundry_evm::{core::evm::FoundryEvmNetwork, executors::ExecutorBuilder};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 use time::{OffsetDateTime, format_description};
+
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 /// Rejects a session id that would let `chisel-<id>.json` escape the cache directory when
 /// concatenated into a path (e.g. `../../etc/cron.d/evil`, which yields the literal path
@@ -38,6 +45,7 @@ pub struct ChiselSession<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     fn deserialize_cached(contents: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
         let mut session: Self = serde_json::from_str(contents)?;
+        session.source.config.clear_credentials();
         // A session load must not run project cleanup requested by cached configuration.
         session.source.config.foundry_config.force = false;
         session.source.config.executor_builder = executor_builder;
@@ -109,19 +117,23 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Returns the path of the new cache file
     pub fn write(&mut self) -> Result<String> {
-        // Try to create the cache directory
-        let cache_dir = Self::cache_dir()?;
-        std::fs::create_dir_all(&cache_dir)?;
+        self.write_to(&Self::cache_dir()?)
+    }
+
+    fn write_to(&mut self, cache_dir: &str) -> Result<String> {
+        if let Some(id) = &self.id {
+            validate_session_id(id)?;
+        }
+        Self::secure_cache_dir(cache_dir)?;
 
         let cache_file_name = match self.id.as_ref() {
             Some(id) => {
                 // ID is already set- use the existing cache file.
-                validate_session_id(id)?;
                 format!("{cache_dir}chisel-{id}.json")
             }
             None => {
                 // Get the next session cache ID / file
-                let (id, file_name) = Self::next_cached_session()?;
+                let (id, file_name) = Self::next_cached_session_in(cache_dir)?;
                 // Set the session's ID
                 self.id = Some(id);
                 // Return the new session's cache file name
@@ -129,9 +141,15 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
             }
         };
 
-        // Write the current ChiselSession to that file
-        let serialized_contents = serde_json::to_string_pretty(self)?;
-        std::fs::write(&cache_file_name, serialized_contents)?;
+        // The temporary file is private from creation, and replacement does not follow a
+        // destination symlink or retain the permissions of an older session.
+        let mut file = tempfile::NamedTempFile::new_in(cache_dir)?;
+        #[cfg(unix)]
+        file.as_file().set_permissions(fs::Permissions::from_mode(0o600))?;
+        serde_json::to_writer_pretty(&mut file, self)?;
+        file.flush()?;
+        file.as_file().sync_all()?;
+        file.persist(&cache_file_name).map_err(|err| err.error)?;
 
         // Return the full cache file path
         // Ex: /home/user/.foundry/cache/chisel/chisel-0.json
@@ -188,23 +206,18 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// The unit type if the operation was successful.
     pub fn create_cache_dir() -> Result<()> {
-        let cache_dir = Self::cache_dir()?;
-        if !Path::new(&cache_dir).exists() {
-            std::fs::create_dir_all(&cache_dir)?;
-        }
-        Ok(())
+        Self::secure_cache_dir(&Self::cache_dir()?)
     }
 
     /// Returns a list of all available cached sessions.
     pub fn get_sessions() -> Result<Vec<(String, String)>> {
         // Read the cache directory entries
         let cache_dir = Self::cache_dir()?;
-        let entries = std::fs::read_dir(cache_dir)?;
+        let entries = Self::cached_session_files(&cache_dir)?;
 
         // For each entry, get the file name and modified time
         let mut sessions = Vec::new();
         for entry in entries {
-            let entry = entry?;
             let modified_time = entry.metadata()?.modified()?;
             let file_name = entry.file_name();
             let file_name = file_name
@@ -239,7 +252,8 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<Self> {
         validate_session_id(id)?;
-        let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
+        Self::secure_cache_dir(cache_dir)?;
+        let contents = Self::read_cached_file(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
         let mut session = Self::deserialize_cached(&contents, executor_builder)?;
         // Use the requested ID even if the cached ID is missing or stale.
         session.id = Some(id.to_string());
@@ -256,10 +270,9 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     }
 
     fn latest_cached_session_in(cache_dir: &str) -> Result<String> {
-        let mut entries = std::fs::read_dir(cache_dir)?;
-        let mut latest = entries.next().ok_or_else(|| eyre::eyre!("No entries found!"))??;
+        let mut entries = Self::cached_session_files(cache_dir)?.into_iter();
+        let mut latest = entries.next().ok_or_else(|| eyre::eyre!("No entries found!"))?;
         for entry in entries {
-            let entry = entry?;
             if entry.metadata()?.modified()? > latest.metadata()?.modified()? {
                 latest = entry;
             }
@@ -282,7 +295,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
 
     fn latest_from(cache_dir: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
         let last_session = Self::latest_cached_session_in(cache_dir)?;
-        let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
+        let last_session_contents = Self::read_cached_file(Path::new(&last_session))?;
         let mut session = Self::deserialize_cached(&last_session_contents, executor_builder)?;
         // Bind the session to the file that was loaded.
         session.id = Self::session_id_from_cache_file_name(&last_session);
@@ -293,6 +306,57 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     fn session_id_from_cache_file_name(path: &str) -> Option<String> {
         Path::new(path).file_stem()?.to_str()?.strip_prefix("chisel-").map(str::to_string)
     }
+
+    /// Protects private source and credentials in both new and legacy cache directories.
+    fn secure_cache_dir(cache_dir: &str) -> Result<()> {
+        // Remove trailing separators so symlink_metadata inspects the directory entry itself.
+        let path = Path::new(cache_dir).components().collect::<PathBuf>();
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder.create(&path)?;
+        eyre::ensure!(
+            fs::symlink_metadata(&path)?.is_dir(),
+            "Chisel cache must be a directory, not a symlink"
+        );
+        #[cfg(unix)]
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+        Ok(())
+    }
+
+    /// Reads a regular session file after restricting legacy file permissions.
+    fn read_cached_file(path: &Path) -> Result<String> {
+        eyre::ensure!(
+            fs::symlink_metadata(path)?.is_file(),
+            "Chisel session must be a regular file"
+        );
+        let mut file = File::open(path)?;
+        eyre::ensure!(file.metadata()?.is_file(), "Chisel session must be a regular file");
+        #[cfg(unix)]
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        Ok(contents)
+    }
+
+    /// Excludes temporary saves, unrelated files, and symlinks from session discovery.
+    fn cached_session_files(cache_dir: &str) -> Result<Vec<fs::DirEntry>> {
+        Self::secure_cache_dir(cache_dir)?;
+        let mut sessions = Vec::new();
+        for entry in fs::read_dir(cache_dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file()
+                && let Some(name) = entry.file_name().to_str()
+                && let Some(id) =
+                    name.strip_prefix("chisel-").and_then(|name| name.strip_suffix(".json"))
+                && validate_session_id(id).is_ok()
+            {
+                sessions.push(entry);
+            }
+        }
+        Ok(sessions)
+    }
 }
 
 #[cfg(test)]
@@ -301,6 +365,9 @@ mod tests {
     use foundry_config::{Config, SolcReq};
     use foundry_evm::core::evm::EthEvmNetwork;
     use semver::Version;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     #[cfg(feature = "monad")]
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
@@ -523,5 +590,236 @@ mod tests {
 
         let err = session.write().unwrap_err();
         assert!(err.to_string().contains("invalid Chisel session id"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_sessions_are_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("chisel");
+        std::fs::create_dir(&cache).unwrap();
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = cache.join("chisel-private.json");
+        std::fs::write(&file, "old session").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut session = session_for_normalization_tests();
+        session.id = Some("private".to_string());
+        session.source.run_code = "uint256 privateValue = 42;".to_string();
+
+        session.write_to(&format!("{}/", cache.display())).unwrap();
+
+        assert_eq!(std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        let saved: ChiselSession<EthEvmNetwork> =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(saved.source.run_code, session.source.run_code);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_cache_directories_are_private_without_changing_existing_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let cache = dir.path().join(".foundry/cache/chisel");
+        let mut session = session_for_normalization_tests();
+
+        let file = session.write_to(&format!("{}/", cache.display())).unwrap();
+
+        assert_eq!(fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777, 0o755);
+        for path in [dir.path().join(".foundry"), dir.path().join(".foundry/cache"), cache] {
+            assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        assert_eq!(fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_replaces_symlinks_without_changing_their_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("unrelated.json");
+        fs::write(&target, "untouched").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+        let cache = dir.path().join("chisel");
+        fs::create_dir(&cache).unwrap();
+        let destination = cache.join("chisel-linked.json");
+        symlink(&target, &destination).unwrap();
+        let mut session = session_for_normalization_tests();
+        session.id = Some("linked".to_string());
+
+        session.write_to(&format!("{}/", cache.display())).unwrap();
+
+        assert!(fs::symlink_metadata(&destination).unwrap().is_file());
+        assert_eq!(fs::metadata(destination).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(fs::metadata(target).unwrap().permissions().mode() & 0o777, 0o644);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_directory_symlinks_are_rejected_without_changing_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("unrelated");
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        let cache = dir.path().join("chisel");
+        symlink(&target, &cache).unwrap();
+        let mut session = session_for_normalization_tests();
+
+        let result = session.write_to(&format!("{}/", cache.display()));
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Chisel cache must be a directory, not a symlink"
+        );
+        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(fs::read_dir(target).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loading_legacy_sessions_restricts_file_and_directory_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().display());
+        let path = dir.path().join("chisel-legacy.json");
+        let session = session_for_normalization_tests();
+        fs::write(&path, serde_json::to_vec(&session).unwrap()).unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let loaded = ChiselSession::<EthEvmNetwork>::load_from(
+            "legacy",
+            &cache_dir,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+
+        assert_eq!(loaded.id.as_deref(), Some("legacy"));
+        assert_eq!(fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loading_rejects_symlinks_without_changing_their_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("unrelated.json");
+        fs::write(&target, "untouched").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(&target, dir.path().join("chisel-linked.json")).unwrap();
+
+        let result = ChiselSession::<EthEvmNetwork>::load_from(
+            "linked",
+            &format!("{}/", dir.path().display()),
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "Chisel session must be a regular file");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(fs::metadata(target).unwrap().permissions().mode() & 0o777, 0o644);
+    }
+
+    #[test]
+    fn session_discovery_ignores_incomplete_and_unrelated_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().display());
+        let mut session = session_for_normalization_tests();
+        session.id = Some("saved".to_string());
+        let saved = session.write_to(&cache_dir).unwrap();
+        fs::write(dir.path().join(".tmp-incomplete"), "{").unwrap();
+        fs::write(dir.path().join("unrelated.json"), "unrelated").unwrap();
+        fs::write(dir.path().join("chisel-.json"), "invalid").unwrap();
+        fs::create_dir(dir.path().join("chisel-directory.json")).unwrap();
+        #[cfg(unix)]
+        symlink(&saved, dir.path().join("chisel-linked.json")).unwrap();
+
+        let sessions = ChiselSession::<EthEvmNetwork>::cached_session_files(&cache_dir).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].path(), Path::new(&saved));
+        assert_eq!(
+            ChiselSession::<EthEvmNetwork>::latest_cached_session_in(&cache_dir).unwrap(),
+            saved
+        );
+        let latest = ChiselSession::<EthEvmNetwork>::latest_from(
+            &cache_dir,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+        assert_eq!(latest.id.as_deref(), Some("saved"));
+    }
+
+    #[test]
+    fn failed_save_cleans_up_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().display());
+        let destination = dir.path().join("chisel-blocked.json");
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("sentinel"), "untouched").unwrap();
+        let mut session = session_for_normalization_tests();
+        session.id = Some("blocked".to_string());
+
+        assert!(session.write_to(&cache_dir).is_err());
+
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(destination.join("sentinel")).unwrap(), "untouched");
+    }
+
+    #[test]
+    fn loading_legacy_fork_sessions_discards_cached_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = format!("{}/", dir.path().display());
+        let mut session = session_for_normalization_tests();
+        session.source.run_code = "uint256 privateValue = 42;".into();
+        session.source.config.calldata = Some(vec![0xde, 0xad, 0xbe, 0xef]);
+        let mut legacy = serde_json::to_value(&session).unwrap();
+        let config = &mut legacy["source"]["config"];
+        config.as_object_mut().unwrap().remove("fork_url_required");
+        config["foundry_config"]["eth_rpc_url"] = "https://rpc.invalid/legacy-token".into();
+        config["foundry_config"]["eth_rpc_jwt"] = "legacy-jwt".into();
+        config["foundry_config"]["eth_rpc_headers"] =
+            serde_json::json!(["Authorization: legacy-header"]);
+        config["foundry_config"]["etherscan_api_key"] = "legacy-api-key".into();
+        config["foundry_config"]["etherscan"] = serde_json::json!({
+            "mainnet": { "key": "legacy-explorer-key", "chain": 1 }
+        });
+        config["foundry_config"]["rpc_endpoints"] = serde_json::json!({
+            "mainnet": "https://rpc.invalid/legacy-endpoint"
+        });
+        config["evm_opts"]["eth_rpc_url"] = "https://rpc.invalid/legacy-token".into();
+        config["evm_opts"]["eth_rpc_jwt"] = "legacy-jwt".into();
+        config["evm_opts"]["eth_rpc_headers"] = serde_json::json!(["Authorization: legacy-header"]);
+        config["evm_opts"]["fork_headers"] =
+            serde_json::json!(["Authorization: legacy-fork-header"]);
+        let path = dir.path().join("chisel-legacy.json");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        for loaded in [
+            ChiselSession::<EthEvmNetwork>::load_from(
+                "legacy",
+                &cache_dir,
+                ExecutorBuilder::<EthEvmNetwork>::new(),
+            )
+            .unwrap(),
+            ChiselSession::<EthEvmNetwork>::latest_from(
+                &cache_dir,
+                ExecutorBuilder::<EthEvmNetwork>::new(),
+            )
+            .unwrap(),
+        ] {
+            let config = &loaded.source.config;
+            assert!(config.fork_url_required);
+            assert_eq!(config.foundry_config.eth_rpc_url, None);
+            assert_eq!(config.foundry_config.eth_rpc_jwt, None);
+            assert_eq!(config.foundry_config.eth_rpc_headers, None);
+            assert_eq!(config.foundry_config.etherscan_api_key, None);
+            assert!(config.foundry_config.etherscan.is_empty());
+            assert!(config.foundry_config.rpc_endpoints.is_empty());
+            assert_eq!(config.evm_opts.fork_url, None);
+            assert_eq!(config.evm_opts.rpc_jwt, None);
+            assert_eq!(config.evm_opts.rpc_headers, None);
+            assert_eq!(config.evm_opts.fork_headers, None);
+            assert_eq!(config.calldata, session.source.config.calldata);
+            assert_eq!(loaded.source.run_code, session.source.run_code);
+        }
     }
 }

@@ -1,10 +1,12 @@
 use crate::{
     multi_sequence::MultiChainSequence,
-    recovery::{RecoveryLock, RecoveryStore},
+    recovery::{AttemptKind, DelegatedStatus, RecoveryLock, RecoveryStore, SignedPayload},
 };
-use alloy_network::Network;
-use alloy_primitives::B256;
-use eyre::{Result, bail};
+use alloy_consensus::transaction::SignerRecoverable;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_network::{Network, ReceiptResponse};
+use alloy_primitives::{B256, Bytes};
+use eyre::{ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
 use foundry_common::{FoundryTransactionBuilder, fmt::UIfmt};
@@ -12,9 +14,46 @@ use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fmt::{Error, Write},
     path::{Path, PathBuf},
 };
+
+pub(crate) fn completed_transaction_prefix<N: Network>(
+    sequence: &ScriptSequence<N>,
+) -> Result<usize> {
+    let mut receipts = HashMap::<_, usize>::new();
+    for receipt in &sequence.receipts {
+        *receipts.entry(receipt.transaction_hash()).or_default() += 1;
+    }
+
+    let mut prefix = 0;
+    let mut incomplete = false;
+    for transaction in &sequence.transactions {
+        let complete = transaction.hash.is_some_and(|hash| {
+            receipts.get_mut(&hash).is_some_and(|count| {
+                if *count == 0 {
+                    false
+                } else {
+                    *count -= 1;
+                    true
+                }
+            })
+        });
+        if complete {
+            if incomplete {
+                bail!("script progress contains a receipt after an incomplete operation");
+            }
+            prefix += 1;
+        } else {
+            incomplete = true;
+        }
+    }
+    if receipts.values().any(|count| *count != 0) {
+        bail!("script progress contains a receipt without a matching operation");
+    }
+    Ok(prefix)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(
@@ -22,8 +61,8 @@ use std::{
     content = "sequence",
     rename_all = "camelCase",
     bound(
-        serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
-        deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+        serialize = "N::TxEnvelope: Serialize",
+        deserialize = "N::TxEnvelope: for<'de2> Deserialize<'de2>"
     )
 )]
 pub(crate) enum SequenceData<N: Network> {
@@ -33,8 +72,7 @@ pub(crate) enum SequenceData<N: Network> {
 
 impl<N: Network> SequenceData<N>
 where
-    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
+    N::TxEnvelope: Serialize,
 {
     fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         match self {
@@ -119,7 +157,6 @@ where
 pub struct ScriptSequenceKind<N: Network>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     recovery: RecoveryStore<N>,
 }
@@ -127,7 +164,6 @@ where
 impl<N: Network> ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     pub fn new_single(sequence: ScriptSequence<N>, batch: bool) -> Result<Self> {
         Self::create(SequenceData::Single(sequence), batch)
@@ -144,7 +180,11 @@ where
         chain: u64,
         dry_run: bool,
         batch: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let paths = ScriptSequence::<N>::get_paths(config, sig, target, chain, dry_run)?;
         let lock = RecoveryLock::acquire(&paths)?;
         let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
@@ -169,7 +209,11 @@ where
         target: &ArtifactId,
         dry_run: bool,
         batch: bool,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let paths = MultiChainSequence::<N>::get_paths(config, sig, target, dry_run)?;
         let lock = RecoveryLock::acquire(&paths)?;
         let recovery = if let Some(recovery) = RecoveryStore::load(&paths, batch, lock)? {
@@ -228,6 +272,191 @@ where
         self.recovery.data_mut().sequences_mut()
     }
 
+    pub(crate) fn signed_payload(&self, sequence: usize, index: usize) -> Option<&SignedPayload> {
+        self.recovery.signed_payload(sequence, index)
+    }
+
+    pub(crate) fn submission_hashes(&self, sequence: usize) -> (Vec<B256>, Vec<B256>) {
+        self.recovery.submission_hashes(sequence)
+    }
+
+    pub(crate) fn persist_signed_payload(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: SignerRecoverable,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        self.recovery.persist_signed_payload(sequence, index, payload)
+    }
+
+    pub(crate) fn delegated_status(
+        &self,
+        sequence: usize,
+        index: usize,
+    ) -> Option<DelegatedStatus> {
+        self.recovery.delegated_status(sequence, index)
+    }
+
+    pub(crate) fn persist_delegated_request(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        self.recovery.persist_delegated_request(sequence, index, request)
+    }
+
+    pub(crate) fn persist_delegated_status(
+        &mut self,
+        sequence: usize,
+        index: usize,
+        status: DelegatedStatus,
+    ) -> Result<()> {
+        self.recovery.persist_delegated_status(sequence, index, status)
+    }
+
+    pub(crate) fn clear_delegated_request(&mut self, sequence: usize, index: usize) -> Result<()> {
+        self.recovery.clear_delegated_request(sequence, index)
+    }
+
+    pub(crate) fn resolve_delegated_hash(
+        &mut self,
+        attempt_id: B256,
+        hash: B256,
+        transaction: &N::TransactionResponse,
+    ) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        let (sequence, index) =
+            self.recovery.resolve_delegated_hash(attempt_id, hash, transaction)?;
+        if !self.recovery.is_batch() {
+            self.sequences_mut()[sequence].add_pending(index, hash);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn batch_attempt(
+        &self,
+        sequence: usize,
+    ) -> Option<(usize, B256, &AttemptKind<N::TransactionRequest>)> {
+        self.recovery.batch_attempt(sequence)
+    }
+
+    pub(crate) fn persist_batch_signed_payload(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+        payload: Bytes,
+    ) -> Result<B256>
+    where
+        N::TxEnvelope: Decodable2718 + Encodable2718,
+    {
+        self.recovery.persist_batch_signed_payload(sequence, first_operation, request, payload)
+    }
+
+    pub(crate) fn persist_batch_delegated_request(
+        &mut self,
+        sequence: usize,
+        first_operation: usize,
+        request: N::TransactionRequest,
+    ) -> Result<()> {
+        self.recovery.persist_batch_delegated_request(sequence, first_operation, request)
+    }
+
+    pub(crate) fn restore_delegated_pending(
+        &mut self,
+        attempt_id: Option<B256>,
+        resolved_hash: Option<B256>,
+        retry_unknown: bool,
+    ) -> Result<Option<(usize, usize, B256, B256)>> {
+        let resolution_requested = resolved_hash.is_some() || retry_unknown;
+        if resolution_requested && attempt_id.is_none() {
+            bail!("--resume-attempt is required to resolve an interrupted submission");
+        }
+
+        for (sequence, index, _, status) in self.recovery.delegated_attempts() {
+            if status == DelegatedStatus::Prepared {
+                self.recovery.persist_delegated_status(
+                    sequence,
+                    index,
+                    DelegatedStatus::OutcomeUnknown,
+                )?;
+            }
+        }
+
+        let mut pending_resolution = None;
+        if let Some(attempt_id) = attempt_id {
+            let (sequence, index) = self
+                .recovery
+                .delegated_attempt_location(attempt_id)
+                .context("no interrupted delegated submission matches --resume-attempt")?;
+            if !matches!(
+                self.recovery.delegated_status(sequence, index),
+                Some(DelegatedStatus::OutcomeUnknown)
+            ) {
+                bail!("delegated submission attempt {attempt_id} does not require resolution");
+            }
+            if retry_unknown {
+                self.recovery.clear_delegated_request(sequence, index)?;
+            } else if let Some(hash) = resolved_hash {
+                pending_resolution = Some((sequence, index, attempt_id, hash));
+            } else {
+                bail!("--resume-attempt requires --resume-tx-hash or --resume-retry");
+            }
+        }
+
+        let batch = self.recovery.is_batch();
+        for (sequence, index, attempt, status) in self.recovery.delegated_attempts() {
+            match status {
+                DelegatedStatus::OutcomeUnknown => {
+                    if pending_resolution.is_some_and(|(_, _, target, _)| target == attempt) {
+                        continue;
+                    }
+                    bail!(
+                        "submission outcome for delegated attempt {attempt} on chain {} is unknown; target it with --resume-attempt and provide --resume-tx-hash, or use --resume-retry only after proving it was not submitted",
+                        self.sequences()[sequence].chain
+                    );
+                }
+                DelegatedStatus::Pending { hash } if !batch => {
+                    let deployment = &mut self.sequences_mut()[sequence];
+                    if !deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    {
+                        deployment.add_pending(index, hash);
+                    }
+                }
+                DelegatedStatus::Prepared | DelegatedStatus::Pending { .. } => {}
+            }
+        }
+        Ok(pending_resolution)
+    }
+
+    pub(crate) fn ensure_delegated_outcomes_known(&mut self, sequence: usize) -> Result<()> {
+        for index in 0..self.sequences()[sequence].transactions.len() {
+            let Some(DelegatedStatus::Pending { hash }) =
+                self.recovery.delegated_status(sequence, index)
+            else {
+                continue;
+            };
+            let deployment = &self.sequences()[sequence];
+            if deployment.pending.contains(&hash)
+                || deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+            {
+                continue;
+            }
+            let chain = deployment.chain;
+            bail!(
+                "delegated submission {hash} for operation {index} on chain {chain} is not currently visible; its recovery identity remains pending"
+            );
+        }
+        Ok(())
+    }
+
     pub const fn is_multi(&self) -> bool {
         self.recovery.data().is_multi()
     }
@@ -278,7 +507,6 @@ where
 impl<N: Network> Drop for ScriptSequenceKind<N>
 where
     N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
 {
     fn drop(&mut self) {
         if let Err(err) = self.save(false, true) {
@@ -335,6 +563,23 @@ mod tests {
     use alloy_network::Ethereum;
     use foundry_common::TransactionMaybeSigned;
 
+    fn unknown_delegated_sequence() -> (tempfile::TempDir, ScriptSequenceKind<Ethereum>, B256) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deployment = ScriptSequence::<Ethereum> {
+            chain: 1,
+            paths: Some((dir.path().join("broadcast.json"), dir.path().join("cache.json"))),
+            ..Default::default()
+        };
+        deployment.transactions.push_back(TransactionWithMetadata::from_tx_request(
+            TransactionMaybeSigned::Unsigned(Default::default()),
+        ));
+        let mut sequence = ScriptSequenceKind::new_single(deployment, false).unwrap();
+        sequence.persist_delegated_request(0, 0, Default::default()).unwrap();
+        sequence.persist_delegated_status(0, 0, DelegatedStatus::OutcomeUnknown).unwrap();
+        let attempt = sequence.recovery.delegated_attempts()[0].2;
+        (dir, sequence, attempt)
+    }
+
     #[test]
     fn publish_keeps_source_paths() {
         let dir = tempfile::tempdir().unwrap();
@@ -367,5 +612,25 @@ mod tests {
         data.sequences_mut()[1].recovery_generation = Some(B256::repeat_byte(0x11));
 
         assert!(data.has_recovery_generation());
+    }
+
+    #[test]
+    fn delegated_outcome_requires_explicit_operator_resolution() {
+        let (_dir, mut sequence, attempt) = unknown_delegated_sequence();
+        let hash = B256::repeat_byte(0x42);
+
+        assert_eq!(
+            sequence.restore_delegated_pending(Some(attempt), Some(hash), false).unwrap(),
+            Some((0, 0, attempt, hash))
+        );
+
+        assert!(matches!(sequence.delegated_status(0, 0), Some(DelegatedStatus::OutcomeUnknown)));
+        assert!(sequence.sequences()[0].pending.is_empty());
+
+        let (_dir, mut sequence, attempt) = unknown_delegated_sequence();
+
+        sequence.restore_delegated_pending(Some(attempt), None, true).unwrap();
+
+        assert!(sequence.delegated_status(0, 0).is_none());
     }
 }

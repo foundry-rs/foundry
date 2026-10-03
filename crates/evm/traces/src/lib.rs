@@ -19,7 +19,7 @@ use foundry_config::{Chain, Config};
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
+use revm_inspectors::tracing::OpcodeFilter;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -89,8 +89,9 @@ pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
-        CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace, TraceMemberOrder,
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
+        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
+        StorageChange, StorageChangeReason, TraceMemberOrder,
     },
 };
 
@@ -110,6 +111,8 @@ pub mod folded_stack_trace;
 
 pub mod backtrace;
 pub mod speedscope;
+
+pub mod erc8021;
 
 pub type Traces = Vec<(TraceKind, SparsedTraceArena)>;
 
@@ -601,6 +604,7 @@ pub struct TraceRequirements {
     returndata_snapshots: bool,
     immediate_bytes: bool,
     state_diff: bool,
+    bytecode: bool,
 }
 
 impl TraceRequirements {
@@ -613,6 +617,7 @@ impl TraceRequirements {
             returndata_snapshots: false,
             immediate_bytes: false,
             state_diff: false,
+            bytecode: false,
         }
     }
 
@@ -629,6 +634,7 @@ impl TraceRequirements {
         self.returndata_snapshots |= other.returndata_snapshots;
         self.immediate_bytes |= other.immediate_bytes;
         self.state_diff |= other.state_diff;
+        self.bytecode |= other.bytecode;
         self
     }
 
@@ -656,6 +662,7 @@ impl TraceRequirements {
             self.returndata_snapshots = true;
             self.immediate_bytes = true;
             self.state_diff = true;
+            self.bytecode = true;
         }
         self
     }
@@ -704,7 +711,7 @@ impl TraceRequirements {
         TracingInspectorConfig {
             record_steps: steps != StepRecording::None,
             record_inputs: true,
-            record_bytecode: false,
+            record_bytecode: self.bytecode,
             step_limit: None,
             record_memory_snapshots: self.memory_snapshots,
             record_stack_snapshots: if self.stack_snapshots {
@@ -735,7 +742,6 @@ mod tests {
     use alloy_primitives::Bytes;
     use foundry_config::NamedChain;
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
 
     #[test]
     fn trace_context_uses_the_execution_network_hardfork_namespace() {

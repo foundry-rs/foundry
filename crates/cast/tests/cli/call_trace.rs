@@ -3,7 +3,8 @@
 use super::*;
 
 // https://github.com/foundry-rs/foundry/issues/9476
-forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
+#[forgetest]
+async fn cast_call_custom_chain_id(cmd: _) {
     let chain_id = 55555u64;
     let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
 
@@ -19,13 +20,13 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
             &chain_id.to_string(),
         ])
         .assert_success();
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/10848
-forgetest_async!(cast_call_disable_labels, |prj, cmd| {
+#[forgetest_init]
+async fn cast_call_disable_labels(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     prj.add_source(
         "Counter",
@@ -121,15 +122,15 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // --debug-trace-call with --with-local-artifacts labels the called contract by its local
 // artifact name (Counter::) instead of the raw address. Without the RPC bytecode-map fetch the
 // trace falls back to the bare address, so this test can fail.
-forgetest_async!(cast_call_debug_trace_call_with_local_artifacts, |prj, cmd| {
+#[forgetest_init]
+async fn cast_call_debug_trace_call_with_local_artifacts(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
     cmd.args([
         "script",
@@ -167,15 +168,15 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // `--debug-trace-call --with-local-artifacts` must label a contract that only exists through a
 // `--override-code` state override: the trace runs the override code, so artifact matching must
 // see that code instead of the (empty) on-chain code.
-forgetest_async!(cast_call_debug_trace_call_override_code_local_artifacts, |prj, cmd| {
+#[forgetest_init]
+async fn cast_call_debug_trace_call_override_code_local_artifacts(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
     // Deploy counter contract, only to read its runtime bytecode back.
@@ -227,14 +228,14 @@ forgetest_async!(cast_call_debug_trace_call_override_code_local_artifacts, |prj,
         output.contains("Counter::number()"),
         "expected the override-code contract to be labeled from local artifacts:\n{output}"
     );
-});
+}
 
 // `--json --debug-trace-call --with-local-artifacts` must keep stdout machine-readable: the
 // compile banner/progress goes to stderr, so stdout is exactly one JSON document.
-forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, cmd| {
+#[forgetest_init]
+async fn cast_call_debug_trace_call_local_artifacts_json_stdout(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
     // Deploy counter contract.
@@ -269,15 +270,15 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     serde_json::from_str::<serde_json::Value>(output.trim()).unwrap_or_else(|err| {
         panic!("expected stdout to be a single JSON document ({err}):\n{output}")
     });
-});
+}
 
 // `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
 // populates, without requiring `--with-local-artifacts`.
 // <https://github.com/foundry-rs/foundry/issues/11085>
-forgetest_async!(flaky_cast_call_trace_decodes_error_from_signatures_cache, |prj, cmd| {
+#[forgetest_init]
+async fn flaky_cast_call_trace_decodes_error_from_signatures_cache(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
         "CustomErrorContract",
         r#"
@@ -365,11 +366,12 @@ Traces:
 Error: Transaction failed.
 
 "#]]);
-});
+}
 
 // tests that cast call --trace selects TempoEvmNetwork when Tempo is inferred from
 // the fork RPC, or when a Tempo chain ID is provided explicitly via --chain.
-casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
+#[casttest]
+async fn cast_call_trace_selects_tempo_network(cmd: _) {
     let (_, tempo_handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let (_, eth_handle) = anvil::spawn(NodeConfig::test()).await;
 
@@ -389,12 +391,13 @@ casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
             "expected traced Tempo TIP20 call to execute successfully for {name}, got:\n{output}"
         );
     }
-});
+}
 
 // tests that `cast call --trace` executes the call with the configured gas limit or the limit given
 // via `--gas-limit` rather than running with an unbounded gas limit.
 // <https://github.com/foundry-rs/foundry/issues/15357>
-forgetest_async!(cast_call_trace_respects_gas_limits, |prj, cmd| {
+#[forgetest]
+async fn cast_call_trace_respects_gas_limits(prj: _, cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     prj.update_config(|config| config.gas_limit = 1_000_000.into());
@@ -476,9 +479,10 @@ contract GasDependent {
         trace_output.contains("[Return]") && !trace_output.contains("unrealistic gas limit"),
         "expected traced call to respect --gas-limit and succeed, got:\n{trace_output}"
     );
-});
+}
 
-casttest!(cast_call_disables_external_identification, async |prj, cmd| {
+#[casttest]
+async fn cast_call_disables_external_identification(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     // Leave the listener unserved: correct flag propagation prevents a connection, while an
     // enabled identifier connects before exhausting the configured timeout.
@@ -537,13 +541,14 @@ local = {{ key = "test", url = "{etherscan_url}" }}
         Ok(_) => panic!("external identification made an Etherscan request"),
         Err(err) => panic!("failed to inspect mock Etherscan listener: {err}"),
     }
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/10189
 // `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
 // (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
 // targets the identity precompile so the test needs no deployed contract.
-casttest!(cast_call_debug_trace_call, async |prj, cmd| {
+#[casttest]
+async fn cast_call_debug_trace_call(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     fs::write(
@@ -584,14 +589,15 @@ Transaction successfully executed.
 Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
-});
+}
 
 // `--debug-trace-call` must honour state overrides: here we override the code of an address with a
 // tiny runtime that returns storage slot 0, and override slot 0 itself, then check the traced call
 // returns the overridden value. If the overrides were not forwarded to `debug_traceCall`, the
 // address would have no code and the return would not be the overridden value, so this test can
 // fail.
-casttest!(cast_call_debug_trace_call_applies_overrides, async |_prj, cmd| {
+#[casttest]
+async fn cast_call_debug_trace_call_applies_overrides(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     cmd.cast_fuse()
@@ -619,13 +625,14 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // `--debug-trace-call` must also forward block overrides: override an address with a runtime that
 // returns `block.number` and pass `--block.number`, then check the traced call returns that number.
 // If `with_block_overrides` were not forwarded to `debug_traceCall`, the call would run at anvil's
 // real block number and the return would differ, so this test can fail.
-casttest!(cast_call_debug_trace_call_applies_block_overrides, async |_prj, cmd| {
+#[casttest]
+async fn cast_call_debug_trace_call_applies_block_overrides(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     cmd.cast_fuse()
@@ -653,12 +660,13 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // The motivating invocation in issue #11521 is `cast call --trace --from <safe> <to>`, so the
 // delegate override must reach the local tracing executor as well. The trace shows the call
 // executing at the sender address, which is where the delegated code runs.
-casttest!(cast_call_delegate_trace_uses_sender_storage, async |_prj, cmd| {
+#[casttest]
+async fn cast_call_delegate_trace_uses_sender_storage(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let from = "0x00000000000000000000000000000000000000d7";
     let to = "0x00000000000000000000000000000000000000d8";
@@ -694,11 +702,12 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
 
 // `--debug-trace-call` must render a reverting call as `[Revert]` (success = false), exercising
 // `status_from_frame` and the failure rendering end-to-end. The overridden runtime just reverts.
-casttest!(cast_call_debug_trace_call_renders_revert, async |_prj, cmd| {
+#[casttest]
+async fn cast_call_debug_trace_call_renders_revert(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     cmd.cast_fuse()
@@ -723,11 +732,12 @@ Traces:
 [GAS]
 
 "#]]);
-});
+}
 
 // tests that `--debug-trace-call --curl` emits a `debug_traceCall` request with the
 // callTracer, not a plain `eth_call`
-casttest!(curl_call_debug_trace_call, |_prj, cmd| {
+#[casttest]
+fn curl_call_debug_trace_call(cmd: _) {
     let rpc = "https://eth.example.com";
     let to = "0xdead000000000000000000000000000000000000";
 
@@ -743,11 +753,12 @@ casttest!(curl_call_debug_trace_call, |_prj, cmd| {
     assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
     assert!(output.contains("callTracer"), "expected callTracer tracer param:\n{output}");
     assert!(!output.contains("eth_call"), "unexpected eth_call request:\n{output}");
-});
+}
 
 // tests that `--debug-trace-call --curl` forwards state and block overrides in the request,
 // like the non-curl path does, so the printed request traces the same state
-casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
+#[casttest]
+fn curl_call_debug_trace_call_forwards_overrides(cmd: _) {
     let rpc = "https://eth.example.com";
     let to = "0xdead000000000000000000000000000000000000";
 
@@ -776,11 +787,12 @@ casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
         "expected the override code in params:\n{output}"
     );
     assert!(output.contains("blockOverrides"), "expected block overrides in params:\n{output}");
-});
+}
 
 // tests that `--curl` forwards the scalar transaction fields into the call object, so the
 // printed request runs the same call as the non-curl command
-casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
+#[casttest]
+fn curl_call_debug_trace_call_forwards_tx_fields(cmd: _) {
     let rpc = "https://eth.example.com";
     let to = "0xdead000000000000000000000000000000000000";
 
@@ -817,11 +829,12 @@ casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
     );
     assert!(output.contains("0x3039"), "expected the gas limit (12345) in params:\n{output}");
     assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
-});
+}
 
 // tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which
 // forwards them to the trace renderer like `--trace` does
-casttest!(call_labels_accepted_with_debug_trace_call, |_prj, cmd| {
+#[casttest]
+fn call_labels_accepted_with_debug_trace_call(cmd: _) {
     let rpc = "https://eth.example.com";
     let to = "0xdead000000000000000000000000000000000000";
 
@@ -838,10 +851,11 @@ casttest!(call_labels_accepted_with_debug_trace_call, |_prj, cmd| {
         "--curl",
     ])
     .assert_success();
-});
+}
 
 // tests that `--labels` still requires one of the trace modes
-casttest!(call_labels_rejected_without_trace_mode, |_prj, cmd| {
+#[casttest]
+fn call_labels_rejected_without_trace_mode(cmd: _) {
     let rpc = "https://eth.example.com";
     let to = "0xdead000000000000000000000000000000000000";
 
@@ -856,13 +870,14 @@ casttest!(call_labels_rejected_without_trace_mode, |_prj, cmd| {
         "--curl",
     ])
     .assert_failure();
-});
+}
 
 // `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
 // sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
 // just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
 // precompile, so the trace has a child call ordered after the log.
-casttest!(cast_call_debug_trace_call_renders_nested_call_and_log, async |_prj, cmd| {
+#[casttest]
+async fn cast_call_debug_trace_call_renders_nested_call_and_log(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     cmd.cast_fuse()
@@ -891,4 +906,23 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+}
+
+#[casttest]
+fn curl_call_rejects_local_trace(cmd: _) {
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "number()(uint256)",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+        "--trace",
+        "--curl",
+    ])
+    .assert_failure()
+    .stdout_eq("")
+    .stderr_eq(str![[r#"
+Error: --trace cannot be combined with --curl; use --debug-trace-call --curl instead
+
+"#]]);
+}

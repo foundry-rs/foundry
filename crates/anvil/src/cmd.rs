@@ -703,6 +703,10 @@ pub struct AnvilEvmArgs {
     pub chain_id: Option<Chain>,
 
     /// Enable steps tracing used for debug calls returning geth-style traces
+    ///
+    /// Steps are recorded by replaying the transaction from its parent block's state, so they
+    /// are unavailable once that state is pruned or when loading a state dump created without
+    /// `--preserve-historical-states`.
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
@@ -809,9 +813,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
-        if let Some(state) = self.dump_state.clone() {
-            Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
+    async fn dump(mut self) {
+        // Shutdown no longer polls the periodic future, so release its locks first.
+        self.in_progress_dump = None;
+        if let Some(state) = self.dump_state {
+            Self::dump_state(self.api, state, self.preserve_historical_states).await
         }
     }
 
@@ -976,6 +982,36 @@ mod tests {
 
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
+
+    #[tokio::test]
+    async fn final_dump_cancels_suspended_periodic_dump() {
+        for queued_for_mining in [false, true] {
+            let (api, _handle) = crate::spawn(NodeConfig::test().with_no_mining(true)).await;
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("state.json");
+            let mining =
+                if queued_for_mining { Some(api.backend.lock_mining().await) } else { None };
+            let db = api.backend.get_db().write().await;
+            let mut dumper = PeriodicStateDumper::new(
+                api.clone(),
+                Some(path.clone()),
+                Duration::from_secs(60),
+                false,
+            );
+            dumper.in_progress_dump =
+                Some(Box::pin(PeriodicStateDumper::dump_state(api.clone(), path.clone(), false)));
+            assert!(futures::poll!(&mut dumper).is_pending());
+
+            // Shutdown stops polling the periodic dumper before starting the final dump.
+            drop(db);
+            drop(mining);
+            tokio::time::timeout(Duration::from_secs(2), dumper.dump())
+                .await
+                .expect("final dump waited for a suspended periodic dump");
+            let state = foundry_common::fs::read_json_file::<SerializableState>(&path).unwrap();
+            assert_eq!(state.best_block_number, Some(0));
+        }
+    }
 
     #[cfg(feature = "base")]
     #[test]

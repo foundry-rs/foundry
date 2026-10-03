@@ -68,11 +68,12 @@ impl SymbolicExecutor {
     fn prepare_invariant_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        state: PathState,
+        mut state: PathState,
         invariant_address: Address,
         sender: Address,
         invariant: &Function,
     ) -> Result<SequenceCall, SymbolicError> {
+        state.invariant_predicate = true;
         let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
         let call_data = calldata.call_data(&mut self.cx);
         let constraints = calldata.into_constraints();
@@ -355,38 +356,5 @@ impl SymbolicExecutor {
             .collect::<Result<Vec<_>, SymbolicError>>()?;
         let storage = state.world.replay_storage_assignments(&model)?;
         Ok((sequence, storage))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fatal_candidate_limitation_replaces_earlier_nonfatal_reason() {
-        let mut limitation = None;
-        assert!(!record_candidate_limitation(
-            &mut limitation,
-            SymbolicError::Unsupported("first unsupported path"),
-        ));
-        assert!(record_candidate_limitation(&mut limitation, SymbolicError::Timeout(1)));
-        assert_eq!(limitation.unwrap().kind, SymbolicStopReason::Timeout);
-    }
-
-    #[test]
-    fn nonfatal_candidate_limitation_keeps_first_reason() {
-        let mut limitation = None;
-        assert!(!record_candidate_limitation(
-            &mut limitation,
-            SymbolicError::Unsupported("first unsupported path"),
-        ));
-        assert!(!record_candidate_limitation(
-            &mut limitation,
-            SymbolicError::Unsupported("second unsupported path"),
-        ));
-        assert_eq!(
-            limitation.unwrap().reason,
-            "unsupported symbolic execution feature: first unsupported path"
-        );
     }
 }
