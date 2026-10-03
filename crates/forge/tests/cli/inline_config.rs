@@ -358,10 +358,25 @@ fn is_isolate_mode_uses_effective_isolation(prj: _, cmd: _) {
     "#,
     );
 
-    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/effective_isolation.sol:EffectiveIsolationTest
+[PASS] test_isolate_mode_disabled_by_config() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     cmd.forge_fuse()
         .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/effective_isolation.sol:EffectiveIsolationTest
+[PASS] test_gas_report_enables_isolate_mode() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -401,7 +416,15 @@ fn inline_isolate_inherits_default_fs_permissions_for_non_default_profile(prj: _
     );
 
     cmd.env("FOUNDRY_PROFILE", "test");
-    cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"]).assert_success();
+    cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/inline_isolate_fs_permissions.sol:InlineIsolateFsPermissionsTest
+[PASS] testInlineIsolateCanCreateFile() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
