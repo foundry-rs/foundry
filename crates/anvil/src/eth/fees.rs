@@ -782,7 +782,8 @@ impl FeeDetails {
                 Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
-                    max_priority_fee_per_gas: max_priority,
+                    // A fee cap without a tip pays the base fee only.
+                    max_priority_fee_per_gas: max_priority.or(max_fee.map(|_| 0)),
                     max_fee_per_blob_gas,
                 })
             }
@@ -876,6 +877,12 @@ mod tests {
         assert_eq!(parent_fees.base_fee, 0);
         assert_eq!(parent_fees.extra_data.as_ref(), jovian);
         assert_eq!(parent_fees.optimism_jovian, Some(true));
+    }
+
+    #[test]
+    fn fee_details_default_missing_tip_to_zero() {
+        let fees = FeeDetails::new(None, Some(5), None, None).unwrap();
+        assert_eq!(fees.split(), (Some(5), Some(5), Some(0), None));
     }
 
     #[test]
