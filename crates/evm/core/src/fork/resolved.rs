@@ -1,7 +1,10 @@
 use crate::opts::ForkContext;
 use alloy_eips::{BlockId, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, keccak256};
-use std::fmt;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 /// An exact fork snapshot resolved from a fully configured RPC source.
 ///
@@ -11,12 +14,15 @@ use std::fmt;
 /// is always exact. Reusing this value keeps preflight reads, environment reconstruction, cache
 /// identity, and backend construction on the same remote state. Endpoint profiles are canonical,
 /// so equivalent network selections share the same identity.
-#[derive(Clone, PartialEq, Eq, Hash)]
+///
+/// The observed finalized height only selects how state is read, so it is not part of the identity.
+#[derive(Clone)]
 pub struct ResolvedFork {
     source: ForkSource,
     selector: Option<BlockNumber>,
     block: BlockNumHash,
     context: ForkContext,
+    finalized: Option<BlockNumber>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -47,7 +53,14 @@ impl ResolvedFork {
             selector,
             block,
             context,
+            finalized: None,
         }
+    }
+
+    /// Sets the finalized block height observed on the RPC source.
+    pub(crate) const fn with_finalized(mut self, finalized: Option<BlockNumber>) -> Self {
+        self.finalized = finalized;
+        self
     }
 
     pub(crate) fn matches(
@@ -87,12 +100,20 @@ impl ResolvedFork {
         self.context
     }
 
-    /// Returns an EIP-1898 selector for the exact resolved block.
-    ///
-    /// The block is not required to remain canonical so callers can still query the resolved
-    /// state after a reorganization.
-    pub fn exact_block_id(&self) -> BlockId {
-        BlockId::from((self.hash(), Some(false)))
+    /// Returns whether the resolved block was finalized. Anvil's finality is synthetic, so never.
+    pub(crate) fn is_finalized(&self) -> bool {
+        self.context.hardfork.is_none()
+            && self.finalized.is_some_and(|finalized| self.number() <= finalized)
+    }
+
+    /// Returns the selector for remote state reads: by number once finalized, otherwise by hash so
+    /// a reorg cannot mix state from two blocks.
+    pub fn state_block_id(&self) -> BlockId {
+        if self.is_finalized() {
+            BlockId::number(self.number())
+        } else {
+            BlockId::from((self.hash(), Some(false)))
+        }
     }
 
     /// Returns the resolved block number and hash.
@@ -142,12 +163,31 @@ impl ResolvedFork {
         .expect("resolved fork identity is serializable");
         keccak256(encoded)
     }
+
+    const fn identity(&self) -> (&ForkSource, Option<BlockNumber>, BlockNumHash, ForkContext) {
+        let Self { source, selector, block, context, finalized: _ } = self;
+        (source, *selector, *block, *context)
+    }
 }
 
 fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
     let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
     encoded.extend_from_slice(&len.to_be_bytes());
     encoded.extend_from_slice(part);
+}
+
+impl PartialEq for ResolvedFork {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for ResolvedFork {}
+
+impl Hash for ResolvedFork {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state);
+    }
 }
 
 impl fmt::Debug for ResolvedFork {
@@ -185,24 +225,49 @@ mod tests {
     }
 
     #[test]
-    fn exact_block_id_serializes_as_eip_1898_object() {
+    fn state_block_id_reads_finalized_blocks_by_number() {
         let hash = B256::with_last_byte(1);
         let fork = ResolvedFork::new(
             "http://localhost:8545",
             None,
             None,
             None,
-            BlockNumHash::new(1, hash),
-            context(1),
+            BlockNumHash::new(10, hash),
+            context(10),
         );
+        let by_hash = json!({ "blockHash": hash, "requireCanonical": false });
 
-        assert_eq!(
-            serde_json::to_value(fork.exact_block_id()).unwrap(),
-            json!({
-                "blockHash": hash,
-                "requireCanonical": false,
-            })
-        );
+        for finalized in [None, Some(9)] {
+            let fork = fork.clone().with_finalized(finalized);
+            assert_eq!(serde_json::to_value(fork.state_block_id()).unwrap(), by_hash);
+            assert_eq!(fork, fork.clone().with_finalized(Some(10)));
+        }
+        for finalized in [10, 11] {
+            let fork = fork.clone().with_finalized(Some(finalized));
+            assert_eq!(serde_json::to_value(fork.state_block_id()).unwrap(), json!("0xa"));
+        }
+
+        let anvil = ResolvedFork::new(
+            "http://localhost:8545",
+            None,
+            None,
+            None,
+            BlockNumHash::new(10, hash),
+            ForkContext {
+                hardfork: Some(foundry_config::FoundryHardfork::Ethereum(
+                    foundry_evm_hardforks::EthereumHardfork::Prague,
+                )),
+                ..context(10)
+            },
+        )
+        .with_finalized(Some(11));
+        assert_eq!(serde_json::to_value(anvil.state_block_id()).unwrap(), by_hash);
+
+        let rolled = fork.with_finalized(Some(10));
+        let ancestor = rolled.at_block(BlockNumHash::new(5, B256::with_last_byte(2)));
+        assert_eq!(ancestor.state_block_id(), BlockId::number(5));
+        let descendant = rolled.at_block(BlockNumHash::new(11, B256::with_last_byte(3)));
+        assert_eq!(descendant.state_block_id(), BlockId::from((descendant.hash(), Some(false))));
     }
 
     #[test]

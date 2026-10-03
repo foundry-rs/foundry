@@ -187,3 +187,117 @@ contract ExactForkTest {{
     }
     assert!(exact_state_read.load(Ordering::Relaxed));
 }
+
+#[forgetest]
+async fn fork_reads_finalized_state_by_number(prj: _, cmd: _) {
+    let (_api, anvil) = spawn(NodeConfig::test()).await;
+    let upstream = anvil.http_endpoint();
+    rpc(
+        &upstream,
+        "anvil_setBalance",
+        json!(["0x0000000000000000000000000000000000000100", "0x2a"]),
+    )
+    .await;
+    rpc(&upstream, "anvil_mine", json!([1])).await;
+    let tx = rpc(
+        &upstream,
+        "eth_sendTransaction",
+        json!([{
+            "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "to": "0x0000000000000000000000000000000000000200",
+            "value": "0x1",
+        }]),
+    )
+    .await;
+    // Anvil finalizes all but the latest 64 blocks.
+    rpc(&upstream, "anvil_mine", json!([100])).await;
+
+    // Reject state reads by hash like Monad, and hide Anvil's identity.
+    let app = Router::new().fallback(move |body: Bytes| {
+        let upstream = upstream.clone();
+        async move {
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            if request["method"].as_str().unwrap().starts_with("anvil_") {
+                return Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                }));
+            }
+            let state_by_hash = matches!(
+                request["method"].as_str(),
+                Some(
+                    "eth_getAccountInfo"
+                        | "eth_getBalance"
+                        | "eth_getCode"
+                        | "eth_getStorageAt"
+                        | "eth_getTransactionCount"
+                )
+            ) && request["params"]
+                .as_array()
+                .and_then(|params| params.last())
+                .is_some_and(|block| block.get("blockHash").is_some());
+            if state_by_hash {
+                return Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": request["id"],
+                    "error": {"code": -32602, "message": "Block requested not found"},
+                }));
+            }
+            let response = reqwest::Client::new()
+                .post(upstream)
+                .json(&request)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap();
+            Json(response)
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    prj.add_test(
+        "FinalizedFork.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256);
+    function createSelectFork(string calldata urlOrAlias, bytes32 txHash) external returns (uint256);
+}}
+
+contract FinalizedForkTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkState() public view {{
+        require(address(0x100).balance == 42, "wrong state");
+    }}
+
+    function testCreateSelectFork() public {{
+        vm.createSelectFork("{endpoint}", 2);
+        require(address(0x100).balance == 42, "wrong state");
+    }}
+
+    function testCreateSelectForkAtTransaction() public {{
+        vm.createSelectFork("{endpoint}", bytes32({tx}));
+        require(address(0x100).balance == 42, "wrong state");
+    }}
+}}
+"#,
+            tx = tx.as_str().unwrap(),
+        ),
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--fork-block-number", "2"])
+        .args(["--match-test", "testForkState"])
+        .assert_success();
+    cmd.forge_fuse().args(["test", "--match-test", "testCreateSelectFork"]).assert_success();
+    // Unfinalized blocks are still read by hash.
+    cmd.forge_fuse()
+        .args(["test", "--fork-url", &endpoint, "--fork-block-number", "100"])
+        .args(["--match-test", "testForkState"])
+        .assert_failure();
+}

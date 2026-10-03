@@ -519,9 +519,10 @@ impl EvmOpts {
             None => BlockNumberOrTag::Latest,
         });
         let mut node_info_probe = self.anvil_node_info_probe();
+        let finalized = finalized_block_number(&provider).await;
         let (_, block, context) =
             self.resolve_fork_block_with_context(&provider, target, &mut node_info_probe).await?;
-        Ok(Some(self.resolved_fork(fork_url, block, context)))
+        Ok(Some(self.resolved_fork(fork_url, block, context).with_finalized(finalized)))
     }
 
     /// Returns whether the configured CREATE2 deployer can be used for library linking.
@@ -558,7 +559,7 @@ impl EvmOpts {
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
         let available = !provider
             .get_code_at(self.create2_deployer)
-            .block_id(fork.exact_block_id())
+            .block_id(fork.state_block_id())
             .await?
             .is_empty();
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
@@ -622,7 +623,7 @@ impl EvmOpts {
     ) -> eyre::Result<u64> {
         let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
-        let nonce = provider.get_transaction_count(account).block_id(fork.exact_block_id()).await?;
+        let nonce = provider.get_transaction_count(account).block_id(fork.state_block_id()).await?;
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
         Ok(nonce)
     }
@@ -979,6 +980,7 @@ impl EvmOpts {
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
         let mut node_info_probe = self.anvil_node_info_probe();
         for _ in 0..3 {
+            let finalized = finalized_block_number(&provider).await;
             let (evm_env, block, context) =
                 self.fork_evm_env_resolved_with_context(&provider, &mut node_info_probe).await?;
             let gas_price =
@@ -997,7 +999,8 @@ impl EvmOpts {
             if context.matches_identity(&identity) {
                 let chain_id = self.chain_id_override().unwrap_or(context.execution_chain_id);
                 let tx = self.fork_tx_env(gas_price, chain_id);
-                return Ok((evm_env, tx, Some(self.resolved_fork(fork_url, block, context))));
+                let fork = self.resolved_fork(fork_url, block, context).with_finalized(finalized);
+                return Ok((evm_env, tx, Some(fork)));
             }
         }
         eyre::bail!(
@@ -1095,10 +1098,11 @@ impl EvmOpts {
         provider: &P,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ResolvedFork)> {
         let mut node_info_probe = self.anvil_node_info_probe();
+        let finalized = finalized_block_number(provider).await;
         let (evm_env, block, context) =
             self.fork_evm_env_resolved_with_context(provider, &mut node_info_probe).await?;
         let fork_url = self.fork_url.as_deref().unwrap_or_default();
-        Ok((evm_env, self.resolved_fork(fork_url, block, context)))
+        Ok((evm_env, self.resolved_fork(fork_url, block, context).with_finalized(finalized)))
     }
 
     /// Returns the fork environment, exact block, and endpoint identity resolved together.
@@ -1655,6 +1659,13 @@ async fn option_try_or_else<T, E>(
     f: impl AsyncFnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
     if let Some(value) = option { Ok(value) } else { f().await }
+}
+
+/// Returns the finalized height. Read it before resolving the fork block so a block at or below
+/// it is canonical.
+async fn finalized_block_number<N: Network, P: Provider<N>>(provider: &P) -> Option<BlockNumber> {
+    let block = provider.get_block_by_number(BlockNumberOrTag::Finalized).await.ok().flatten()?;
+    Some(block.header().number())
 }
 
 #[cfg(test)]
