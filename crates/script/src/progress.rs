@@ -414,16 +414,18 @@ async fn blocked_transaction<N: Network>(
     }
 }
 
-/// Returns the lowest predecessor nonce whose known submission is neither mined nor visible to
-/// the node.
+/// Returns the lowest predecessor nonce that is not filled on the node and whose known submission
+/// the node does not return.
 ///
-/// A predecessor without a known hash, or whose lookup fails, is not evidence of absence.
+/// The sender's pending nonce counts mined and executable pool transactions, so a nonce below it is
+/// filled even when its original submission was replaced. A predecessor without a known hash, or
+/// whose lookup fails, is not evidence of absence.
 async fn missing_predecessor<N: Network>(
     provider: &RootProvider<N>,
     predecessors: &Predecessors,
 ) -> Option<u64> {
-    let mined = provider.get_transaction_count(predecessors.sender).latest().await.ok()?;
-    for &(nonce, hash) in predecessors.operations.iter().filter(|(nonce, _)| *nonce >= mined) {
+    let filled = provider.get_transaction_count(predecessors.sender).pending().await.ok()?;
+    for &(nonce, hash) in predecessors.operations.iter().filter(|(nonce, _)| *nonce >= filled) {
         if let Some(hash) = hash
             && matches!(provider.get_transaction_by_hash(hash).await, Ok(None))
         {
@@ -476,6 +478,36 @@ mod tests {
         // A mined predecessor is skipped even when its recorded hash is not returned.
         api.mine_one().await.unwrap();
         assert_eq!(missing(vec![(0, Some(unknown))]).await, None);
+    }
+
+    /// A fee replacement fills the nonce under a new hash, so the successor can still be mined.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn missing_predecessor_accepts_replaced_submission() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let provider = ProviderBuilder::new()
+            .connect_http(handle.http_endpoint().parse().unwrap())
+            .root()
+            .clone();
+        let sender = handle.dev_accounts().next().unwrap();
+        let submit = async |nonce: u64, fee_multiplier: u128| {
+            let tx = TransactionRequest::default()
+                .with_from(sender)
+                .with_to(sender)
+                .with_value(U256::from(1))
+                .with_nonce(nonce)
+                .with_max_fee_per_gas(100_000_000_000 * fee_multiplier)
+                .with_max_priority_fee_per_gas(1_000_000_000 * fee_multiplier);
+            *provider.send_transaction(tx).await.unwrap().tx_hash()
+        };
+        let original = submit(0, 1).await;
+        let successor = submit(1, 1).await;
+        submit(0, 2).await;
+        assert!(provider.get_transaction_by_hash(original).await.unwrap().is_none());
+
+        let predecessors = Predecessors { sender, operations: vec![(0, Some(original))] };
+        assert_eq!(missing_predecessor::<Ethereum>(&provider, &predecessors).await, None);
+        api.mine_one().await.unwrap();
+        assert!(provider.get_transaction_receipt(successor).await.unwrap().is_some());
     }
 
     #[tokio::test]

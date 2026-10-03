@@ -144,9 +144,10 @@ Before sending new work, `BundledState::wait_for_pending` checks each hash in `p
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash and returns an error without appending
 the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction, unless the known
-submission of an earlier unreceipted operation from the same sender is neither mined nor visible to
-that endpoint after a watcher timeout. The transaction can then never be mined, so the whole wait
+consuming the retry budget while the selected RPC still returns the transaction, unless, after a
+watcher timeout, an earlier unreceipted operation from the same sender has a known submission that
+endpoint does not return and a nonce at or above the sender's pending nonce, so no mined, pending,
+or replacement transaction fills it. The transaction can then never be mined, so the whole wait
 fails and keeps unresolved hashes in `pending`. This check is skipped on Tempo, whose nonce keys and
 expiring nonces do not follow the sequential account nonce. If that endpoint returns no
 transaction, the durable attempt remains the source of identity: signed bytes may be replayed;
