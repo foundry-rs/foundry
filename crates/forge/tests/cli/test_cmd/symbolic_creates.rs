@@ -684,7 +684,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
-[FAIL: expected CREATE call by address 0xffffffffffffffffffffffffffffffffffffffff for bytecode 0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c80635c36b18614602a575b5f5ffd5b60306044565b604051603b91906062565b60405180910390f35b5f6001905090565b5f819050919050565b605c81604c565b82525050565b5f60208201905060735f8301846055565b9291505056fea2646970667358221220a118ece6d488315b2c4b184b31becf14a67c783f310d7c6338f511a799fded7b64736f6c63430008230033 but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedSymbolicCreateExpectation(address) ([METRICS])
+[FAIL: expected CREATE call by address 0xffffffffffffffffffffffffffffffffffffffff for bytecode 0x[..] but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedSymbolicCreateExpectation(address) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
@@ -699,7 +699,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/SymbolicExpectCreate.t.sol:SymbolicExpectCreate
-[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode 0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c80635c36b18614602a575b5f5ffd5b60306044565b604051603b91906062565b60405180910390f35b5f6001905090565b5f819050919050565b605c81604c565b82525050565b5f60208201905060735f8301846055565b9291505056fea2646970667358221220a118ece6d488315b2c4b184b31becf14a67c783f310d7c6338f511a799fded7b64736f6c63430008230033 but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMissingCreateExpectation(uint256) ([METRICS])
+[FAIL: expected CREATE call by address 0x7fa9385be102ac3eac297483dd6233d62b3e1496 for bytecode 0x[..] but not found; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMissingCreateExpectation(uint256) ([METRICS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
