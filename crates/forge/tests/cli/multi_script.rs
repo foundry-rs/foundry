@@ -320,3 +320,99 @@ async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
         }
     }
 }
+
+#[forgetest]
+async fn multi_chain_stops_when_submission_disappears(prj: _, cmd: _) {
+    let (api1, handle1) = spawn(NodeConfig::test()).await;
+    let (api2, handle2) = spawn(NodeConfig::test()).await;
+    api1.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc1, chain1_submissions) =
+        spawn_rpc_proxy_recording_method(handle1.http_endpoint(), "eth_sendRawTransaction").await;
+    let (rpc2, chain2_submissions) =
+        spawn_rpc_proxy_recording_method(handle2.http_endpoint(), "eth_sendRawTransaction").await;
+    prj.update_config(|config| config.transaction_timeout = 1);
+
+    let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&rpc1, &rpc2])
+        .arg("--broadcast");
+    let mut child = KillOnDrop::spawn(tester.cmd.cmd());
+
+    // Chain 1 records its first submission as pending, then the node forgets it.
+    let path = prj.root().join("broadcast/multi");
+    let sequence = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Some(path) = foundry_common::fs::json_files(&path)
+                .find(|path| path.to_string_lossy().contains("-latest"))
+                && let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["deployments"][0]["pending"].as_array().is_some_and(|p| p.len() == 1)
+            {
+                break sequence;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("chain 1 submission was not checkpointed");
+    let submitted = chain1_submissions.lock().unwrap()[0][0].clone();
+    let submitted_hash = keccak256(hex::decode(submitted.as_str().unwrap()).unwrap());
+    assert_eq!(sequence["deployments"][0]["pending"][0], submitted_hash.to_string());
+    api1.anvil_drop_transaction(submitted_hash).await.unwrap();
+    api1.anvil_set_auto_mine(true).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Forge did not stop after the submission disappeared");
+    let output = child.kill_and_wait();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "Forge reported success: {stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "submitted transactions on chain 31337 have no receipt and are no longer visible to the RPC endpoint: {submitted_hash}"
+        )),
+        "{stderr}"
+    );
+
+    // Nothing after the unresolved submission was sent, and its signed attempt is kept.
+    assert_eq!(chain1_submissions.lock().unwrap().len(), 1);
+    assert!(chain2_submissions.lock().unwrap().is_empty());
+    assert_eq!(api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 0);
+    assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 0);
+    let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
+        .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
+        .expect("no authoritative recovery snapshot");
+    let recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let attempt = &recovery["deployments"][0]["attempts"][0];
+    assert_eq!(attempt["kind"]["kind"], "signed");
+    assert_eq!(attempt["kind"]["payload"]["payload"], submitted);
+
+    tester.clear();
+    tester
+        .load_private_keys(&[0, 1])
+        .await
+        .add_sig("MultiChainBroadcastNoLink", "deploy(string memory,string memory)")
+        .args(&[&rpc1, &rpc2])
+        .arg("--multi")
+        .arg("--resume");
+    tester.cmd.assert_success();
+
+    // Resume resends the identical signed bytes before completing both chains.
+    let chain1_payloads = chain1_submissions.lock().unwrap().clone();
+    assert_eq!(chain1_payloads.len(), 3);
+    assert_eq!(chain1_payloads[1][0], submitted);
+    assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
+    assert_eq!(api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 1);
+    assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 1);
+    assert_eq!(api2.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 2);
+    assert_eq!(api2.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 3);
+    assert!(
+        handle1.http_provider().get_transaction_receipt(submitted_hash).await.unwrap().is_some()
+    );
+}
