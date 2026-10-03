@@ -3,7 +3,8 @@
 use super::*;
 
 // tests that the `cast block` command works correctly
-casttest!(latest_block, |_prj, cmd| {
+#[casttest]
+fn latest_block(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Call `cast find-block`
@@ -55,9 +56,10 @@ transactions:        [
 1655904485
 
 "#]]);
-});
+}
 
-casttest!(block_raw, |_prj, cmd| {
+#[casttest]
+fn block_raw(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     let output = cmd
@@ -77,9 +79,10 @@ casttest!(block_raw, |_prj, cmd| {
         hash.to_string(),
         "0x49fd7f3b9ba5d67fa60197027f09454d4cac945e8f271edcc84c3fd5872446d3"
     );
-});
+}
 
-casttest!(block_json_wraps_raw_and_scalar_field_outputs, |_prj, cmd| {
+#[casttest]
+fn block_json_wraps_raw_and_scalar_field_outputs(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     let raw_output = cmd
@@ -102,9 +105,10 @@ casttest!(block_json_wraps_raw_and_scalar_field_outputs, |_prj, cmd| {
     assert_eq!(field_envelope["schema_version"], 1);
     assert!(field_envelope["success"].as_bool().unwrap());
     assert_eq!(field_envelope["data"], 291);
-});
+}
 
-casttest!(block_raw_tempo, |_prj, cmd| {
+#[casttest]
+fn block_raw_tempo(cmd: _) {
     // https://explore.tempo.xyz/block/8386710
     let output = cmd
         .args([
@@ -128,10 +132,11 @@ casttest!(block_raw_tempo, |_prj, cmd| {
         hash.to_string(),
         "0xcd6170dc28b888bcb93ed1ad76a6bea4ad9977b678db5d462df83d35ec9b8d15"
     );
-});
+}
 
 // tests that the `cast find-block` command works correctly
-casttest!(finds_block, |_prj, cmd| {
+#[casttest]
+fn finds_block(cmd: _) {
     // Construct args
     let timestamp = "1647843609".to_string();
     let eth_rpc_url = next_http_rpc_endpoint();
@@ -144,9 +149,10 @@ casttest!(finds_block, |_prj, cmd| {
 14428082
 
 "#]]);
-});
+}
 
-casttest!(balance, |_prj, cmd| {
+#[casttest]
+fn balance(cmd: _) {
     let rpc = next_http_rpc_endpoint();
     let dai = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
 
@@ -183,9 +189,10 @@ casttest!(balance, |_prj, cmd| {
 
     assert_ne!(dai_result, "0");
     assert_eq!(alias_result, dai_result);
-});
+}
 
-casttest!(block_number, |_prj, cmd| {
+#[casttest]
+fn block_number(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     let s = cmd
         .args(["block-number", "--rpc-url", eth_rpc_url.as_str()])
@@ -193,9 +200,10 @@ casttest!(block_number, |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
-});
+}
 
-casttest!(block_number_latest, |_prj, cmd| {
+#[casttest]
+fn block_number_latest(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     let s = cmd
         .args(["block-number", "--rpc-url", eth_rpc_url.as_str(), "latest"])
@@ -203,9 +211,10 @@ casttest!(block_number_latest, |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert!(s.trim().parse::<u64>().unwrap() > 0, "{s}")
-});
+}
 
-casttest!(block_number_hash, |_prj, cmd| {
+#[casttest]
+fn block_number_hash(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     let s = cmd
         .args([
@@ -218,10 +227,11 @@ casttest!(block_number_hash, |_prj, cmd| {
         .get_output()
         .stdout_lossy();
     assert_eq!(s.trim().parse::<u64>().unwrap(), 1, "{s}")
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast block-number
-casttest!(curl_block_number, |_prj, cmd| {
+#[casttest]
+fn curl_block_number(cmd: _) {
     let rpc = "https://eth.example.com";
 
     let output = cmd
@@ -234,10 +244,11 @@ casttest!(curl_block_number, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_blockNumber"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast chain-id
-casttest!(curl_chain_id, |_prj, cmd| {
+#[casttest]
+fn curl_chain_id(cmd: _) {
     let rpc = "https://eth.example.com";
 
     let output = cmd
@@ -250,10 +261,11 @@ casttest!(curl_chain_id, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_chainId"));
     assert!(output.contains(rpc));
-});
+}
 
 // tests that the --curl flag outputs a valid curl command for cast gas-price
-casttest!(curl_gas_price, |_prj, cmd| {
+#[casttest]
+fn curl_gas_price(cmd: _) {
     let rpc = "https://eth.example.com";
 
     let output = cmd
@@ -266,38 +278,43 @@ casttest!(curl_gas_price, |_prj, cmd| {
     assert!(output.contains("curl -X POST"));
     assert!(output.contains("eth_gasPrice"));
     assert!(output.contains(rpc));
-});
+}
 
-casttest!(chain_unknown, async |_prj, cmd| {
+#[casttest]
+async fn chain_unknown(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args(["chain", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq("unknown\n");
-});
+}
 
-casttest!(age, async |_prj, cmd| {
+#[casttest]
+async fn age(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test().with_genesis_timestamp(Some(1_645_099_200u64))).await;
     cmd.args(["age", "0", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq("Thu Feb 17 12:00:00 2022 UTC\n");
-});
+}
 
-casttest!(age_rejects_timestamp_overflow, async |_prj, cmd| {
+#[casttest]
+async fn age_rejects_timestamp_overflow(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test().with_genesis_timestamp(Some(u64::MAX))).await;
     cmd.args(["age", "0", "--rpc-url", &handle.http_endpoint()])
         .assert_failure()
         .stderr_eq("Error: invalid timestamp\n");
-});
+}
 
-casttest!(base_fee, async |_prj, cmd| {
+#[casttest]
+async fn base_fee(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test().with_base_fee(Some(123_456_789))).await;
     cmd.args(["base-fee", "0", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq("123456789\n");
-});
+}
 
-casttest!(cast_tx_curl_skips_network_probe, |_prj, cmd| {
+#[casttest]
+fn cast_tx_curl_skips_network_probe(cmd: _) {
     cmd.args([
         "tx",
         "0x0000000000000000000000000000000000000000000000000000000000000001",
@@ -311,9 +328,10 @@ curl -X POST -H 'Content-Type: application/json' --data-raw '{"method":"eth_getT
 
 "#]])
     .stderr_eq(str![""]);
-});
+}
 
-casttest!(cast_raw_block_curl_skips_network_probe, |prj, cmd| {
+#[casttest]
+fn cast_raw_block_curl_skips_network_probe(prj: _, cmd: _) {
     for raw in ["--raw", "--field=raw"] {
         cmd.cast_fuse().current_dir(prj.root())
             .args(["block", "latest"])
@@ -326,4 +344,4 @@ curl -X POST -H 'Content-Type: application/json' --data-raw '{"method":"eth_getB
 "#]])
             .stderr_eq(str![""]);
     }
-});
+}

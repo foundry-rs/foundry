@@ -2,7 +2,8 @@
 
 use super::*;
 
-casttest!(mktx, |_prj, cmd| {
+#[casttest]
+fn mktx(cmd: _) {
     cmd.args([
         "mktx",
         "--private-key",
@@ -24,9 +25,10 @@ casttest!(mktx, |_prj, cmd| {
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
 
 "#]]);
-});
+}
 
-casttest!(mktx_eip7702_auth_disclosure_declined, |_prj, cmd| {
+#[casttest]
+fn mktx_eip7702_auth_disclosure_declined(cmd: _) {
     cmd.args([
         "mktx",
         "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
@@ -48,9 +50,10 @@ Warning: This command will send a signed EIP-7702 authorization to the RPC endpo
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
-casttest!(mktx_ethsign_eip7702_auth_disclosure_declined, |_prj, cmd| {
+#[casttest]
+fn mktx_ethsign_eip7702_auth_disclosure_declined(cmd: _) {
     cmd.args([
         "mktx",
         "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
@@ -81,9 +84,10 @@ Warning: This command will send a signed EIP-7702 authorization to the RPC endpo
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
-casttest!(mktx_eip7702_auth_no_disclosure, |_prj, cmd| {
+#[casttest]
+fn mktx_eip7702_auth_no_disclosure(cmd: _) {
     cmd.args([
         "mktx",
         "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
@@ -110,9 +114,10 @@ casttest!(mktx_eip7702_auth_no_disclosure, |_prj, cmd| {
 
 "#]])
     .stderr_eq(str![""]);
-});
+}
 
-casttest!(mktx_eip7702_create_requires_recipient, |_prj, cmd| {
+#[casttest]
+fn mktx_eip7702_create_requires_recipient(cmd: _) {
     cmd.args([
         "mktx",
         "--auth",
@@ -139,9 +144,10 @@ casttest!(mktx_eip7702_create_requires_recipient, |_prj, cmd| {
 Error: EIP-7702 transactions can't be CREATE transactions and require a destination address
 
 "#]]);
-});
+}
 
-casttest!(mktx_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+#[casttest]
+async fn mktx_eip7702_auth_disclosure_forced(cmd: _) {
     let (_api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
 
@@ -162,9 +168,10 @@ casttest!(mktx_eip7702_auth_disclosure_forced, async |_prj, cmd| {
 
 "#]])
     .stderr_eq(str![""]);
-});
+}
 
-casttest!(mktx_sponsor_hash_supports_address_auth, async |_prj, cmd| {
+#[casttest]
+async fn mktx_sponsor_hash_supports_address_auth(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
 
     cmd.args([
@@ -185,9 +192,10 @@ casttest!(mktx_sponsor_hash_supports_address_auth, async |_prj, cmd| {
 
 "#]])
     .stderr_eq(str![""]);
-});
+}
 
-casttest!(mktx_signature, |_prj, cmd| {
+#[casttest]
+fn mktx_signature(cmd: _) {
     cmd.args([
         "mktx",
         "--signature",
@@ -213,9 +221,10 @@ casttest!(mktx_signature, |_prj, cmd| {
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
 
 "#]]);
-});
+}
 
-casttest!(mktx_signature_requires_from, |_prj, cmd| {
+#[casttest]
+fn mktx_signature_requires_from(cmd: _) {
     cmd.args([
         "mktx",
         "--signature",
@@ -232,9 +241,10 @@ Usage: cast[..] mktx --from <ADDRESS> --signature <SIGNATURE> <TO> [SIG] [ARGS].
 For more information, try '--help'.
 
 "#]]);
-});
+}
 
-casttest!(mktx_signature_normalizes_high_s, |_prj, cmd| {
+#[casttest]
+fn mktx_signature_normalizes_high_s(cmd: _) {
     cmd.args([
         "mktx",
         "--signature",
@@ -260,9 +270,10 @@ casttest!(mktx_signature_normalizes_high_s, |_prj, cmd| {
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
 
 "#]]);
-});
+}
 
-casttest!(mktx_signature_from_mismatch, |_prj, cmd| {
+#[casttest]
+fn mktx_signature_from_mismatch(cmd: _) {
     cmd.args([
         "mktx",
         "--signature",
@@ -288,10 +299,11 @@ casttest!(mktx_signature_from_mismatch, |_prj, cmd| {
 Error: The provided signature recovers to 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf, which does not match the specified sender 0x0000000000000000000000000000000000000001
 
 "#]]);
-});
+}
 
 // ensure recipient or code is required
-casttest!(mktx_requires_to, |_prj, cmd| {
+#[casttest]
+fn mktx_requires_to(cmd: _) {
     cmd.args([
         "mktx",
         "--private-key",
@@ -303,9 +315,10 @@ casttest!(mktx_requires_to, |_prj, cmd| {
 Error: Must specify a recipient address or contract code to deploy
 
 "#]]);
-});
+}
 
-casttest!(mktx_signer_from_mismatch, |_prj, cmd| {
+#[casttest]
+fn mktx_signer_from_mismatch(cmd: _) {
     cmd.args([
         "mktx",
         "--private-key",
@@ -323,9 +336,10 @@ Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address.
 
 "#]]);
-});
+}
 
-casttest!(mktx_signer_from_match, |_prj, cmd| {
+#[casttest]
+fn mktx_signer_from_match(cmd: _) {
     cmd.args([
         "mktx",
         "--private-key",
@@ -347,9 +361,10 @@ casttest!(mktx_signer_from_match, |_prj, cmd| {
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505
 
 "#]]);
-});
+}
 
-casttest!(mktx_raw_unsigned, |_prj, cmd| {
+#[casttest]
+fn mktx_raw_unsigned(cmd: _) {
     cmd.args([
         "mktx",
         "--from",
@@ -373,9 +388,10 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
 
 "#
     ]]);
-});
+}
 
-casttest!(mktx_raw_unsigned_curl_skips_unknown_fee_token_symbol_lookup, |_prj, cmd| {
+#[casttest]
+fn mktx_raw_unsigned_curl_skips_unknown_fee_token_symbol_lookup(cmd: _) {
     let output = cmd
         .args([
             "mktx",
@@ -408,9 +424,10 @@ casttest!(mktx_raw_unsigned_curl_skips_unknown_fee_token_symbol_lookup, |_prj, c
     assert!(output.starts_with("0x"), "expected raw transaction hex, got:\n{output}");
     assert!(!output.contains("eth_call"), "unexpected fee-token symbol lookup curl:\n{output}");
     assert!(!output.contains("0x95d89b41"), "unexpected symbol() calldata:\n{output}");
-});
+}
 
-casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
+#[casttest]
+async fn mktx_raw_unsigned_no_from_missing_chain(cmd: _) {
     // As chain is not provided, a query is made to the provider to get the chain id, before the
     // tx is built. Anvil is configured to use chain id 1 so that the produced tx will
     // be the same as in the `mktx_raw_unsigned` test.
@@ -436,9 +453,10 @@ casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
 
 "#
     ]]);
-});
+}
 
-casttest!(mktx_raw_unsigned_no_from_missing_gas_pricing, async |_prj, cmd| {
+#[casttest]
+async fn mktx_raw_unsigned_no_from_missing_gas_pricing(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([
         "mktx",
@@ -451,13 +469,14 @@ casttest!(mktx_raw_unsigned_no_from_missing_gas_pricing, async |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[
-        r#"0x02e5827a69800184773594018252089400000000000000000000000000000000000000018080c0
+        r#"0x02e5827a6980018477359401825dc09400000000000000000000000000000000000000018080c0
 
 "#
     ]]);
-});
+}
 
-casttest!(mktx_raw_unsigned_no_from_missing_nonce, |_prj, cmd| {
+#[casttest]
+fn mktx_raw_unsigned_no_from_missing_nonce(cmd: _) {
     cmd.args([
         "mktx",
         "--chain",
@@ -475,9 +494,10 @@ casttest!(mktx_raw_unsigned_no_from_missing_nonce, |_prj, cmd| {
 
 "#
     ]]);
-});
+}
 
-casttest!(mktx_ethsign, async |_prj, cmd| {
+#[casttest]
+async fn mktx_ethsign(cmd: _) {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     cmd.args([
@@ -506,11 +526,12 @@ casttest!(mktx_ethsign, async |_prj, cmd| {
 
 "#
     ]]);
-});
+}
 
 // tests that `cast mktx --tempo.lane <name>` resolves the lane against a `tempo.lanes.toml` file at
 // the project root, sets the corresponding `nonce_key` on the produced Tempo AA transaction.
-casttest!(mktx_tempo_lane_resolves_nonce_key, |prj, cmd| {
+#[casttest]
+fn mktx_tempo_lane_resolves_nonce_key(prj: _, cmd: _) {
     // Write a shared lanes file at the project root.
     let lanes_path = prj.root().join("tempo.lanes.toml");
     fs::write(&lanes_path, "deploy = 1\nops = 2\npayments = 42\n").unwrap();
@@ -555,9 +576,10 @@ casttest!(mktx_tempo_lane_resolves_nonce_key, |prj, cmd| {
     let envelope = TempoTxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode tempo tx");
     assert!(envelope.is_aa(), "expected Tempo AA transaction, got: {envelope:?}");
     assert_eq!(envelope.nonce_key(), Some(U256::from(42_u64)));
-});
+}
 
-casttest!(batch_mktx_eip7702_auth_disclosure, async |_prj, cmd| {
+#[casttest]
+async fn batch_mktx_eip7702_auth_disclosure(cmd: _) {
     let args = [
         "batch-mktx",
         "--call",
@@ -594,9 +616,10 @@ Continue anyway? [y/N] Aborted.
 Building batch transaction with 1 call(s)...
 
 "#]]);
-});
+}
 
-casttest!(batch_mktx_ethsign_eip7702_auth_disclosure_declined, |_prj, cmd| {
+#[casttest]
+fn batch_mktx_ethsign_eip7702_auth_disclosure_declined(cmd: _) {
     cmd.args([
         "batch-mktx",
         "--call",
@@ -631,10 +654,11 @@ Warning: This command will send a signed EIP-7702 authorization to the RPC endpo
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
 // Test cast mktx with negative numbers
-casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
+#[casttest]
+fn cast_mktx_negative_numbers(cmd: _) {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "mktx",
@@ -649,10 +673,11 @@ casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
         "100000",
     ])
     .assert_success();
-});
+}
 
 // Test cast mktx with EIP-4844 blob transaction (legacy format)
-casttest!(cast_mktx_eip4844_blob, |prj, cmd| {
+#[casttest]
+fn cast_mktx_eip4844_blob(prj: _, cmd: _) {
     // Create a temporary blob data file
     let blob_data = b"dummy blob data for testing";
     let blob_path = prj.root().join("blob_data.bin");
@@ -681,10 +706,11 @@ casttest!(cast_mktx_eip4844_blob, |prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ])
     .assert_success();
-});
+}
 
 // Test cast mktx with EIP-7594 blob transaction (default format)
-casttest!(cast_mktx_eip7594_blob, |prj, cmd| {
+#[casttest]
+fn cast_mktx_eip7594_blob(prj: _, cmd: _) {
     // Create a temporary blob data file
     let blob_data = b"dummy peerdas blob data for testing";
     let blob_path = prj.root().join("peerdas_blob_data.bin");
@@ -712,9 +738,10 @@ casttest!(cast_mktx_eip7594_blob, |prj, cmd| {
         "0x0000000000000000000000000000000000000001",
     ])
     .assert_success();
-});
+}
 
-casttest!(mktx_tempo_access_key_uses_alloy_wallet, async |_prj, cmd| {
+#[casttest]
+async fn mktx_tempo_access_key_uses_alloy_wallet(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let output = cmd
         .args([
@@ -759,4 +786,4 @@ casttest!(mktx_tempo_access_key_uses_alloy_wallet, async |_prj, cmd| {
         signature.key_id(&signed.tx().signature_hash()).unwrap(),
         address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
     );
-});
+}

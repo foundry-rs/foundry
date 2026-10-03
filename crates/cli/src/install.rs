@@ -13,7 +13,7 @@ use regex::Regex;
 use semver::Version;
 use soldeer_commands::{Command, Verbosity, commands::install::Install};
 use std::{
-    io::IsTerminal,
+    io::{ErrorKind, IsTerminal},
     path::{Path, PathBuf},
     str,
     sync::LazyLock,
@@ -432,6 +432,38 @@ impl Drop for NewSubmoduleGuard {
     }
 }
 
+/// Removes a newly created dependency directory if its installation fails.
+struct NewFolderGuard<'a> {
+    path: &'a Path,
+    armed: bool,
+}
+
+impl<'a> NewFolderGuard<'a> {
+    fn new(path: &'a Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        // Claim the destination before cloning so rollback cannot remove an existing path.
+        fs::create_dir(path)?;
+        Ok(Self { path, armed: true })
+    }
+
+    const fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for NewFolderGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed
+            && let Err(err) = std::fs::remove_dir_all(self.path)
+            && err.kind() != ErrorKind::NotFound
+        {
+            warn!(%err, path = %self.path.display(), "failed to remove dependency after installation failure");
+        }
+    }
+}
+
 fn restore_file(path: &Path, contents: Option<&[u8]>) {
     let result = match contents {
         Some(contents) => fs::write(path, contents),
@@ -447,6 +479,7 @@ impl Installer<'_> {
     /// Installs the dependency as an ordinary folder instead of a submodule
     fn install_as_folder(self, dep: &Dependency, path: &Path) -> Result<Option<String>> {
         let url = dep.require_url()?;
+        let mut guard = NewFolderGuard::new(path)?;
         Git::clone(dep.tag.is_none(), url, Some(&path))?;
         let mut dep = dep.clone();
 
@@ -475,6 +508,7 @@ impl Installer<'_> {
         // remove git artifacts
         fs::remove_dir_all(path.join(".git"))?;
 
+        guard.disarm();
         Ok(dep.tag)
     }
 
@@ -672,7 +706,10 @@ impl Installer<'_> {
         if let Err(mut e) = res {
             // remove dependency on failed checkout
             fs::remove_dir_all(path)?;
-            if e.to_string().contains("did not match any file(s) known to git") {
+            let error = e.to_string();
+            if error.contains("did not match any file(s) known to git")
+                || error.contains("fatal: invalid reference:")
+            {
                 e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
             }
             return Err(e);

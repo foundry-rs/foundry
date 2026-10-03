@@ -115,6 +115,8 @@ pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
+    /// Whether the current cheatcode call is static.
+    pub(crate) is_static: bool,
 }
 
 impl<'a, 'db, FEN: FoundryEvmNetwork> std::ops::Deref for CheatsCtxt<'a, 'db, FEN> {

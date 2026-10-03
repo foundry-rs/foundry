@@ -5,9 +5,12 @@ use foundry_config::{CompilationRestrictions, SettingsOverrides};
 
 #[cfg(unix)]
 use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
+#[cfg(unix)]
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 // <https://github.com/foundry-rs/foundry/issues/16852>
-forgetest!(preprocess_parenthesized_new, |prj, cmd| {
+#[forgetest]
+fn preprocess_parenthesized_new(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
@@ -87,21 +90,21 @@ No files changed, compilation skipped
 Ran 1 test for test/Value.t.sol:ValueTest
 [PASS] test_arguments() ([GAS])
 Traces:
-  [30387] ValueTest::test_arguments()
+  [[..]] ValueTest::test_arguments()
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a, 1000000000000000000 [1e18])
-    │   ├─ [41006] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   ├─ [[..]] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000007, 2000000000000000000 [2e18])
-    │   ├─ [41006] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   ├─ [[..]] → new Target@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000008)
-    │   ├─ [41006] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   ├─ [[..]] → new Target@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
     ├─ [0] VM::deployCode("src/Target.sol:Target", 0x0000000000000000000000000000000000000000000000000000000000000009, 3000000000000000000 [3e18])
-    │   ├─ [41006] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
+    │   ├─ [[..]] → new Target@0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9
     │   │   └─ ← [Return] 203 bytes of code
     │   └─ ← [Return] Target: [0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9]
     ├─ [303] Target::n() [staticcall]
@@ -119,15 +122,17 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapped_bytecode_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_bytecode_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
     });
     let source = r#"
+pragma solidity ^0.8.0;
 contract Impl {
     constructor(uint256) {}
     function v() external pure returns (uint256) { return 111; }
@@ -189,10 +194,692 @@ Encountered 2 failing tests in test/Impl.t.sol:ImplTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
+
+// <https://github.com/foundry-rs/foundry/issues/16901>
+#[forgetest]
+fn preprocess_external_bytecode_dependencies(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.create_file("lib/dep/src/RemappedImpl.sol", source);
+    prj.create_file("external/RelativeImpl.sol", source);
+    prj.add_test(
+        "ExternalImpl.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl as RemappedImpl} from "@dep/RemappedImpl.sol";
+import {Impl as RelativeImpl} from "../external/RelativeImpl.sol";
+contract ExternalImplTest {
+    function test_remapped() public {
+        require(new RemappedImpl().v() == 111, "stale remapped implementation");
+    }
+    function test_relative() public {
+        require(new RelativeImpl().v() == 111, "stale relative implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    // External deployments remain native, so body-only edits must rebuild their importer.
+    let changed = source.replace("return 111", "return 222");
+    prj.create_file("lib/dep/src/RemappedImpl.sol", &changed);
+    prj.create_file("external/RelativeImpl.sol", &changed);
+    cmd.forge_fuse().arg("test").with_no_redact().assert_failure().stdout_eq(str![[r#"
+Compiling 3 files with [..]
+[..]
+Compiler run successful!
+...
+[FAIL: stale relative implementation] test_relative() ([..])
+[FAIL: stale remapped implementation] test_remapped() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_external_dependencies_invalidate_independently(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.create_file("lib/dep/src/RemappedImpl.sol", source);
+    prj.create_file("external/RelativeImpl.sol", source);
+    let remapped_test = |expected| {
+        format!(
+            r#"
+pragma solidity ^0.8.0;
+import {{Impl}} from "@dep/RemappedImpl.sol";
+contract RemappedTest {{
+    function test_remapped() public {{
+        require(new Impl().v() == {expected}, "stale remapped implementation");
+    }}
+}}
+"#,
+        )
+    };
+    prj.add_test("Remapped.t.sol", &remapped_test(111));
+    prj.add_test(
+        "Relative.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../external/RelativeImpl.sol";
+contract RelativeTest {
+    function test_relative() public {
+        require(new Impl().v() == 111, "stale relative implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    let changed = source.replace("return 111", "return 222");
+    prj.create_file("lib/dep/src/RemappedImpl.sol", &changed);
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale remapped implementation] test_remapped() ([..])
+...
+"#]]);
+
+    // Make the first importer green without touching the second, then verify the relative edge.
+    prj.add_test("Remapped.t.sol", &remapped_test(222));
+    prj.create_file("external/RelativeImpl.sol", &changed);
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale relative implementation] test_relative() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_native_bytecode_forms(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "Native.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+interface Vm { function etch(address, bytes calldata) external; }
+function make() returns (Impl) { return new Impl(); }
+contract NativeTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    function test_runtime_code() public {
+        address target = address(0xBEEF);
+        vm.etch(target, type(Impl).runtimeCode);
+        (bool ok, bytes memory out) = target.staticcall(abi.encodeCall(Impl.v, ()));
+        require(ok && abi.decode(out, (uint256)) == 111, "stale runtime bytecode");
+    }
+    function test_free_function() public {
+        require(make().v() == 111, "stale free function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale free function bytecode] test_free_function() ([..])
+[FAIL: stale runtime bytecode] test_runtime_code() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_same_file_free_function_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "FreeFunction.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+function make() returns (Impl) { return new Impl(); }
+contract FreeFunctionTest {
+    function test_free_function() public {
+        require(make().v() == 111, "stale free function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale free function bytecode] test_free_function() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_script_native_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_script(
+        "Native.s.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+contract NativeScript {
+    function run() public {
+        require(new Impl().v() == 111, "stale script bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["script", "script/Native.s.sol:NativeScript"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().args(["script", "script/Native.s.sol:NativeScript"]).assert_failure();
+}
+
+#[forgetest]
+fn preprocess_imported_free_function_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "Factory.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+/*
+This padding deliberately places the imported function's expression beyond the end of the test
+source. Recursive dependency analysis must use the callee's source map rather than slicing the
+importer with the callee's offsets.
+....................................................................................................
+....................................................................................................
+....................................................................................................
+*/
+function make() returns (Impl) { return new Impl(); }
+"#,
+    );
+    prj.add_test(
+        "FreeFunction.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {make} from "../src/Factory.sol";
+contract FreeFunctionTest {
+    function test_free_function() public {
+        require(make().v() == 111, "stale imported free function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale imported free function bytecode] test_free_function() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_function_reference_dependencies(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "Factory.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+function makeRef() returns (Impl) { return new Impl(); }
+function make() returns (Impl) { return new Impl(); }
+function make(uint256) returns (Impl) { return new Impl(); }
+"#,
+    );
+    prj.add_test(
+        "FunctionReference.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+import {make, makeRef} from "../src/Factory.sol";
+contract FunctionReferenceTest {
+    function test_function_reference() public {
+        function () internal returns (Impl) factory = makeRef;
+        require(factory().v() == 111, "stale function reference bytecode");
+    }
+    function test_overloaded_function() public {
+        require(make().v() == 111, "stale overloaded function bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale function reference bytecode] test_function_reference() ([..])
+[FAIL: stale overloaded function bytecode] test_overloaded_function() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_shared_free_function_is_not_rewritten(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    prj.add_source("Impl.sol", "contract Impl {}");
+    prj.add_test(
+        "SharedFreeFunction.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+function make() returns (Impl) { return new Impl(); }
+contract FirstTest {
+    function test_first() public { require(address(make()) != address(0)); }
+}
+contract SecondTest {
+    function test_second() public { require(address(make()) != address(0)); }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success();
+}
+
+#[forgetest]
+fn preprocess_try_call_option_dependency_is_not_rewritten(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    prj.add_source("Created.sol", "contract Created {}");
+    prj.add_source("Salt.sol", "contract Salt {}");
+    prj.add_test(
+        "TryCallOption.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Created} from "../src/Created.sol";
+import {Salt} from "../src/Salt.sol";
+contract TryCallOptionTest {
+    function test_try_call_option() public {
+        try new Created{salt: keccak256(type(Salt).creationCode)}() returns (Created created) {
+            require(address(created) != address(0));
+        } catch { revert(); }
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success();
+}
+
+#[forgetest]
+fn preprocess_internal_library_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make() internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "Library.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {FactoryLib} from "../src/FactoryLib.sol";
+contract LibraryTest {
+    function test_library() public {
+        require(FactoryLib.make().v() == 111, "stale library bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale library bytecode] test_library() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_namespace_library_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make() internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "NamespaceLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import "../src/FactoryLib.sol" as Factories;
+contract NamespaceLibraryTest {
+    function test_namespace_library() public {
+        require(
+            Factories.FactoryLib.make().v() == 111,
+            "stale namespace library bytecode"
+        );
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale namespace library bytecode] test_namespace_library() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_using_library_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make(uint256) internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "UsingLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {FactoryLib} from "../src/FactoryLib.sol";
+contract UsingLibraryTest {
+    using FactoryLib for uint256;
+    function test_using_library() public {
+        require(uint256(0).make().v() == 111, "stale using library bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale using library bytecode] test_using_library() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_try_constructor_argument_dependencies(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "FactoryLib.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+library FactoryLib {
+    function make() internal returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_source(
+        "Receiver.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Receiver {
+    uint256 public immutable value;
+    constructor(uint256 value_) { value = value_; }
+}
+"#,
+    );
+    prj.add_test(
+        "TryPlainLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {FactoryLib} from "../src/FactoryLib.sol";
+import {Receiver} from "../src/Receiver.sol";
+contract TryPlainLibraryTest {
+    function test_try_plain_library() public {
+        try new Receiver(FactoryLib.make().v()) returns (Receiver receiver) {
+            require(receiver.value() == 111, "stale try plain library bytecode");
+        } catch { revert(); }
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "TryNamespaceLibrary.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import "../src/FactoryLib.sol" as Factories;
+import {Receiver} from "../src/Receiver.sol";
+contract TryNamespaceLibraryTest {
+    function test_try_namespace_library() public {
+        try new Receiver(Factories.FactoryLib.make().v()) returns (Receiver receiver) {
+            require(receiver.value() == 111, "stale try namespace library bytecode");
+        } catch { revert(); }
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale try namespace library bytecode] test_try_namespace_library() ([..])
+...
+[FAIL: stale try plain library bytecode] test_try_plain_library() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_external_inheritance_dependency(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Base { function v() public pure returns (uint256) { return 111; } }
+"#;
+    prj.create_file("external/Base.sol", source);
+    prj.add_test(
+        "Inheritance.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Base} from "../external/Base.sol";
+contract InheritanceTest is Base {
+    function test_inherited() public pure {
+        require(v() == 111, "stale inherited bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.create_file("external/Base.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale inherited bytecode] test_inherited() ([..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_expanded_source_context_invalidates_prior_artifacts(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.create_file("vendor/pkg/src/Impl.sol", source);
+    prj.add_test(
+        "A.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+contract ATest {
+    function test_a() public { require(new Impl().v() == 111, "stale A bytecode"); }
+}
+"#,
+    );
+    prj.add_test(
+        "B.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../vendor/pkg/src/Impl.sol";
+contract BTest { function test_b() public { new Impl(); } }
+"#,
+    );
+
+    cmd.args(["build", "test/A.t.sol"]).assert_success();
+    cmd.forge_fuse().args(["build", "test/B.t.sol"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().args(["test", "--match-path", "test/A.t.sol"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: stale A bytecode] test_a() ([..])
+...
+"#]],
+    );
+}
+
+#[forgetest]
+fn preprocess_nested_absolute_imports(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["dep/=lib/dep/".parse::<Remapping>().unwrap().into()];
+    });
+    prj.create_file(
+        "lib/dep/src/Child.sol",
+        r#"
+pragma solidity ^0.8.0;
+contract Child {}
+"#,
+    );
+    prj.create_file(
+        "lib/dep/src/Base.sol",
+        r#"
+pragma solidity ^0.8.0;
+import "src/Child.sol";
+contract Base { function make() external returns (Child) { return new Child(); } }
+"#,
+    );
+    prj.add_test(
+        "Nested.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Base} from "dep/src/Base.sol";
+contract NestedTest { function test_nested() public { new Base(); } }
+"#,
+    );
+
+    cmd.args(["test"]).assert_success();
+}
+
+#[forgetest]
+fn preprocess_analysis_failure_is_conservative(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+pragma solidity ^0.8.0;
+contract Impl { function v() external pure returns (uint256) { return 111; } }
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_source(
+        "Derived.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "./Impl.sol";
+contract Derived is Impl {}
+"#,
+    );
+    prj.add_test(
+        "Fallback.t.sol",
+        r#"
+pragma solidity ^0.8.0;
+import {Impl} from "../src/Impl.sol";
+import {Derived} from "../src/Derived.sol";
+contract FallbackTest {
+    function test_fallback() public {
+        new Derived();
+        require(new Impl().v() == 111, "stale conservative bytecode");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale conservative bytecode] test_fallback() ([..])
+...
+"#]]);
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapping_identity, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapping_identity(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = ["@p/=src/../src/", "src/=lib/alternate/"]
@@ -255,10 +942,11 @@ Encountered 1 failing test in test/Impl.t.sol:ImplTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapping_context_uses_running_test, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapping_context_uses_running_test(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings =
@@ -299,10 +987,11 @@ contract ImplTest is Helper {
 [FAIL: stale implementation] test_new() ([GAS])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapped_helper_source, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_helper_source(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = ["@p/=src/", "test/:foundry-pp/=lib/alternate/"]
@@ -336,10 +1025,11 @@ contract ImplTest {
 [FAIL: stale implementation] test_new() ([GAS])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_ambiguous_artifact_stays_native, |prj, cmd| {
+#[forgetest]
+fn preprocess_ambiguous_artifact_stays_native(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 contract Impl {
@@ -370,8 +1060,9 @@ contract ImplTest {
     prj.add_test("Impl.t.sol", test);
     cmd.args(["test"]).assert_success();
 
-    // A narrower test-only compilation must retain the native fallback classification.
+    // A genuinely narrower request must retain the native fallback classification.
     prj.add_test("Impl.t.sol", &format!("\n{test}"));
+    cmd.forge_fuse().args(["build", "test/Impl.t.sol"]).assert_success();
     cmd.forge_fuse().arg("test").assert_success();
 
     prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
@@ -380,10 +1071,11 @@ contract ImplTest {
 [FAIL: stale implementation] test_new() ([GAS])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapped_mock_inheritance, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_mock_inheritance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
@@ -446,11 +1138,12 @@ Encountered 1 failing test in test/Impl.t.sol:ImplTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
 #[cfg(unix)]
-forgetest!(preprocess_remapped_symlinked_source, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_symlinked_source(prj: _, cmd: _) {
     use std::{fs, os::unix::fs::symlink};
 
     fs::remove_dir_all(prj.root().join("src")).unwrap();
@@ -498,16 +1191,16 @@ Encountered 1 failing test in test/Impl.t.sol:ImplTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 #[cfg(unix)]
-forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
-    use foundry_test_utils::util::OutputExt;
-    use std::{fs, os::unix::fs::PermissionsExt};
-
+#[forgetest_init]
+fn abi_commands_reuse_preprocessed_cache(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| config.dynamic_test_linking = true);
     cmd.arg("build").assert_success();
+    // Discovery keeps an unprocessed ABI cache separate from the dynamic-linking artifacts.
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
 
     let solc = prj.root().join("fake-solc");
     let invoked = prj.root().join("fake-solc.invoked");
@@ -531,14 +1224,16 @@ exit 1
         config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
     });
 
-    let output =
-        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
-    let stdout = output.get_output().stdout_lossy();
-    assert!(
-        stdout.contains("Ran 2 tests for test/Counter.t.sol:CounterTest"),
-        "cached ABI did not select CounterTest: {stdout}"
+    cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 2 tests for test/Counter.t.sol:CounterTest
+...
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]],
     );
-    assert!(!invoked.exists(), "filtered test compilation did not reuse the preprocessed cache");
+    assert!(!invoked.exists(), "filtered test compilation did not reuse cached discovery");
 
     cmd.forge_fuse().args(["selectors", "list"]).assert_success();
     assert!(!invoked.exists(), "selector compilation did not reuse the preprocessed cache");
@@ -555,10 +1250,42 @@ exit 1
     assert!(abi_cache.is_dir());
     assert!(!prj.artifacts().join("Other.t.sol").exists());
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Local(solc));
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
     });
     cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
     assert!(!invoked.exists(), "partial-cache discovery invoked solc");
+
+    // Editing either a selected or unselected test must leave unrelated ABI entries cached.
+    // <https://github.com/foundry-rs/foundry/issues/17204>
+    for name in ["Other.t.sol", "Counter.t.sol"] {
+        let path = prj.root().join("test").join(name);
+        let source = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{source}\n// edit.\n")).unwrap();
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_failure();
+        let input = serde_json::from_slice::<SolcInput>(&fs::read(&invoked).unwrap()).unwrap();
+        let tests =
+            input.sources.keys().filter(|path| path.starts_with("test")).collect::<Vec<_>>();
+        assert_eq!(tests, vec![&PathBuf::from(format!("test/{name}"))]);
+        let expected = OutputSelection::common_output_selection(["abi".to_string()]);
+        assert_eq!(input.settings.output_selection.0[&format!("test/{name}")], expected.0["*"]);
+        for output in input.settings.output_selection.0.values().flat_map(|s| s.values()).flatten()
+        {
+            assert_eq!(output, "abi");
+        }
+        fs::remove_file(&invoked).unwrap();
+
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Version(
+                foundry_test_utils::util::SOLC_VERSION.parse().unwrap(),
+            ));
+        });
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+        prj.update_config(|config| {
+            config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+        });
+        cmd.forge_fuse().args(["test", "--match-contract", "CounterTest"]).assert_success();
+        assert!(!invoked.exists(), "edited discovery was not cached");
+    }
 
     // Disabling caching must bypass both stores, even after warming them.
     prj.update_config(|config| config.cache = false);
@@ -576,10 +1303,11 @@ exit 1
     }
     cmd.forge_fuse().arg("clean").assert_success();
     assert!(!abi_cache.exists());
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
-forgetest_init!(filtered_tests_compile_unimported_test_fixtures, |prj, cmd| {
+#[forgetest_init]
+fn filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| config.solc = None);
     prj.add_raw_test(
         "fixtures/Fixture.sol",
@@ -660,10 +1388,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
-forgetest_init!(path_filtered_tests_compile_unimported_test_fixtures, |prj, cmd| {
+#[forgetest_init]
+fn path_filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = None;
         config.dynamic_test_linking = false;
@@ -701,10 +1430,11 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16529>
-forgetest_init!(filtered_tests_preserve_compilation_restrictions, |prj, cmd| {
+#[forgetest_init]
+fn filtered_tests_preserve_compilation_restrictions(prj: _, cmd: _) {
     prj.wipe_contracts();
     prj.add_lib(
         "dep/src/Clz.sol",
@@ -756,21 +1486,38 @@ contract Root {
     });
 
     cmd.args(["test", "--match-path", "test/RootTest.sol"]).assert_success();
-});
+}
 
-forgetest_init!(filtered_tests_support_overlapping_source_roots, |prj, cmd| {
-    prj.update_config(|config| config.script = ".".into());
+#[forgetest_init]
+fn filtered_tests_support_overlapping_source_roots(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.script = ".".into();
+        config.dynamic_test_linking = true;
+    });
     prj.add_source("SourceFixture.sol", "contract SourceFixture {}");
+    prj.add_source(
+        "Child.sol",
+        "contract Child { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "Factory.sol",
+        "import {Child} from './Child.sol'; contract Factory { function create() external returns (Child) { return new Child(); } }",
+    );
     prj.add_test("fixtures/Fixture.sol", "contract Fixture {}");
     prj.add_test(
         "Fixture.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
+import {Child} from "../src/Child.sol";
+import {Factory} from "../src/Factory.sol";
 
 contract FixtureTest is Test {
     function testFixture() public {
         assertGt(vm.getCode("test/fixtures/Fixture.sol:Fixture").length, 0);
         assertGt(vm.getCode("src/SourceFixture.sol:SourceFixture").length, 0);
+        Factory factory = new Factory();
+        Child child = factory.create();
+        assertEq(child.value(), 1);
     }
 }
 "#,
@@ -785,10 +1532,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Test cache is invalidated when `forge build` if optimize test option toggled.
-forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
+#[forgetest_init]
+fn toggle_invalidate_cache_on_build(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -819,10 +1567,11 @@ Compiling 23 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Test cache is invalidated when `forge test` if optimize test option toggled.
-forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
+#[forgetest_init]
+fn toggle_invalidate_cache_on_test(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -853,10 +1602,11 @@ Compiling 21 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16468>
-forgetest_init!(unchecked_artifacts_support_dynamic_linking, |prj, cmd| {
+#[forgetest_init]
+fn unchecked_artifacts_support_dynamic_linking(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.unchecked_cheatcode_artifacts = true;
@@ -924,7 +1674,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Counter contract without interface instantiated in CounterTest
 //
@@ -932,7 +1682,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // │ └── Counter.sol
 // └── test
 //     └── Counter.t.sol
-forgetest_init!(preprocess_contract_with_no_interface, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_no_interface(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1044,7 +1795,7 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Counter contract with interface instantiated in CounterTest
 //
@@ -1054,7 +1805,8 @@ Compiling 1 files with [..]
 // │     └── CounterIf.sol
 // └── test
 //     └── Counter.t.sol
-forgetest_init!(preprocess_contract_with_interface, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_interface(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1177,7 +1929,7 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // - Counter contract instantiated in CounterMock
 // - CounterMock instantiated in CounterTest
@@ -1188,7 +1940,8 @@ Compiling 1 files with [..]
 //     ├── Counter.t.sol
 //     └── mock
 //         └── CounterMock.sol
-forgetest_init!(preprocess_mock_without_inheritance, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_without_inheritance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1328,7 +2081,7 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // - CounterMock contract is Counter contract
 // - CounterMock instantiated in CounterTest
@@ -1339,7 +2092,8 @@ Compiling 2 files with [..]
 //    ├── Counter.t.sol
 //    └── mock
 //        └── CounterMock.sol
-forgetest_init!(preprocess_mock_with_inheritance, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_with_inheritance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1461,7 +2215,69 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
+
+#[forgetest]
+fn preprocess_contract_to_free_function_clears_dependencies(prj: _, cmd: _) {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let dependency =
+        "contract Dep { function value() public pure returns (uint256) { return 1; } }";
+    prj.add_source("Dep.sol", dependency);
+    prj.add_test(
+        "Helper.sol",
+        r#"
+import {Dep} from "../src/Dep.sol";
+contract Helper {
+    function dependencyCode() internal pure returns (bytes memory) {
+        return type(Dep).creationCode;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Consumer.t.sol",
+        r#"
+import {Helper} from "./Helper.sol";
+contract ConsumerTest is Helper {
+    function test_helper() public pure {
+        require(dependencyCode().length > 0);
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_test("Helper.sol", "function helperValue() pure returns (uint256) { return 1; }");
+    prj.add_test(
+        "Consumer.t.sol",
+        r#"
+import {helperValue} from "./Helper.sol";
+contract ConsumerTest {
+    function test_helper() public pure {
+        require(helperValue() == 1);
+    }
+}
+"#,
+    );
+    cmd.assert_success();
+
+    // Neither the contractless helper nor its rebuilt importer still depends on Dep.
+    for value in [2, 3] {
+        prj.add_source("Dep.sol", &dependency.replace("return 1", &format!("return {value}")));
+        cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [..]
+[..]
+Compiler run successful!
+
+Ran 1 test for test/Consumer.t.sol:ConsumerTest
+[PASS] test_helper() (gas: [..])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [..]
+
+Ran 1 test suite [..]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    }
+}
 
 // - CounterMock contract is Counter contract
 // - CounterMock instantiated in CounterTest
@@ -1472,7 +2288,8 @@ Compiling 2 files with [..]
 //    ├── Counter.t.sol
 //    └── mock
 //        └── CounterMock.sol
-forgetest_init!(preprocess_mock_to_non_mock, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_to_non_mock(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1579,7 +2396,7 @@ Compiling 1 files with [..]
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/12452>
 // - CounterMock contract is Counter contract
@@ -1589,7 +2406,8 @@ Compiler run successful!
 // │ └── Counter.sol
 // └── test
 //    ├── Counter.t.sol
-forgetest_init!(preprocess_mock_declared_in_test_contract, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_declared_in_test_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1655,7 +2473,7 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // ├── src
 // │ ├── CounterA.sol
@@ -1665,7 +2483,8 @@ Compiling 2 files with [..]
 // │     └── Counter.sol
 // └── test
 // └── Counter.t.sol
-forgetest_init!(preprocess_multiple_contracts_with_constructors, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_multiple_contracts_with_constructors(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1919,10 +2738,11 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Test preprocessing contracts with payable constructor, value and salt named args.
-forgetest_init!(flaky_preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
+#[forgetest_init]
+fn flaky_preprocess_contracts_with_payable_constructor_and_salt(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2065,10 +2885,11 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Counter contract with constructor reverts and emitted events.
-forgetest_init!(preprocess_contract_with_require_and_emit, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_require_and_emit(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2194,10 +3015,11 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10312>
-forgetest_init!(preprocess_contract_with_constructor_args_struct, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_constructor_args_struct(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2236,10 +3058,11 @@ Compiling 21 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Test preprocessed contracts with decode internal fns.
-forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_decode_internal(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -2282,7 +3105,7 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 Traces:
   [..] CounterTest::test_Increment()
     ├─ [0] VM::deployCode("src/Counter.sol:Counter")
-    │   ├─ [96345] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
+    │   ├─ [[..]] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
     ├─ [..] Counter::setNumber(0)
@@ -2300,11 +3123,122 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10492>
 // Preprocess test contracts with try constructor statements.
-forgetest_init!(preprocess_contract_with_try_ctor_stmt, |prj, cmd| {
+// Synthetic deployments must respect static execution without changing native try boundaries.
+#[forgetest]
+fn preprocess_static_deployment(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Empty {
+    constructor() payable {}
+}
+contract Target {
+    uint256 public value;
+    address public sender;
+    constructor(uint256 x) payable { value = x; sender = msg.sender; }
+}
+"#,
+    );
+    prj.add_test(
+        "StaticDeployment.t.sol",
+        r#"
+import {Empty, Target} from "../src/Target.sol";
+
+interface Vm {
+    function getNonce(address account) external view returns (uint64);
+}
+
+contract StaticDeploymentTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function deploy() external returns (Target) { return new Target(7); }
+    function deploy2() external returns (Target) { return new Target{salt: bytes32(uint256(1))}(7); }
+    function tryDeploy() external { try new Target(7) {} catch {} }
+    function tryDeploy2() external { try new Target{salt: bytes32(uint256(1))}(7) {} catch {} }
+    function creationCode() external view returns (bytes memory) { return type(Target).creationCode; }
+
+    function checkStatic(bytes memory data) internal {
+        uint64 nonce = vm.getNonce(address(this));
+        uint256 balance = address(this).balance;
+        (bool ok, bytes memory result) = address(this).staticcall(data);
+        require(!ok, "static deployment succeeded");
+        require(result.length == 0, "unexpected revert data");
+        require(vm.getNonce(address(this)) == nonce, "nonce changed");
+        require(address(this).balance == balance, "balance changed");
+    }
+
+    function test_static_create() public { checkStatic(abi.encodeCall(this.deploy, ())); }
+    function test_static_create2() public { checkStatic(abi.encodeCall(this.deploy2, ())); }
+    function test_static_try_create() public { checkStatic(abi.encodeCall(this.tryDeploy, ())); }
+    function test_static_try_create2() public { checkStatic(abi.encodeCall(this.tryDeploy2, ())); }
+
+    function test_regular_deployment() public {
+        Target a = this.deploy();
+        Target b = this.deploy2();
+        require(a.value() == 7 && b.value() == 7);
+        require(a.sender() == address(this) && b.sender() == address(this));
+    }
+
+    function test_static_creation_code() public {
+        (bool ok, bytes memory result) = address(this).staticcall(abi.encodeCall(this.creationCode, ()));
+        require(ok && abi.decode(result, (bytes)).length > 0);
+    }
+
+    function test_manual_deploy_code_static() public {
+        string memory empty = "src/Target.sol:Empty";
+        string memory target = "src/Target.sol:Target";
+        bytes memory args = abi.encode(uint256(7));
+        bytes32 salt = bytes32(uint256(1));
+        bytes[] memory calls = new bytes[](8);
+        calls[0] = abi.encodeWithSignature("deployCode(string)", empty);
+        calls[1] = abi.encodeWithSignature("deployCode(string,bytes)", target, args);
+        calls[2] = abi.encodeWithSignature("deployCode(string,uint256)", empty, 1);
+        calls[3] = abi.encodeWithSignature("deployCode(string,bytes,uint256)", target, args, 1);
+        calls[4] = abi.encodeWithSignature("deployCode(string,bytes32)", empty, salt);
+        calls[5] = abi.encodeWithSignature("deployCode(string,bytes,bytes32)", target, args, salt);
+        calls[6] = abi.encodeWithSignature("deployCode(string,uint256,bytes32)", empty, 1, salt);
+        calls[7] = abi.encodeWithSignature("deployCode(string,bytes,uint256,bytes32)", target, args, 1, salt);
+        uint64 nonce = vm.getNonce(address(this));
+        for (uint256 i; i < calls.length; ++i) {
+            (bool ok, bytes memory result) = address(vm).staticcall(calls[i]);
+            require(!ok && result.length == 0, "static deployCode succeeded");
+        }
+        require(vm.getNonce(address(this)) == nonce, "nonce changed");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        for force in [true, false] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 7 tests for test/StaticDeployment.t.sol:StaticDeploymentTest
+[PASS] test_manual_deploy_code_static() ([GAS])
+[PASS] test_regular_deployment() ([GAS])
+[PASS] test_static_create() ([GAS])
+[PASS] test_static_create2() ([GAS])
+[PASS] test_static_creation_code() ([GAS])
+[PASS] test_static_try_create() ([GAS])
+[PASS] test_static_try_create2() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+    }
+}
+
+#[forgetest_init]
+fn preprocess_contract_with_try_ctor_stmt(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2405,10 +3339,10 @@ contract CounterB {
 }
     "#,
     );
-    // Only CounterB should compile.
+    // CounterB and its native try-deployment consumer should compile.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 1 files with [..]
+Compiling 2 files with [..]
 ...
 [PASS] test_try_counterA_creation() (gas: [..])
 [FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
@@ -2431,10 +3365,10 @@ contract CounterC {
 }
     "#,
     );
-    // Only CounterC should compile.
+    // CounterC and its native try-deployment consumer should compile.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 1 files with [..]
+Compiling 2 files with [..]
 ...
 [PASS] test_try_counterA_creation() (gas: [..])
 [FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
@@ -2457,10 +3391,10 @@ contract CounterC {
 }
     "#,
     );
-    // Only CounterC should compile and revert.
+    // CounterC and its native try-deployment consumer should compile and revert.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-Compiling 1 files with [..]
+Compiling 2 files with [..]
 ...
 [PASS] test_try_counterA_creation() (gas: [..])
 [FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
@@ -2469,11 +3403,12 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11978>
 // Preprocess test contracts when active prank.
-forgetest_init!(preprocess_contract_with_active_prank, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_active_prank(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2550,10 +3485,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-});
+}
 
 // Preprocess test contracts with try constructor statements that bind return type.
-forgetest_init!(preprocess_contract_with_try_ctor_stmt_and_returns, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_try_ctor_stmt_and_returns(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2580,8 +3516,8 @@ contract CounterReturnsTest is Test {
     function test_try_counter_creation_returns_custom_type() public {
         try new Counter(1) returns (Counter c) {
             c;
-        } catch {
-            revert();
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("ctor failure"));
         }
     }
 }
@@ -2597,7 +3533,7 @@ Compiling 21 files with [..]
 
 "#]]);
 
-    // Change Counter to fail test in try statement, only Counter contract should be compiled.
+    // The typed deployment remains native so its constructor revert reaches the catch clause.
     prj.add_source(
         "Counter.sol",
         r#"
@@ -2610,19 +3546,110 @@ contract Counter {
 }
         "#,
     );
-    cmd.assert_failure().stdout_eq(str![[r#"
-...
-Compiling 1 files with [..]
-...
-[FAIL: ctor failure] test_try_counter_creation_returns_custom_type() (gas: [..])
-...
+    cmd.assert_success();
+}
 
+#[forgetest]
+fn preprocess_typed_try_new_preserves_catches(prj: _, cmd: _) {
+    let targets = r#"
+error ConstructorError(uint256 value);
+
+contract RevertString {
+    constructor() { revert("first reason"); }
+}
+
+contract CustomError {
+    constructor() { revert ConstructorError(7); }
+}
+
+contract Panic {
+    constructor() { assert(false); }
+}
+
+contract EmptyRevert {
+    constructor() { assembly { revert(0, 0) } }
+}
+"#;
+    prj.add_source("Targets.sol", targets);
+    prj.add_test(
+        "TypedTry.t.sol",
+        r#"
+import * as Targets from "../src/Targets.sol";
+
+contract TypedTryTest {
+    bool public constructorCaught;
+
+    constructor() {
+        try new Targets.EmptyRevert() returns (Targets.EmptyRevert) {
+            revert("constructor deployment succeeded");
+        } catch (bytes memory reason) {
+            constructorCaught = reason.length == 0;
+        }
+    }
+
+    function test_constructor_context() public view {
+        require(constructorCaught, "constructor catch missed");
+    }
+
+    function test_error_string() public {
+        try new Targets.RevertString() returns (Targets.RevertString) {
+            revert("deployment succeeded");
+        } catch Error(string memory reason) {
+            require(keccak256(bytes(reason)) == keccak256("first reason"), "changed reason");
+        }
+    }
+
+    function test_custom_error() public {
+        try new Targets.CustomError() returns (Targets.CustomError) {
+            revert("deployment succeeded");
+        } catch (bytes memory reason) {
+            require(bytes4(reason) == Targets.ConstructorError.selector, "wrong custom error");
+        }
+    }
+
+    function test_panic() public {
+        try new Targets.Panic() returns (Targets.Panic) {
+            revert("deployment succeeded");
+        } catch Panic(uint256 code) {
+            require(code == 1, "wrong panic");
+        }
+    }
+
+    function test_empty_revert() public {
+        try new Targets.EmptyRevert() returns (Targets.EmptyRevert) {
+            revert("deployment succeeded");
+        } catch (bytes memory reason) {
+            require(reason.length == 0, "non-empty revert");
+        }
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Targets.sol", &targets.replace("first reason", "second reason"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 5 tests for test/TypedTry.t.sol:TypedTryTest
+[PASS] test_constructor_context() ([GAS])
+[PASS] test_custom_error() ([GAS])
+[PASS] test_empty_revert() ([GAS])
+[FAIL: changed reason] test_error_string() ([GAS])
+[PASS] test_panic() ([GAS])
+Suite result: FAILED. 4 passed; 1 failed; 0 skipped; [ELAPSED]
+...
 "#]]);
-});
+    }
+}
 
 // Test that `type(Contract).creationCode` can be used in view functions.
 // https://github.com/foundry-rs/foundry/issues/13086
-forgetest_init!(preprocess_creation_code_in_view_function, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_creation_code_in_view_function(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2664,10 +3691,11 @@ contract TargetTest is Test {
     );
 
     cmd.args(["build"]).assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16487>
-forgetest_init!(preprocess_custom_layout_contract, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_custom_layout_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
@@ -2706,11 +3734,12 @@ contract TargetTest is Test {
     );
 
     cmd.args(["test"]).assert_success();
-});
+}
 
 // Test that `type(Contract).creationCode` keeps native pure semantics when dynamic linking is
 // enabled.
-forgetest_init!(preprocess_creation_code_in_pure_function, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_creation_code_in_pure_function(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2752,11 +3781,70 @@ contract TargetTest is Test {
     );
 
     cmd.args(["build"]).assert_success();
-});
+}
+
+// Constant initializers must stay native and retain their bytecode dependencies.
+#[forgetest]
+fn preprocess_creation_code_in_constant_initializer(prj: _, cmd: _) {
+    let target = r#"
+contract Target {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_test(
+        "ConstantCode.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract ConstantCodeTest {
+    bytes constant CODE = type(Target).creationCode;
+    bytes32 constant CODE_HASH = keccak256(type(Target).creationCode);
+    bytes32 immutable initialHash = keccak256(type(Target).creationCode);
+
+    function test_constant_code() public {
+        require(CODE_HASH == initialHash, "stale code hash");
+        bytes memory code = CODE;
+        address deployed;
+        assembly { deployed := create(0, add(code, 32), mload(code)) }
+        require(Target(deployed).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+"#]]);
+
+        prj.add_source("Target.sol", &target.replace("111", "222"));
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ConstantCode.t.sol:ConstantCodeTest
+[FAIL: changed value] test_constant_code() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().arg("test").assert_success();
+    }
+}
 
 // Test that `type(Contract).creationCode` keeps native pure semantics when it is used in a
 // modifier body that is applied to a pure function.
-forgetest_init!(preprocess_creation_code_in_modifier_used_by_pure_function, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_creation_code_in_modifier_used_by_pure_function(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2786,4 +3874,1278 @@ contract ModifierCreationCodeTest {
     );
 
     cmd.args(["build"]).assert_success();
-});
+}
+
+// Nested call options are copied verbatim and must retain native dependency edges.
+#[forgetest]
+fn preprocess_nested_deployment_options(prj: _, cmd: _) {
+    let other = r#"
+contract Other {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Other.sol", other);
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Empty { constructor() payable {} }
+contract Target {
+    uint256 public immutable value;
+    constructor(uint256 value_) payable { value = value_; }
+}
+"#,
+    );
+    prj.add_test(
+        "Options.t.sol",
+        r#"
+import {Other} from "../src/Other.sol";
+import {Empty, Target} from "../src/Target.sol";
+contract OptionsTest {
+    function expected() internal pure returns (bytes32) {
+        return keccak256(type(Empty).creationCode);
+    }
+    function test_salt() public {
+        Empty target = new Empty{salt: bytes32(new Other().value())}();
+        address predicted = address(uint160(uint256(keccak256(abi.encodePacked(
+            bytes1(0xff), address(this), bytes32(uint256(111)), expected()
+        )))));
+        require(address(target) == predicted, "changed salt");
+    }
+    function test_value() public {
+        Empty target = new Empty{value: new Other().value()}();
+        require(address(target).balance == 111, "changed value");
+    }
+    function test_arguments() public {
+        Target target = new Target{value: new Other().value()}(new Other().value());
+        require(address(target).balance == 111 && target.value() == 111, "changed arguments");
+    }
+    function test_try() public {
+        try new Target{value: new Other().value()}(42) returns (Target target) {
+            require(address(target).balance == 111, "changed try value");
+        } catch { revert("deployment failed"); }
+    }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Other.sol", other);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Other.sol", &other.replace("return 111", "return 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/Options.t.sol:OptionsTest
+[FAIL: changed arguments] test_arguments() ([GAS])
+[FAIL: changed salt] test_salt() ([GAS])
+[FAIL: changed try value] test_try() ([GAS])
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        cmd.forge_fuse().args(["test", "--force"]).assert_failure();
+    }
+}
+
+// Constructor helper fields use type spans, independent of parameter data-location spelling.
+#[forgetest]
+fn preprocess_constructor_parameter_types(prj: _, cmd: _) {
+    let target = r#"
+contract Target {
+    uint256 public value;
+    constructor(
+        bytes
+        memory
+        a,
+        string/* before */memory/* after */b,
+        uint256[]	memory	c,
+        bytes memory,
+        function(bytes memory) external returns (bytes memory) callback
+    ) {
+        require(a.length == 1 && bytes(b).length == 2 && c.length == 3);
+        require(callback(a).length == 1);
+        value = 111;
+    }
+}
+contract Named {
+    uint256 public value;
+    constructor(bytes/* before */memory/* after */data) {
+        require(data.length == 1);
+        value = 111;
+    }
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Parameters.t.sol",
+        r#"
+import {Target, Named} from "../src/Target.sol";
+contract ParametersTest {
+    function echo(bytes memory data) external pure returns (bytes memory) { return data; }
+    function test_positional() public {
+        Target target = new Target(hex"01", "ab", new uint256[](3), hex"", this.echo);
+        require(target.value() == 111, "changed positional");
+    }
+    function test_named() public {
+        Named target = new Named({data: hex"01"});
+        require(target.value() == 111, "changed named");
+    }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("value = 111", "value = 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Parameters.t.sol:ParametersTest
+[FAIL: changed named] test_named() ([GAS])
+[FAIL: changed positional] test_positional() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        cmd.forge_fuse().args(["test", "--force"]).assert_failure();
+    }
+}
+
+#[forgetest]
+fn preprocess_private_constructor_array_dimensions(prj: _, cmd: _) {
+    let targets = r#"
+contract Nested {
+    uint256 private constant N = 2;
+    constructor(uint256[N][3] memory xs) { require(xs[2][1] == 7); }
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Expression {
+    uint256 private constant N = 2;
+    constructor(uint256[N + 1] memory xs) { require(xs[2] == 7); }
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Unnamed {
+    uint256 private constant N = 2;
+    constructor(uint256[N] memory) {}
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Literal {
+    constructor(uint256[2] memory) {}
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_test(
+        "PrivateDimensions.t.sol",
+        r#"
+import {Expression, Literal, Nested, Unnamed} from "../src/Targets.sol";
+
+contract PrivateDimensionsTest {
+    function test_nested() public {
+        uint256[2][3] memory xs;
+        xs[2][1] = 7;
+        require(new Nested(xs).value() == 111, "changed value");
+    }
+    function test_expression() public {
+        uint256[3] memory xs;
+        xs[2] = 7;
+        require(new Expression(xs).value() == 111, "changed value");
+    }
+    function test_unnamed() public {
+        require(new Unnamed([uint256(1), 2]).value() == 111, "changed value");
+    }
+    function test_literal() public {
+        require(new Literal([uint256(1), 2]).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+
+        prj.add_source("Targets.sol", &targets.replace("111", "222"));
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/PrivateDimensions.t.sol:PrivateDimensionsTest
+[FAIL: changed value] test_expression() ([GAS])
+[FAIL: changed value] test_literal() ([GAS])
+[FAIL: changed value] test_nested() ([GAS])
+[FAIL: changed value] test_unnamed() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+
+        prj.add_source("Targets.sol", targets);
+        cmd.forge_fuse().arg("test").assert_success();
+    }
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test_literal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Traces:
+...
+    ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
+...
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_generated_interface_name_collision(prj: _, cmd: _) {
+    let target = r#"
+contract Target {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_source(
+        "ImportedNames.sol",
+        "interface VmContractHelper2 {} interface VmContractHelper2_ {}",
+    );
+    prj.add_test(
+        "Collision.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+import "../src/ImportedNames.sol";
+
+contract CollisionTest {
+    function test_value() public {
+        require(new Target().value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("return 111", "return 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Collision.t.sol:CollisionTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest]
+fn preprocess_generated_constructor_helper_name_collision(prj: _, cmd: _) {
+    let base = r#"
+contract Base {
+    struct FoundryPpConstructorArgs { uint256 unused; }
+    function encodeArgs0() public pure returns (uint256) { return 0; }
+}
+"#;
+    let target = r#"
+import {Base} from "./Base.sol";
+contract Target is Base {
+    uint256 public value;
+    constructor(uint256, uint256 foundry_pp_ctor_arg1) {
+        value = foundry_pp_ctor_arg1 + 110;
+    }
+}
+contract DeployHelper0 {}
+function encodeArgs0() pure returns (uint256) { return 0; }
+"#;
+    prj.add_source("Base.sol", base);
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Collision.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract DeployHelper0_ {}
+function encodeArgs0_() pure returns (uint256) { return 0; }
+
+contract CollisionTest {
+    function test_value() public {
+        require(new Target(0, 1).value() == 111, "changed value");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Base.sol", base);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("+ 110", "+ 220"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Collision.t.sol:CollisionTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest]
+fn preprocess_try_adapter_name_collision(prj: _, cmd: _) {
+    let target = r#"
+contract Target {
+    function value() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Collision.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract CollisionTest {
+    function addressToTarget1(address target) public pure returns (Target) {
+        return Target(target);
+    }
+
+    function addressToTarget1_(address target) public pure returns (Target) {
+        return Target(target);
+    }
+
+    function test_value() public {
+        try new Target() returns (Target target) {
+            require(target.value() == 111, "changed value");
+        } catch {
+            revert("deployment failed");
+        }
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("return 111", "return 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Collision.t.sol:CollisionTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest]
+fn preprocess_payable_try_adapter(prj: _, cmd: _) {
+    let target = r#"
+contract Target {
+    uint256 public value;
+    constructor(uint256 offset) payable { value = offset + 111; }
+    receive() external payable {}
+}
+"#;
+    prj.add_source("Target.sol", target);
+    prj.add_test(
+        "Payable.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract PayableTest {
+    function test_value() public {
+        try new Target(0) returns (Target target) {
+            require(target.value() == 111, "changed value");
+        } catch {
+            revert("deployment failed");
+        }
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Target.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source("Target.sol", &target.replace("+ 111", "+ 222"));
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Payable.t.sol:PayableTest
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+// Windows filenames cannot contain double quotes.
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_generated_path_string_escaping(prj: _, cmd: _) {
+    let target = r#"
+contract Zero {
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Args {
+    uint256 public value;
+    constructor(uint256 offset) { value = offset + 111; }
+}
+"#;
+    prj.add_source("Quoted\"Path.sol", target);
+    prj.add_test(
+        "Quoted.t.sol",
+        r#"
+import {Zero, Args} from "../src/Quoted\"Path.sol";
+
+contract QuotedTest {
+    function test_zero() public {
+        require(new Zero().value() == 111, "changed zero");
+    }
+
+    function test_args() public {
+        require(new Args(0).value() == 111, "changed args");
+    }
+}
+"#,
+    );
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Quoted\"Path.sol", target);
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source(
+            "Quoted\"Path.sol",
+            &target.replace("+ 111", "+ 222").replace("return 111", "return 222"),
+        );
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Quoted.t.sol:QuotedTest
+[FAIL: changed args] test_args() ([GAS])
+[FAIL: changed zero] test_zero() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+// Windows directory names cannot contain colons.
+#[cfg(unix)]
+#[forgetest]
+fn preprocess_colon_in_artifact_path(prj: _, cmd: _) {
+    let target = r#"
+contract Zero {
+    function value() external pure returns (uint256) { return 111; }
+}
+contract Args {
+    uint256 public value;
+    constructor(uint256 offset) { value = offset + 111; }
+}
+"#;
+    prj.add_source("Colon:Path.sol", target);
+    prj.add_source(
+        "Parsed:Wrong.sol",
+        "contract Parsed { function value() external pure returns (uint256) { return 111; } }",
+    );
+    prj.add_test(
+        "Colon.t.sol",
+        r#"
+import {Zero, Args} from "../src/Colon:Path.sol";
+import {Parsed} from "../src/Parsed:Wrong.sol";
+
+contract ColonTest {
+    function test_zero() public {
+        require(new Zero().value() == 111, "changed zero");
+    }
+
+    function test_args() public {
+        require(new Args(0).value() == 111, "changed args");
+    }
+
+    function test_parseable_identifier() public {
+        require(new Parsed().value() == 111, "changed parsed");
+    }
+
+    function test_running_profile_bytecode() public {
+        require(
+            keccak256(address(new Zero()).code) == keccak256(type(Zero).runtimeCode),
+            "wrong profile bytecode"
+        );
+    }
+}
+"#,
+    );
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "optimized".to_owned(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: Some(true),
+            optimizer_runs: Some(10_000),
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "test/Colon.t.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: Some(10_000),
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
+    });
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        prj.add_source("Colon:Path.sol", target);
+        prj.add_source(
+            "Parsed:Wrong.sol",
+            "contract Parsed { function value() external pure returns (uint256) { return 111; } }",
+        );
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source(
+            "Colon:Path.sol",
+            &target.replace("+ 111", "+ 222").replace("return 111", "return 222"),
+        );
+        prj.add_source(
+            "Parsed:Wrong.sol",
+            "contract Parsed { function value() external pure returns (uint256) { return 222; } }",
+        );
+        cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/Colon.t.sol:ColonTest
+[FAIL: changed args] test_args() ([GAS])
+[FAIL: changed parsed] test_parseable_identifier() ([GAS])
+[PASS] test_running_profile_bytecode() ([GAS])
+[FAIL: changed zero] test_zero() ([GAS])
+Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    }
+}
+
+#[forgetest]
+fn preprocess_create_isolation_boundary(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        r#"
+interface Callback {
+    function read() external view returns (uint256);
+    function write() external;
+}
+contract Target {
+    uint256 public observed;
+    constructor() {
+        observed = Callback(msg.sender).read();
+        Callback(msg.sender).write();
+    }
+}
+"#,
+    );
+    for isolate in [false, true] {
+        prj.update_config(|config| {
+            config.isolate = isolate;
+            config.evm_version = EvmVersion::Cancun;
+        });
+        prj.add_test(
+            "Isolation.t.sol",
+            &format!(
+                r#"
+import {{Target}} from '../src/Target.sol';
+contract IsolationTest {{
+    function read() external view returns (uint256 n) {{ assembly {{ n := tload(0) }} }}
+    function write() external {{ assembly {{ tstore(0, 22) }} }}
+    function test_create() public {{
+        assembly {{ tstore(0, 11) }}
+        Target target = new Target();
+        require(target.observed() == {}, "constructor boundary");
+        uint256 n;
+        assembly {{ n := tload(0) }}
+        require(n == {}, "outer boundary");
+    }}
+    function test_create2() public {{
+        assembly {{ tstore(0, 11) }}
+        Target target = new Target{{salt: bytes32(uint256(7))}}();
+        require(target.observed() == 11, "salted constructor boundary");
+        uint256 n;
+        assembly {{ n := tload(0) }}
+        require(n == 22, "salted outer boundary");
+    }}
+}}
+"#,
+                if isolate { 0 } else { 11 },
+                if isolate { 11 } else { 22 },
+            ),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Isolation.t.sol:IsolationTest
+[PASS] test_create() ([GAS])
+[PASS] test_create2() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+        }
+    }
+    // Confirm the isolation regression exercised a rewritten CREATE and balanced nested traces.
+    cmd.forge_fuse()
+        .args(["test", "--match-test", r"^test_create\(", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Isolation.t.sol:IsolationTest
+[PASS] test_create() ([GAS])
+Traces:
+  [[..]] IsolationTest::test_create()
+    ├─ [0] VM::deployCode("src/Target.sol:Target")
+    │   ├─ [[..]] → new Target@[..]
+    │   │   ├─ [[..]] IsolationTest::read() [staticcall]
+    │   │   │   └─ ← [Return] 0
+    │   │   ├─ [[..]] IsolationTest::write()
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return] [..] bytes of code
+    │   └─ ← [Return] Target: [..]
+    ├─ [[..]] Target::observed() [staticcall]
+    │   └─ ← [Return] 0
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}
+
+#[forgetest]
+fn preprocess_constructor_validation(prj: _, cmd: _) {
+    // These constraints would disappear with the original new-expression. Solc must reject
+    // exactly the same source in both modes, including implicit and explicit constructors.
+    for (target, expression) in [
+        ("contract Target {}", "new Target(7)"),
+        ("contract Target {}", "new Target({oops: 7})"),
+        ("contract Target { constructor() {} }", "new Target(7)"),
+        ("contract Target {}", "new Target{gas: 100000}()"),
+        ("contract Target {}", "new Target{value: 0}()"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target{gas: 100000}(7)"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target{value: 0}(7)"),
+        ("contract Target { constructor(uint256 x) {} }", "new Target({oops: 7})"),
+        ("contract Target { constructor(uint256 x, uint256 y) {} }", "new Target({x: 7, x: 8})"),
+        ("library Target {}", "new Target()"),
+        ("abstract contract Target { function f() external virtual; }", "new Target()"),
+    ] {
+        prj.add_source("Target.sol", target);
+        prj.add_test(
+            "Invalid.t.sol",
+            &format!(
+                "import '../src/Target.sol'; contract InvalidTest {{ function test_invalid() public {{ {expression}; }} }}"
+            ),
+        );
+        prj.update_config(|config| config.dynamic_test_linking = false);
+        let native = cmd
+            .forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        prj.update_config(|config| config.dynamic_test_linking = true);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+    }
+}
+
+#[forgetest]
+fn preprocess_constructor_abi_coder_validation(prj: _, cmd: _) {
+    // Encoding in the generated helper must not bypass the caller's ABI-coder restrictions.
+    for (parameters, arguments) in
+        [("S memory s", "Target.S(7)"), ("uint256[][] memory xs", "new uint256[][](0)")]
+    {
+        prj.add_source(
+            "Target.sol",
+            &format!(
+                "pragma abicoder v2; contract Target {{ struct S {{ uint256 n; }} constructor({parameters}) {{}} }}"
+            ),
+        );
+        for pragma in
+            ["pragma abicoder v1;", "pragma abicoder v2;", "pragma experimental ABIEncoderV2;"]
+        {
+            prj.add_test(
+                "Coder.t.sol",
+                &format!(
+                    "{pragma} import '../src/Target.sol'; contract CoderTest {{ function test_construct() public {{ new Target({arguments}); }} }}"
+                ),
+            );
+            prj.update_config(|config| config.dynamic_test_linking = false);
+            if pragma == "pragma abicoder v1;" {
+                let native = cmd
+                    .forge_fuse()
+                    .args(["build", "--force"])
+                    .assert_failure()
+                    .get_output()
+                    .stderr
+                    .clone();
+                prj.update_config(|config| config.dynamic_test_linking = true);
+                cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+            } else {
+                cmd.forge_fuse().args(["test", "--force"]).assert_success();
+                prj.update_config(|config| config.dynamic_test_linking = true);
+                cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            }
+        }
+    }
+}
+
+#[forgetest]
+fn preprocess_constructor_abi_v1_native_cache(prj: _, cmd: _) {
+    prj.add_test(
+        "Coder.t.sol",
+        r#"
+pragma abicoder v1;
+import "../src/Target.sol";
+contract CoderTest {
+    function test_construct() public {
+        require(new Target(7).value() == 7, "stale constructor");
+    }
+}
+"#,
+    );
+    for dynamic in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic);
+        prj.add_source(
+            "Target.sol",
+            "contract Target { uint256 public value; constructor(uint256 n) { value = n; } }",
+        );
+        cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        cmd.forge_fuse().arg("test").assert_success();
+        prj.add_source(
+            "Target.sol",
+            "contract Target { uint256 public value; constructor(uint256 n) { value = n + 1; } }",
+        );
+        for force in [false, true] {
+            cmd.forge_fuse().arg("test");
+            if force {
+                cmd.arg("--force");
+            }
+            cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale constructor] test_construct() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+        }
+    }
+}
+
+#[forgetest]
+fn preprocess_constructor_evm_version_validation(prj: _, cmd: _) {
+    // The compilation target controls CREATE2 validation, independently of runtime settings.
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 28)));
+    });
+    prj.add_source("Target.sol", "pragma solidity ^0.8.0; contract Target {}");
+    for (evm_version, salt, valid) in [
+        (EvmVersion::Byzantium, "{salt: bytes32(0)}", false),
+        (EvmVersion::Byzantium, "", true),
+        (EvmVersion::Constantinople, "{salt: bytes32(0)}", true),
+    ] {
+        prj.add_test(
+            "Version.t.sol",
+            &format!("pragma solidity ^0.8.0; import '../src/Target.sol'; contract VersionTest {{ function test_construct() public {{ new Target{salt}(); }} }}"),
+        );
+        prj.update_config(|config| {
+            config.evm_version = evm_version;
+            config.dynamic_test_linking = false;
+        });
+        if valid {
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            prj.update_config(|config| config.dynamic_test_linking = true);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+        } else {
+            let native = cmd
+                .forge_fuse()
+                .args(["build", "--force"])
+                .assert_failure()
+                .get_output()
+                .stderr
+                .clone();
+            prj.update_config(|config| config.dynamic_test_linking = true);
+            cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
+        }
+    }
+}
+
+#[forgetest]
+fn preprocess_return_data_observation(prj: _, cmd: _) {
+    prj.add_source("Target.sol", "contract Target {}");
+    // Each case has its own contract and helper source, so another observer cannot mask a
+    // discovery failure. Abstract bases keep inherited tests in the derived suite only.
+    for (case, helper, declarations) in [
+        (
+            "create",
+            "",
+            r#"
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "create buffer");
+    }
+}"#,
+        ),
+        (
+            "namespace_create2",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import * as Observe from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target{salt: bytes32(uint256(7))}();
+        require(Observe.size() == 0, "create2 buffer");
+    }
+}"#,
+        ),
+        (
+            "inherited_producer",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import * as Observe from '../src/Observe.sol';
+abstract contract Base { function make() internal { new Target(); } }
+contract ReturnDataTest is Base {
+    function test_return_data() public {
+        make();
+        require(Observe.size() == 0, "inherited producer buffer");
+    }
+}"#,
+        ),
+        (
+            "inherited_observer",
+            "",
+            r#"
+abstract contract Base {
+    function make() internal virtual;
+    function test_return_data() public {
+        make();
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "inherited observer buffer");
+    }
+}
+contract ReturnDataTest is Base {
+    function make() internal override { new Target(); }
+}"#,
+        ),
+        (
+            "using_initializer",
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using Reader for uint256;
+    Target target = new Target();
+    uint256 observed = uint256(0).size();
+    function test_return_data() public view {
+        require(observed == 0, "initializer buffer");
+    }
+}"#,
+        ),
+        (
+            "using_function",
+            "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using {size} for uint256;
+    function test_return_data() public {
+        new Target();
+        require(uint256(0).size() == 0, "using function buffer");
+    }
+}"#,
+        ),
+        (
+            "aliased_using",
+            "function size(uint256) view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size as readSize} from '../src/Observe.sol';
+contract ReturnDataTest {
+    using {readSize} for uint256;
+    function test_return_data() public {
+        new Target();
+        require(uint256(0).readSize() == 0, "aliased using function buffer");
+    }
+}"#,
+        ),
+        (
+            "library",
+            "library Reader { function size(uint256) internal view returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Reader.size(0) == 0, "library buffer");
+    }
+}"#,
+        ),
+        (
+            "parenthesized_library",
+            "library Reader { function size() internal pure returns (uint256 n) { assembly { n := returndatasize() } } }",
+            r#"
+import {Reader} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require((Reader).size() == 0, "parenthesized library buffer");
+    }
+}"#,
+        ),
+        (
+            "unary_operator",
+            "type Word is uint256; using {size as -} for Word global; function size(Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+            r#"
+import {Word} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Word.unwrap(-Word.wrap(0)) == 0, "unary operator buffer");
+    }
+}"#,
+        ),
+        (
+            "binary_operator",
+            "type Word is uint256; using {size as +} for Word global; function size(Word, Word) pure returns (Word) { uint256 n; assembly { n := returndatasize() } return Word.wrap(n); }",
+            r#"
+import {Word} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        new Target();
+        require(Word.unwrap(Word.wrap(0) + Word.wrap(0)) == 0, "binary operator buffer");
+    }
+}"#,
+        ),
+        (
+            "creation_code",
+            "",
+            r#"
+contract ReturnDataTest {
+    function ping() external pure returns (uint256) { return 77; }
+    function test_return_data() public {
+        this.ping();
+        bytes memory code = type(Target).creationCode;
+        uint256 value;
+        assembly { returndatacopy(0, 0, 32) value := mload(0) }
+        require(code.length > 0 && value == 77, "creation code buffer");
+    }
+}"#,
+        ),
+        (
+            "modifier",
+            "",
+            r#"
+contract ReturnDataTest {
+    modifier check() {
+        _;
+        uint256 n;
+        assembly { n := returndatasize() }
+        require(n == 0, "modifier buffer");
+    }
+    function test_return_data() public check { new Target(); }
+}"#,
+        ),
+        (
+            "function_pointer",
+            "function size() view returns (uint256 n) { assembly { n := returndatasize() } }",
+            r#"
+import {size} from '../src/Observe.sol';
+contract ReturnDataTest {
+    function test_return_data() public {
+        function() internal view returns (uint256) observe = size;
+        new Target();
+        require(observe() == 0, "function pointer buffer");
+    }
+}"#,
+        ),
+    ] {
+        prj.add_source("Observe.sol", helper);
+        prj.add_test(
+            "ReturnData.t.sol",
+            &format!("import '../src/Target.sol'; {declarations}")
+                .replace("test_return_data", &format!("test_{case}")),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success().stdout_eq(format!(
+                r#"...
+Ran 1 test for test/ReturnData.t.sol:ReturnDataTest
+[PASS] test_{case}() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+"#
+            ));
+        }
+    }
+}
+
+#[forgetest]
+fn preprocess_inline_verbatim_diagnostics(prj: _, cmd: _) {
+    prj.add_source("Target.sol", "contract Target {}");
+    for expression in ["let n := verbatim_0i_1o(hex\"3d\")", "verbatim_3i_0o(hex\"3e\", 0, 0, 0)"] {
+        prj.add_test(
+            "Verbatim.t.sol",
+            &format!("import '../src/Target.sol'; contract VerbatimTest {{ function test_verbatim() public {{ new Target(); assembly {{ {expression} }} }} }}"),
+        );
+        prj.update_config(|config| config.dynamic_test_linking = false);
+        let native = cmd
+            .forge_fuse()
+            .args(["build", "--force"])
+            .assert_failure()
+            .get_output()
+            .stderr
+            .clone();
+        prj.update_config(|config| config.dynamic_test_linking = true);
+        let mut expected = b"Warning: dynamic test linking disabled for 1 files: error: unsupported verbatim builtin\n".to_vec();
+        expected.extend(native);
+        cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
+    }
+}
+
+#[forgetest]
+fn preprocess_imported_constant_dependencies(prj: _, cmd: _) {
+    let target =
+        "contract Target { function value() external pure returns (uint256) { return 11; } }";
+    for (import, value) in [
+        ("import {CODE} from '../src/Constants.sol';", "CODE"),
+        ("import {CODE as ALIAS} from '../src/Constants.sol';", "ALIAS"),
+        ("import {ALIAS} from '../src/Constants.sol';", "ALIAS"),
+        ("import * as Constants from '../src/Constants.sol';", "Constants.CODE"),
+    ] {
+        prj.add_source(
+            "Constants.sol",
+            "import './Target.sol'; bytes constant CODE = type(Target).creationCode; bytes constant ALIAS = CODE;",
+        );
+        prj.add_test(
+            "Constants.t.sol",
+            &format!(
+                r#"
+{import}
+import {{Target}} from '../src/Target.sol';
+contract ConstantsTest {{
+    function test_value() public {{
+        bytes memory code = {value};
+        address deployed;
+        assembly {{ deployed := create(0, add(code, 32), mload(code)) }}
+        require(Target(deployed).value() == 11, "value");
+    }}
+}}
+"#
+            ),
+        );
+        for dynamic in [false, true] {
+            prj.update_config(|config| config.dynamic_test_linking = dynamic);
+            prj.add_source("Target.sol", target);
+            cmd.forge_fuse().args(["test", "--force"]).assert_success();
+            cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Constants.t.sol:ConstantsTest
+[PASS] test_value() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+            prj.add_source("Target.sol", &target.replace("11", "22"));
+            for force in [false, true] {
+                cmd.forge_fuse().arg("test");
+                if force {
+                    cmd.arg("--force");
+                }
+                cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Constants.t.sol:ConstantsTest
+[FAIL: value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+            }
+            prj.add_source("Target.sol", target);
+            cmd.forge_fuse().arg("test").assert_success();
+        }
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17220>
+#[forgetest]
+fn filtered_tests_preserve_cyclic_import_order(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.evm_version = EvmVersion::Cancun;
+    });
+    prj.add_test(
+        "helpers/Base.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Derived.sol";
+contract Base {}
+"#,
+    );
+    prj.add_test(
+        "helpers/Derived.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./Base.sol";
+contract Derived is Base {}
+"#,
+    );
+    // This root makes solc visit Derived before Base. Dropping it reverses traversal of the
+    // import cycle and produces error 2449, even though inheritance itself is acyclic.
+    prj.add_test(
+        "Anchor.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+import "./helpers/Derived.sol";
+contract Anchor {
+    function testOther() public pure { revert("must remain filtered out"); }
+}
+"#,
+    );
+    prj.add_test(
+        "Selected.t.sol",
+        r#"
+pragma solidity ^0.8.24;
+contract Selected {
+    function testSelected() public pure {}
+}
+"#,
+    );
+    // Test compilation should continue to omit unrelated scripts, including on retry.
+    prj.add_raw_script("Broken.s.sol", "this is not valid Solidity");
+
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        for filter in [
+            ["--match-test", "testSelected"],
+            ["--match-contract", "Selected"],
+            ["--match-path", "test/Selected.t.sol"],
+        ] {
+            cmd.forge_fuse().args(["test", "--force"]).args(filter).assert_success().stdout_eq(
+                str![[r#"
+...
+Ran 1 test for test/Selected.t.sol:Selected
+[PASS] testSelected() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+            );
+            // Reusing the artifacts from the retry must preserve the test selection.
+            cmd.forge_fuse().args(["test"]).args(filter).assert_success();
+        }
+
+        cmd.forge_fuse()
+            .args(["test", "--force", "--match-test", "^__nomatch__$", "--json"])
+            .assert_empty_stdout();
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17222>
+#[forgetest]
+fn preprocess_analysis_fallback_uses_import_invalidation(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));
+        config.evm_version = EvmVersion::Istanbul;
+        config.lint.lint_on_build = false;
+    });
+    let implementation = "pragma solidity 0.6.12; contract Impl { function value() external pure returns (uint256) { return 111; } }";
+    prj.add_raw_source("Impl.sol", implementation);
+    prj.add_raw_source(
+        "Middle.sol",
+        "pragma solidity 0.6.12; import './Impl.sol'; contract Middle is Impl {}",
+    );
+    prj.add_raw_source("Unrelated.sol", "pragma solidity 0.6.12; contract Unrelated {}");
+    let test = r#"
+pragma solidity 0.6.12;
+import "../src/Middle.sol";
+contract FallbackTest {
+    // Valid in solc 0.6.12, but unavailable in Solar's analysis.
+    uint256 timestamp = now;
+    function test_fallback() public {
+        require(new Middle().value() == 111, "stale fallback bytecode");
+    }
+}
+"#;
+    prj.add_raw_test("Fallback.t.sol", test);
+    prj.add_raw_test(
+        "Independent.t.sol",
+        "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} }",
+    );
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 2 files: error: unresolved symbol `now`
+
+"#]]);
+
+    prj.add_raw_source("Unrelated.sol", "pragma solidity 0.6.12; contract Unrelated {} // edit");
+    cmd.forge_fuse()
+        .arg("build")
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![""]);
+
+    prj.add_raw_test("Independent.t.sol", "pragma solidity 0.6.12; contract IndependentTest { function test_independent() public pure {} } // edit");
+    cmd.forge_fuse()
+        .arg("build")
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+Compiling 1 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![""]);
+
+    prj.add_raw_source("Impl.sol", &implementation.replace("return 111", "return 222"));
+    cmd.forge_fuse()
+        .arg("test")
+        .with_no_redact()
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Compiling 3 files with Solc 0.6.12
+Solc 0.6.12 finished in [..]
+Compiler run successful!
+...
+[FAIL: stale fallback bytecode] test_fallback() ([..])
+...
+"#]])
+        .stderr_eq(str![[r#"
+Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
+
+"#]]);
+}

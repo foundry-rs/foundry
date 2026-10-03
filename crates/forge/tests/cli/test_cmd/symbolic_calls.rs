@@ -4,7 +4,8 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
 
-forgetest_init!(symbolic_call_contains_invalid_child_halt, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_contains_invalid_child_halt(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_contains_invalid_child_halt because z3 is not available"
@@ -39,9 +40,10 @@ contract SymbolicInvalidChildCall {
     );
 
     cmd.args(["test", "--symbolic", "--match-test", "checkInvalidChildCall"]).assert_success();
-});
+}
 
-forgetest_init!(symbolic_assume_no_revert_does_not_prune_invalid_child_halt, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_assume_no_revert_does_not_prune_invalid_child_halt(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_assume_no_revert_does_not_prune_invalid_child_halt because z3 is not available"
@@ -85,9 +87,10 @@ contract SymbolicAssumeNoRevertInvalidChild is Test {
 [FAIL: assertion failed; counterexample:
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_calldataload_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_calldataload_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_calldataload_accepts_symbolic_offset because z3 is not available"
@@ -129,9 +132,10 @@ contract SymbolicCalldataLoad {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLDATALOAD offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_calldatacopy_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_calldatacopy_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_symbolic_offset because z3 is not available"
@@ -174,9 +178,10 @@ contract SymbolicCalldataCopy {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLDATACOPY offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_calldatacopy_accepts_symbolic_dest, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_calldatacopy_accepts_symbolic_dest(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_symbolic_dest because z3 is not available"
@@ -216,9 +221,10 @@ contract SymbolicCalldataCopyDest {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLDATACOPY dest"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_calldatacopy_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_calldatacopy_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_bounded_symbolic_size because z3 is not available"
@@ -264,9 +270,10 @@ contract SymbolicCalldataCopySize {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLDATACOPY size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_calldatacopy_accepts_symbolic_dest_and_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_calldatacopy_accepts_symbolic_dest_and_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_symbolic_dest_and_size because z3 is not available"
@@ -311,9 +318,10 @@ contract SymbolicCalldataCopyDestAndSize {
     );
     assert!(!stdout.contains("symbolic CALLDATACOPY dest"), "{stdout}");
     assert!(!stdout.contains("symbolic CALLDATACOPY size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_call_accepts_symbolic_input_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_accepts_symbolic_input_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_symbolic_input_offset because z3 is not available"
@@ -371,9 +379,10 @@ contract SymbolicCallInputOffset {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL input offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_call_accepts_bounded_symbolic_output_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_accepts_bounded_symbolic_output_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_bounded_symbolic_output_size because z3 is not available"
@@ -431,9 +440,10 @@ contract SymbolicCallOutputSize {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL output size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_call_accepts_bounded_symbolic_input_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_accepts_bounded_symbolic_input_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_bounded_symbolic_input_size because z3 is not available"
@@ -491,9 +501,10 @@ contract SymbolicCallInputSize {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL input size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_executes_typed_external_call, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_executes_typed_external_call(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_executes_typed_external_call because z3 is not available"
@@ -543,9 +554,10 @@ checkExternal(uint256)
 "#]],
     );
     assert!(!stdout.contains("unsupported symbolic execution feature: external CALL"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_executes_low_level_external_call, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_executes_low_level_external_call(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_executes_low_level_external_call because z3 is not available"
@@ -599,9 +611,10 @@ checkLowLevel(uint256)
 "#]],
     );
     assert!(!stdout.contains("unsupported symbolic execution feature: external CALL"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_external_call_with_symbolic_selector_finds_backdoor, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_external_call_with_symbolic_selector_finds_backdoor(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_symbolic_selector_finds_backdoor because z3 is not available"
@@ -666,9 +679,10 @@ args=
 "#]],
     );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_external_call_with_symbolic_target_finds_backdoor, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_external_call_with_symbolic_target_finds_backdoor(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_symbolic_target_finds_backdoor because z3 is not available"
@@ -740,9 +754,95 @@ args=
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL target outside known contracts"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_external_call_with_single_known_target_auto_expands, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_target_explores_mock_mismatch(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_call_target_explores_mock_mismatch because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicTargetMockMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RealToken {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract FiveToken {
+    function balanceOf(address) external pure returns (uint256) {
+        return 5;
+    }
+}
+
+contract SymbolicTargetMockMismatch is Test {
+    RealToken real;
+    FiveToken five;
+
+    function setUp() public {
+        real = new RealToken();
+        five = new FiveToken();
+    }
+
+    // The mock only covers `balanceOf(user)`; for `user != this` the real code answers 7.
+    function checkMockedSymbolicTargetMayMiss(address callee, address user) public {
+        vm.assume(callee == address(real) || callee == address(five));
+        vm.mockCall(
+            address(real),
+            abi.encodeWithSelector(RealToken.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        assert(RealToken(callee).balanceOf(address(this)) == 5);
+    }
+
+    function checkMockedSymbolicTargetAlwaysHits(address callee) public {
+        vm.assume(callee == address(real) || callee == address(five));
+        vm.mockCall(
+            address(real),
+            abi.encodeWithSelector(RealToken.balanceOf.selector, address(this)),
+            abi.encode(uint256(5))
+        );
+        assert(RealToken(callee).balanceOf(address(this)) == 5);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicTargetMockMismatch"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockedSymbolicTargetMayMiss(address,address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockedSymbolicTargetAlwaysHits(address)
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn symbolic_external_call_with_single_known_target_auto_expands(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_single_known_target_auto_expands because z3 is not available"
@@ -793,21 +893,20 @@ contract SymbolicTargetDefaultAuto is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
-});
+}
 
-forgetest_init!(
-    symbolic_external_call_with_unbounded_symbolic_target_requires_config,
-    |prj, cmd| {
-        if !z3_available() {
-            let _ = sh_eprintln!(
-                "skipping symbolic_external_call_with_unbounded_symbolic_target_requires_config because z3 is not available"
-            );
-            return;
-        }
+#[forgetest_init]
+fn symbolic_external_call_with_unbounded_symbolic_target_requires_config(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_external_call_with_unbounded_symbolic_target_requires_config because z3 is not available"
+        );
+        return;
+    }
 
-        prj.add_test(
-            "SymbolicTargetDefaultOff.t.sol",
-            r#"
+    prj.add_test(
+        "SymbolicTargetDefaultOff.t.sol",
+        r#"
 contract SymbolicTargetDefaultOff {
     function checkTarget(address target) public {
         (bool ok,) = target.call("");
@@ -815,24 +914,24 @@ contract SymbolicTargetDefaultOff {
     }
 }
 "#,
-        );
+    );
 
-        let stdout = cmd
-            .args(["test", "--symbolic", "--match-test", "checkTarget"])
-            .assert_failure()
-            .get_output()
-            .stdout_lossy();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkTarget"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
 
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
 symbolic CALL target
 "#]],
-        );
-    }
-);
+    );
+}
 
-forgetest_init!(symbolic_external_call_with_empty_unknown_target_is_modeled, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_external_call_with_empty_unknown_target_is_modeled(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_empty_unknown_target_is_modeled because z3 is not available"
@@ -891,9 +990,10 @@ contract SymbolicUnboundedTarget is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL target outside known contracts"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_delegatecall_with_symbolic_target_executes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_delegatecall_with_symbolic_target_executes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_delegatecall_with_symbolic_target_executes because z3 is not available"
@@ -959,9 +1059,10 @@ checkDelegateTarget(address,uint256)
 "#]],
     );
     assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_external_unknown_selector_returns_call_failure, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_external_unknown_selector_returns_call_failure(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_external_unknown_selector_returns_call_failure because z3 is not available"
@@ -1010,9 +1111,10 @@ contract SymbolicUnknownSelector {
 "#]],
     );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_svm_create_bytes4_can_drive_selector_dispatch, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_svm_create_bytes4_can_drive_selector_dispatch(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_svm_create_bytes4_can_drive_selector_dispatch because z3 is not available"
@@ -1067,9 +1169,10 @@ contract SymbolicSvmBytes4Selector {
 "#]],
     );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_svm_create_calldata_generates_bounded_dispatch, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_svm_create_calldata_generates_bounded_dispatch(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_svm_create_calldata_generates_bounded_dispatch because z3 is not available"
@@ -1131,9 +1234,10 @@ contract SymbolicSvmCreateCalldata {
 "#]],
     );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_external_require_is_call_failure, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_external_require_is_call_failure(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_external_require_is_call_failure because z3 is not available"
@@ -1185,9 +1289,10 @@ contract SymbolicExternalRequire {
 "#]],
     );
     assert!(!stdout.contains("unsupported symbolic execution feature: external CALL"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_staticcall_rejects_storage_write, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_staticcall_rejects_storage_write(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_staticcall_rejects_storage_write because z3 is not available"
@@ -1235,9 +1340,10 @@ contract SymbolicStaticCall {
 [PASS] checkStatic(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_static_call_splits_symbolic_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_static_call_splits_symbolic_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_static_call_splits_symbolic_value because z3 is not available"
@@ -1294,9 +1400,10 @@ contract SymbolicStaticCallValue is Test {
 [PASS] checkStaticCallValue(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_delegatecall_writes_caller_storage, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_delegatecall_writes_caller_storage(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_delegatecall_writes_caller_storage because z3 is not available"
@@ -1346,9 +1453,10 @@ contract SymbolicDelegateCall {
 [PASS] checkDelegate(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_call_transfers_value_and_checks_balance, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_transfers_value_and_checks_balance(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_transfers_value_and_checks_balance because z3 is not available"
@@ -1399,9 +1507,10 @@ contract SymbolicValueCall is Test {
 [PASS] checkValueTransfer()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_call_accepts_symbolic_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_accepts_symbolic_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_symbolic_value because z3 is not available"
@@ -1461,9 +1570,10 @@ contract SymbolicValueCall is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic external CALL value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_call_splits_symbolic_insufficient_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_call_splits_symbolic_insufficient_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_call_splits_symbolic_insufficient_value because z3 is not available"
@@ -1514,9 +1624,10 @@ contract SymbolicInsufficientValueCall is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic external CALL value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_callcode_accepts_symbolic_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_callcode_accepts_symbolic_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_callcode_accepts_symbolic_value because z3 is not available"
@@ -1665,4 +1776,4 @@ contract SymbolicCallcodeValue is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
-});
+}

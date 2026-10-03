@@ -6,7 +6,7 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256, map::AddressHashMap};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
@@ -281,9 +281,7 @@ impl Cheatcode for eth_getLogsCall {
             bail!("topics array must contain at most 4 elements")
         }
 
-        let url =
-            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
+        let provider = active_fork_provider(ccx)?;
         let mut filter = Filter::new().address(*target).from_block(from_block).to_block(to_block);
         for (i, &topic) in topics.iter().enumerate() {
             filter.topics[i] = topic.into();
@@ -311,11 +309,41 @@ impl Cheatcode for eth_getLogsCall {
     }
 }
 
+impl Cheatcode for eth_getProofCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, slots, blockNumber } = self;
+        let block_number = u64::try_from(blockNumber)
+            .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
+
+        let provider = active_fork_provider(ccx)?;
+        let proof = foundry_common::block_on(async move {
+            provider.get_proof(*target, slots.clone()).number(block_number).await
+        })
+        .map_err(|e| fmt_err!("failed to get proof: {e}"))?;
+
+        let storage_proof = proof
+            .storage_proof
+            .into_iter()
+            .map(|p| EthStorageProof { key: p.key.as_b256(), value: p.value, proof: p.proof })
+            .collect();
+
+        Ok(EthGetProof {
+            account: proof.address,
+            balance: proof.balance,
+            codeHash: proof.code_hash,
+            nonce: proof.nonce,
+            storageHash: proof.storage_hash,
+            accountProof: proof.account_proof,
+            storageProof: storage_proof,
+        }
+        .abi_encode())
+    }
+}
+
 impl Cheatcode for getRawBlockHeaderCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blockNumber } = self;
-        let url = ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork"))?;
-        let provider = ProviderBuilder::<AnyNetwork>::new(&url).build()?;
+        let provider = active_fork_provider(ccx)?;
         let block_number = u64::try_from(blockNumber)
             .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
         let block =
@@ -409,7 +437,13 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
     evm_opts.fork_retries = rpc_endpoint.config.retries;
     evm_opts.fork_retry_backoff = rpc_endpoint.config.retry_backoff;
     if let Some(Ok(auth)) = rpc_endpoint.auth {
-        evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
+        let fork_headers = Some(vec![format!("Authorization: {auth}")]);
+        // The cached identity was discovered with other credentials, which may reach another
+        // backend behind the same URL.
+        if evm_opts.fork_headers != fork_headers {
+            evm_opts.fork_endpoint = None;
+        }
+        evm_opts.fork_headers = fork_headers;
     }
     let fork = CreateFork {
         enable_caching: !ccx.state.config.no_storage_caching
@@ -495,6 +529,10 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
     target_fork_id: Option<LocalForkId>,
 ) {
     let active_fork_id = ccx.ecx.db().active_fork_id();
+    let rolled_fork_id = target_fork_id.or(active_fork_id);
+    if let Some(overrides) = ccx.state.env_overrides.get_mut(&rolled_fork_id) {
+        overrides.implicit_basefee = None;
+    }
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.ecx.db().active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
@@ -529,6 +567,16 @@ fn transact<FEN: FoundryEvmNetwork>(
 // https://github.com/foundry-rs/foundry/issues/8004
 fn persist_caller<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
     ccx.ecx.db_mut().add_persistent_account(ccx.caller);
+}
+
+/// Returns a provider for the active fork, configured with the RPC options the fork was created
+/// with (e.g. auth headers, retries and timeouts).
+fn active_fork_provider<FEN: FoundryEvmNetwork>(
+    ccx: &CheatsCtxt<'_, '_, FEN>,
+) -> Result<RootProvider<AnyNetwork>> {
+    let fork =
+        ccx.ecx.db().active_fork_options().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+    Ok(fork.evm_opts.fork_provider_with_url(&fork.url)?)
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.

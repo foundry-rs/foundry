@@ -59,7 +59,7 @@ async fn unknown_block_transaction_count_is_none() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
     let genesis_balance = handle.genesis_balance();
@@ -67,6 +67,19 @@ async fn can_dev_get_balance() {
         let balance = provider.get_balance(acc).await.unwrap();
         assert_eq!(balance, genesis_balance);
     }
+
+    let address = handle.genesis_accounts().next().unwrap();
+    let db = api.backend.get_db().write().await;
+    let mut first = Box::pin(api.anvil_add_balance(address, U256::from(1)));
+    let mut second = Box::pin(api.anvil_add_balance(address, U256::from(2)));
+    assert!(futures::poll!(first.as_mut()).is_pending());
+    assert!(futures::poll!(second.as_mut()).is_pending());
+    drop(db);
+
+    let (first, second) = join!(first, second);
+    first.unwrap();
+    second.unwrap();
+    assert_eq!(provider.get_balance(address).await.unwrap(), genesis_balance + U256::from(3));
 }
 
 #[tokio::test(flavor = "multi_thread")]

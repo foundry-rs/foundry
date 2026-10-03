@@ -4,7 +4,8 @@ use super::*;
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 
-casttest!(browser_wallet_commands_expose_browser_option, |_prj, cmd| {
+#[casttest]
+fn browser_wallet_commands_expose_browser_option(cmd: _) {
     for (name, args) in [
         ("call", &["call", "--help"][..]),
         ("estimate", &["estimate", "--help"]),
@@ -18,10 +19,11 @@ casttest!(browser_wallet_commands_expose_browser_option, |_prj, cmd| {
             "expected {name} help to expose --browser:\n{output}"
         );
     }
-});
+}
 
 // tests that we can create a new wallet
-casttest!(new_wallet, |_prj, cmd| {
+#[casttest]
+fn new_wallet(cmd: _) {
     cmd.args(["wallet", "new"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -34,10 +36,11 @@ Successfully created new keypair.
 [PRIVATE_KEY]
 
 "#]]);
-});
+}
 
 // tests that we can create a new wallet (verbose variant)
-casttest!(new_wallet_verbose, |_prj, cmd| {
+#[casttest]
+fn new_wallet_verbose(cmd: _) {
     cmd.args(["wallet", "new", "-v"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -51,42 +54,41 @@ Successfully created new keypair.
 [PRIVATE_KEY]
 
 "#]]);
-});
+}
 
 // tests that the machine-readable stdout record is omitted on an interactive terminal, where it
 // would duplicate the stderr prose
-casttest!(
-    #[cfg(unix)]
-    new_wallet_tty_omits_stdout_record,
-    |_prj, _cmd| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
-        command.env("NO_COLOR", "1").env("TERM", "dumb").args(["wallet", "new"]);
+#[test]
+#[cfg(unix)]
+fn new_wallet_tty_omits_stdout_record() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+    command.env("NO_COLOR", "1").env("TERM", "dumb").args(["wallet", "new"]);
 
-        let mut session = spawn_with_options(
-            command,
-            Options {
-                timeout_ms: Some(30_000),
-                strip_ansi_escape_codes: true,
-                encoding: Encoding::UTF8,
-            },
-        )
-        .unwrap();
+    let mut session = spawn_with_options(
+        command,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
 
-        session.exp_string("Successfully created new keypair.").unwrap();
-        session.exp_string("Address:").unwrap();
-        session.exp_string("Private key: 0x").unwrap();
-        // Only the private key value may follow; the `address\tprivate_key` record must not be
-        // printed to a tty.
-        let rest = session.exp_eof().unwrap();
-        assert!(
-            !rest.contains("0x") && !rest.contains('\t'),
-            "unexpected stdout record on tty: {rest:?}"
-        );
-    }
-);
+    session.exp_string("Successfully created new keypair.").unwrap();
+    session.exp_string("Address:").unwrap();
+    session.exp_string("Private key: 0x").unwrap();
+    // Only the private key value may follow; the `address\tprivate_key` record must not be
+    // printed to a tty.
+    let rest = session.exp_eof().unwrap();
+    assert!(
+        !rest.contains("0x") && !rest.contains('\t'),
+        "unexpected stdout record on tty: {rest:?}"
+    );
+}
 
 // tests that we can create a new wallet with json output
-casttest!(new_wallet_json, |_prj, cmd| {
+#[casttest]
+fn new_wallet_json(cmd: _) {
     cmd.args(["wallet", "new", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {
@@ -106,10 +108,11 @@ casttest!(new_wallet_json, |_prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that `--json -v` does not alter stdout (verbosity is stderr-only)
-casttest!(new_wallet_json_verbose, |_prj, cmd| {
+#[casttest]
+fn new_wallet_json_verbose(cmd: _) {
     cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
 {
@@ -129,10 +132,11 @@ casttest!(new_wallet_json_verbose, |_prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that `cast wallet address --json` wraps output in envelope
-casttest!(wallet_address_json, |_prj, cmd| {
+#[casttest]
+fn wallet_address_json(cmd: _) {
     cmd.args([
         "wallet",
         "address",
@@ -145,10 +149,11 @@ casttest!(wallet_address_json, |_prj, cmd| {
 {"schema_version":1,"success":true,"data":"0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf","errors":[],"warnings":[]}
 
 "#]]);
-});
+}
 
 // tests that keystore `--json` output includes address, public_key, path
-casttest!(new_wallet_keystore_json, |_prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_json(cmd: _) {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--json"])
         .assert_success()
         .stdout_eq(
@@ -170,10 +175,11 @@ casttest!(new_wallet_keystore_json, |_prj, cmd| {
 "#]]
             .is_json(),
         );
-});
+}
 
 // tests that keystore `--json -v` does not alter stdout (verbosity is stderr-only)
-casttest!(new_wallet_keystore_json_verbose, |_prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_json_verbose(cmd: _) {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--json", "-v"])
         .assert_success()
         .stdout_eq(
@@ -195,10 +201,11 @@ casttest!(new_wallet_keystore_json_verbose, |_prj, cmd| {
 "#]]
             .is_json(),
         );
-});
+}
 
 // tests that we can create a new wallet with keystore
-casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_with_password(cmd: _) {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -210,10 +217,11 @@ Created new encrypted keystore file: [..]
 [ADDRESS]
 
 "#]]);
-});
+}
 
 // tests that we can create a new wallet with keystore (verbose variant)
-casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_with_password_verbose(cmd: _) {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-v"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -226,10 +234,11 @@ Created new encrypted keystore file: [..]
 [PUBLIC_KEY]
 
 "#]]);
-});
+}
 
 // tests that `cast wallet new` prompts before overwriting an existing keystore file
-casttest!(new_wallet_keystore_overwrite_protection, |prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_overwrite_protection(prj: _, cmd: _) {
     // Create the initial keystore
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success();
 
@@ -247,10 +256,11 @@ The following keystore file(s) already exist:
 Do you want to overwrite all 1 file(s)? [y/N]: Error: Operation cancelled. No keystores were modified.
 
 "#]]);
-});
+}
 
 // tests that `cast wallet new --force` overwrites existing keystore files without prompting
-casttest!(new_wallet_keystore_overwrite_force, |prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_overwrite_force(prj: _, cmd: _) {
     // Create the initial keystore
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"]).assert_success();
 
@@ -268,10 +278,11 @@ Created new encrypted keystore file: [..]
 [ADDRESS]
 
 "#]]);
-});
+}
 
 // tests that `cast wallet new -n 2` prompts before overwriting existing keystore files
-casttest!(new_wallet_keystore_overwrite_protection_multiple, |prj, cmd| {
+#[casttest]
+fn new_wallet_keystore_overwrite_protection_multiple(prj: _, cmd: _) {
     // Create 2 keystores: test-account_1 and test-account_2
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
         .assert_success();
@@ -291,10 +302,11 @@ The following keystore file(s) already exist:
 Do you want to overwrite all 2 file(s)? [y/N]: Error: Operation cancelled. No keystores were modified.
 
 "#]]);
-});
+}
 
 // tests that we can create a new wallet with default keystore location
-casttest!(new_wallet_default_keystore, |_prj, cmd| {
+#[casttest]
+fn new_wallet_default_keystore(cmd: _) {
     cmd.args(["wallet", "new", "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -311,10 +323,11 @@ Created new encrypted keystore file: [..]
     let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
     assert!(keystore_path.exists());
     assert!(keystore_path.is_dir());
-});
+}
 
 // tests that `cast wallet new <name>` treats a bare account name like `cast wallet import <name>`
-casttest!(new_wallet_bare_account_name_uses_default_keystore, |prj, cmd| {
+#[casttest]
+fn new_wallet_bare_account_name_uses_default_keystore(prj: _, cmd: _) {
     // Windows resolves the home directory through the shell API, ignoring HOME.
     // Use a unique account in the real default keystore directory on every platform.
     let account = prj.root().file_name().unwrap().to_str().unwrap();
@@ -333,10 +346,11 @@ Created new encrypted keystore file: [..]
     let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores").join(account);
     assert!(keystore_path.is_file(), "expected keystore at {}", keystore_path.display());
     fs::remove_file(keystore_path).unwrap();
-});
+}
 
 // tests that a missing path-like argument is still treated as a directory, not an account name
-casttest!(new_wallet_missing_dir_still_errors, |_prj, cmd| {
+#[casttest]
+fn new_wallet_missing_dir_still_errors(cmd: _) {
     cmd.args(["wallet", "new", "./missing-keystore-dir", "--unsafe-password", "test"])
         .assert_failure()
         .stderr_eq(str![[r#"
@@ -345,12 +359,13 @@ Error: If you specified a directory, please make sure it exists, or create it be
 Error: [..]
 
 "#]]);
-});
+}
 
 // tests that a bare argument whose resolution fails for a reason other than the path being
 // missing is reported, rather than silently falling back to the default keystore directory
 #[cfg(unix)]
-casttest!(new_wallet_bare_name_unresolvable_symlink_errors, |prj, cmd| {
+#[casttest]
+fn new_wallet_bare_name_unresolvable_symlink_errors(prj: _, cmd: _) {
     /// Restores search permission so the temporary project can be torn down, even on panic.
     struct RestorePermissions<'a>(&'a Path);
 
@@ -381,11 +396,12 @@ Error: [..]
 
     let keystore_path = prj.root().join(".foundry").join("keystores").join(account);
     assert!(!keystore_path.exists(), "unexpected keystore at {}", keystore_path.display());
-});
+}
 
 // tests that the two-positional `[PATH] [ACCOUNT_NAME]` form still errors for a missing
 // separator-free directory, rather than treating the first argument as an account name
-casttest!(new_wallet_missing_dir_with_account_name_still_errors, |_prj, cmd| {
+#[casttest]
+fn new_wallet_missing_dir_with_account_name_still_errors(cmd: _) {
     cmd.args(["wallet", "new", "missing-dir", "account-name", "--unsafe-password", "test"])
         .assert_failure()
         .stderr_eq(str![[r#"
@@ -394,9 +410,10 @@ missing-dir is not a directory.
 Error: [..]
 
 "#]]);
-});
+}
 
-casttest!(new_wallet_multiple_keys, |_prj, cmd| {
+#[casttest]
+fn new_wallet_multiple_keys(cmd: _) {
     cmd.args(["wallet", "new", "-n", "2"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -413,10 +430,11 @@ Successfully created new keypair.
 [PRIVATE_KEY]
 
 "#]]);
-});
+}
 
 // tests that we can get the address of a keystore file
-casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
+#[casttest]
+fn wallet_address_keystore_with_password_file(cmd: _) {
     let keystore_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore");
 
     cmd.args([
@@ -435,49 +453,48 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/16523
-casttest!(
-    #[cfg(unix)]
-    wallet_address_keystore_from_stdin,
-    |_prj, _cmd| {
-        let keystore =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
-        let mut command = Command::new("sh");
-        command
-            .env("CAST_BIN", env!("CARGO_BIN_EXE_cast"))
-            .env("KEYSTORE", keystore)
-            .env("NO_COLOR", "1")
-            .env("TERM", "dumb")
-            .args(["-c", r#"cat "$KEYSTORE" | "$CAST_BIN" wallet address --keystore /dev/stdin"#]);
+#[test]
+#[cfg(unix)]
+fn wallet_address_keystore_from_stdin() {
+    let keystore =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
+    let mut command = Command::new("sh");
+    command
+        .env("CAST_BIN", env!("CARGO_BIN_EXE_cast"))
+        .env("KEYSTORE", keystore)
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .args(["-c", r#"cat "$KEYSTORE" | "$CAST_BIN" wallet address --keystore /dev/stdin"#]);
 
-        let mut session = spawn_with_options(
-            command,
-            Options {
-                timeout_ms: Some(30_000),
-                strip_ansi_escape_codes: true,
-                encoding: Encoding::UTF8,
-            },
-        )
-        .unwrap();
+    let mut session = spawn_with_options(
+        command,
+        Options {
+            timeout_ms: Some(30_000),
+            strip_ansi_escape_codes: true,
+            encoding: Encoding::UTF8,
+        },
+    )
+    .unwrap();
 
-        session.exp_string("Enter keystore password:").unwrap();
-        session.send_line("keystorepassword").unwrap();
-        let output = session.exp_eof().unwrap();
-        assert!(
-            matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
-            "cast command failed: {output}"
-        );
-        assert!(
-            output.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"),
-            "missing keystore address: {output}"
-        );
-    }
-);
+    session.exp_string("Enter keystore password:").unwrap();
+    session.send_line("keystorepassword").unwrap();
+    let output = session.exp_eof().unwrap();
+    assert!(
+        matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
+        "cast command failed: {output}"
+    );
+    assert!(
+        output.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"),
+        "missing keystore address: {output}"
+    );
+}
 
 // Tests that `cast wallet remove` can successfully remove a keystore file and validates password.
-casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
+#[casttest]
+fn wallet_remove_keystore_with_unsafe_password(prj: _, cmd: _) {
     let keystore_path = prj.root().join("keystore");
 
     cmd.set_current_dir(prj.root());
@@ -530,11 +547,12 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
 "#]]);
 
     assert!(!keystore_file.exists());
-});
+}
 
 // `cast wallet import` treats ACCOUNT_NAME as a file name under the keystore dir.
 // A path segment would write the encrypted keystore outside that directory.
-casttest!(wallet_import_rejects_path_account_name, |prj, cmd| {
+#[casttest]
+fn wallet_import_rejects_path_account_name(prj: _, cmd: _) {
     let keystore_dir = prj.root().join("keystore");
     fs::create_dir_all(&keystore_dir).unwrap();
     let escaped = prj.root().join("pwned_foundry_alias");
@@ -560,10 +578,11 @@ Error: account name must be a single path segment
 
     assert!(!escaped.exists());
     assert!(!keystore_dir.join("../pwned_foundry_alias").exists());
-});
+}
 
 // Tests that `cast wallet list` outputs the local accounts.
-casttest!(wallet_list_local_accounts, |prj, cmd| {
+#[casttest]
+fn wallet_list_local_accounts(prj: _, cmd: _) {
     let keystore_path = prj.root().join("keystore");
     fs::create_dir_all(&keystore_path).unwrap();
     cmd.set_current_dir(prj.root());
@@ -637,10 +656,11 @@ Created new encrypted keystore file: [..]
 
 "#]
     ]);
-});
+}
 
 // Tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope.
-casttest!(wallet_list_local_accounts_json, |prj, cmd| {
+#[casttest]
+fn wallet_list_local_accounts_json(prj: _, cmd: _) {
     let keystore_path = prj.root().join("keystore");
     fs::create_dir_all(&keystore_path).unwrap();
     cmd.set_current_dir(prj.root());
@@ -673,10 +693,11 @@ casttest!(wallet_list_local_accounts_json, |prj, cmd| {
 "#]]
             .is_json(),
         );
-});
+}
 
 // tests that `cast wallet list` preserves custom keystore names
-casttest!(wallet_list_named_local_account, |prj, cmd| {
+#[casttest]
+fn wallet_list_named_local_account(prj: _, cmd: _) {
     let keystore_path = prj.root().join("keystore");
     fs::create_dir_all(&keystore_path).unwrap();
     fs::write(keystore_path.join("my_account"), "{}").unwrap();
@@ -710,10 +731,11 @@ my_account (Local)
 "#]]
             .is_json(),
         );
-});
+}
 
 // tests that `cast wallet vanity --json --nonce` wraps wallet and contract address output
-casttest!(wallet_vanity_json_nonce_contract_address, |_prj, cmd| {
+#[casttest]
+fn wallet_vanity_json_nonce_contract_address(cmd: _) {
     cmd.args(["wallet", "vanity", "--starts-with", ".", "--nonce", "1", "--json"])
         .assert_success()
         .stdout_eq(
@@ -733,11 +755,12 @@ casttest!(wallet_vanity_json_nonce_contract_address, |_prj, cmd| {
 "#]]
             .is_json(),
         );
-});
+}
 
 // tests that `cast wallet import` creates a keystore for a private key and that `cast wallet
 // decrypt-keystore` can access it
-casttest!(wallet_import_and_decrypt, |prj, cmd| {
+#[casttest]
+fn wallet_import_and_decrypt(prj: _, cmd: _) {
     let keystore_path = prj.root().join("keystore");
 
     cmd.set_current_dir(prj.root());
@@ -790,10 +813,11 @@ casttest!(wallet_import_and_decrypt, |prj, cmd| {
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     // the form
     assert_eq!(decrypted_private_key, test_private_key);
-});
+}
 
 // tests that `cast wallet change-password` can successfully change the password of a keystore file
-casttest!(wallet_change_password, |prj, cmd| {
+#[casttest]
+fn wallet_change_password(prj: _, cmd: _) {
     let keystore_path = prj.root().join("keystore");
 
     cmd.set_current_dir(prj.root());
@@ -878,4 +902,97 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     // check that the decrypted private key matches the imported private key
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     assert_eq!(decrypted_private_key, test_private_key);
-});
+}
+
+// HOME does not override the default keystore directory on Windows.
+#[cfg(not(windows))]
+#[casttest]
+fn wallet_list_turnkey_skips_local_accounts(prj: _, cmd: _) {
+    let keystores = prj.root().join(".foundry/keystores");
+    fs::create_dir_all(&keystores).unwrap();
+    fs::write(keystores.join("local-account"), "").unwrap();
+
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "list"]).assert_success().stdout_eq(str![[r#"
+local-account (Local)
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", prj.root());
+    cmd.unset_env("TURNKEY_API_PRIVATE_KEY");
+    let assert = cmd.args(["wallet", "list", "--turnkey"]).assert_success().stdout_eq(str![""]);
+    if cfg!(feature = "turnkey") {
+        assert.stderr_eq(str![[r#"
+Error: environment variable not found
+
+"#]]);
+    } else {
+        assert.stderr_eq(str![""]);
+    }
+}
+
+#[cfg(feature = "turnkey")]
+#[casttest]
+fn wallet_list_turnkey(cmd: _) {
+    for json in [false, true] {
+        cmd.cast_fuse();
+        cmd.envs([
+            (
+                "TURNKEY_API_PRIVATE_KEY",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+            ),
+            ("TURNKEY_ORGANIZATION_ID", "test-organization"),
+            ("TURNKEY_ADDRESS", "0x000000000000000000000000000000000000dEaD"),
+        ]);
+        cmd.args(["wallet", "list", "--turnkey"]);
+        if json {
+            cmd.arg("--json").assert_json_stdout(str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [{"address": "0x000000000000000000000000000000000000dEaD", "source": "Turnkey"}],
+  "errors": [],
+  "warnings": []
+}
+"#]]);
+        } else {
+            cmd.assert_success().stdout_eq(str![[r#"
+0x000000000000000000000000000000000000dEaD (Turnkey)
+
+"#]]);
+        }
+    }
+}
+
+#[casttest]
+fn malformed_dotenv_warns_without_exposing_values(prj: _, cmd: _) {
+    fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
+    cmd.args([
+        "wallet",
+        "address",
+        "--private-key",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf\n")
+    .stderr_eq(str![[r#"
+Warning: Failed to load [..]/.env: invalid syntax; remaining variables were not loaded
+
+"#]]);
+}
+
+#[casttest]
+fn malformed_dotenv_quiet_suppresses_warning(prj: _, cmd: _) {
+    fs::write(prj.root().join(".env"), "FIRST=one\nSECRET=\"sensitive-value\nAFTER=two\n").unwrap();
+    cmd.args([
+        "--quiet",
+        "wallet",
+        "address",
+        "--private-key",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq("")
+    .stderr_eq("");
+}

@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, Bytes, hex, map::AddressHashMap};
 use foundry_evm_core::precompiles;
-use foundry_evm_traces::{CallKind, CallTrace, CallTraceArena};
-use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{
-    CallTraceStep, DecodedCallTrace, DecodedTraceStep, TraceMemberOrder,
+use foundry_evm_traces::{
+    CallKind, CallTrace, CallTraceArena, CallTraceStep, DecodedCallTrace, DecodedTraceStep,
+    TraceMemberOrder,
 };
+use revm::bytecode::opcode::OpCode;
 use serde::{Deserialize, Serialize};
 
 const PRECOMPILES_TRACE_LABEL: &str = "PRECOMPILES";
@@ -34,6 +34,9 @@ pub struct DebugNode {
     /// Decoded call data for the current execution context, if available.
     #[serde(default)]
     pub decoded: Option<Box<DecodedCallTrace>>,
+    /// Name of the contract whose code is executed in this context, if identified.
+    #[serde(default)]
+    pub contract_name: Option<String>,
     /// The debug steps.
     pub steps: Vec<CallTraceStep>,
 }
@@ -58,6 +61,7 @@ impl DebugNode {
             trace_node_idx: 0,
             step_offset: 0,
             decoded,
+            contract_name: None,
         }
     }
 }
@@ -68,14 +72,17 @@ impl DebugNode {
 /// calls.
 #[cfg(test)]
 fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
-    flatten_call_trace_with_precompiles(arena, out, &AddressHashMap::default());
+    flatten_call_trace_with_precompiles(arena, out, &AddressHashMap::default(), &[]);
 }
 
 /// Flattens given [CallTraceArena] into a list of [DebugNode]s using active precompile labels.
+///
+/// `contract_names` holds the identified contract name for each arena node, indexed by node index.
 pub fn flatten_call_trace_with_precompiles(
     arena: CallTraceArena,
     out: &mut Vec<DebugNode>,
     precompile_labels: &AddressHashMap<String>,
+    contract_names: &[Option<String>],
 ) {
     #[derive(Debug, Clone, Copy)]
     struct PendingNode {
@@ -170,6 +177,7 @@ pub fn flatten_call_trace_with_precompiles(
         node.returndata = call.output.clone();
         node.trace_node_idx = trace_node_idx_offset.saturating_add(pending.node_idx);
         node.step_offset = pending.step_offset;
+        node.contract_name = contract_names.get(pending.node_idx).cloned().flatten();
 
         out.push(node);
     }
@@ -295,9 +303,8 @@ const fn known_precompile_name(address: Address) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm_traces::CallTraceNode;
+    use foundry_evm_traces::{CallTraceNode, DecodedCallData, DecodedInternalCall};
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{DecodedCallData, DecodedInternalCall};
 
     fn step(pc: usize) -> CallTraceStep {
         CallTraceStep {
@@ -568,7 +575,7 @@ mod tests {
         let precompile_labels = AddressHashMap::from_iter([(address, "FeeManager".to_string())]);
 
         let mut flattened = Vec::new();
-        flatten_call_trace_with_precompiles(arena, &mut flattened, &precompile_labels);
+        flatten_call_trace_with_precompiles(arena, &mut flattened, &precompile_labels, &[]);
 
         assert_eq!(
             assert_precompile_notice(&flattened[0].steps[0]),

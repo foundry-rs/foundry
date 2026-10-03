@@ -14,7 +14,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     BlockResponse, ReceiptResponse, TransactionBuilder, primitives::HeaderResponse,
 };
-use alloy_primitives::{B256, Bytes, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use anvil::{NodeConfig, NodeHandle};
@@ -30,7 +30,7 @@ use foundry_test_utils::{
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, process::Output, sync::atomic::Ordering};
 
-const BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
+const BAL_METHOD: &str = "eth_getBlockAccessList";
 
 /// Three counter transactions in one block, plus the BAL the block would have produced.
 struct Fixture {
@@ -196,7 +196,8 @@ fn run(cmd: &mut TestCommand, hash: B256, endpoint: &str, flags: &[&str]) -> Out
     run_command(cmd, hash, endpoint, flags).assert_success().get_output().clone()
 }
 
-casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_matches_replay_at_every_position(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let (endpoint, calls) = spawn_rpc_proxy_canned_method(
         fixture.handle.http_endpoint(),
@@ -221,9 +222,10 @@ casttest!(cast_run_fork_bal_matches_replay_at_every_position, async |_prj, cmd| 
 "#]]);
     }
     assert_eq!(calls.load(Ordering::Relaxed), 3);
-});
+}
 
-casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
@@ -249,9 +251,10 @@ casttest!(cast_run_fork_bal_respects_no_bal_quick_prestate_and_remote_modes, asy
     OutputAssert::new(output).stdout_eq(replay.stdout).stderr_eq("");
     assert_eq!(prestate_calls.load(Ordering::Relaxed), 1);
     assert_eq!(calls.load(Ordering::Relaxed), 1);
-});
+}
 
-casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_unavailable_falls_back_to_replay(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
@@ -275,9 +278,10 @@ casttest!(cast_run_fork_bal_unavailable_falls_back_to_replay, async |_prj, cmd| 
     OutputAssert::new(output)
         .stdout_eq(replay.stdout)
         .stderr_eq("Executing previous transactions from the block.\n");
-});
+}
 
-casttest!(cast_run_fork_bal_is_checked_against_the_header_hash, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_is_checked_against_the_header_hash(cmd: _) {
     let fixture = Fixture::new(EthereumHardfork::Cancun).await;
     let hash = fixture.transactions[2];
     let replay = run(&mut cmd, hash, &fixture.handle.http_endpoint(), &[]);
@@ -314,9 +318,10 @@ Executing previous transactions from the block.
         }
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
-});
+}
 
-casttest!(cast_run_fork_bal_uses_anvil_block_access_list, async |_prj, cmd| {
+#[casttest]
+async fn cast_run_fork_bal_uses_anvil_block_access_list(cmd: _) {
     // Amsterdam anvil serves the BAL of its own blocks, so no canned response is needed.
     let fixture = Fixture::new(EthereumHardfork::Amsterdam).await;
     let endpoint = fixture.handle.http_endpoint();
@@ -333,4 +338,90 @@ casttest!(cast_run_fork_bal_uses_anvil_block_access_list, async |_prj, cmd| {
 
 "#]]);
     }
-});
+}
+
+#[casttest]
+async fn cast_run_fork_bal_replays_prefix_for_execution_overrides(prj: _, cmd: _) {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into())))
+            .await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let target = Address::repeat_byte(0x11);
+
+    // Empty input stores CLZ(0), while nonempty input returns slot zero. CLZ is invalid under
+    // Cancun, so replaying the first transaction there must leave the slot untouched.
+    api.anvil_set_code(target, hex!("361560105760005460005260206000f35b60001e60005500").into())
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let mut transactions = Vec::new();
+    for (index, input) in [Bytes::new(), Bytes::from_static(&[1])].into_iter().enumerate() {
+        transactions.push(
+            *provider
+                .send_transaction(
+                    TransactionRequest::default()
+                        .from(sender)
+                        .to(target)
+                        .nonce(nonce + index as u64)
+                        .gas_limit(100_000)
+                        .input(input.into())
+                        .into(),
+                )
+                .await
+                .unwrap()
+                .tx_hash(),
+        );
+    }
+    api.mine_one().await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.transactions().hashes().collect::<Vec<_>>(), transactions);
+    let hash = transactions[1];
+    let bal = provider.get_block_access_list(BlockId::hash(block.header().hash())).await.unwrap();
+    assert!(bal.is_some());
+    let (endpoint, calls) =
+        spawn_rpc_proxy_canned_method(handle.http_endpoint(), BAL_METHOD, json!(bal)).await;
+
+    let canonical = run(&mut cmd, hash, &endpoint, &[]);
+    OutputAssert::new(canonical)
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x1111111111111111111111111111111111111111::fallback(01)
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000100
+
+
+Transaction successfully executed.
+Gas used: 23152
+
+"#]])
+        .stderr_eq("");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+    // Both the CLI override and the configured hardfork must bypass the canonical BAL.
+    for flags in [&["--evm-version", "cancun"][..], &[]] {
+        if flags.is_empty() {
+            prj.update_config(|config| config.hardfork = Some(EthereumHardfork::Cancun.into()));
+        }
+        let mut replay_flags = flags.to_vec();
+        replay_flags.push("--no-bal");
+        let replay = run(&mut cmd, hash, &endpoint, &replay_flags);
+        OutputAssert::new(replay.clone())
+            .stdout_eq(str![[r#"
+Traces:
+  [..] 0x1111111111111111111111111111111111111111::fallback(01)
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000000
+
+
+Transaction successfully executed.
+Gas used: 23152
+
+"#]])
+            .stderr_eq("Executing previous transactions from the block.\n");
+        OutputAssert::new(run(&mut cmd, hash, &endpoint, flags))
+            .stdout_eq(replay.stdout)
+            .stderr_eq(replay.stderr);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}

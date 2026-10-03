@@ -10,15 +10,26 @@ use crate::coverage::{
     anchors::{find_anchors, find_execution_anchors},
 };
 use alloy_json_abi::StateMutability;
-use alloy_primitives::{Address, Bytes, U256, map::HashMap};
+use alloy_primitives::{
+    Address, Bytes, U256, keccak256,
+    map::{HashMap, HashSet},
+};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::{TestFilter, compile::ProjectCompiler, errors::convert_solar_errors};
+use foundry_common::{
+    TestFilter, compile::ProjectCompiler, errors::convert_solar_errors, version::SHORT_VERSION,
+};
 use foundry_compilers::{
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
-    artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
-    compilers::{Language, multi::MultiCompilerLanguage},
+    Artifact, ArtifactId, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
+    VYPER_EXTENSIONS,
+    artifacts::{CompactBytecode, CompactDeployedBytecode, Source, sourcemap::SourceMap},
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
+    compilers::{
+        Language,
+        multi::{MultiCompilerLanguage, MultiCompilerParser},
+    },
+    error::SolcError,
     utils::source_files_iter,
 };
 use foundry_config::{
@@ -29,7 +40,8 @@ use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::Version;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -239,6 +251,39 @@ impl CoverageArgs {
         filter: &ProjectPathsAwareFilter,
     ) -> Result<(Project, ProjectCompileOutput)> {
         let mut project = config.ephemeral_project()?;
+        // A contended or unavailable cache retains ephemeral compilation. Keep the lock until
+        // artifacts and build contexts have been loaded or published together.
+        let cache = (config.cache && !config.deny.warnings())
+            .then(|| config.coverage_cache_path())
+            .flatten()
+            .and_then(|path| {
+                fs::create_dir_all(path.parent()?).ok()?;
+                let lock = Config::lock_coverage_cache(&path).ok()?;
+                match fs::create_dir(&path) {
+                    Ok(()) => {
+                        if fs::File::create_new(path.join(Config::COVERAGE_CACHE_MARKER)).is_err() {
+                            let _ = fs::remove_dir(&path);
+                            return None;
+                        }
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if !path.join(Config::COVERAGE_CACHE_MARKER).is_file() {
+                            return None;
+                        }
+                    }
+                    Err(_) => return None,
+                }
+                Some((path, lock))
+            });
+        let original_paths = project.paths.clone();
+        if let Some((path, _)) = &cache {
+            project.cached = true;
+            project.no_artifacts = false;
+            project.paths.cache = path.join(SOLIDITY_FILES_CACHE_FILENAME);
+            project.paths.artifacts = path.join("artifacts");
+            project.paths.build_infos = path.join("build-info");
+            project.paths.slash_paths();
+        }
 
         if self.ir_minimum {
             sh_warn!(
@@ -259,9 +304,10 @@ impl CoverageArgs {
 
         config.disable_optimizations(&mut project, self.ir_minimum);
 
-        let mut compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
-        if filter.args().path_pattern.is_some() || filter.args().path_pattern_inverse.is_some() {
-            let sources = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+        let files = (filter.args().path_pattern.is_some()
+            || filter.args().path_pattern_inverse.is_some())
+        .then(|| {
+            source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .chain(
                     source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
                         // Preserve path-filter behavior for conventional test files while still
@@ -270,10 +316,120 @@ impl CoverageArgs {
                 )
                 // Coverage reports include scripts even though they are not test targets.
                 .chain(source_files_iter(&config.script, MultiCompilerLanguage::FILE_EXTENSIONS))
-                .collect::<BTreeSet<_>>();
-            compiler = compiler.files(sources);
-        }
-        let output = compiler.compile(&project)?.with_stripped_file_prefixes(project.root());
+                .collect::<BTreeSet<_>>()
+        });
+        let compile = |project: &Project| {
+            let mut compiler = ProjectCompiler::new()
+                .external_compilers(config)
+                .external_artifacts(false)
+                .dynamic_test_linking(config.dynamic_test_linking);
+            if let Some(files) = &files {
+                compiler = compiler.files(files.iter().cloned());
+            }
+            compiler.compile(project)
+        };
+        // Coverage needs complete build contexts, including sources without contract artifacts.
+        // Invalidate the owned cache as a whole on edits so source IDs, artifact names, and
+        // build-info files all belong to the same compilation.
+        let cached_output = (|| -> Result<Option<ProjectCompileOutput>> {
+            let Some((path, _)) = &cache else { return Ok(None) };
+            let mut sources = if let Some(files) = &files
+                && !files.is_empty()
+            {
+                Source::read_all(files)?
+            } else {
+                project.paths.read_input_files()?
+            };
+            if let Some(filter) = &project.sparse_output {
+                sources.retain(|path, _| filter.is_match(path));
+            }
+            let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+            let resolved = graph.into_sources_by_version(&project)?;
+            let mut jobs = resolved
+                .sources
+                .iter()
+                .flat_map(|(language, jobs)| {
+                    jobs.iter().map(move |(version, sources, (profile, settings))| {
+                        let sources = sources
+                            .iter()
+                            .map(|(path, source)| {
+                                (path, source.content_hash(), source.kind.is_dirty())
+                            })
+                            .collect::<Vec<_>>();
+                        serde_json::to_value((language, version, profile, settings, sources))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            jobs.sort_unstable_by_key(serde_json::Value::to_string);
+            let primary_profiles = resolved.primary_profiles.iter().collect::<BTreeMap<_, _>>();
+            let mut identity = serde_json::to_value((
+                SHORT_VERSION,
+                &project.paths,
+                (&config.solc, &config.vyper, &config.extra_args),
+                (&config.extra_output, &config.extra_output_files),
+                config.dynamic_test_linking,
+                jobs,
+                primary_profiles,
+            ))?;
+            identity.sort_all_objects();
+            let fingerprint = keccak256(serde_json::to_vec(&identity)?).to_string();
+            let marker = path.join(Config::COVERAGE_CACHE_MARKER);
+            if fs::read_to_string(&marker).ok().as_deref() != Some(&fingerprint) {
+                // Retain ownership even if compilation fails before the new fingerprint is saved.
+                fs::write(&marker, "")?;
+                for entry in fs::read_dir(path)? {
+                    let entry = entry?;
+                    if entry.file_name() == Config::COVERAGE_CACHE_MARKER {
+                        continue;
+                    }
+                    if entry.file_type()?.is_dir() {
+                        fs::remove_dir_all(entry.path())?;
+                    } else {
+                        fs::remove_file(entry.path())?;
+                    }
+                }
+            }
+            let output = compile(&project)?;
+            // Compiler builds with no artifacts can be pruned from the cache. Coverage still
+            // reports their free functions, so recover their source IDs with a fresh compilation.
+            let mapped_sources = output
+                .builds()
+                .flat_map(|(_, build)| build.source_id_to_path.values().map(PathBuf::as_path))
+                .collect::<HashSet<_>>();
+            if output
+                .graph()
+                .files()
+                .any(|idx| !mapped_sources.contains(output.graph().node_path(idx)))
+            {
+                return Ok(None);
+            }
+            // Publication is optional once the compiler has returned a complete output.
+            if let Err(err) = fs::write(marker, fingerprint) {
+                debug!(%err, "failed to publish coverage cache fingerprint");
+            }
+            Ok(Some(output))
+        })();
+        let output = match cached_output {
+            Ok(Some(output)) => output,
+            Err(err)
+                if !err.chain().any(|cause| {
+                    cause.is::<std::io::Error>()
+                        || matches!(cause.downcast_ref(), Some(SolcError::Io(_)))
+                }) =>
+            {
+                return Err(err);
+            }
+            result => {
+                if let Err(err) = result {
+                    debug!(%err, "coverage cache unavailable; compiling without persistence");
+                }
+                project.cached = false;
+                project.no_artifacts = true;
+                project.paths = original_paths;
+                compile(&project)?
+            }
+        };
+        let output = output.with_stripped_file_prefixes(project.root());
 
         Ok((project, output))
     }
@@ -297,21 +453,19 @@ impl CoverageArgs {
 
         // Collect source files.
         let mut sources_by_build = HashMap::<String, SourceFiles>::default();
-        for (path, sources) in &output.output().sources.0 {
-            // Filter out vyper sources.
-            if path
-                .extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
-            {
-                continue;
-            }
+        for (build_id, build) in output.builds() {
+            for (source_id, path) in &build.source_id_to_path {
+                if output.graph().get_parsed_source(path).is_none()
+                    || path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|ext| VYPER_EXTENSIONS.contains(&ext))
+                {
+                    continue;
+                }
+                let path = path.strip_prefix(&project_paths.root).unwrap_or(path);
+                report.add_source(build_id.clone(), *source_id as usize, path.to_path_buf());
 
-            for source in sources {
-                let source_file = &source.source_file;
-                report.add_source(source.build_id.clone(), source_file.id as usize, path.clone());
-
-                // Filter out libs dependencies and tests.
                 if (!self.include_libs && project_paths.has_library_ancestor(path))
                     || (self.exclude_tests && project_paths.is_test(path))
                 {
@@ -319,10 +473,10 @@ impl CoverageArgs {
                 }
 
                 sources_by_build
-                    .entry(source.build_id.clone())
+                    .entry(build_id.clone())
                     .or_default()
                     .sources
-                    .insert(source_file.id, project_paths.root.join(path));
+                    .insert(*source_id, project_paths.root.join(path));
             }
         }
 

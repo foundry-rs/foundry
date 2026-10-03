@@ -4,7 +4,7 @@ use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*, inspector::RecordDebugStepInfo,
 };
-use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::{Typed2718, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
@@ -24,7 +24,7 @@ use foundry_common::{
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
-    FoundryBlock, FoundryTransaction,
+    FoundryBlock, FoundryChain, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
@@ -810,15 +810,16 @@ impl Cheatcode for etchCall {
         ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        // Clear synthetic history only in local mode. On forks, preserve storage as for other
+        // etched accounts; clearing the ring can require one synchronous RPC read per uncached
+        // slot.
         if *target == HISTORY_STORAGE_ADDRESS
+            && !ccx.ecx.db().is_forked_mode()
             && bytecode.hash_slow() != keccak256(&HISTORY_STORAGE_CODE)
+            && ccx.ecx.journal_mut().evm_state()[target].info.code_hash
+                == keccak256(&HISTORY_STORAGE_CODE)
         {
-            let account =
-                ccx.ecx.journal_mut().evm_state_mut().get_mut(target).expect("account is loaded");
-            if account.info.code_hash == keccak256(&HISTORY_STORAGE_CODE) {
-                account.storage.clear();
-                account.mark_created();
-            }
+            clear_eip2935_history_storage(ccx.ecx)?;
         }
         ccx.ecx.journal_mut().set_code(*target, bytecode);
         Ok(Default::default())
@@ -1352,6 +1353,11 @@ impl Cheatcode for executeTransactionCall {
         let tx = TxEnvelopeFor::<FEN>::decode(&mut self.rawTx.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
+        ensure!(
+            tx.ty() != 0x79,
+            "EIP-8130 transactions are not supported by vm.executeTransaction"
+        );
+
         // Build TxEnv from the recovered transaction.
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
@@ -1402,9 +1408,13 @@ impl Cheatcode for executeTransactionCall {
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = prepare_child_state(ccx.ecx.journal_inner());
 
+        // A fresh transaction owns an independent journal. Do not let snapshot bookkeeping from an
+        // enclosing isolated call cross into it or vice versa.
+        let track_isolated_snapshots = ccx.state.track_isolated_snapshots;
+        ccx.state.track_isolated_snapshots = false;
         let mut res = None;
         let mut cold_state = Some(cold_state);
-        let mut nested_evm_env = {
+        let nested_evm_env = {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
             executor.with_fresh_nested_evm(
                 ccx.state,
@@ -1419,8 +1429,10 @@ impl Cheatcode for executeTransactionCall {
                     res = Some(evm.transact_raw(modified_tx_env.clone()));
                     Ok(())
                 },
-            )?
+            )
         };
+        ccx.state.track_isolated_snapshots = track_isolated_snapshots;
+        let mut nested_evm_env = nested_evm_env?;
         let res = res.unwrap();
 
         // Restore env, preserving cheatcode cfg/block changes from the nested EVM
@@ -1440,7 +1452,7 @@ impl Cheatcode for executeTransactionCall {
         let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
         // Merge state changes back into the parent journaled state.
-        merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state);
+        merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state, false);
 
         // Keep network-specific caches aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
@@ -1641,6 +1653,20 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
     }
 }
 
+fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
+    if !ccx.state.in_isolation_context {
+        return;
+    }
+
+    let basefee = ccx.ecx.block().basefee();
+    if basefee != 0 {
+        let fork_id = ccx.ecx.db().active_fork_id();
+        ccx.state.env_overrides_for_mut(fork_id).implicit_basefee.get_or_insert(basefee);
+        ccx.ecx.block_mut().set_basefee(0);
+    }
+    ccx.ecx.chain_mut().clear_transaction_fee_cache();
+}
+
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
@@ -1655,6 +1681,10 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
+        if ccx.state.track_isolated_snapshots {
+            ccx.state.isolated_snapshot_restores.push(journaled_state);
+            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        }
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
@@ -1679,6 +1709,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         }
         ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
+        restore_isolation_fee_accounting(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1699,6 +1730,10 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
+        if ccx.state.track_isolated_snapshots {
+            ccx.state.isolated_snapshot_restores.push(journaled_state);
+            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+        }
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
@@ -1721,6 +1756,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         }
         ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);
+        restore_isolation_fee_accounting(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1935,6 +1971,41 @@ fn set_eip2935_blockhash<
         .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?
         .is_cold;
     restore_eip2935_cold_state(ecx, account_was_cold, Some((slot, slot_was_cold)));
+    Ok(())
+}
+
+/// Clears the EIP-2935 history ring buffer with journaled writes, so that reverting the enclosing
+/// frame restores the previous history storage.
+///
+/// Warmth is preserved: slots that were cold stay cold. A database error reverts any partial
+/// clearing.
+fn clear_eip2935_history_storage<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+) -> Result<()> {
+    let checkpoint = ecx.journal_mut().checkpoint();
+    for slot in 0..HISTORY_SERVE_WINDOW {
+        let slot = U256::from(slot);
+        match ecx.journal_mut().sstore(HISTORY_STORAGE_ADDRESS, slot, U256::ZERO) {
+            Ok(result) if result.is_cold => {
+                if let Some(storage_slot) = ecx
+                    .journal_mut()
+                    .evm_state_mut()
+                    .get_mut(&HISTORY_STORAGE_ADDRESS)
+                    .and_then(|account| account.storage.get_mut(&slot))
+                {
+                    storage_slot.is_cold = true;
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                ecx.journal_mut().checkpoint_revert(checkpoint);
+                return Err(fmt_err!("failed to clear EIP-2935 history slot: {e:?}"));
+            }
+        }
+    }
+    ecx.journal_mut().checkpoint_commit();
     Ok(())
 }
 

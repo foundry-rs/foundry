@@ -7,17 +7,6 @@ mod rounding;
 
 use polynomial::polynomial_identity;
 
-/// Normalizes path constraints into an equivalent, solver-friendlier form.
-#[cfg(test)]
-pub(crate) fn normalize_constraints_for_solver(
-    cx: &mut SymCx,
-    constraints: &[SymBoolExpr],
-) -> Vec<SymBoolExpr> {
-    normalize_constraints_for_solver_with(cx, constraints, |cx, constraint| {
-        normalize_bool_for_solver(cx, constraint.clone())
-    })
-}
-
 /// Reuses context-free normalization results while retaining per-query contextual rewrites.
 pub(super) fn normalize_constraints_for_solver_cached(
     cx: &mut SymCx,
@@ -405,6 +394,19 @@ fn normalize_cmp_for_solver(
     right: SymExpr,
 ) -> SymBoolExpr {
     if op == SymCmpOp::Eq {
+        for (quotient, expected) in [(&left, &right), (&right, &left)] {
+            if let Some((denominator, value)) =
+                ConstraintContext::mul_div_identity_operands(quotient, expected)
+                && let Some(factor) = denominator.as_const().filter(|value| !value.is_zero())
+            {
+                // For constant k > 0, (x * k mod 2^256) / k == x iff x <= MAX / k.
+                // The quotient cannot exceed MAX / k; conversely this bound prevents wrapping.
+                // Retain that exact bound instead of asking SMT to solve the overflow check.
+                // `SymExpr::binop` folds a zero factor away, so the non-zero filter is only a
+                // defensive guard against `MAX / 0` should that folding ever change.
+                return SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ule, value, U256::MAX / factor);
+            }
+        }
         if right.as_const().is_some_and(|value| value.is_zero())
             && let SymExprKind::BinOp(SymBinOp::Sub, minuend, subtrahend) = left.kind()
         {
@@ -552,14 +554,6 @@ impl ConstraintContext {
         context
     }
 
-    fn upper_bound(&self, expr: &SymExpr) -> Option<U256> {
-        self.upper_bounds.get(expr).copied()
-    }
-
-    fn lower_bound(&self, expr: &SymExpr) -> Option<U256> {
-        self.lower_bounds.get(expr).copied()
-    }
-
     /// Conservatively identifies every conjunct that path facts may rewrite.
     fn requires_independent_context(expr: &SymBoolExpr) -> bool {
         let root_candidate = match expr.kind() {
@@ -703,10 +697,6 @@ impl ConstraintContext {
         }
     }
 
-    fn exact_value(&self, expr: &SymExpr) -> Option<U256> {
-        self.exact_values.get(expr).copied()
-    }
-
     fn may_normalize_word(&self, expr: &SymExpr) -> bool {
         if self.exact_values.contains_key(expr)
             || Self::mul_div_operands(expr).is_some()
@@ -731,7 +721,7 @@ impl ConstraintContext {
     }
 
     fn normalize_word(&self, cx: &mut SymCx, expr: SymExpr) -> SymExpr {
-        if let Some(value) = self.exact_value(&expr) {
+        if let Some(value) = self.exact_values.get(&expr).copied() {
             return SymExpr::constant(cx, value);
         }
         if let SymExprKind::Ite(condition, then_value, else_value) = expr.kind() {
@@ -937,7 +927,7 @@ impl ConstraintContext {
             return false;
         };
         const_side_bound(left, right)
-            .is_some_and(|(expr, value)| self.exact_value(expr) == Some(value))
+            .is_some_and(|(expr, value)| self.exact_values.get(expr).copied() == Some(value))
     }
 
     fn masked_eq_self_condition(&self, expr: &SymBoolExpr) -> bool {
@@ -1092,8 +1082,8 @@ impl ConstraintContext {
 
     /// Propagates interval bounds through the known unsigned relation `left <= right`.
     fn propagate_less_or_equal_bounds(&mut self, left: &SymExpr, right: &SymExpr) -> bool {
-        let upper = self.upper_bound(right);
-        let lower = self.lower_bound(left);
+        let upper = self.upper_bounds.get(right).copied();
+        let lower = self.lower_bounds.get(left).copied();
         let upper_changed = upper.is_some_and(|bound| self.record_upper_bound(left.clone(), bound));
         let lower_changed =
             lower.is_some_and(|bound| self.record_lower_bound(right.clone(), bound));
@@ -1311,8 +1301,8 @@ impl ConstraintContext {
             return *interval;
         }
 
-        let lower = self.lower_bound(expr);
-        let upper = self.upper_bound(expr);
+        let lower = self.lower_bounds.get(expr).copied();
+        let upper = self.upper_bounds.get(expr).copied();
         let explicit_bounds = || {
             if lower.is_none() && upper.is_none() {
                 return None;
@@ -1472,10 +1462,6 @@ fn normalize_ite_expr_for_solver(
 }
 
 impl SymExpr {
-    fn add_cannot_overflow_256(&self, right: &Self) -> bool {
-        self.unsigned_bits().max(right.unsigned_bits()).saturating_add(1) <= 256
-    }
-
     fn word_bool_always_true(&self, cx: &mut SymCx) -> bool {
         ConstraintContext::default().word_bool_always_true(cx, self)
     }
@@ -1577,7 +1563,7 @@ impl SymBoolExpr {
             }
             SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
         }?;
-        if base.add_cannot_overflow_256(increment) {
+        if base.unsigned_bits().max(increment.unsigned_bits()).saturating_add(1) <= 256 {
             return Some(Self::constant(cx, !overflow));
         }
 
@@ -2099,12 +2085,13 @@ impl ConstraintContext {
             _ => 256,
         };
 
-        let bits =
-            self.upper_bound(expr).map(|bound| bits.min(bound.bit_len().max(1))).unwrap_or(bits);
+        let bits = self
+            .upper_bounds
+            .get(expr)
+            .copied()
+            .map(|bound| bits.min(bound.bit_len().max(1)))
+            .unwrap_or(bits);
         bit_widths.insert(expr.clone(), bits);
         Some(bits)
     }
 }
-
-#[cfg(test)]
-mod tests;

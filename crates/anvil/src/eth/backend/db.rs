@@ -17,7 +17,7 @@ use anvil_core::eth::{
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, EmptyDBWrapper, MemDb, RevertStateSnapshotAction,
-    StateSnapshot,
+    StateSnapshot, existing_account,
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
@@ -26,7 +26,7 @@ use revm::{
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
     database::{AccountState, CacheDB, DatabaseRef, DbAccount, bal::BalState},
-    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId},
     state::{AccountInfo, bal::BlockAccessIndex},
 };
 use serde::{
@@ -69,6 +69,10 @@ pub(crate) fn cache_block_hash(block_hashes: &mut U256Map<B256>, number: U256, h
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     fn maybe_as_full_db(&self) -> Option<&AddressMap<DbAccount>> {
+        None
+    }
+
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
         None
     }
 
@@ -134,6 +138,10 @@ where
         T::maybe_as_full_db(self)
     }
 
+    fn maybe_as_full_db_mut(&mut self) -> Option<&mut AddressMap<DbAccount>> {
+        T::maybe_as_full_db_mut(self)
+    }
+
     fn maybe_full_db(&self) -> Option<AddressMap<DbAccount>> {
         T::maybe_full_db(self)
     }
@@ -172,13 +180,13 @@ pub trait MaybeForkedDatabase {
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
 
-/// A wrapper around [`CacheDB`].
+/// A wrapper around [`CacheDB`] that executes transactions at `spec`.
 #[derive(Debug)]
-pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState);
+pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState, SpecId);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
-    pub fn new(inner: T) -> Self {
-        Self(CacheDB::new(inner), BalState::default())
+    pub fn new(inner: T, spec: SpecId) -> Self {
+        Self(CacheDB::new(inner), BalState::default(), spec)
     }
 
     /// Enables EIP-7928 block access list recording.
@@ -209,7 +217,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> Database for AnvilCache
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.0.basic(address)
+        Ok(existing_account(self.2, self.0.basic(address)?))
     }
 
     fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -271,6 +279,36 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> BalIndexedDatabase
 
     fn bump_bal_index(&mut self) {
         (**self).bump_bal_index();
+    }
+}
+
+/// A read-only view of a database that reports empty accounts as absent.
+///
+/// Anvil's databases return a default [`AccountInfo`] for an account they don't hold (see
+/// [`EmptyDBWrapper`]), so an absent account can't be told apart from an empty one. Since
+/// EIP-161 an empty account can't be created and is deleted when touched, so this view lets a
+/// pre-state lookup treat both as absent. An account that already exists while empty, from genesis
+/// or before Spurious Dragon, is also reported as absent.
+#[derive(Debug)]
+pub(super) struct EmptyAsAbsentDb<T>(pub(super) T);
+
+impl<T: DatabaseRef> DatabaseRef for EmptyAsAbsentDb<T> {
+    type Error = T::Error;
+
+    fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        Ok(self.0.basic_ref(address)?.filter(|info| !info.is_empty()))
+    }
+
+    fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.0.code_by_hash_ref(code_hash)
+    }
+
+    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.0.storage_ref(address, index)
+    }
+
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        self.0.block_hash_ref(number)
     }
 }
 

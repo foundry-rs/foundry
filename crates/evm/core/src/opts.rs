@@ -33,6 +33,10 @@ use url::Url;
 /// selector to a block number, hash, and endpoint context. Forge normally performs discovery
 /// before resolution, while callers that already know the network can resolve directly.
 ///
+/// Resolution revalidates the endpoint identity around its remote reads. A cached discovery that
+/// found no Anvil identity has nothing to revalidate and is reused instead, so the chain ID and
+/// the `anvil_nodeInfo` probe of such an endpoint are requested once, by discovery.
+///
 /// An implicit `latest` selector remains unchanged in these options; only the returned
 /// [`ResolvedFork`] is pinned to the exact block observed during resolution.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,6 +92,10 @@ pub struct EvmOpts {
     /// Disables storage caching entirely.
     pub no_storage_caching: bool,
 
+    /// Disables parent-block BAL cache prewarming for transaction-hash forks.
+    #[serde(default)]
+    pub no_fork_bal: bool,
+
     /// The initial balance of each deployed test contract.
     pub initial_balance: U256,
 
@@ -124,6 +132,9 @@ pub struct EvmOpts {
     pub create2_deployer: Address,
 
     /// Most recently discovered endpoint identity, cached for network dispatch and revalidation.
+    ///
+    /// An identity without Anvil metadata also stands in for later identity snapshots of the same
+    /// endpoint.
     #[serde(skip)]
     pub fork_endpoint: Option<ForkEndpointIdentity>,
 
@@ -191,6 +202,9 @@ enum EndpointHardforkPolicy {
 /// optional capability is unavailable. Mandatory standard RPC reads still expose endpoint-wide
 /// failures. Once a response or cached endpoint identity identifies Anvil, every later probe
 /// failure is returned so it cannot hide an endpoint reset or execution-profile change.
+///
+/// The probe is not repeated for an endpoint whose cached discovery found no Anvil identity, see
+/// [`EvmOpts::discovered_non_anvil_chain_id`].
 #[derive(Clone, Copy, Debug, Default)]
 struct AnvilNodeInfoProbe {
     identified: bool,
@@ -311,6 +325,7 @@ impl Default for EvmOpts {
             compute_units_per_second: None,
             no_rpc_rate_limit: false,
             no_storage_caching: false,
+            no_fork_bal: false,
             initial_balance: U256::default(),
             sender: Address::default(),
             ffi: false,
@@ -426,6 +441,29 @@ impl EvmOpts {
                 Some(identity.endpoint.as_str()) == endpoint && identity.reported_hardfork.is_some()
             });
         AnvilNodeInfoProbe::new(identified)
+    }
+
+    /// Returns the chain ID of the configured endpoint if its cached discovery found no Anvil
+    /// identity.
+    ///
+    /// Without Anvil node info the identity is derived from the chain ID alone: there is no
+    /// instance, hardfork, or upstream fork that a reset could change between two reads. Later
+    /// snapshots of the same endpoint therefore reuse the discovered chain ID instead of
+    /// requesting `eth_chainId` and probing `anvil_nodeInfo` again. An endpoint that
+    /// `node_info_probe` or a cached identity identifies as Anvil is never reused and keeps its
+    /// strict revalidation.
+    fn discovered_non_anvil_chain_id(
+        &self,
+        node_info_probe: AnvilNodeInfoProbe,
+    ) -> Option<ChainId> {
+        if node_info_probe.identified {
+            return None;
+        }
+        let endpoint = self.fork_url.as_deref()?;
+        self.fork_endpoint
+            .as_ref()
+            .filter(|identity| identity.endpoint == endpoint)
+            .map(|identity| identity.execution_chain_id)
     }
 
     fn fork_source_headers(&self) -> Option<&[String]> {
@@ -616,7 +654,8 @@ impl EvmOpts {
     /// This is the dispatch phase of fork setup: explicit network selections are preserved, while
     /// inferred chain and network settings are applied when no override exists. The method does not
     /// resolve or pin a fork block; block resolution happens later through [`Self::resolve_fork`]
-    /// or [`Self::env_resolved`].
+    /// or [`Self::env_resolved`]. Repeated calls only inspect the endpoint again as described by
+    /// [`Self::fork_endpoint_identity`].
     pub async fn infer_network_from_fork(&mut self) -> eyre::Result<()> {
         let previous_identity = self.fork_endpoint.clone();
         let Some(fork_url) = self.fork_url.clone() else {
@@ -638,7 +677,7 @@ impl EvmOpts {
         };
         let explicit_network =
             self.networks.has_network_selection() && !self.fork_network_is_inferred;
-        let identity = self.discover_fork_endpoint().await?;
+        let identity = self.fork_endpoint_identity().await?;
         self.ensure_expected_fork_endpoint(&identity)?;
         if self.fork_network_is_inferred
             && previous_identity.as_ref().is_some_and(|previous| {
@@ -672,9 +711,10 @@ impl EvmOpts {
     ///
     /// Each attempt reads `eth_chainId` and the optional Anvil identity methods before and after,
     /// and returns only when both snapshots agree. Before Anvil is positively identified, a failed
-    /// `anvil_nodeInfo` probe is treated as absence of optional Anvil identity information for that
-    /// snapshot. Later probe failures are strict. This method does not mutate or cache the returned
-    /// identity in `self`.
+    /// `anvil_nodeInfo` probe is treated as absence of optional Anvil identity information: the
+    /// identity then depends on the chain ID alone and is returned from the first snapshot without
+    /// a confirming one. Later probe failures are strict. This method does not mutate or cache the
+    /// returned identity in `self`.
     pub async fn discover_fork_endpoint(&self) -> eyre::Result<ForkEndpointIdentity> {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
@@ -685,12 +725,18 @@ impl EvmOpts {
                 .get_chain_id()
                 .await
                 .wrap_err("failed to retrieve chain ID from fork endpoint")?;
-            let before_node_info = node_info_probe.request(&provider).await?;
+            let Some(before_node_info) = node_info_probe.request(&provider).await? else {
+                return Self::non_anvil_fork_endpoint_identity(
+                    fork_url,
+                    before_chain_id,
+                    Some(unknown_fallback),
+                );
+            };
             let before = Self::resolve_fork_endpoint_identity(
                 &provider,
                 fork_url,
                 before_chain_id,
-                before_node_info,
+                Some(before_node_info),
                 Some(unknown_fallback),
                 EndpointHardforkPolicy::Optional,
             )
@@ -719,11 +765,32 @@ impl EvmOpts {
         );
     }
 
+    /// Returns the identity of the configured fork endpoint, inspecting it only when necessary.
+    ///
+    /// A cached discovery that found no Anvil identity is returned without new requests. Anvil
+    /// endpoints and endpoints without a cached discovery are inspected through
+    /// [`Self::discover_fork_endpoint`], so a reset or execution-profile change of an Anvil
+    /// endpoint is still observed.
+    pub async fn fork_endpoint_identity(&self) -> eyre::Result<ForkEndpointIdentity> {
+        let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
+        if let Some(execution_chain_id) =
+            self.discovered_non_anvil_chain_id(self.anvil_node_info_probe())
+        {
+            return Self::non_anvil_fork_endpoint_identity(
+                fork_url,
+                execution_chain_id,
+                Some(self.endpoint_network_fallback()),
+            );
+        }
+        self.discover_fork_endpoint().await
+    }
+
     /// Reads one endpoint identity snapshot without performing a stability check.
     ///
     /// The shared node-info probe starts permissive for endpoints that do not expose Anvil methods
     /// and becomes strict after Anvil is identified. Callers either bracket mutable remote reads
-    /// with two snapshots or use this helper to revalidate an already resolved fork.
+    /// with two snapshots or use this helper to revalidate an already resolved fork. No request is
+    /// sent for an endpoint whose cached discovery found no Anvil identity.
     async fn resolve_fork_endpoint_once<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
@@ -731,6 +798,13 @@ impl EvmOpts {
         hardfork_policy: EndpointHardforkPolicy,
     ) -> eyre::Result<ForkEndpointIdentity> {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
+        if let Some(execution_chain_id) = self.discovered_non_anvil_chain_id(*node_info_probe) {
+            return Self::non_anvil_fork_endpoint_identity(
+                fork_url,
+                execution_chain_id,
+                Some(self.endpoint_network_fallback()),
+            );
+        }
         let cached_anvil = self.fork_endpoint.as_ref().is_some_and(|identity| {
             identity.endpoint == fork_url && identity.reported_hardfork.is_some()
         });
@@ -828,34 +902,44 @@ impl EvmOpts {
                     source_fork_block_hash,
                 })
             }
-            None => {
-                let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
-                    execution_chain_id,
-                    None,
-                    unknown_fallback,
-                )
-                .map_err(eyre::Report::msg)?;
-                if let Some(network_profile) = network_profile {
-                    let network = network_profile.execution_network();
-                    return Ok(ForkEndpointIdentity {
-                        endpoint: endpoint.to_string(),
-                        execution_chain_id,
-                        source_chain_id: execution_chain_id,
-                        network,
-                        network_profile,
-                        reported_hardfork: None,
-                        hardfork: None,
-                        instance_id: None,
-                        source_fork_block_number: None,
-                        source_fork_block_hash: None,
-                    });
-                }
-                Err(eyre::eyre!(
-                    "cannot determine network family for unknown chain ID \
-                     {execution_chain_id}: the fork endpoint does not expose `anvil_nodeInfo`"
-                ))
-            }
+            None => Self::non_anvil_fork_endpoint_identity(
+                endpoint,
+                execution_chain_id,
+                unknown_fallback,
+            ),
         }
+    }
+
+    /// Builds the identity of an endpoint that exposes no Anvil node info from its chain ID.
+    fn non_anvil_fork_endpoint_identity(
+        endpoint: &str,
+        execution_chain_id: ChainId,
+        unknown_fallback: Option<NetworkConfigs>,
+    ) -> eyre::Result<ForkEndpointIdentity> {
+        let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
+            execution_chain_id,
+            None,
+            unknown_fallback,
+        )
+        .map_err(eyre::Report::msg)?
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "cannot determine network family for unknown chain ID \
+                 {execution_chain_id}: the fork endpoint does not expose `anvil_nodeInfo`"
+            )
+        })?;
+        Ok(ForkEndpointIdentity {
+            endpoint: endpoint.to_string(),
+            execution_chain_id,
+            source_chain_id: execution_chain_id,
+            network: network_profile.execution_network(),
+            network_profile,
+            reported_hardfork: None,
+            hardfork: None,
+            instance_id: None,
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        })
     }
 
     /// Returns a tuple with [`EvmEnv`], `TxEnv`, and the actual fork block number.
@@ -956,7 +1040,7 @@ impl EvmOpts {
         let mut node_info_probe = self.anvil_node_info_probe();
         node_info_probe.identified |= fork.context().hardfork.is_some();
         for _ in 0..3 {
-            let (evm_env, endpoint) = self
+            let (evm_env, endpoint, _) = self
                 .fork_evm_env_at_resolved_with_context(&provider, fork, &mut node_info_probe)
                 .await?;
             let gas_price =
@@ -1182,7 +1266,7 @@ impl EvmOpts {
         provider: &P,
         expected: &ResolvedFork,
         node_info_probe: &mut AnvilNodeInfoProbe,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext)> {
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext, N::BlockResponse)> {
         let (block, _, context) = self
             .resolve_fork_block_with_context(
                 provider,
@@ -1198,10 +1282,10 @@ impl EvmOpts {
         let chain_id = self.chain_id_override().unwrap_or(context.execution_chain_id);
         let evm_env =
             self.fork_env_from_block::<SPEC, BLOCK, N>(chain_id, context.source_chain_id, &block);
-        Ok((evm_env, context))
+        Ok((evm_env, context, block))
     }
 
-    /// Reconstructs the fork environment at an already resolved exact block.
+    /// Reconstructs the fork environment and retains its validated source block.
     pub(crate) async fn fork_evm_env_at_resolved<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
@@ -1211,13 +1295,13 @@ impl EvmOpts {
         &self,
         provider: &P,
         expected: &ResolvedFork,
-    ) -> eyre::Result<EvmEnv<SPEC, BLOCK>> {
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, N::BlockResponse)> {
         let mut node_info_probe = self.anvil_node_info_probe();
         node_info_probe.identified |= expected.context().hardfork.is_some();
-        let (evm_env, _) = self
+        let (evm_env, _, block) = self
             .fork_evm_env_at_resolved_with_context(provider, expected, &mut node_info_probe)
             .await?;
-        Ok(evm_env)
+        Ok((evm_env, block))
     }
 
     fn fork_env_from_block<
@@ -1583,7 +1667,7 @@ mod tests {
     use alloy_serde::WithOtherFields;
     use foundry_test_utils::rpc::{
         spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
-        spawn_rpc_proxy_rejecting_method_after,
+        spawn_rpc_proxy_recording_method, spawn_rpc_proxy_rejecting_method_after,
     };
     use revm::context::{BlockEnv, TxEnv};
 
@@ -2074,6 +2158,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "optimism", not(feature = "base")))]
+    fn resolve_execution_spec_preserves_config_for_base_op_fallback() {
+        let config = Config { evm_version: EvmVersion::Osaka, ..Default::default() };
+        let mut block = BlockEnv::default();
+        block.set_timestamp(U256::from(u64::MAX));
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::default()), block);
+
+        assert_eq!(
+            resolve_execution_spec(
+                config.evm_version,
+                config.hardfork,
+                &mut env,
+                ExecutionSpecContext::fork(NamedChain::Base as u64, None),
+                None,
+            ),
+            None
+        );
+        assert_eq!(env.cfg_env.spec, OpSpecId::KARST);
+    }
+
+    #[test]
     #[cfg(feature = "monad")]
     fn resolve_execution_spec_honors_explicit_precedence() {
         let activation =
@@ -2323,10 +2428,10 @@ mod tests {
                 .await;
         let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
-        let identity = evm_opts.discover_fork_endpoint().await.unwrap();
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
 
-        assert!(identity.reported_hardfork.is_some());
-        assert!(identity.instance_id.is_some());
+        assert!(fork.context().hardfork.is_some());
+        assert!(fork.context().instance_id.is_some());
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2345,6 +2450,45 @@ mod tests {
             error.to_string().contains("failed to determine network family from endpoint"),
             "{error}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_non_anvil_discovery_is_reused_by_resolution() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
+                .await;
+        let endpoint = spawn_rpc_proxy_method_not_found_before(
+            handle.http_endpoint(),
+            "anvil_nodeInfo",
+            usize::MAX,
+        )
+        .await;
+        let (endpoint, chain_ids) = spawn_rpc_proxy_recording_method(endpoint, "eth_chainId").await;
+        let (endpoint, node_infos) =
+            spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+        let probes = || (chain_ids.lock().unwrap().len(), node_infos.lock().unwrap().len());
+        let mut evm_opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+        assert_eq!(probes(), (1, 1));
+        assert_eq!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork, None);
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+        let (_, _, resolved) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        evm_opts
+            .env_with_resolved_fork::<SpecId, BlockEnv, TxEnv>(resolved.as_ref())
+            .await
+            .unwrap();
+        let fork = evm_opts
+            .get_fork_resolved(&Config::default(), NamedChain::Mainnet as u64, resolved.as_ref())
+            .unwrap();
+        let _backend =
+            crate::backend::Backend::<crate::evm::EthEvmNetwork>::spawn(Some(fork)).unwrap();
+        assert_eq!(probes(), (1, 1));
+
+        // Explicit discovery always inspects the endpoint.
+        evm_opts.discover_fork_endpoint().await.unwrap();
+        assert_eq!(probes(), (2, 2));
     }
 
     #[test]
@@ -2658,6 +2802,27 @@ mod tests {
             error.to_string().contains("changed after its execution context was selected"),
             "{error}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolved_fork_environment_retains_exact_block() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
+        let provider = handle.http_provider();
+
+        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        assert!(provider.get_block_number().await.unwrap() > fork.number());
+
+        let (evm_env, block) = evm_opts
+            .fork_evm_env_at_resolved::<SpecId, BlockEnv, _, _>(&provider, &fork)
+            .await
+            .unwrap();
+
+        assert_eq!(block.header().hash(), fork.hash());
+        assert_eq!(block.header().number(), fork.number());
+        assert_eq!(evm_env.block_env.number, U256::from(fork.number()));
+        assert_eq!(evm_env.block_env.timestamp, U256::from(block.header().timestamp()));
     }
 
     #[tokio::test(flavor = "multi_thread")]

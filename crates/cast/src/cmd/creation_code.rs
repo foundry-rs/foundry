@@ -105,7 +105,7 @@ pub(crate) async fn load_abi(
     if let Some(path) = abi_path {
         return load_abi_from_file(path);
     }
-    let abis = fetch_abi_from_etherscan(contract, config).await?;
+    let abis = fetch_abi_from_etherscan(contract, config, false).await?;
     abis.into_iter().next().map(|(abi, _)| abi).ok_or_eyre("No ABI found.")
 }
 
@@ -122,8 +122,8 @@ pub(crate) fn constructor_with_args(abi: &JsonAbi) -> Result<&Constructor> {
 ///
 /// The arguments are appended to the init code, so their encoding is a word-aligned suffix of the
 /// creation bytecode. Static arguments occupy a fixed number of words, but dynamic ones carry
-/// their own lengths, so the suffix is searched from the shortest candidate upwards for the first
-/// one that decodes as the constructor inputs and encodes back to the same bytes.
+/// their own lengths, so the suffix is searched for a unique candidate that decodes as the
+/// constructor inputs and encodes back to the same bytes. Nested ABI data can make this ambiguous.
 pub(crate) fn constructor_args_offset(constructor: &Constructor, bytecode: &[u8]) -> Result<usize> {
     let types =
         constructor.inputs.iter().map(|input| input.resolve()).collect::<Result<Vec<_>, _>>()?;
@@ -141,15 +141,21 @@ pub(crate) fn constructor_args_offset(constructor: &Constructor, bytecode: &[u8]
     }
 
     let tuple = DynSolType::Tuple(types);
-    (min_words..=bytecode.len() / 32)
+    let mut candidates = (min_words..=bytecode.len() / 32)
         .map(|words| bytecode.len() - words * 32)
-        .find(|&offset| {
+        .filter(|&offset| {
             let args = &bytecode[offset..];
             tuple.abi_decode_params(args).is_ok_and(|value| value.abi_encode_params() == args)
-        })
-        .ok_or_else(|| {
-            eyre!("Could not find constructor arguments matching the ABI in the creation bytecode")
-        })
+        });
+    let offset = candidates.next().ok_or_else(|| {
+        eyre!("Could not find constructor arguments matching the ABI in the creation bytecode")
+    })?;
+    if candidates.next().is_some() {
+        eyre::bail!(
+            "Multiple constructor argument suffixes match the ABI in the creation bytecode"
+        );
+    }
+    Ok(offset)
 }
 
 /// Connects to the configured RPC, pins `config.chain` to it, and fetches the creation code of
@@ -246,6 +252,21 @@ mod tests {
         let offset = constructor_args_offset(&constructor, &bytecode).unwrap();
         assert_eq!(offset, init_code.len());
         assert_eq!(&bytecode[offset..], args.as_slice());
+    }
+
+    #[test]
+    fn rejects_ambiguous_dynamic_constructor_args() {
+        let constructor = constructor(r#"{"name":"data","type":"bytes"}"#);
+        let nested =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![0x42; 32])]).abi_encode_params();
+        let args = DynSolValue::Tuple(vec![DynSolValue::Bytes(nested)]).abi_encode_params();
+        for init_len in [64, 77] {
+            let bytecode = [vec![0xfe; init_len], args.clone()].concat();
+            assert_eq!(
+                constructor_args_offset(&constructor, &bytecode).unwrap_err().to_string(),
+                "Multiple constructor argument suffixes match the ABI in the creation bytecode"
+            );
+        }
     }
 
     #[test]

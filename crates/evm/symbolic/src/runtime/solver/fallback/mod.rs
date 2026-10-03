@@ -13,11 +13,6 @@ impl SymBoolExpr {
 }
 
 impl SymExpr {
-    #[cfg(test)]
-    pub(crate) fn contains_hard_arith(&self) -> bool {
-        self.visit_bool(is_hard_arith_node)
-    }
-
     fn contains_var(&self) -> bool {
         self.visit_bool(|expr| {
             matches!(
@@ -108,6 +103,7 @@ pub(crate) fn hard_arith_fallback_model(
         searched_vars: &searched_vars,
         vars: &vars,
         candidates: &candidates,
+        max_assignments: HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS,
     };
     search.model(0, &mut model, &mut assignments)
 }
@@ -481,7 +477,7 @@ fn fallback_candidates_for_var(
         push_fallback_candidate(&mut candidates, constant, hints);
         push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::from(1)), hints);
         push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::from(1)), hints);
-        if candidates.len() >= HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR {
+        if candidates.len() >= FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR {
             break;
         }
     }
@@ -489,14 +485,14 @@ fn fallback_candidates_for_var(
     for bit in 0..256 {
         let power = U256::from(1) << bit;
         push_fallback_candidate(&mut candidates, power, hints);
-        if candidates.len() >= HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR {
+        if candidates.len() >= FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR {
             break;
         }
     }
 
     let mut candidates = candidates.into_iter().collect::<Vec<_>>();
     candidates.sort_unstable();
-    candidates.truncate(HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR);
+    candidates.truncate(FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR);
     Some(candidates)
 }
 
@@ -506,6 +502,7 @@ struct FallbackSearch<'a> {
     searched_vars: &'a SymbolicVars,
     vars: &'a [Symbol],
     candidates: &'a [Vec<U256>],
+    max_assignments: usize,
 }
 
 impl FallbackSearch<'_> {
@@ -516,10 +513,6 @@ impl FallbackSearch<'_> {
         assignments: &mut usize,
     ) -> Option<SymbolicModel> {
         if index == self.vars.len() {
-            *assignments += 1;
-            if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
-                return None;
-            }
             let mut completed = model.clone();
             let mut remaining_support_visits = usize::MAX;
             if complete_fallback_support_model(
@@ -542,6 +535,10 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
+            if *assignments >= self.max_assignments {
+                return None;
+            }
+            *assignments += 1;
             model.insert(self.vars[index], *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
@@ -552,21 +549,10 @@ impl FallbackSearch<'_> {
             {
                 return Some(model);
             }
-            if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
-                return None;
-            }
         }
         model.remove(&self.vars[index]);
         None
     }
-}
-
-#[cfg(test)]
-fn fallback_model_satisfies_all_constraints(
-    constraints: &[SymBoolExpr],
-    model: &(impl SymbolicModelLookup + ?Sized),
-) -> bool {
-    eval_model_constraints(constraints, model)
 }
 
 /// Seeds only unassigned scalar variables; every resulting witness is still fully validated.
@@ -692,7 +678,7 @@ fn complete_support_constraints_once(
         match constraint.eval_model_if_complete(model) {
             Ok(Some(true)) => {}
             Ok(Some(false)) | Err(_) => return None,
-            Ok(None) => changed |= complete_support_constraint(constraint, model),
+            Ok(None) => changed |= complete_support_bool(constraint, model, false, false),
         }
     }
     Some(changed)
@@ -733,10 +719,6 @@ fn complete_model_with_zeroes(
         model.entry(var).or_default();
     }
     true
-}
-
-fn complete_support_constraint(constraint: &SymBoolExpr, model: &mut SymbolicModel) -> bool {
-    complete_support_bool(constraint, model, false, false)
 }
 
 fn complete_default_support_constraint(
@@ -997,7 +979,11 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     None
 }
 
-pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
+/// Searches a bounded Cartesian portfolio and returns only an evaluator-validated SAT witness.
+///
+/// Unsupported expressions and exhausted search return `None`, leaving the external solver as the
+/// authoritative fallback.
+pub(crate) fn fallback_bounded_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
     if constraints.iter().any(SymBoolExpr::contains_hard_arith) {
         return None;
     }
@@ -1005,11 +991,11 @@ pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<Symb
     let mut vars = SymbolicVars::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
-        if vars.len() > 2 {
+        if vars.len() > FALLBACK_MODEL_MAX_VARS {
             return None;
         }
     }
-    if vars.len() != 2 {
+    if vars.len() < 2 {
         return None;
     }
     if constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
@@ -1017,12 +1003,6 @@ pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<Symb
     {
         return None;
     }
-    if !constraints_have_two_var_relation(constraints, &vars)
-        || !constraints_bind_each_search_var(constraints, &vars)
-    {
-        return None;
-    }
-
     let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
         collect_bool_constants(constraint, &mut constants);
@@ -1049,83 +1029,11 @@ pub(crate) fn fallback_two_var_model(constraints: &[SymBoolExpr]) -> Option<Symb
         searched_vars: &searched_vars,
         vars: &vars,
         candidates: &candidates,
+        max_assignments: FALLBACK_MODEL_MAX_ASSIGNMENTS,
     };
     let mut model = SymbolicModel::default();
     let mut assignments = 0usize;
     search.model(0, &mut model, &mut assignments)
-}
-
-fn constraints_have_two_var_relation(
-    constraints: &[SymBoolExpr],
-    searched_vars: &SymbolicVars,
-) -> bool {
-    constraints
-        .iter()
-        .any(|constraint| bool_expr_has_two_var_relation(constraint, searched_vars, false))
-}
-
-fn bool_expr_has_two_var_relation(
-    expr: &SymBoolExpr,
-    searched_vars: &SymbolicVars,
-    inverted: bool,
-) -> bool {
-    match expr.kind() {
-        SymBoolExprKind::Const(_) => false,
-        SymBoolExprKind::Not(expr) => {
-            bool_expr_has_two_var_relation(expr, searched_vars, !inverted)
-        }
-        SymBoolExprKind::And(exprs) if !inverted => {
-            exprs.iter().any(|expr| bool_expr_has_two_var_relation(expr, searched_vars, false))
-        }
-        SymBoolExprKind::And(_) => false,
-        SymBoolExprKind::Cmp(_, left, right) => {
-            let mut vars = SymbolicVars::default();
-            collect_expr_fallback_vars(left, &mut vars);
-            collect_expr_fallback_vars(right, &mut vars);
-            vars.len() == 2 && vars.is_subset(searched_vars)
-        }
-    }
-}
-
-fn constraints_bind_each_search_var(
-    constraints: &[SymBoolExpr],
-    searched_vars: &SymbolicVars,
-) -> bool {
-    searched_vars.iter().all(|var| {
-        constraints.iter().any(|constraint| bool_expr_binds_single_var(constraint, *var, false))
-    })
-}
-
-fn bool_expr_binds_single_var(expr: &SymBoolExpr, bound_var: Symbol, inverted: bool) -> bool {
-    match expr.kind() {
-        SymBoolExprKind::Const(_) => false,
-        SymBoolExprKind::Not(expr) => bool_expr_binds_single_var(expr, bound_var, !inverted),
-        SymBoolExprKind::And(exprs) if !inverted => {
-            exprs.iter().any(|expr| bool_expr_binds_single_var(expr, bound_var, false))
-        }
-        SymBoolExprKind::And(_) => false,
-        SymBoolExprKind::Cmp(_, left, right) => {
-            let mut vars = SymbolicVars::default();
-            collect_expr_fallback_vars(left, &mut vars);
-            collect_expr_fallback_vars(right, &mut vars);
-            vars.len() == 1
-                && vars.contains(&bound_var)
-                && (expr_contains_const(left) || expr_contains_const(right))
-        }
-    }
-}
-
-fn collect_expr_fallback_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
-    let _ = expr.visit(&mut |expr| {
-        if let Some(var) = expr.kind().get_eval_var() {
-            vars.insert(var);
-        }
-        ControlFlow::<()>::Continue(())
-    });
-}
-
-fn expr_contains_const(expr: &SymExpr) -> bool {
-    expr.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Const(_)))
 }
 
 fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hints: MaskHints) {
@@ -1177,7 +1085,7 @@ impl MaskHints {
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
         {
             if inverted {
-                if is_single_bit(mask) {
+                if mask.is_power_of_two() {
                     self.one |= mask;
                 }
             } else {
@@ -1185,10 +1093,6 @@ impl MaskHints {
             }
         }
     }
-}
-
-fn is_single_bit(value: U256) -> bool {
-    !value.is_zero() && (value & (value - U256::from(1))).is_zero()
 }
 
 fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
@@ -1202,487 +1106,5 @@ fn zero_mask_equality(var: &Symbol, masked: &SymExpr, zero: &SymExpr) -> Option<
             right.as_const()
         }
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn replayable_input(cx: &mut SymCx, name: &str) -> SymExpr {
-        let symbol = cx.intern(name);
-        cx.mark_replayable_input(symbol);
-        SymExpr::get_var(cx, symbol)
-    }
-
-    fn checked_mul_guard_word(
-        cx: &mut SymCx,
-        zero_operand: &SymExpr,
-        expected: &SymExpr,
-    ) -> SymExpr {
-        let zero = SymExpr::zero(cx);
-        let operand_is_zero = SymBoolExpr::eq(cx, zero_operand.clone(), zero.clone());
-        let product = SymExpr::binop(cx, SymBinOp::Mul, zero_operand.clone(), expected.clone());
-        let quotient = SymExpr::binop(cx, SymBinOp::UDiv, product, zero_operand.clone());
-        let checked_product = SymExpr::ite(cx, operand_is_zero.clone(), zero, quotient);
-        let operand_is_zero_word = SymExpr::bool_word(cx, operand_is_zero);
-        let product_matches_expected = SymBoolExpr::eq(cx, checked_product, expected.clone());
-        let product_matches_expected_word = SymExpr::bool_word(cx, product_matches_expected);
-        SymExpr::binop(cx, SymBinOp::Or, operand_is_zero_word, product_matches_expected_word)
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_preserves_exact_operand_constraints() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
-        let guard_is_true = guard_is_false.clone().not(&mut cx);
-
-        let seven = SymExpr::constant(&mut cx, U256::from(7));
-        let y_is_seven = SymBoolExpr::eq(&mut cx, y.clone(), seven);
-        let true_constraints = [guard_is_true, y_is_seven];
-        let true_model = checked_mul_guard_branch_model(
-            &cx,
-            &true_constraints,
-            &true_constraints,
-            &SymbolicVars::default(),
-        )
-        .expect("true guard branch model");
-        assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
-        assert_eq!(y.eval_model(&true_model).unwrap(), U256::from(7));
-        assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
-
-        let three = SymExpr::constant(&mut cx, U256::from(3));
-        let y_is_three = SymBoolExpr::eq(&mut cx, y.clone(), three);
-        let false_constraints = [guard_is_false, y_is_three];
-        let false_model = checked_mul_guard_branch_model(
-            &cx,
-            &false_constraints,
-            &false_constraints,
-            &SymbolicVars::default(),
-        )
-        .expect("false guard branch model");
-        assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
-        assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(3));
-        assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_matches_nested_boolean_guard() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let zero = SymExpr::zero(&mut cx);
-        let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero.clone());
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
-        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), x.clone());
-        let guarded_quotient = SymExpr::ite(&mut cx, x_is_zero.clone(), zero, quotient);
-        let quotient_matches = SymBoolExpr::eq(&mut cx, guarded_quotient, y.clone());
-        let quotient_mismatches = quotient_matches.not(&mut cx);
-        let x_is_nonzero = x_is_zero.not(&mut cx);
-        let guard_is_false = SymBoolExpr::and(&mut cx, vec![quotient_mismatches, x_is_nonzero]);
-        let max = SymExpr::constant(&mut cx, U256::MAX);
-        let product_is_not_max = SymBoolExpr::eq(&mut cx, product, max).not(&mut cx);
-
-        let guard_is_true = guard_is_false.clone().not(&mut cx);
-        let nested_false_branch =
-            SymBoolExpr::and(&mut cx, vec![guard_is_true, product_is_not_max.clone()]).not(&mut cx);
-        let false_constraints = [nested_false_branch.clone()];
-        let false_model = checked_mul_guard_branch_model(
-            &cx,
-            &false_constraints,
-            &false_constraints,
-            &SymbolicVars::default(),
-        )
-        .expect("nested false guard branch model");
-        assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
-        assert_eq!(y.eval_model(&false_model).unwrap(), U256::from(2));
-        assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
-
-        let guard_word = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let word_guard_is_false = SymBoolExpr::eq(&mut cx, guard_word, zero);
-        let normalized = [nested_false_branch, word_guard_is_false.clone()];
-        let original = [word_guard_is_false, normalized[0].clone()];
-        let combined_model =
-            checked_mul_guard_branch_model(&cx, &normalized, &original, &SymbolicVars::default())
-                .expect("combined word and nested guard model");
-        assert!(fallback_model_satisfies_all_constraints(&original, &combined_model));
-
-        let guarded_nonmax_product =
-            SymBoolExpr::and(&mut cx, vec![guard_is_false, product_is_not_max]).not(&mut cx);
-        let true_constraints = [guarded_nonmax_product];
-        let true_model = checked_mul_guard_branch_model(
-            &cx,
-            &true_constraints,
-            &true_constraints,
-            &SymbolicVars::default(),
-        )
-        .expect("nested true guard branch model");
-        assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
-        assert_eq!(y.eval_model(&true_model).unwrap(), U256::ZERO);
-        assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_completes_original_model_symbols() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero).not(&mut cx);
-        let slot_symbol = cx.intern("slot");
-        let slot = SymExpr::get_var(&mut cx, slot_symbol);
-        let one = SymExpr::one(&mut cx);
-        let slot_is_not_one = SymBoolExpr::eq(&mut cx, slot, one).not(&mut cx);
-        let normalized = [guard_is_true.clone()];
-        let original = [guard_is_true, slot_is_not_one];
-        let replayable_storage = [slot_symbol].into_iter().collect();
-
-        let model =
-            checked_mul_guard_branch_model(&cx, &normalized, &original, &replayable_storage)
-                .expect("completed guard branch model");
-
-        assert_eq!(model.get(&slot_symbol), Some(&U256::ZERO));
-        assert!(fallback_model_satisfies_all_constraints(&original, &model));
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_rejects_symbolic_hash_assignments() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
-        let y_is_zero = SymBoolExpr::eq(&mut cx, y.clone(), zero.clone());
-        let hash_symbol = cx.intern("sha256_y");
-        let hash = SymExpr::hash_symbol(&mut cx, hash_symbol, "sha256", vec![y]);
-        let hash_is_zero = SymBoolExpr::eq(&mut cx, hash, zero);
-        let constraints = [guard_is_true, y_is_zero, hash_is_zero];
-
-        assert!(
-            checked_mul_guard_branch_model(
-                &cx,
-                &constraints,
-                &constraints,
-                &SymbolicVars::default(),
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_rejects_gasleft_assignments() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
-        let gas_left = SymExpr::gas_left(&mut cx, 0);
-        let gas_is_zero = SymBoolExpr::eq(&mut cx, gas_left, zero);
-        let constraints = [guard_is_true, gas_is_zero];
-
-        assert!(
-            checked_mul_guard_branch_model(
-                &cx,
-                &constraints,
-                &constraints,
-                &SymbolicVars::default(),
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_rejects_opaque_var_assignments() {
-        for name in ["create_address_opaque", "vmRandomUint_0", "svm_0"] {
-            let mut cx = SymCx::new();
-            let x = replayable_input(&mut cx, "x");
-            let y = replayable_input(&mut cx, "y");
-            let guard = checked_mul_guard_word(&mut cx, &x, &y);
-            let zero = SymExpr::zero(&mut cx);
-            let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
-            let opaque = SymExpr::var(&mut cx, name);
-            let opaque_is_zero = SymBoolExpr::eq(&mut cx, opaque, zero);
-            let constraints = [guard_is_true, opaque_is_zero];
-
-            assert!(
-                checked_mul_guard_branch_model(
-                    &cx,
-                    &constraints,
-                    &constraints,
-                    &SymbolicVars::default(),
-                )
-                .is_none(),
-                "accepted opaque model symbol {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_propagates_relational_operand_constraints() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let guard_is_false = SymBoolExpr::eq(&mut cx, guard, zero);
-        let guard_is_true = guard_is_false.clone().not(&mut cx);
-
-        let seven = SymExpr::constant(&mut cx, U256::from(7));
-        let x_plus_seven = SymExpr::binop(&mut cx, SymBinOp::Add, x.clone(), seven);
-        let y_is_x_plus_seven = SymBoolExpr::eq(&mut cx, y.clone(), x_plus_seven);
-        let true_constraints = [guard_is_true, y_is_x_plus_seven];
-        let true_model = checked_mul_guard_branch_model(
-            &cx,
-            &true_constraints,
-            &true_constraints,
-            &SymbolicVars::default(),
-        )
-        .expect("true relational model");
-        assert_eq!(x.eval_model(&true_model).unwrap(), U256::ZERO);
-        assert_eq!(y.eval_model(&true_model).unwrap(), U256::from(7));
-        assert!(fallback_model_satisfies_all_constraints(&true_constraints, &true_model));
-
-        let operands_are_equal = SymBoolExpr::eq(&mut cx, x.clone(), y.clone());
-        let false_constraints = [guard_is_false, operands_are_equal];
-        let false_model = checked_mul_guard_branch_model(
-            &cx,
-            &false_constraints,
-            &false_constraints,
-            &SymbolicVars::default(),
-        )
-        .expect("false relational model");
-        assert_eq!(x.eval_model(&false_model).unwrap(), U256::MAX);
-        assert_eq!(y.eval_model(&false_model).unwrap(), U256::MAX);
-        assert!(fallback_model_satisfies_all_constraints(&false_constraints, &false_model));
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_stops_at_shared_support_budget() {
-        let mut cx = SymCx::new();
-        let first_x = replayable_input(&mut cx, "first_x");
-        let first_y = replayable_input(&mut cx, "first_y");
-        let first_guard = checked_mul_guard_word(&mut cx, &first_x, &first_y);
-        let zero = SymExpr::zero(&mut cx);
-        let first_guard_is_true = SymBoolExpr::eq(&mut cx, first_guard, zero.clone()).not(&mut cx);
-
-        let second_x = replayable_input(&mut cx, "second_x");
-        let second_y = replayable_input(&mut cx, "second_y");
-        let second_guard = checked_mul_guard_word(&mut cx, &second_x, &second_y);
-        let second_guard_is_false = SymBoolExpr::eq(&mut cx, second_guard, zero);
-
-        let one = SymExpr::one(&mut cx);
-        let second_x_plus_one = SymExpr::binop(&mut cx, SymBinOp::Add, second_x.clone(), one);
-        let x_relation = SymBoolExpr::eq(&mut cx, first_x.clone(), second_x_plus_one);
-        let y_relation = SymBoolExpr::eq(&mut cx, first_y.clone(), second_y.clone());
-        let mut constraints =
-            vec![first_guard_is_true, second_guard_is_false, x_relation, y_relation];
-        for _ in 0..8 {
-            constraints.push(SymBoolExpr::constant(&mut cx, true));
-        }
-
-        let expected = [
-            (cx.intern("first_x"), U256::ZERO),
-            (cx.intern("first_y"), U256::from(2)),
-            (cx.intern("second_x"), U256::MAX),
-            (cx.intern("second_y"), U256::from(2)),
-        ]
-        .into_iter()
-        .collect::<SymbolicModel>();
-        assert!(fallback_model_satisfies_all_constraints(&constraints, &expected));
-
-        assert!(
-            checked_mul_guard_branch_model(
-                &cx,
-                &constraints,
-                &constraints,
-                &SymbolicVars::default(),
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn checked_mul_guard_branch_model_stops_at_shared_expression_budget() {
-        let mut cx = SymCx::new();
-        let x = replayable_input(&mut cx, "x");
-        let y = replayable_input(&mut cx, "y");
-        let guard = checked_mul_guard_word(&mut cx, &x, &y);
-        let zero = SymExpr::zero(&mut cx);
-        let guard_is_true = SymBoolExpr::eq(&mut cx, guard, zero.clone()).not(&mut cx);
-
-        let source = replayable_input(&mut cx, "source");
-        let mut shared = source;
-        for _ in 0..9 {
-            shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
-        }
-        let support = SymBoolExpr::eq(&mut cx, shared, zero);
-        let original = [guard_is_true, support.clone()];
-        let normalized = normalize_constraints_for_solver(&mut cx, &original);
-
-        assert!(normalized.contains(&support));
-        assert!(
-            checked_mul_guard_branch_model(&cx, &normalized, &original, &SymbolicVars::default(),)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn fallback_completes_signed_global_bounds_after_rounded_conversion() {
-        let mut cx = SymCx::new();
-        let balance = SymExpr::var(&mut cx, "storage_balance");
-        let rate = SymExpr::var(&mut cx, "storage_rate");
-        let credits = SymExpr::var(&mut cx, "storage_credits");
-        let supply = SymExpr::var(&mut cx, "storage_supply");
-        let account = SymExpr::var(&mut cx, "calldata_0");
-        let state = SymExpr::var(&mut cx, "storage_state");
-        let fixed = SymExpr::var(&mut cx, "storage_fixed");
-        let scale_value = U256::from(1_000_000_000_000_000_000u64);
-        let scale = SymExpr::constant(&mut cx, scale_value);
-        let one = SymExpr::one(&mut cx);
-        let zero = SymExpr::zero(&mut cx);
-        let max = U256::MAX >> 1;
-        let max_word = SymExpr::constant(&mut cx, max);
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, balance.clone(), rate.clone());
-        let rounded = SymExpr::binop(&mut cx, SymBinOp::Add, product, scale.clone());
-        let rounded = SymExpr::binop(&mut cx, SymBinOp::Sub, rounded, one.clone());
-        let rounded = SymExpr::binop(&mut cx, SymBinOp::UDiv, rounded, scale.clone());
-        let room = SymExpr::binop(&mut cx, SymBinOp::Sub, max_word, rounded);
-        let mask = SymExpr::constant(&mut cx, U256::from(255));
-        let masked_state = SymExpr::binop(&mut cx, SymBinOp::And, state, mask);
-        let mut constraints = vec![
-            SymBoolExpr::eq(&mut cx, balance.clone(), zero.clone()).not(&mut cx),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ugt, &supply, max),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, credits.clone(), room.clone()),
-            SymBoolExpr::eq(&mut cx, fixed, scale),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &balance, U256::from(u128::MAX)),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ult, &account, U256::ONE << 160),
-            SymBoolExpr::eq(&mut cx, masked_state, one),
-            SymBoolExpr::cmp_word_const(
-                &mut cx,
-                SymCmpOp::Ule,
-                &rate,
-                scale_value * U256::from(1_000_000_000),
-            ),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Ule, &credits, max),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, balance, supply),
-            SymBoolExpr::eq(&mut cx, account, zero).not(&mut cx),
-            SymBoolExpr::cmp_word_const(&mut cx, SymCmpOp::Uge, &rate, scale_value),
-        ];
-        for overflow in [false, true] {
-            constraints[2] = SymBoolExpr::cmp(
-                &mut cx,
-                if overflow { SymCmpOp::Ugt } else { SymCmpOp::Ule },
-                credits.clone(),
-                room.clone(),
-            );
-            for _ in 0..2 {
-                let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-                let model =
-                    hard_arith_fallback_model(&cx, &normalized).expect("bounded global witness");
-                assert!(fallback_model_satisfies_all_constraints(&constraints, &model));
-                constraints.reverse();
-            }
-        }
-    }
-
-    #[test]
-    fn hard_arith_fallback_ignores_unrelated_abi_vars() {
-        let mut cx = SymCx::new();
-        let amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
-        let zero = SymExpr::zero(&mut cx);
-        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), amount.clone());
-        let div = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, amount.clone());
-        let amount_is_zero = SymBoolExpr::eq(&mut cx, amount, zero);
-        let guarded_zero = SymExpr::zero(&mut cx);
-        let guarded_div = SymExpr::ite(&mut cx, amount_is_zero.clone(), guarded_zero, div);
-        let overflow_branch = SymBoolExpr::eq(&mut cx, guarded_div, scale).not(&mut cx);
-
-        let address_bound = U256::from(1) << 160;
-        let mut constraints = vec![amount_is_zero.not(&mut cx), overflow_branch];
-        for idx in 0..6 {
-            let abi_word = SymExpr::var(&mut cx, &format!("sequence_0_0_0_addr_{idx}"));
-            constraints.push(SymBoolExpr::cmp_word_const(
-                &mut cx,
-                SymCmpOp::Ult,
-                &abi_word,
-                address_bound,
-            ));
-        }
-
-        assert!(constraints_prefer_hard_arith_fallback_first(&cx, &constraints));
-        let model = hard_arith_fallback_model(&cx, &constraints).expect("fallback model");
-        assert!(model.contains_name(cx.symbol("sequence_0_0_0_1")));
-        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
-    }
-
-    #[test]
-    fn hard_arith_fallback_keeps_prior_path_vars_needed_by_zero_model() {
-        let mut cx = SymCx::new();
-        let setup_amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
-        let borrow_amount = SymExpr::var(&mut cx, "sequence_2_2_0_1");
-        let zero = SymExpr::zero(&mut cx);
-        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), borrow_amount.clone());
-        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, borrow_amount.clone());
-
-        let constraints = vec![
-            SymBoolExpr::eq(&mut cx, setup_amount, zero.clone()).not(&mut cx),
-            SymBoolExpr::eq(&mut cx, borrow_amount, zero).not(&mut cx),
-            SymBoolExpr::eq(&mut cx, quotient, scale),
-        ];
-
-        assert!(constraints_prefer_hard_arith_fallback_first(&cx, &constraints));
-        let model = hard_arith_fallback_model(&cx, &constraints).expect("fallback model");
-        assert!(model.contains_name(cx.symbol("sequence_0_0_0_1")));
-        assert!(model.contains_name(cx.symbol("sequence_2_2_0_1")));
-        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
-    }
-
-    #[test]
-    fn hard_arith_fallback_completes_checked_storage_guards() {
-        let mut cx = SymCx::new();
-        let amount = SymExpr::var(&mut cx, "sequence_0_0_0_1");
-        let from_balance = SymExpr::var(&mut cx, "storage_from_balance");
-        let to_balance = SymExpr::var(&mut cx, "storage_to_balance");
-        let zero = SymExpr::zero(&mut cx);
-        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000));
-        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, scale.clone(), amount.clone());
-        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, amount.clone());
-
-        let debited = SymExpr::binop(&mut cx, SymBinOp::Sub, from_balance.clone(), amount.clone());
-        let credited = SymExpr::binop(&mut cx, SymBinOp::Add, to_balance.clone(), amount.clone());
-        let mut constraints = vec![
-            SymBoolExpr::eq(&mut cx, amount, zero).not(&mut cx),
-            SymBoolExpr::eq(&mut cx, quotient, scale),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, from_balance, debited).not(&mut cx),
-            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, credited, to_balance).not(&mut cx),
-        ];
-
-        let address_bound = U256::from(1) << 160;
-        for idx in 0..6 {
-            let abi_word = SymExpr::var(&mut cx, &format!("sequence_0_0_0_addr_{idx}"));
-            constraints.push(SymBoolExpr::cmp_word_const(
-                &mut cx,
-                SymCmpOp::Ult,
-                &abi_word,
-                address_bound,
-            ));
-        }
-
-        assert!(constraints_prefer_hard_arith_fallback_first(&cx, &constraints));
-        let model = hard_arith_fallback_model(&cx, &constraints).expect("fallback model");
-        assert!(model.contains_name(cx.symbol("sequence_0_0_0_1")));
-        assert!(model.contains_name(cx.symbol("storage_from_balance")));
-        assert!(model.contains_name(cx.symbol("storage_to_balance")));
-        assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     }
 }

@@ -8,7 +8,8 @@ fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
 }
 
-forgetest_init!(can_run_mutation_testing, |prj, cmd| {
+#[forgetest_init]
+fn can_run_mutation_testing(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -110,9 +111,10 @@ Survived mutants
 {"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_retains_gas_distinct_bounds, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_retains_gas_distinct_bounds(prj: _, cmd: _) {
     prj.add_source(
         "Boundary.sol",
         r#"
@@ -169,9 +171,10 @@ exclude_operators = [
 {"summary":{"total":5,"killed":4,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Boundary.sol":[{"line":7,"column":16,"original":"value == 0","mutant":"value <= 0"}]}}
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_retains_storage_push_lvalue_mutants, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_retains_storage_push_lvalue_mutants(prj: _, cmd: _) {
     prj.add_source(
         "StoragePush.sol",
         r#"
@@ -233,9 +236,10 @@ exclude_operators = [
     assert_eq!(summary["killed"], 5);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["skipped"], 0);
-});
+}
 
-forgetest_init!(mutation_testing_filters_invalid_compound_assignments, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_filters_invalid_compound_assignments(prj: _, cmd: _) {
     prj.add_source(
         "CompoundAssignments.sol",
         r#"
@@ -322,9 +326,10 @@ exclude_operators = [
     assert_eq!(summary["survived"], 0);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["skipped"], 0);
-});
+}
 
-forgetest_init!(mutation_testing_filters_invalid_fixed_bytes_unary_mutants, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_filters_invalid_fixed_bytes_unary_mutants(prj: _, cmd: _) {
     prj.add_source(
         "TypedUnary.sol",
         r#"
@@ -389,9 +394,10 @@ exclude_operators = [
     assert_eq!(summary["survived"], 0);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["skipped"], 0);
-});
+}
 
-forgetest_init!(mutation_testing_comparison_type_matrix, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_comparison_type_matrix(prj: _, cmd: _) {
     prj.add_source(
         "Comparisons.sol",
         r#"
@@ -472,9 +478,10 @@ exclude_operators = [
     assert_eq!(summary["survived"], 0);
     assert_eq!(summary["invalid"], 0);
     assert_eq!(summary["mutation_score"], 100.0);
-});
+}
 
-forgetest!(mutation_testing_rejects_list_mode_before_compile, |prj, cmd| {
+#[forgetest]
+fn mutation_testing_rejects_list_mode_before_compile(prj: _, cmd: _) {
     prj.add_source(
         "Broken.sol",
         r#"
@@ -496,9 +503,10 @@ contract Broken {
 Error: `--mutate` cannot be combined with: --list. Re-run without those flags to use mutation testing.
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_rejects_all_skipped_baseline, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_rejects_all_skipped_baseline(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -547,9 +555,10 @@ contract CounterTest is Test {
         stderr.contains("Mutation testing requires at least one passing baseline test"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_validates_mutation_compiler_profile, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_validates_mutation_compiler_profile(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = true\n").unwrap();
 
     prj.add_source(
@@ -618,9 +627,10 @@ contract StackTooDeepTest {
         ),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_uses_mutation_profile_for_initial_compile, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
 
     prj.add_source(
@@ -690,9 +700,10 @@ contract StackTooDeepTest {
     let summary = mutation_summary(&output.get_output().stdout_lossy());
 
     assert!(summary["total"].as_u64().unwrap() > 0, "unexpected summary:\n{summary}");
-});
+}
 
-forgetest_init!(mutation_testing_rerun_preserves_exact_failure_filter, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_testing_rerun_preserves_exact_failure_filter(prj: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -776,9 +787,10 @@ contract StrongTest {
             "expected --rerun to match the exact WeakTest baseline for `{key}`: weak={weak_summary}, rerun={rerun_summary}",
         );
     }
-});
+}
 
-forgetest_init!(mutation_testing_rejects_empty_mutate_path_selection, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_rejects_empty_mutate_path_selection(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -821,9 +833,10 @@ contract CounterTest {
         stderr.contains("no source matched --mutate-path pattern"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_rejects_empty_mutate_contract_selection, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_rejects_empty_mutate_contract_selection(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -865,9 +878,10 @@ contract CounterTest {
         stderr.contains("no source matched --mutate-contract pattern"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-forgetest_init!(mutation_testing_with_parallel_workers, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_with_parallel_workers(prj: _, cmd: _) {
     prj.add_source(
         "Simple.sol",
         r#"
@@ -917,11 +931,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 18.2%      │
+│ Survived ┆ 2         ┆ 20.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 72.7%      │
+│ Killed   ┆ 8         ┆ 80.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 9.1%       │
+│ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -929,9 +943,10 @@ MUTATION TESTING RESULTS
 Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_with_show_progress, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_with_show_progress(prj: _, cmd: _) {
     prj.add_source(
         "Simple.sol",
         r#"
@@ -979,11 +994,11 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 2         ┆ 18.2%      │
+│ Survived ┆ 2         ┆ 20.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 8         ┆ 72.7%      │
+│ Killed   ┆ 8         ┆ 80.0%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 1         ┆ 9.1%       │
+│ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
@@ -1013,15 +1028,13 @@ Survived mutants
 ────────────────────────────────────────────────────────────
 8 mutants killed
 
-────────────────────────────────────────────────────────────
-1 mutants invalid
-
 ════════════════════════════════════════════════════════════
 
 "#]]);
-});
+}
 
-forgetest_init!(mutation_result_cache_invalidates_when_tests_change, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_result_cache_invalidates_when_tests_change(prj: _) {
     prj.add_source(
         "Calculator.sol",
         r#"
@@ -1101,9 +1114,10 @@ contract CalculatorTest {
         strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
         "expected changed tests to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
     );
-});
+}
 
-forgetest_init!(mutation_result_cache_invalidates_when_match_test_changes, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_result_cache_invalidates_when_match_test_changes(prj: _) {
     prj.add_source(
         "Calculator.sol",
         r#"
@@ -1183,9 +1197,10 @@ contract CalculatorTest {
         strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
         "expected --match-test to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
     );
-});
+}
 
-forgetest_init!(mutation_result_cache_invalidates_when_match_path_changes, |prj, _cmd| {
+#[forgetest_init]
+fn mutation_result_cache_invalidates_when_match_path_changes(prj: _) {
     prj.add_source(
         "Calculator.sol",
         r#"
@@ -1283,9 +1298,10 @@ contract StrongTest {
         strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
         "expected --match-path to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
     );
-});
+}
 
-forgetest_init!(mutation_honors_match_path_at_compile_time, |prj, cmd| {
+#[forgetest_init]
+fn mutation_honors_match_path_at_compile_time(prj: _, cmd: _) {
     prj.add_source(
         "Foo.sol",
         r#"
@@ -1368,10 +1384,11 @@ contract FooBrokenTest {
         killed + survived >= 1,
         "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
     );
-});
+}
 
 #[cfg(unix)]
-forgetest_init!(mutation_uses_canonical_temp_root_for_filtered_sources, |prj, cmd| {
+#[forgetest_init]
+fn mutation_uses_canonical_temp_root_for_filtered_sources(prj: _, cmd: _) {
     let temp_parent = tempfile::tempdir().unwrap();
     let real_temp = temp_parent.path().join("real");
     let aliased_temp = temp_parent.path().join("alias");
@@ -1488,9 +1505,10 @@ contract SelectedTest {
             .starts_with("forge_mutation_")),
         "mutation workspaces should be removed after the run"
     );
-});
+}
 
-forgetest_init!(mutation_compiles_dynamic_linking_artifacts_for_selected_tests, |prj, cmd| {
+#[forgetest_init]
+fn mutation_compiles_dynamic_linking_artifacts_for_selected_tests(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
@@ -1586,9 +1604,10 @@ contract SelectedLinkedTest is BaseLinkedTest {
         killed + survived >= 1,
         "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
     );
-});
+}
 
-forgetest_init!(mutation_workspace_copies_include_paths, |prj, cmd| {
+#[forgetest_init]
+fn mutation_workspace_copies_include_paths(prj: _, cmd: _) {
     let include_dir = prj.root().join("include");
     fs::create_dir_all(&include_dir).unwrap();
     fs::write(
@@ -1657,9 +1676,10 @@ contract UsesSharedTest {
         invalid < total,
         "include_paths imports should compile inside mutant workspaces: summary={summary}"
     );
-});
+}
 
-forgetest_init!(mutation_workspace_preserves_external_read_only_remappings, |prj, cmd| {
+#[forgetest_init]
+fn mutation_workspace_preserves_external_read_only_remappings(prj: _, cmd: _) {
     let shared_dir = prj.root().parent().unwrap().join("shared-solidity");
     fs::create_dir_all(&shared_dir).unwrap();
     fs::write(
@@ -1730,10 +1750,11 @@ contract UsesSharedTest {
         invalid < total,
         "external read-only remapping should compile inside mutant workspaces: summary={summary}"
     );
-});
+}
 
 // Test require/assert mutation for security-critical patterns
-forgetest_init!(mutation_testing_require_mutator, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_require_mutator(prj: _, cmd: _) {
     // A contract with security-critical require checks (access control, input validation)
     prj.add_source(
         "Vault.sol",
@@ -1886,9 +1907,8 @@ contract VaultTest is Test {
     );
 
     // The gas-distinct msg.value > 0 -> msg.value != 0 mutant remains.
-    let mut cmd2 = prj.forge_command();
-    cmd2.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
-    cmd2.assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mutate", "src/Vault.sol", "--mutation-jobs", "2"]);
+    cmd.assert_success().stdout_eq(str![[r#"
 ...
 Running mutation tests with 2 parallel workers...
 ...
@@ -1911,9 +1931,10 @@ MUTATION TESTING RESULTS
 Mutation Score: 94.1% (48/51 mutants killed); [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(mutation_testing_assembly_code, |prj, cmd| {
+#[forgetest_init]
+fn mutation_testing_assembly_code(prj: _, cmd: _) {
     prj.add_source(
         "AsmMath.sol",
         r#"
@@ -1969,4 +1990,4 @@ MUTATION TESTING RESULTS
 ════════════════════════════════════════════════════════════
 ...
 "#]]);
-});
+}

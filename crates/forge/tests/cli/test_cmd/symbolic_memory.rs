@@ -5,7 +5,8 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use super::symbolic_helpers::{assert_symbolic, z3_available};
 use crate::skip_unless_z3;
 
-forgetest_init!(symbolic_mload_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mload_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mload_accepts_symbolic_offset because z3 is not available"
@@ -48,9 +49,10 @@ contract SymbolicMload {
 "#]],
     );
     assert!(!stdout.contains("symbolic MLOAD offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_fixed_memory_access_rejects_oversized_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_fixed_memory_access_rejects_oversized_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_fixed_memory_access_rejects_oversized_offset because z3 is not available"
@@ -171,9 +173,10 @@ args=[0]
 "#]],
     );
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_variable_memory_access_rejects_oversized_ranges, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_variable_memory_access_rejects_oversized_ranges(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_variable_memory_access_rejects_oversized_ranges because z3 is not available"
@@ -303,9 +306,10 @@ contract SymbolicOversizedMemoryRange {
 [PASS] checkOversizedVariableMemoryRanges()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_fixed_memory_access_respects_memory_limit, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_fixed_memory_access_respects_memory_limit(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_fixed_memory_access_respects_memory_limit because z3 is not available"
@@ -411,9 +415,10 @@ contract SymbolicMemoryLimit {
 [PASS] checkMemoryLimitRejectsWrappingCallRanges()
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mstore_accepts_constrained_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mstore_accepts_constrained_symbolic_offset because z3 is not available"
@@ -455,9 +460,10 @@ contract SymbolicMstoreConstrained is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic MSTORE offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_mstore_accepts_unconstrained_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mstore_accepts_unconstrained_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mstore_accepts_unconstrained_symbolic_offset because z3 is not available"
@@ -495,9 +501,10 @@ contract SymbolicMstoreUnconstrained {
 "#]],
     );
     assert!(!stdout.contains("symbolic MSTORE offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_mstore8_accepts_unconstrained_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mstore8_accepts_unconstrained_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mstore8_accepts_unconstrained_symbolic_offset because z3 is not available"
@@ -535,9 +542,10 @@ contract SymbolicMstore8Unconstrained {
 "#]],
     );
     assert!(!stdout.contains("symbolic MSTORE8 offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_msize_after_symbolic_write_is_modeled, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_msize_after_symbolic_write_is_modeled(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_msize_after_symbolic_write_is_modeled because z3 is not available"
@@ -575,9 +583,10 @@ contract SymbolicMsizeAfterWrite {
 "#]],
     );
     assert!(!stdout.contains("symbolic MSIZE after symbolic memory write"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_msize_tracks_read_only_memory_expansion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_msize_tracks_read_only_memory_expansion(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_msize_tracks_read_only_memory_expansion");
 
     prj.add_test(
@@ -631,9 +640,10 @@ contract SymbolicMsizeAfterRead {
 [PASS] checkSymbolicReadOnlyExpansion(uint16)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_msize_respects_zero_symbolic_copy_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_msize_respects_zero_symbolic_copy_size(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_msize_respects_zero_symbolic_copy_size");
 
     prj.add_test(
@@ -669,9 +679,10 @@ contract SymbolicMsizeAfterCopy {
 "#]],
     );
     assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_sha3_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_sha3_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_sha3_accepts_symbolic_offset because z3 is not available"
@@ -713,9 +724,10 @@ contract SymbolicSha3 {
 "#]],
     );
     assert!(!stdout.contains("symbolic SHA3 offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_sha3_accepts_constrained_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_sha3_accepts_constrained_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_sha3_accepts_constrained_symbolic_size because z3 is not available"
@@ -759,9 +771,10 @@ contract SymbolicSha3ConstrainedSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic SHA3 size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_sha3_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_sha3_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_sha3_accepts_bounded_symbolic_size because z3 is not available"
@@ -805,9 +818,10 @@ contract SymbolicSha3BoundedSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic SHA3 size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_log_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_log_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_log_accepts_symbolic_offset because z3 is not available"
@@ -851,9 +865,10 @@ contract SymbolicLogOffset is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic LOG offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_log_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_log_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_log_accepts_bounded_symbolic_size because z3 is not available"
@@ -892,9 +907,10 @@ contract SymbolicLogSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic LOG size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_returndatacopy_accepts_constrained_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_returndatacopy_accepts_constrained_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_constrained_symbolic_offset because z3 is not available"
@@ -955,9 +971,10 @@ contract SymbolicReturndataCopyConstrained is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic RETURNDATACOPY offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_returndatacopy_accepts_bounded_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_returndatacopy_accepts_bounded_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_bounded_symbolic_offset because z3 is not available"
@@ -1021,9 +1038,10 @@ contract SymbolicReturndataCopyOffset is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic RETURNDATACOPY offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_returndatacopy_accepts_symbolic_dest, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_returndatacopy_accepts_symbolic_dest(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_symbolic_dest because z3 is not available"
@@ -1076,9 +1094,10 @@ contract SymbolicReturndataCopyDest {
 "#]],
     );
     assert!(!stdout.contains("symbolic RETURNDATACOPY dest"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_returndatacopy_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_returndatacopy_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_bounded_symbolic_size because z3 is not available"
@@ -1142,21 +1161,20 @@ contract SymbolicReturndataCopySize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic RETURNDATACOPY size"), "{stdout}");
-});
+}
 
-forgetest_init!(
-    symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size,
-    |prj, cmd| {
-        if !z3_available() {
-            let _ = sh_eprintln!(
-                "skipping symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size because z3 is not available"
-            );
-            return;
-        }
+#[forgetest_init]
+fn symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size because z3 is not available"
+        );
+        return;
+    }
 
-        prj.add_test(
-            "SymbolicReturndataCopyOobOffset.t.sol",
-            r#"
+    prj.add_test(
+        "SymbolicReturndataCopyOobOffset.t.sol",
+        r#"
 import "forge-std/Test.sol";
 
 contract SymbolicReturndataCopyOobOffsetHelper {
@@ -1210,30 +1228,30 @@ contract SymbolicReturndataCopyOobOffset is Test {
 
 }
 "#,
-        );
+    );
 
-        let stdout = cmd
-            .args([
-                "test",
-                "--symbolic",
-                "--match-test",
-                "checkOutOfBoundsOffsetForcedZeroSizeReverts|checkOutOfBoundsClearsReturnData",
-            ])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-test",
+            "checkOutOfBoundsOffsetForcedZeroSizeReverts|checkOutOfBoundsClearsReturnData",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
 
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
 [PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256)
 [PASS] checkOutOfBoundsClearsReturnData(uint256)
 "#]],
-        );
-    }
-);
+    );
+}
 
-forgetest_init!(symbolic_return_revert_accept_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_return_revert_accept_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_return_revert_accept_symbolic_offset because z3 is not available"
@@ -1306,9 +1324,10 @@ contract SymbolicReturnRevertOffset {
     );
     assert!(!stdout.contains("symbolic RETURN offset"), "{stdout}");
     assert!(!stdout.contains("symbolic REVERT offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_mcopy_accepts_symbolic_source_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mcopy_accepts_symbolic_source_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_mcopy_accepts_symbolic_source_offset because z3 is not available"
@@ -1349,9 +1368,10 @@ contract SymbolicMcopy {
 "#]],
     );
     assert!(!stdout.contains("symbolic MCOPY src"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_return_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_return_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_return_accepts_bounded_symbolic_size because z3 is not available"
@@ -1409,9 +1429,10 @@ contract SymbolicReturnSize {
 "#]],
     );
     assert!(!stdout.contains("symbolic RETURN size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_revert_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_revert_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_revert_accepts_bounded_symbolic_size because z3 is not available"
@@ -1469,7 +1490,7 @@ contract SymbolicRevertSize {
 "#]],
     );
     assert!(!stdout.contains("symbolic REVERT size"), "{stdout}");
-});
+}
 
 // Dynamic-offset memory read must respect write-epoch ordering: if a later
 // concrete MSTORE has written to an offset, a subsequent symbolic-offset MLOAD
@@ -1477,7 +1498,8 @@ contract SymbolicRevertSize {
 // symbolic write. If epoch ordering regressed, Z3 could pick `symKey == 0x80`
 // and the symbolic MLOAD would surface `0xdeadbeef` instead of `0x1234`,
 // flipping the assertion below into a counterexample.
-forgetest_init!(symbolic_dynamic_mload_respects_later_concrete_overwrite, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_dynamic_mload_respects_later_concrete_overwrite(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_dynamic_mload_respects_later_concrete_overwrite");
 
     prj.add_test(
@@ -1516,4 +1538,4 @@ Ran 1 test for test/SymbolicMemoryEpochOrdering.t.sol:SymbolicMemoryEpochOrderin
 [PASS] checkLaterConcreteWriteWins(uint256,uint256) ([METRICS])
 ...
 "#]]);
-});
+}

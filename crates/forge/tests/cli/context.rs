@@ -46,27 +46,31 @@ contract ForgeContextTest is DSTest {
    "#;
 
 // tests that context properly set for `forge test` command
-forgetest!(can_set_forge_test_standard_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_test_standard_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.args(["test", "--match-test", "testForgeTestContext"]).assert_success();
-});
+}
 
 // tests that context properly set for `forge snapshot` command
-forgetest!(can_set_forge_test_snapshot_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_test_snapshot_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.args(["snapshot", "--match-test", "testForgeSnapshotContext"]).assert_success();
-});
+}
 
 // tests that context properly set for `forge coverage` command
-forgetest!(can_set_forge_test_coverage_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_test_coverage_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.args(["coverage", "--match-test", "testForgeCoverageContext"]).assert_success();
-});
+}
 
-forgetest!(symbolic_uses_actual_forge_context, |prj, cmd| {
+#[forgetest]
+fn symbolic_uses_actual_forge_context(prj: _, cmd: _) {
     if !Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success()) {
         return;
     }
@@ -89,18 +93,20 @@ forgetest!(symbolic_uses_actual_forge_context, |prj, cmd| {
 "#]],
         );
     }
-});
+}
 
 // tests that context properly set for `forge script` command
-forgetest!(can_set_forge_script_dry_run_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_script_dry_run_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     let script = prj.add_source("ForgeScriptContextTest.s.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.arg("script").arg(script).args(["--sig", "runDryRun()"]).assert_success();
-});
+}
 
 // tests that context properly set for `forge script --broadcast` command
-forgetest!(can_set_forge_script_broadcast_context, |prj, cmd| {
+#[forgetest]
+fn can_set_forge_script_broadcast_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     let script = prj.add_source("ForgeScriptContextTest.s.sol", FORGE_TEST_CONTEXT_CONTRACT);
     cmd.arg("script").arg(script).args(["--broadcast", "--sig", "runBroadcast()"]).assert_success();
-});
+}

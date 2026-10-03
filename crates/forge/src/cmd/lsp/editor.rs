@@ -31,8 +31,8 @@ const ASSETS: &[(&str, &[u8])] = &[
     ),
     ("syntaxes/LICENSE", include_bytes!("../../../../../editors/vscode/syntaxes/LICENSE")),
     ("LICENSE", include_bytes!("../../../../../editors/vscode/LICENSE")),
-    ("LICENSE-MIT", include_bytes!("../../../../../editors/vscode/LICENSE-MIT")),
-    ("LICENSE-APACHE", include_bytes!("../../../../../editors/vscode/LICENSE-APACHE")),
+    ("LICENSE-MIT", include_bytes!("../../../../../LICENSE-MIT")),
+    ("LICENSE-APACHE", include_bytes!("../../../../../LICENSE-APACHE")),
     ("NOTICE.md", include_bytes!("../../../../../editors/vscode/NOTICE.md")),
     (
         "THIRD_PARTY_NOTICES.txt",

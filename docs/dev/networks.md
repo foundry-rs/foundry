@@ -118,6 +118,23 @@ Large integrations should be split into reviewable layers when possible: hardfor
 core execution, individual tool surfaces, then CI and documentation. Each layer should retain working
 non-custom execution paths.
 
+## Compiler targets and execution hardforks
+
+Keep the Solidity compiler target (`evm_version`), execution family (`network`), and protocol
+revision (`hardfork`) distinct. A Tempo revision uses an Osaka instruction-set baseline with
+Tempo's own gas schedule, precompiles, and transaction rules; an Ethereum version name does not
+identify a Tempo revision.
+
+`vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
+not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
+remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
+`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
+
+Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
+to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
+and its blanket implementation for `CfgEnv<SPEC>`. Tempo overrides the factory method to use its
+own gas parameters instead of Ethereum prices derived from its instruction-set baseline.
+
 ## State lifecycle
 
 Custom execution state is often not fully represented by ordinary account storage. For every piece
@@ -172,6 +189,26 @@ Unsupported combinations should fail at the selection boundary with a specific e
 Ethereum and other enabled families must continue to use their existing path. Once a workflow has
 selected a concrete FEN, helpers used by that workflow must not accept a second runtime execution
 profile.
+
+### Script recovery
+
+The requirements in this subsection are proposed and are not guarantees of the current script
+broadcaster. Network integrations must satisfy them as the durable recovery architecture is
+implemented.
+
+Custom transaction fields remain owned by the selected Alloy `Network` and concrete execution
+family, but `forge script` must carry their final values through durable submission and resume. A
+network integration that changes transaction preparation is incomplete until it identifies every
+field that can change transaction identity or semantics, preserves those fields in script recovery
+state, and tests interrupted submission with that network's real envelope type.
+
+Do not reconstruct a custom transaction from family-neutral Ethereum fields during resume. Persist
+the final typed or encoded payload at the transaction boundary, including fee assets, validity
+windows, sponsorship, authorization, auxiliary calls, or signer metadata required by that family.
+Locally signed payloads must be recoverable without the signer; delegated signing with an ambiguous
+outcome must stop rather than silently request a second signature. See the
+[Forge scripting recovery contract](./scripting.md#recovery-contract) for the shared lifecycle and
+failure-injection requirements.
 
 ## Tests and CI
 

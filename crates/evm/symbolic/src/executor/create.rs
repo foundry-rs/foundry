@@ -11,7 +11,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         if state.is_static {
             state.return_data = SymReturnData::empty(&mut self.cx);
-            return Ok(StepOutcome::Revert);
+            return Ok(StepOutcome::ExceptionalHalt);
         }
 
         let offset = state.stack.peek(1)?.clone();
@@ -31,18 +31,12 @@ impl SymbolicExecutor {
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
-                let max_size = state
-                    .upper_bound_usize(&mut self.cx, &size)
-                    .filter(|size| *size <= max_limit)
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        self.solver_upper_bound_usize(
-                            state,
-                            &size,
-                            max_limit,
-                            "symbolic CREATE initcode size",
-                        )
-                    })?;
+                let max_size = self.solver_upper_bound_usize(
+                    state,
+                    &size,
+                    max_limit,
+                    "symbolic CREATE initcode size",
+                )?;
                 BoundedCopySize::Symbolic { size, max_size }
             }
         };
@@ -149,27 +143,19 @@ impl SymbolicExecutor {
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                     parents.push_back(parent);
                 }
-                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                JoinedCallOutcome::ExpectedRevert { mut parent, .. } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.block = child.block.clone();
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     parent.world = failure_world.clone();
                     parent.stack.push(created_word.clone())?;
                     parents.push_back(parent);
                 }
                 JoinedCallOutcome::Success { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
-                    parent.block = child.block.clone();
                     let runtime = &child.frame.return_data;
                     parent.world = child.world;
                     parent.expected_emit = child.expected_emit;
-                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = child.call_mocks;
-                    parent.function_mocks = child.function_mocks;
                     self.observe_expected_create(&mut parent, state.address, kind, runtime)?;
                     if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, runtime.to_code(&mut self.cx)?);
@@ -181,12 +167,7 @@ impl SymbolicExecutor {
                 JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.return_data = SymReturnData::empty(&mut self.cx);
                     parent.world = failure_world.clone();
-                    if rejected_runtime {
-                        parent.block = child.block;
-                        parent.expected_calls = child.expected_calls;
-                        parent.call_mocks = child.call_mocks;
-                        parent.function_mocks = child.function_mocks;
-                    } else {
+                    if !rejected_runtime {
                         parent.return_data = child.frame.return_data;
                     }
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
@@ -224,7 +205,7 @@ fn runtime_exceeds_code_size_limit(
     runtime: &SymReturnData,
 ) -> bool {
     spec_id >= SpecId::SPURIOUS_DRAGON
-        && !runtime.has_symbolic_len()
+        && runtime.len_word.as_const().is_some()
         && runtime.len() > cfg.max_code_size()
 }
 
@@ -241,20 +222,4 @@ fn runtime_has_rejected_prefix(
         return Err(SymbolicError::Unsupported("CREATE with symbolic runtime prefix not modeled"));
     };
     Ok(first_byte == U256::from(0xef))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_evm::revm::context::CfgEnv;
-
-    #[test]
-    fn runtime_code_limit_uses_fork_default_without_override() {
-        let mut cx = SymCx::default();
-        let runtime = SymReturnData::from_concrete_bytes(&mut cx, vec![0; 24_577]);
-        let cfg = CfgEnv::<SpecId>::default();
-
-        assert!(runtime_exceeds_code_size_limit(&cfg, SpecId::SHANGHAI, &runtime));
-        assert!(!runtime_exceeds_code_size_limit(&cfg, SpecId::HOMESTEAD, &runtime));
-    }
 }

@@ -23,15 +23,8 @@ use reasoning::{product_monotonic_unsat_normalized, remove_implied_monotonic_con
 use smt::write_smt_assertions;
 
 pub(crate) use fallback::{
-    fallback_single_var_model, fallback_two_var_model, hard_arith_fallback_model,
+    fallback_bounded_model, fallback_single_var_model, hard_arith_fallback_model,
 };
-
-#[cfg(test)]
-pub(crate) use normalize::{
-    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
-};
-#[cfg(test)]
-pub(crate) use reasoning::product_monotonic_unsat;
 
 const Z3_QUERY_END: &str = "foundry-query-complete";
 
@@ -62,10 +55,9 @@ pub(crate) enum SolverOutcome {
     Unexpected,
 }
 
-impl SolverOutcome {
-    /// Returns the diagnostic label for this solver outcome.
-    const fn as_str(self) -> &'static str {
-        match self {
+impl fmt::Display for SolverOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Cancelled => "cancelled",
             Self::Error => "error",
             Self::NotStarted => "not-started",
@@ -78,17 +70,9 @@ impl SolverOutcome {
             Self::Unsat => "unsat",
             Self::UnsatAfterWinner => "unsat-after-winner",
             Self::Unexpected => "unexpected",
-        }
+        })
     }
 }
-
-impl fmt::Display for SolverOutcome {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-pub(crate) type QueryObserver = Box<dyn Fn(usize) + Send + Sync + 'static>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BranchFeasibility {
@@ -98,10 +82,6 @@ pub(crate) enum BranchFeasibility {
 }
 
 impl BranchFeasibility {
-    const fn from_bool(sat: bool) -> Self {
-        if sat { Self::Sat } else { Self::Unsat }
-    }
-
     const fn into_result(self) -> Result<bool, SymbolicError> {
         match self {
             Self::Sat => Ok(true),
@@ -132,21 +112,6 @@ impl SolverCommand {
             .join(" ");
         Ok(Self { program, args, display, smt_timeout })
     }
-
-    #[cfg(test)]
-    pub(crate) fn program(&self) -> &str {
-        &self.program
-    }
-
-    #[cfg(test)]
-    pub(crate) fn args(&self) -> &[String] {
-        &self.args
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn smt_timeout(&self) -> bool {
-        self.smt_timeout
-    }
 }
 
 pub(crate) struct SmtLibSubprocessSolver {
@@ -154,11 +119,8 @@ pub(crate) struct SmtLibSubprocessSolver {
     timeout: Option<u32>,
     max_queries: usize,
     queries: usize,
-    query_observer: Option<QueryObserver>,
     dump_smt: bool,
     portfolio_scheduler: PortfolioScheduler,
-    portfolio_diagnostics: PortfolioDiagnostics,
-    captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
     normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
@@ -178,22 +140,15 @@ pub(crate) struct SmtLibSubprocessSolver {
 }
 
 impl SmtLibSubprocessSolver {
-    pub(crate) fn new(
-        commands: Result<Vec<SolverCommand>, SolverConfigError>,
-        timeout: Option<u32>,
-        max_queries: usize,
-        dump_smt: bool,
-    ) -> Self {
+    /// Constructs a subprocess solver from Foundry symbolic config.
+    pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
         Self {
-            commands,
-            timeout,
-            max_queries,
+            commands: solver_commands_for_config(config),
+            timeout: config.timeout,
+            max_queries: config.max_solver_queries as usize,
             queries: 0,
-            query_observer: None,
-            dump_smt,
+            dump_smt: config.dump_smt,
             portfolio_scheduler: PortfolioScheduler::default(),
-            portfolio_diagnostics: PortfolioDiagnostics::default(),
-            captured_diagnostics: None,
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
             normalization_cache: HashMap::default(),
@@ -211,16 +166,6 @@ impl SmtLibSubprocessSolver {
             smt_max_query_time: Duration::ZERO,
             z3_session: None,
         }
-    }
-
-    /// Constructs a subprocess solver from Foundry symbolic config.
-    pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
-        Self::new(
-            solver_commands_for_config(config),
-            config.timeout,
-            config.max_solver_queries as usize,
-            config.dump_smt,
-        )
     }
 
     /// Returns solver counters collected by this backend.
@@ -246,37 +191,11 @@ impl SmtLibSubprocessSolver {
         }
     }
 
-    /// Registers a live query observer for progress rendering.
-    pub(crate) fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
-        self.query_observer = observer;
-    }
-
-    /// Returns staged-portfolio diagnostics collected by this solver.
-    pub(crate) fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
-        (!self.portfolio_diagnostics.is_empty()).then_some(&self.portfolio_diagnostics)
-    }
-
-    /// Enables deferred diagnostic rendering for verbose symbolic solver output.
-    pub(crate) fn capture_diagnostics(&mut self) {
-        self.captured_diagnostics.get_or_insert_with(String::new);
-    }
-
-    /// Returns and clears deferred diagnostic rendering output.
-    pub(crate) fn take_diagnostics(&mut self) -> Option<String> {
-        self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
-    }
-
     /// Clears cached expression keys tied to a previous symbolic context.
     pub(crate) fn clear_context_caches(&mut self) {
         self.normalization_cache.clear();
         self.sat_cache.clear();
         self.model_cache.clear();
-    }
-
-    /// Returns how many validated local hard-arithmetic witnesses this solver used.
-    #[cfg(test)]
-    pub(crate) const fn heuristic_witnesses(&self) -> usize {
-        self.heuristic_witnesses
     }
 
     /// Verifies that a configured solver can be invoked before exploration starts.
@@ -299,15 +218,6 @@ impl SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_sat(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(cx, constraints, false)?.into_result()
-    }
-
     /// Returns satisfiability with path-local storage symbols that concrete replay can set.
     pub(crate) fn is_sat_with_replayable_storage(
         &mut self,
@@ -315,20 +225,9 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<bool, SymbolicError> {
-        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result =
-            self.is_sat_inner(cx, constraints, false).and_then(BranchFeasibility::into_result);
-        self.replayable_storage = previous;
-        result
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_sat_branch(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(cx, constraints, true)?.into_result()
+        self.with_replayable_storage(replayable_storage, |solver| {
+            solver.is_sat_inner(cx, constraints, false).and_then(BranchFeasibility::into_result)
+        })
     }
 
     /// Returns branch feasibility with path-local storage symbols concrete replay can set.
@@ -338,10 +237,9 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<BranchFeasibility, SymbolicError> {
-        let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = self.is_sat_inner(cx, constraints, true);
-        self.replayable_storage = previous;
-        result
+        self.with_replayable_storage(replayable_storage, |solver| {
+            solver.is_sat_inner(cx, constraints, true)
+        })
     }
 
     /// Returns a model with path-local storage symbols that concrete replay can set.
@@ -351,8 +249,16 @@ impl SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<SymbolicModel, SymbolicError> {
+        self.with_replayable_storage(replayable_storage, |solver| solver.model(cx, constraints))
+    }
+
+    fn with_replayable_storage<T>(
+        &mut self,
+        replayable_storage: &SymbolicVars,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = self.model(cx, constraints);
+        let result = operation(self);
         self.replayable_storage = previous;
         result
     }
@@ -386,7 +292,7 @@ impl SmtLibSubprocessSolver {
         }
 
         if let Some(model) = self.model_cache.get(&cache_key) {
-            if model_satisfies_constraints(model, constraints) {
+            if eval_model_constraints(constraints, model) {
                 let model = model.clone();
                 self.model_cache_hits += 1;
                 trace!("model: normalized cache hit");
@@ -400,7 +306,7 @@ impl SmtLibSubprocessSolver {
         }
 
         self.reserve_query()?;
-        self.record_query();
+        self.queries += 1;
         let _span = trace_span!(
             "solver_query",
             query_id = self.queries,
@@ -410,14 +316,14 @@ impl SmtLibSubprocessSolver {
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
         if let Some(model) = fallback_single_var_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
-        if let Some(model) = fallback_two_var_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+        if let Some(model) = fallback_bounded_model(&smt_constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
@@ -501,7 +407,7 @@ impl SmtLibSubprocessSolver {
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
-            return Ok(BranchFeasibility::from_bool(*result));
+            return Ok(if *result { BranchFeasibility::Sat } else { BranchFeasibility::Unsat });
         }
         if self.has_cached_unsat_subset(&cache_key) {
             self.sat_cache_hits += 1;
@@ -532,7 +438,7 @@ impl SmtLibSubprocessSolver {
         }
 
         self.reserve_query()?;
-        self.record_query();
+        self.queries += 1;
         let _span = trace_span!(
             "solver_query",
             query_id = self.queries,
@@ -552,20 +458,20 @@ impl SmtLibSubprocessSolver {
             return Ok(BranchFeasibility::Unsat);
         }
         if !constraints.is_empty()
-            && model_satisfies_constraints(&SymbolicModel::default(), constraints)
+            && eval_model_constraints(constraints, &SymbolicModel::default())
             && !constraints.iter().any(SymBoolExpr::contains_gasleft)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
         }
-        if let Some(model) = fallback_two_var_model(&smt_constraints)
-            && model_satisfies_constraints(&model, constraints)
+        if let Some(model) = fallback_bounded_model(&smt_constraints)
+            && eval_model_constraints(constraints, &model)
         {
             self.cache_sat_result(cache_key, true);
             return Ok(BranchFeasibility::Sat);
@@ -638,16 +544,6 @@ impl SmtLibSubprocessSolver {
             .map_err(|err| SymbolicError::Solver(err.to_string()))
     }
 
-    /// Emits one verbose solver diagnostic either live or into the deferred buffer.
-    fn emit_diagnostic(&mut self, diagnostic: fmt::Arguments<'_>) {
-        if let Some(captured_diagnostics) = &mut self.captured_diagnostics {
-            let _ = captured_diagnostics.write_fmt(diagnostic);
-        } else {
-            let mut stderr = std::io::stderr().lock();
-            let _ = stderr.write_fmt(diagnostic);
-        }
-    }
-
     pub(crate) const fn reserve_query(&self) -> Result<(), SymbolicError> {
         if self.queries >= self.max_queries {
             return Err(SymbolicError::SolverQueryLimit(self.max_queries));
@@ -655,40 +551,12 @@ impl SmtLibSubprocessSolver {
         Ok(())
     }
 
-    /// Records one logical solver query and notifies the live observer, if any.
-    fn record_query(&mut self) {
-        self.queries += 1;
-        if let Some(observer) = &self.query_observer {
-            observer(self.queries);
-        }
-    }
-
-    /// Caches a definitive normalized satisfiability result if the cache has room.
     fn cache_sat_result(&mut self, key: Vec<SymBoolExpr>, result: bool) {
-        let has_capacity = self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES;
-        match self.sat_cache.entry(key) {
-            alloy_primitives::map::Entry::Occupied(mut entry) => {
-                entry.insert(result);
-            }
-            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
-                entry.insert(result);
-            }
-            alloy_primitives::map::Entry::Vacant(_) => {}
-        }
+        cache_result(&mut self.sat_cache, key, result, SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES);
     }
 
-    /// Caches a validated normalized model result if the cache has room.
     fn cache_model_result(&mut self, key: Vec<SymBoolExpr>, model: SymbolicModel) {
-        let has_capacity = self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES;
-        match self.model_cache.entry(key) {
-            alloy_primitives::map::Entry::Occupied(mut entry) => {
-                entry.insert(model);
-            }
-            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
-                entry.insert(model);
-            }
-            alloy_primitives::map::Entry::Vacant(_) => {}
-        }
+        cache_result(&mut self.model_cache, key, model, SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES);
     }
 
     /// Returns whether an already-proved unsat constraint set is a subset of `key`.
@@ -740,7 +608,7 @@ impl SmtLibSubprocessSolver {
         self.smt_build_time += build_started.elapsed();
         if self.dump_smt {
             let query = self.queries;
-            self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
+            let _ = writeln!(std::io::stderr(), "--- symbolic SMT query {query} ---\n{smt}");
         }
 
         let started = Instant::now();
@@ -764,14 +632,12 @@ impl SmtLibSubprocessSolver {
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
-        if self.dump_smt {
-            self.portfolio_diagnostics.record(&result.summaries);
-            if !result.summaries.is_empty() {
-                self.emit_diagnostic(format_args!(
-                    "{}",
-                    format_solver_portfolio_summaries(&result.summaries)
-                ));
-            }
+        if self.dump_smt && !result.summaries.is_empty() {
+            let _ = write!(
+                std::io::stderr(),
+                "{}",
+                format_solver_portfolio_summaries(&result.summaries)
+            );
         }
         result.output
     }
@@ -796,6 +662,22 @@ impl SmtLibSubprocessSolver {
             }
             other => other,
         }
+    }
+}
+
+fn cache_result<K, V>(cache: &mut HashMap<K, V>, key: K, value: V, max_entries: usize)
+where
+    K: Eq + std::hash::Hash,
+{
+    let has_capacity = cache.len() < max_entries;
+    match cache.entry(key) {
+        alloy_primitives::map::Entry::Occupied(mut entry) => {
+            entry.insert(value);
+        }
+        alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
+            entry.insert(value);
+        }
+        alloy_primitives::map::Entry::Vacant(_) => {}
     }
 }
 
@@ -910,31 +792,6 @@ fn collect_solver_vars(constraint: &SymBoolExpr, vars: &mut SymbolicVars) -> boo
     visit_bool(constraint, vars)
 }
 
-#[cfg(test)]
-#[test]
-fn removes_only_witnessed_isolated_hash_constraints() {
-    let mut cx = SymCx::new();
-    let input = SymExpr::var(&mut cx, "input");
-    let hash = keccak_word(&mut cx, vec![input.clone()]);
-    let modulus = SymExpr::constant(&mut cx, U256::MAX);
-    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), hash.clone(), modulus);
-    let hash_branch = SymBoolExpr::eq_word_const(&mut cx, &mulmod, U256::ZERO);
-    let preimage_constraint = SymBoolExpr::eq_word_const(&mut cx, &input, U256::from(1));
-
-    let remaining = remove_witnessed_isolated_hash_constraints(
-        &mut cx,
-        vec![hash_branch.clone(), preimage_constraint.clone()],
-    );
-    assert_eq!(remaining, vec![preimage_constraint]);
-
-    let shared_hash_constraint = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
-    let remaining = remove_witnessed_isolated_hash_constraints(
-        &mut cx,
-        vec![hash_branch, shared_hash_constraint],
-    );
-    assert_eq!(remaining.len(), 2, "a shared hash symbol is not an independent component");
-}
-
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
 fn validated_hard_arith_fallback_model(
     cx: &SymCx,
@@ -942,15 +799,7 @@ fn validated_hard_arith_fallback_model(
     original_constraints: &[SymBoolExpr],
 ) -> Option<SymbolicModel> {
     let model = hard_arith_fallback_model(cx, normalized_constraints)?;
-    model_satisfies_constraints(&model, original_constraints).then_some(model)
-}
-
-/// Returns whether a parsed model satisfies the current original constraints.
-fn model_satisfies_constraints(
-    model: &(impl SymbolicModelLookup + ?Sized),
-    constraints: &[SymBoolExpr],
-) -> bool {
-    eval_model_constraints(constraints, model)
+    eval_model_constraints(original_constraints, &model).then_some(model)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -982,11 +831,6 @@ impl PortfolioSchedulerSignal {
         }
     }
 
-    /// Returns whether this signal should affect later portfolio scheduling.
-    const fn is_neutral(self) -> bool {
-        matches!(self, Self::Neutral)
-    }
-
     /// Returns the numeric score contribution for adaptive portfolio ordering.
     const fn score(self) -> i64 {
         match self {
@@ -1002,7 +846,7 @@ impl PortfolioSchedulerSignal {
 impl PortfolioScheduler {
     /// Returns configured commands ordered by recent portfolio performance.
     fn ordered_commands(&mut self, commands: &[SolverCommand]) -> Vec<(usize, SolverCommand)> {
-        self.ensure_len(commands.len());
+        self.history.resize_with(commands.len(), VecDeque::new);
         let mut ordered = commands.iter().cloned().enumerate().collect::<Vec<_>>();
         ordered.sort_by(|(left_index, _), (right_index, _)| {
             self.score(*right_index)
@@ -1023,7 +867,7 @@ impl PortfolioScheduler {
             let Some((configured_index, _)) = ordered_commands.get(run_index) else { continue };
             let Some(history) = self.history.get_mut(*configured_index) else { continue };
             let signal = PortfolioSchedulerSignal::from_summary(summary);
-            if signal.is_neutral() {
+            if matches!(signal, PortfolioSchedulerSignal::Neutral) {
                 continue;
             }
             history.push_back(signal);
@@ -1031,11 +875,6 @@ impl PortfolioScheduler {
                 history.pop_front();
             }
         }
-    }
-
-    /// Ensures the scheduler has one history slot per configured solver.
-    fn ensure_len(&mut self, len: usize) {
-        self.history.resize_with(len, VecDeque::new);
     }
 
     /// Returns the recent-performance score for one configured solver index.
@@ -1076,37 +915,6 @@ pub(crate) fn solver_commands_for_config(
     }
 
     Ok(vec![named_solver_command(&config.solver)?])
-}
-
-/// Returns a warning when a configured portfolio will run with unavailable solver entries.
-pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
-    if config.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty())
-        || config.solver_portfolio.iter().all(|entry| entry.trim().is_empty())
-    {
-        return None;
-    }
-
-    let commands = solver_commands_for_config(config).ok()?;
-    let unavailable = commands
-        .iter()
-        .filter_map(|command| {
-            solver_command_availability_error(command)
-                .map(|err| format!("`{}` ({err})", command.display))
-        })
-        .collect::<Vec<_>>();
-    if unavailable.is_empty() {
-        return None;
-    }
-
-    let suffix = if unavailable.len() == commands.len() {
-        "No configured portfolio entries are currently available."
-    } else {
-        "Available portfolio entries will still be used."
-    };
-    Some(format!(
-        "Symbolic solver portfolio is degraded; unavailable entries: {}. {suffix}",
-        unavailable.join("; ")
-    ))
 }
 
 /// Returns the default command for a known solver name.
@@ -1164,16 +972,6 @@ pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, SolverC
     }
 
     Ok(parts)
-}
-
-/// Returns why `command` is not currently executable as an SMT solver.
-fn solver_command_availability_error(command: &SolverCommand) -> Option<String> {
-    let output = match Command::new(&command.program).arg("--version").output() {
-        Ok(output) => output,
-        Err(err) => return Some(format!("failed to execute `{}`: {err}", command.program)),
-    };
-    (!output.status.success())
-        .then(|| format!("`{}` is not a usable SMT solver executable", command.program))
 }
 
 #[derive(Debug)]
@@ -1270,136 +1068,6 @@ impl SolverRunSummary {
     pub(crate) const fn winner(mut self) -> Self {
         self.winner = true;
         self
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PortfolioDiagnostics {
-    queries: usize,
-    solver_runs: usize,
-    rescue_runs: usize,
-    non_primary_wins: usize,
-    rescue_wins: usize,
-    not_started: usize,
-    cancelled_after_winner: usize,
-    invalid_models: usize,
-    solver_errors: usize,
-    winner_counts: HashMap<String, usize>,
-    launch_counts: HashMap<String, usize>,
-    outcome_counts: HashMap<SolverOutcome, usize>,
-}
-
-impl PortfolioDiagnostics {
-    /// Returns whether this diagnostic set is empty.
-    pub const fn is_empty(&self) -> bool {
-        self.queries == 0
-    }
-
-    /// Records one portfolio query's per-solver summaries.
-    pub(crate) fn record(&mut self, summaries: &[SolverRunSummary]) {
-        if summaries.len() <= 1 {
-            return;
-        }
-
-        self.queries += 1;
-        for summary in summaries {
-            *self.outcome_counts.entry(summary.outcome).or_default() += 1;
-            if summary.started_after.is_some() {
-                self.solver_runs += 1;
-                *self.launch_counts.entry(summary.display.clone()).or_default() += 1;
-                if summary.index.is_some_and(|index| index >= 2) {
-                    self.rescue_runs += 1;
-                }
-            }
-
-            match summary.outcome {
-                SolverOutcome::NotStarted => self.not_started += 1,
-                SolverOutcome::Cancelled
-                | SolverOutcome::SatAfterWinner
-                | SolverOutcome::UnsatAfterWinner
-                | SolverOutcome::UnknownAfterWinner => self.cancelled_after_winner += 1,
-                SolverOutcome::SatInvalid => self.invalid_models += 1,
-                SolverOutcome::Error => self.solver_errors += 1,
-                _ => {}
-            }
-
-            if summary.winner {
-                *self.winner_counts.entry(summary.display.clone()).or_default() += 1;
-                if summary.index.is_some_and(|index| index > 0) {
-                    self.non_primary_wins += 1;
-                }
-                if summary.index.is_some_and(|index| index >= 2) {
-                    self.rescue_wins += 1;
-                }
-            }
-        }
-    }
-
-    /// Merges another aggregate portfolio summary into this one.
-    pub fn merge(&mut self, other: &Self) {
-        self.queries += other.queries;
-        self.solver_runs += other.solver_runs;
-        self.rescue_runs += other.rescue_runs;
-        self.non_primary_wins += other.non_primary_wins;
-        self.rescue_wins += other.rescue_wins;
-        self.not_started += other.not_started;
-        self.cancelled_after_winner += other.cancelled_after_winner;
-        self.invalid_models += other.invalid_models;
-        self.solver_errors += other.solver_errors;
-        merge_counts(&mut self.winner_counts, &other.winner_counts);
-        merge_counts(&mut self.launch_counts, &other.launch_counts);
-        merge_counts(&mut self.outcome_counts, &other.outcome_counts);
-    }
-}
-
-impl fmt::Display for PortfolioDiagnostics {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            return Ok(());
-        }
-
-        writeln!(f, "--- symbolic solver portfolio summary ---")?;
-        writeln!(f, "queries: {}", self.queries)?;
-        writeln!(f, "solver runs: {}", self.solver_runs)?;
-        writeln!(f, "rescue solver runs: {}", self.rescue_runs)?;
-        writeln!(f, "not-started solver runs: {}", self.not_started)?;
-        writeln!(f, "non-primary wins: {}", self.non_primary_wins)?;
-        writeln!(f, "rescue wins: {}", self.rescue_wins)?;
-        writeln!(f, "cancelled after winner: {}", self.cancelled_after_winner)?;
-        writeln!(f, "invalid models: {}", self.invalid_models)?;
-        writeln!(f, "solver errors: {}", self.solver_errors)?;
-        if !self.winner_counts.is_empty() {
-            writeln!(f, "winner counts:")?;
-            let mut counts = self.winner_counts.iter().collect::<Vec<_>>();
-            counts.sort_by_key(|(solver, _)| *solver);
-            for (solver, count) in counts {
-                writeln!(f, "  {solver}: {count}")?;
-            }
-        }
-        if !self.launch_counts.is_empty() {
-            writeln!(f, "launch counts:")?;
-            let mut counts = self.launch_counts.iter().collect::<Vec<_>>();
-            counts.sort_by_key(|(solver, _)| *solver);
-            for (solver, count) in counts {
-                writeln!(f, "  {solver}: {count}")?;
-            }
-        }
-        writeln!(f, "outcome counts:")?;
-        let mut counts = self.outcome_counts.iter().collect::<Vec<_>>();
-        counts.sort_by_key(|(outcome, _)| **outcome);
-        for (outcome, count) in counts {
-            writeln!(f, "  {outcome}: {count}")?;
-        }
-        Ok(())
-    }
-}
-
-fn merge_counts<K: Eq + std::hash::Hash + Clone>(
-    base: &mut HashMap<K, usize>,
-    other: &HashMap<K, usize>,
-) {
-    for (key, count) in other {
-        *base.entry(key.clone()).or_default() += count;
     }
 }
 
@@ -1500,7 +1168,9 @@ fn run_solver_commands(
                 continue;
             }
             match outcome {
-                SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
+                SolverProcessOutcome::Output(output)
+                    if output.lines().next().unwrap_or_default().trim() == "sat" =>
+                {
                     if let Some(constraints) = model_constraints
                         && let Err(err) = validate_solver_model_output(cx, &output, constraints)
                     {
@@ -1528,14 +1198,18 @@ fn run_solver_commands(
                         summaries.push(summary_for_unstarted_solver(solver));
                     }
                 }
-                SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+                SolverProcessOutcome::Output(output)
+                    if output.lines().next().unwrap_or_default().trim() == "unsat" =>
+                {
                     summaries.push(
                         SolverRunSummary::new(display, elapsed, SolverOutcome::Unsat)
                             .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unsat = true;
                 }
-                SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
+                SolverProcessOutcome::Output(output)
+                    if output.lines().next().unwrap_or_default().trim() == "unknown" =>
+                {
                     summaries.push(
                         SolverRunSummary::new(display, elapsed, SolverOutcome::Unknown)
                             .with_schedule(index, scheduled_after, Some(started_after)),
@@ -1543,7 +1217,7 @@ fn run_solver_commands(
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Output(output) => {
-                    let first_line = first_solver_line(&output).to_string();
+                    let first_line = output.lines().next().unwrap_or_default().trim().to_string();
                     summaries.push(
                         SolverRunSummary::new(display.clone(), elapsed, SolverOutcome::Unexpected)
                             .with_schedule(index, scheduled_after, Some(started_after))
@@ -1648,18 +1322,24 @@ fn summary_for_cancelled_solver_result(
     outcome: SolverProcessOutcome,
 ) -> SolverRunSummary {
     let summary = match outcome {
-        SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
+        SolverProcessOutcome::Output(output)
+            if output.lines().next().unwrap_or_default().trim() == "sat" =>
+        {
             SolverRunSummary::new(display, elapsed, SolverOutcome::SatAfterWinner)
         }
-        SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+        SolverProcessOutcome::Output(output)
+            if output.lines().next().unwrap_or_default().trim() == "unsat" =>
+        {
             SolverRunSummary::new(display, elapsed, SolverOutcome::UnsatAfterWinner)
         }
-        SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
+        SolverProcessOutcome::Output(output)
+            if output.lines().next().unwrap_or_default().trim() == "unknown" =>
+        {
             SolverRunSummary::new(display, elapsed, SolverOutcome::UnknownAfterWinner)
         }
         SolverProcessOutcome::Output(output) => {
             SolverRunSummary::new(display, elapsed, SolverOutcome::Unexpected)
-                .with_detail(first_solver_line(&output).to_string())
+                .with_detail(output.lines().next().unwrap_or_default().trim().to_string())
         }
         SolverProcessOutcome::Unknown => {
             SolverRunSummary::new(display, elapsed, SolverOutcome::TimeoutOrUnknown)
@@ -1943,22 +1623,6 @@ fn solver_exit_error(
     message
 }
 
-fn solver_output_is_sat(output: &str) -> bool {
-    first_solver_line(output) == "sat"
-}
-
-fn solver_output_is_unsat(output: &str) -> bool {
-    first_solver_line(output) == "unsat"
-}
-
-fn solver_output_is_unknown(output: &str) -> bool {
-    first_solver_line(output) == "unknown"
-}
-
-fn first_solver_line(output: &str) -> &str {
-    output.lines().next().unwrap_or_default().trim()
-}
-
 pub(crate) fn parse_and_validate_model(
     cx: &SymCx,
     output: &str,
@@ -1988,15 +1652,6 @@ pub(crate) fn validate_solver_model_output(
     constraints: &[SymBoolExpr],
 ) -> Result<(), SymbolicError> {
     parse_and_validate_model(cx, output, constraints).map(|_| ())
-}
-
-#[cfg(test)]
-pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, SymbolicError> {
-    let mut values = BTreeMap::new();
-    parse_model_values(output, |name, value| {
-        values.insert(name.to_owned(), value);
-    })?;
-    Ok(values)
 }
 
 fn parse_model_with_symbols(
@@ -2081,24 +1736,4 @@ fn model_symbols_for_constraints(
         constraint.collect_vars(&mut vars);
     }
     vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
-}
-
-#[cfg(test)]
-#[test]
-fn z3_session_resets_and_reuses_the_process() {
-    let command = named_solver_command("z3").unwrap();
-    if solver_command_availability_error(&command).is_some() {
-        return;
-    }
-
-    let mut solver = SmtLibSubprocessSolver::new(Ok(vec![command]), Some(5), 2, false);
-    let mut cx = SymCx::new();
-    let value = SymExpr::var(&mut cx, "value");
-    let one = SymExpr::one(&mut cx);
-    let constraints = vec![SymBoolExpr::eq(&mut cx, value, one)];
-
-    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
-    let pid = solver.z3_session.as_mut().unwrap().child.child_mut().id();
-    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
-    assert_eq!(solver.z3_session.as_mut().unwrap().child.child_mut().id(), pid);
 }

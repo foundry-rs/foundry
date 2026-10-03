@@ -5,7 +5,8 @@ use foundry_test_utils::{forgetest_init, util::OutputExt};
 use super::symbolic_helpers::z3_available;
 use crate::skip_unless_z3;
 
-forgetest_init!(symbolic_cheatcodes_accept_symbolic_address_targets, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_symbolic_address_targets(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_symbolic_address_targets because z3 is not available"
@@ -71,9 +72,10 @@ contract SymbolicAddressCheatcodes is Test {
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.store target"), "{stdout}");
     assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_prank_accepts_symbolic_sender, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_prank_accepts_symbolic_sender(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_prank_accepts_symbolic_sender because z3 is not available"
@@ -186,9 +188,10 @@ contract SymbolicPrankSender is Test {
     );
     assert!(!stdout.contains("symbolic vm.prank"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.startPrank"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_balance_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_balance_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_balance_accepts_symbolic_target because z3 is not available"
@@ -226,9 +229,10 @@ contract SymbolicBalance is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodesize_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodesize_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodesize_accepts_symbolic_target because z3 is not available"
@@ -266,9 +270,10 @@ contract SymbolicExtcodeSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodehash_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodehash_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodehash_accepts_symbolic_target because z3 is not available"
@@ -306,9 +311,10 @@ contract SymbolicExtcodeHash is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXTCODEHASH target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodecopy_accepts_symbolic_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodecopy_accepts_symbolic_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_symbolic_target because z3 is not available"
@@ -352,9 +358,10 @@ contract SymbolicExtcodeCopy is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXTCODECOPY target"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_prank_propagates_callers, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_prank_propagates_callers(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_prank_propagates_callers because z3 is not available"
@@ -418,9 +425,10 @@ contract SymbolicPrank is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_assert_cheatcodes_find_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_assert_cheatcodes_find_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_assert_cheatcodes_find_counterexample because z3 is not available"
@@ -466,9 +474,10 @@ args=[42]
 "#]],
     );
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_recorded_logs_round_trip, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_recorded_logs_round_trip(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_recorded_logs_round_trip because z3 is not available"
@@ -595,9 +604,10 @@ contract SymbolicRecordedLogs is Test {
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.getRecordedLogsJson"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_env_crypto_and_console_helpers, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_env_crypto_and_console_helpers(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_env_crypto_and_console_helpers because z3 is not available"
@@ -657,7 +667,9 @@ contract SymbolicEnvCryptoConsole is Test {
         assertTrue(s != bytes32(0));
         (bytes32 compactR, bytes32 vs) = vm.signCompact(1, keccak256("foundry-symbolic"));
         assertEq(compactR, r);
-        assertTrue(vs != bytes32(0));
+        uint8 compactV = uint8(27 + (uint256(vs) >> 255));
+        bytes32 compactS = bytes32(uint256(vs) & (type(uint256).max >> 1));
+        assertEq(ecrecover(keccak256("foundry-symbolic"), compactV, compactR, compactS), keyAddress);
         address remembered = vm.rememberKey(2);
         assertEq(remembered, vm.addr(2));
         address[] memory wallets = vm.getWallets();
@@ -747,9 +759,10 @@ contract SymbolicEnvCryptoConsole is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_ffi_is_config_gated, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_ffi_is_config_gated(prj: _, cmd: _) {
     if !z3_available() {
         let _ =
             sh_eprintln!("skipping symbolic_vm_ffi_is_config_gated because z3 is not available");
@@ -783,9 +796,10 @@ contract SymbolicFfiDisabled is Test {
 symbolic ffi disabled
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_ffi_success_when_enabled, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_ffi_success_when_enabled(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_ffi_success_when_enabled because z3 is not available"
@@ -827,9 +841,10 @@ contract SymbolicFfiEnabled is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic ffi disabled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_etch_and_get_deployed_code, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_etch_and_get_deployed_code(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_etch_and_get_deployed_code because z3 is not available"
@@ -903,9 +918,10 @@ contract SymbolicEtch is Test {
     assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.getCode artifact"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodehash_distinguishes_empty_existing_account, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodehash_distinguishes_empty_existing_account(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodehash_distinguishes_empty_existing_account because z3 is not available"
@@ -944,9 +960,10 @@ contract SymbolicCodeHash is Test {
 [PASS] checkCodeHash(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_extcodecopy_pads_partial_code_ranges, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodecopy_pads_partial_code_ranges(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_pads_partial_code_ranges because z3 is not available"
@@ -991,9 +1008,10 @@ contract SymbolicExtcodeCopy is Test {
 [PASS] checkExtcodeCopy(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_codecopy_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_codecopy_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_codecopy_accepts_symbolic_offset because z3 is not available"
@@ -1035,9 +1053,10 @@ contract SymbolicCodeCopy {
 "#]],
     );
     assert!(!stdout.contains("symbolic CODECOPY offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodecopy_accepts_symbolic_offset, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodecopy_accepts_symbolic_offset(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_symbolic_offset because z3 is not available"
@@ -1084,9 +1103,10 @@ contract SymbolicExtcodeCopyOffset is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXTCODECOPY offset"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_codecopy_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_codecopy_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_codecopy_accepts_bounded_symbolic_size because z3 is not available"
@@ -1130,9 +1150,10 @@ contract SymbolicCodeCopySize {
 "#]],
     );
     assert!(!stdout.contains("symbolic CODECOPY size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_extcodecopy_accepts_bounded_symbolic_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_extcodecopy_accepts_bounded_symbolic_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_bounded_symbolic_size because z3 is not available"
@@ -1179,9 +1200,10 @@ contract SymbolicExtcodeCopySize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic EXTCODECOPY size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_selfdestruct_updates_account_overlay, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_selfdestruct_updates_account_overlay(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_updates_account_overlay because z3 is not available"
@@ -1247,21 +1269,20 @@ contract SymbolicSelfdestruct is Test {
 "#]],
     );
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(
-    symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete,
-    |prj, cmd| {
-        if !z3_available() {
-            let _ = sh_eprintln!(
-                "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
-            );
-            return;
-        }
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
 
-        prj.add_test(
-            "SymbolicSelfdestructBeneficiary.t.sol",
-            r#"
+    prj.add_test(
+        "SymbolicSelfdestructBeneficiary.t.sol",
+        r#"
 import "forge-std/Test.sol";
 
 /// forge-config: default.evm_version = "cancun"
@@ -1292,26 +1313,26 @@ contract SymbolicSelfdestructBeneficiary is Test {
     }
 }
 "#,
-        );
+    );
 
-        let stdout = cmd
-            .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
-            .assert_failure()
-            .get_output()
-            .stdout_lossy();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
 
-        assert_relevant_lines(
-            &stdout,
-            foundry_test_utils::str![[r#"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
 [FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructBeneficiary(address)
 "#]],
-        );
-        assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-        assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
-    }
-);
+    );
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+    assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+}
 
-forgetest_init!(symbolic_selfdestruct_cancun_existing_preserves_account, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_existing_preserves_account(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_cancun_existing_preserves_account because z3 is not available"
@@ -1375,9 +1396,10 @@ contract SymbolicSelfdestructCancunExisting is Test {
 "#]],
     );
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_selfdestruct_cancun_same_transaction_deletes_account, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_same_transaction_deletes_account(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_cancun_same_transaction_deletes_account because z3 is not available"
@@ -1430,9 +1452,10 @@ contract SymbolicSelfdestructCancunSameTx is Test {
 "#]],
     );
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_selfdestruct_cancun_wrong_delete_assertion_fails, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_wrong_delete_assertion_fails(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_cancun_wrong_delete_assertion_fails because z3 is not available"
@@ -1489,9 +1512,10 @@ contract SymbolicSelfdestructCancunWrongDelete is Test {
     assert!(!stdout.contains("[PASS] checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
     assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_set_blockhash, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_set_blockhash(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_vm_set_blockhash because z3 is not available");
         return;
@@ -1530,9 +1554,10 @@ contract SymbolicBlockhash is Test {
 [PASS] checkSetBlockhash(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_blockhash_accepts_symbolic_number, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_blockhash_accepts_symbolic_number(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_blockhash_accepts_symbolic_number because z3 is not available"
@@ -1573,9 +1598,10 @@ contract SymbolicBlockhashNumber is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic BLOCKHASH number"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_set_blockhash_accepts_symbolic_hash, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_set_blockhash_accepts_symbolic_hash(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_set_blockhash_accepts_symbolic_hash because z3 is not available"
@@ -1612,9 +1638,10 @@ contract SymbolicBlockhashValue is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.setBlockhash hash"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_block_environment_breadth, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_block_environment_breadth(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_block_environment_breadth because z3 is not available"
@@ -1675,9 +1702,10 @@ contract SymbolicBlockEnvironment is Test {
 [PASS] checkBlockEnvironment(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_uses_prepared_executor_environment, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_uses_prepared_executor_environment(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_uses_prepared_executor_environment because z3 is not available"
@@ -1728,9 +1756,10 @@ contract SymbolicPreparedEnvironment is Test {
 [PASS] checkPreparedEnvironment(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_state_snapshots, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_state_snapshots(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_vm_state_snapshots because z3 is not available");
         return;
@@ -1792,9 +1821,10 @@ contract SymbolicStateSnapshots is Test {
 [PASS] checkStateSnapshots(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_random_bytes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_random_bytes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_vm_random_bytes because z3 is not available");
         return;
@@ -1834,9 +1864,10 @@ contract SymbolicRandomBytes is Test {
 [PASS] checkRandomBytes(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_random_bytes_accepts_bounded_symbolic_length, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_random_bytes_accepts_bounded_symbolic_length(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_random_bytes_accepts_bounded_symbolic_length because z3 is not available"
@@ -1876,9 +1907,10 @@ contract SymbolicRandomBytesLength is Test {
     );
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
     assert!(!stdout.contains("symbolic randomBytes length"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_cheatcodes_accept_constrained_scalar_args, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_constrained_scalar_args(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_constrained_scalar_args because z3 is not available"
@@ -1971,9 +2003,208 @@ contract SymbolicConstrainedCheatcodes is Test {
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.deal value"), "{stdout}");
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_address_inputs_may_alias(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_address_inputs_may_alias");
+
+    prj.add_test(
+        "SymbolicAddressAlias.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAddressAlias is Test {
+    // Fails concretely for any a == b: the second deal overwrites the first.
+    function checkDealsMayTargetOneAccount(address a, address b) public {
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+
+    function checkDistinctDealsAreIndependent(address a, address b) public {
+        vm.assume(a != b);
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicAddressAlias"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDistinctDealsAreIndependent(address,address)
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn symbolic_cheatcode_state_survives_reverting_call(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
+
+    prj.add_test(
+        "SymbolicRevertKeepsCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Token {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicRevertKeepsCheatcodes is Test {
+    uint256 constant DEADLINE = 1000;
+    Token token;
+
+    function setUp() public {
+        token = new Token();
+    }
+
+    function warpThenRevert(uint256 t) external {
+        vm.warp(t);
+        revert("boom");
+    }
+
+    function mockThenRevert(address user) external {
+        vm.mockCall(
+            address(token),
+            abi.encodeWithSelector(Token.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        revert("boom");
+    }
+
+    // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
+    function checkWarpSurvivesRevertingCall(uint256 t) public {
+        try this.warpThenRevert(t) {} catch {}
+        assert(block.timestamp < DEADLINE);
+    }
+
+    // Concretely the mock outlives the revert, so the mocked value is observed.
+    function checkMockSurvivesRevertingCall(address user) public {
+        try this.mockThenRevert(user) {} catch {}
+        assert(token.balanceOf(user) == 7);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicRevertKeepsCheatcodes"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[1000]] checkWarpSurvivesRevertingCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockSurvivesRevertingCall(address)
+"#]],
+    );
+    assert!(!stdout.contains("[PASS]"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_expect_call_follows_function_mock_redirect(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
+
+    prj.add_test(
+        "SymbolicExpectCallRedirect.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Redirect {
+    function ping() external pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract SymbolicExpectCallRedirect is Test {
+    Target target;
+    Redirect redirect;
+
+    function setUp() public {
+        target = new Target();
+        redirect = new Redirect();
+    }
+
+    // The redirected call runs `redirect`'s code, so an expectation on `target` is never met.
+    function checkExpectCallOnRedirectedSource() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(Target.ping.selector));
+        target.ping();
+    }
+
+    function checkExpectCallOnRedirectTarget() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        assertEq(target.ping(), 2);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicExpectCallRedirect"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+to be called 1 time, but was called 0 times; counterexample:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallOnRedirectedSource()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallOnRedirectTarget()
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn symbolic_cheatcodes_reject_gas_deal_value(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
 
     prj.add_test(
@@ -2005,9 +2236,10 @@ contract SymbolicDealGasValue is Test {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_cheatcodes_reject_derived_gas_deal_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_reject_derived_gas_deal_value(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_cheatcodes_reject_derived_gas_deal_value");
 
     prj.add_test(
@@ -2035,9 +2267,10 @@ contract SymbolicDerivedDealGasValue is Test {
 incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_cheatcodes_accept_bounded_symbolic_input_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_bounded_symbolic_input_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_bounded_symbolic_input_size because z3 is not available"
@@ -2082,9 +2315,10 @@ contract SymbolicCheatcodeInputSize is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic cheatcode CALL input size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_svm_creator_breadth, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_svm_creator_breadth(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!("skipping symbolic_svm_creator_breadth because z3 is not available");
         return;
@@ -2140,8 +2374,9 @@ contract SymbolicSvmCreators {
 "#]],
     );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
-});
-forgetest_init!(symbolic_vm_expect_revert_matches_external_reverts, |prj, cmd| {
+}
+#[forgetest_init]
+fn symbolic_vm_expect_revert_matches_external_reverts(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_matches_external_reverts because z3 is not available"
@@ -2199,9 +2434,10 @@ contract SymbolicExpectRevert is Test {
 [PASS] checkExpectRevert(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_expect_revert_double_registration_is_rejected, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_double_registration_is_rejected(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_vm_expect_revert_double_registration_is_rejected");
 
     prj.add_test(
@@ -2251,9 +2487,10 @@ contract DoubleExpectRevert is Test {
 checkDoubleExpectRevert(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_expect_revert_missing_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_missing_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_missing_is_counterexample because z3 is not available"
@@ -2303,9 +2540,10 @@ contract SymbolicExpectRevertMissing is Test {
 checkMissingExpectedRevert(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_expect_revert_mismatch_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_mismatch_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_mismatch_is_counterexample because z3 is not available"
@@ -2359,9 +2597,10 @@ contract SymbolicExpectRevertMismatch is Test {
 checkMismatchedExpectedRevert(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_expect_revert_accepts_symbolic_data, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_accepts_symbolic_data(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_accepts_symbolic_data because z3 is not available"
@@ -2452,9 +2691,10 @@ contract SymbolicExpectRevertSymbolicData is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_revert_symbolic_data_mismatch_fails, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_revert_symbolic_data_mismatch_fails(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_symbolic_data_mismatch_fails because z3 is not available"
@@ -2535,9 +2775,10 @@ checkSymbolicExpectedReverterMismatch(address)
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_emit_matches_external_logs, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_emit_matches_external_logs because z3 is not available"
@@ -2631,9 +2872,10 @@ contract SymbolicExpectEmit is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_emit_mismatch_is_counterexample, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_emit_mismatch_is_counterexample(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_emit_mismatch_is_counterexample because z3 is not available"
@@ -2717,9 +2959,10 @@ checkMismatchedExpectEmitSymbolicEmitter(address)
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_call_matches_and_reports_missing, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_call_matches_and_reports_missing(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_call_matches_and_reports_missing because z3 is not available"
@@ -2981,9 +3224,10 @@ checkExpectCallMinGasMissing(uint256)
     {
         prj.forge_command().args(["test", "--symbolic", "--match-test", test]).assert_success();
     }
-});
+}
 
-forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_mock_call_returns_and_reverts(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_mock_call_returns_and_reverts because z3 is not available"
@@ -3196,9 +3440,10 @@ checkSymbolicCalleeMockMismatch(address)
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned because z3 is not available"
@@ -3276,9 +3521,10 @@ contract SymbolicUnpinnedCallValue is Test {
     );
     assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_call_expectations_branch_symbolic_pinned_value, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_call_expectations_branch_symbolic_pinned_value(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_call_expectations_branch_symbolic_pinned_value because z3 is not available"
@@ -3415,9 +3661,10 @@ checkMockCallPinnedValueFindsMismatch(uint8)
 "#]],
     );
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_expect_and_mock_call_accept_symbolic_data, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_expect_and_mock_call_accept_symbolic_data(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_and_mock_call_accept_symbolic_data because z3 is not available"
@@ -3552,9 +3799,10 @@ contract SymbolicCallDataCheatcodes is Test {
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_call_data_match_branches_find_mismatch, |prj, _cmd| {
+#[forgetest_init]
+fn symbolic_vm_call_data_match_branches_find_mismatch(prj: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_call_data_match_branches_find_mismatch because z3 is not available"
@@ -3676,9 +3924,10 @@ contract SymbolicCallDataMismatch is Test {
         assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
         assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
     }
-});
+}
 
-forgetest_init!(symbolic_vm_mock_function_routes_to_target, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_mock_function_routes_to_target(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_mock_function_routes_to_target because z3 is not available"
@@ -3757,9 +4006,10 @@ contract SymbolicMockFunction is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_record_accesses_tracks_symbolic_slots, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_record_accesses_tracks_symbolic_slots(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_record_accesses_tracks_symbolic_slots because z3 is not available"
@@ -3909,9 +4159,10 @@ contract SymbolicRecordAccesses is Test {
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.accesses address"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_bound_skip_and_gas_noops, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_bound_skip_and_gas_noops(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_bound_skip_and_gas_noops because z3 is not available"
@@ -4072,9 +4323,10 @@ contract SymbolicBoundSkip is Test {
 "#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_bound_invalid_range_fails_without_stuck, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_bound_invalid_range_fails_without_stuck(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_bound_invalid_range_fails_without_stuck because z3 is not available"
@@ -4125,9 +4377,10 @@ checkInvalidSignedBound(int256)
     );
     assert!(!stdout.contains("symbolic vm.bound range"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_assume_no_revert_prunes_reverting_call, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_assume_no_revert_prunes_reverting_call(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_assume_no_revert_prunes_reverting_call because z3 is not available"
@@ -4176,9 +4429,10 @@ contract SymbolicAssumeNoRevert is Test {
     );
     assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_vm_assume_no_revert_filters_revert_matches, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_assume_no_revert_filters_revert_matches(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_assume_no_revert_filters_revert_matches because z3 is not available"
@@ -4328,13 +4582,14 @@ contract SymbolicAssumeNoRevertFilters is Test {
         assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
         assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     }
-});
+}
 
 // The `vm.prank(address, bool delegateCall)` overload diverges from concrete
 // Forge semantics when `delegateCall == true`: the engine does not model
 // pranking through a delegatecall frame, so this branch must fail closed as
 // Unsupported rather than silently behaving like the address-only overload.
-forgetest_init!(symbolic_vm_prank_delegatecall_overload_reports_unsupported, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_prank_delegatecall_overload_reports_unsupported(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_prank_delegatecall_overload_reports_unsupported because z3 is not available"
@@ -4380,9 +4635,10 @@ contract SymbolicPrankDelegateCall is Test {
 unsupported symbolic execution feature: symbolic vm.prank delegatecall
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_vm_deploy_code_models_constructor_outcomes, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_vm_deploy_code_models_constructor_outcomes(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_vm_deploy_code_models_constructor_outcomes because z3 is not available"
@@ -4497,9 +4753,10 @@ contract SymbolicDeployCodeCheatcode is Test {
     );
     assert!(!stdout.contains("symbolic vm.deployCode"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
-});
+}
 
-forgetest_init!(storage_hook_cheatcodes_concrete_and_symbolic, |prj, cmd| {
+#[forgetest_init]
+fn storage_hook_cheatcodes_concrete_and_symbolic(prj: _, cmd: _) {
     prj.add_test(
         "StorageHooks.t.sol",
         r#"
@@ -5269,9 +5526,10 @@ contract StorageHooksTest is Test {
 [PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256)
 "#]],
     );
-});
+}
 
-forgetest_init!(storage_hook_callbacks_do_not_leak_fuzz_guidance, |prj, cmd| {
+#[forgetest_init]
+fn storage_hook_callbacks_do_not_leak_fuzz_guidance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.runs = 32;
         config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
@@ -5435,9 +5693,10 @@ contract StorageHookFuzzGuidanceTest is Test {
     }
     assert!(showmap_files > 0, "no showmap files were produced");
     assert!(saw_target_coverage, "showmap did not contain target coverage");
-});
+}
 
-forgetest_init!(symbolic_mapping_storage_hooks, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_mapping_storage_hooks(prj: _, cmd: _) {
     skip_unless_z3!("symbolic_mapping_storage_hooks");
     prj.update_config(|config| config.invariant.runs = 0);
     prj.add_test(
@@ -6125,4 +6384,4 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
         "{}",
         result["symbolic"]
     );
-});
+}
