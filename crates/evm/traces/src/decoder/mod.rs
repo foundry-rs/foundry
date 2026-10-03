@@ -1949,8 +1949,6 @@ mod tests {
 
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
-    #[cfg(feature = "base")]
-    use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
 
     #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
@@ -4050,8 +4048,9 @@ mod tests {
                 .build()
                 .precompile_labels()
         };
+        let base_precompiles = NetworkConfigs::with_base().precompiles(None);
         let base_label_count = |labels: &AddressHashMap<String>| {
-            BASE_PRECOMPILE_ADDRESSES.iter().filter(|address| labels.contains_key(*address)).count()
+            base_precompiles.values().filter(|address| labels.contains_key(*address)).count()
         };
 
         assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Azul)), 0);
