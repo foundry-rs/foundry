@@ -77,12 +77,6 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Sets the EIP-4844 blob versioned hashes of the transaction.
     fn set_blob_versioned_hashes(&mut self, _hashes: Vec<B256>) {}
 
-    /// Builder-pattern method for setting the EIP-4844 blob versioned hashes.
-    fn with_blob_versioned_hashes(mut self, hashes: Vec<B256>) -> Self {
-        self.set_blob_versioned_hashes(hashes);
-        self
-    }
-
     /// Gets the blob sidecar (either EIP-4844 or EIP-7594 variant) of the transaction.
     fn blob_sidecar(&self) -> Option<&BlobTransactionSidecarVariant> {
         None
@@ -183,12 +177,6 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Set the 2D nonce key for the Tempo transaction.
     fn set_nonce_key(&mut self, _nonce_key: U256) {}
 
-    /// Builder-pattern method for setting a 2D nonce key for a Tempo transaction.
-    fn with_nonce_key(mut self, nonce_key: U256) -> Self {
-        self.set_nonce_key(nonce_key);
-        self
-    }
-
     /// Clone this request and prepare it for browser-wallet gas estimation.
     ///
     /// Complete signer hints are preserved. Missing or incomplete hints default to a conservative
@@ -211,12 +199,6 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// recovered from the signature.
     fn set_key_id(&mut self, _key_id: Address) {}
 
-    /// Builder-pattern method for setting the Tempo access key ID.
-    fn with_key_id(mut self, key_id: Address) -> Self {
-        self.set_key_id(key_id);
-        self
-    }
-
     /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
     fn valid_before(&self) -> Option<NonZeroU64> {
         None
@@ -224,12 +206,6 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
 
     /// Set the valid_before timestamp for a Tempo expiring nonce transaction.
     fn set_valid_before(&mut self, _valid_before: NonZeroU64) {}
-
-    /// Builder-pattern method for setting the valid_before timestamp.
-    fn with_valid_before(mut self, valid_before: NonZeroU64) -> Self {
-        self.set_valid_before(valid_before);
-        self
-    }
 
     /// Get the valid_after timestamp for a Tempo expiring nonce transaction.
     fn valid_after(&self) -> Option<NonZeroU64> {
@@ -239,12 +215,6 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Set the valid_after timestamp for a Tempo expiring nonce transaction.
     fn set_valid_after(&mut self, _valid_after: NonZeroU64) {}
 
-    /// Builder-pattern method for setting the valid_after timestamp.
-    fn with_valid_after(mut self, valid_after: NonZeroU64) -> Self {
-        self.set_valid_after(valid_after);
-        self
-    }
-
     /// Get the fee payer (sponsor) signature for a Tempo sponsored transaction.
     fn fee_payer_signature(&self) -> Option<Signature> {
         None
@@ -252,12 +222,6 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
 
     /// Set the fee payer (sponsor) signature for a Tempo sponsored transaction.
     fn set_fee_payer_signature(&mut self, _signature: Signature) {}
-
-    /// Builder-pattern method for setting the fee payer signature.
-    fn with_fee_payer_signature(mut self, signature: Signature) -> Self {
-        self.set_fee_payer_signature(signature);
-        self
-    }
 
     /// Computes the sponsor (fee payer) signature hash for this transaction.
     ///

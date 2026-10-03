@@ -496,17 +496,6 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     /// Marks the given account as persistent.
     fn add_persistent_account(&mut self, account: Address) -> bool;
 
-    /// Removes persistent status from all given accounts.
-    #[auto_impl(keep_default_for(&, &mut, Rc, Arc, Box))]
-    fn remove_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
-    where
-        Self: Sized,
-    {
-        for acc in accounts {
-            self.remove_persistent_account(&acc);
-        }
-    }
-
     /// Extends the persistent accounts with the accounts the iterator yields.
     #[auto_impl(keep_default_for(&, &mut, Rc, Arc, Box))]
     fn extend_persistent_accounts(&mut self, accounts: impl IntoIterator<Item = Address>)
@@ -522,11 +511,6 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     ///
     /// Returns true if the `account` already has access
     fn allow_cheatcode_access(&mut self, account: Address) -> bool;
-
-    /// Revokes cheatcode access for the given account
-    ///
-    /// Returns true if the `account` was previously allowed cheatcode access
-    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool;
 
     /// Returns `true` if the given account is allowed to execute cheatcodes
     fn has_cheatcode_access(&self, account: &Address) -> bool;
@@ -2687,11 +2671,6 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn allow_cheatcode_access(&mut self, account: Address) -> bool {
         trace!(?account, "allow cheatcode access");
         self.inner.cheatcode_access_accounts.insert(account)
-    }
-
-    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
-        trace!(?account, "revoke cheatcode access");
-        self.inner.cheatcode_access_accounts.remove(account)
     }
 
     fn has_cheatcode_access(&self, account: &Address) -> bool {
