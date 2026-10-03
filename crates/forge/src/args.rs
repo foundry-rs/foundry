@@ -110,7 +110,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         }
         ForgeSubcommand::Clean { root } => {
             let config = utils::load_config_with_root(root.as_deref())?;
-            let project = config.project()?;
+            let project = config.parsing_project()?;
             for warning in config.cleanup(&project)? {
                 let _ = sh_warn!("{warning}");
             }

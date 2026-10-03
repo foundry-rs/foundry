@@ -30,6 +30,29 @@ use std::{
     thread,
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(unix)]
+fn write_recording_solc(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+touch "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.13+commit.abaa5c0e"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 const DEFAULT_CONFIG: &str = r#"[profile.default]
 src = "src"
 test = "test"
@@ -334,6 +357,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        evm_version_from_local_solc: false,
         hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
@@ -852,6 +876,158 @@ Compiler run successful!
     cmd.forge_fuse();
     cmd.env("PATH", bin_dir);
     cmd.args(["build", "--force"]).root_arg().assert_success();
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn compiler_override_does_not_run_project_solc(prj: _, cmd: _) {
+    prj.add_raw_source("Foo", "pragma solidity *; contract Foo {}");
+    let solc = prj.root().join("unselected-solc");
+    write_recording_solc(&solc);
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = '{}'\n", solc.display()),
+    )
+    .unwrap();
+
+    cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success();
+    assert!(!solc.with_extension("invoked").exists(), "the overridden compiler was invoked");
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn nested_config_does_not_run_solc(prj: _, cmd: _) {
+    let dependency = prj.root().join("lib/dependency");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::write(dependency.join("src/Dependency.sol"), "contract Dependency {}").unwrap();
+
+    let solc = dependency.join("nested-solc");
+    write_recording_solc(&solc);
+    fs::write(
+        dependency.join(Config::FILE_NAME),
+        "[profile.default]\nsolc = 'lib/dependency/nested-solc'\n",
+    )
+    .unwrap();
+
+    cmd.args(["config", "--json"]).assert_success();
+    assert!(!solc.with_extension("invoked").exists(), "the dependency compiler was invoked");
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn non_compiling_commands_do_not_run_solc(prj: _, cmd: _) {
+    prj.add_source("Foo", "contract Foo {}");
+    let solc = prj.root().join("project-solc");
+    write_recording_solc(&solc);
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(solc.clone())));
+
+    for args in
+        [&["config", "--json"][..], &["remappings"], &["tree"], &["fmt"], &["lint"], &["clean"]]
+    {
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!solc.with_extension("invoked").exists(), "`forge {args:?}` invoked solc");
+    }
+}
+
+// An explicit EVM version is preserved at runtime, even if the compiler does not support it.
+#[forgetest]
+fn explicit_evm_version_is_preserved_at_runtime(prj: _, cmd: _) {
+    let assertion = r#"
+pragma solidity ^0.8.0;
+
+interface Vm {
+    function getEvmVersion() external pure returns (string memory evm);
+}
+
+library EvmVersionAssert {
+    function check() internal pure {
+        string memory evm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).getEvmVersion();
+        require(keccak256(bytes(evm)) == keccak256("osaka"), evm);
+    }
+}
+"#;
+    prj.add_test(
+        "EvmVersion.t.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionTest {{ function test_evm_version() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+    prj.add_script(
+        "EvmVersion.s.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionScript {{ function run() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+
+    // Local compiler binary.
+    let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = '{}'\nevm_version = 'osaka'\n", solc.solc.display()),
+    )
+    .unwrap();
+    cmd.args(["test"]).assert_success();
+    cmd.forge_fuse().args(["coverage"]).assert_success();
+    cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).assert_success();
+
+    // Pinned compiler version.
+    fs::write(prj.root().join(Config::FILE_NAME), "[profile.default]\n").unwrap();
+    let explicit = ["--use", OTHER_SOLC_VERSION, "--evm-version", "osaka"];
+    cmd.forge_fuse().arg("test").args(explicit).assert_success();
+    cmd.forge_fuse().arg("coverage").args(explicit).assert_success();
+    cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).args(explicit).assert_success();
+}
+
+// The default EVM version follows the version of a configured local compiler when building and at
+// runtime.
+#[forgetest]
+fn local_solc_derives_default_evm_version(prj: _, cmd: _) {
+    let assertion = r#"
+pragma solidity ^0.8.0;
+
+interface Vm {
+    function getEvmVersion() external pure returns (string memory evm);
+}
+
+library EvmVersionAssert {
+    function check() internal pure {
+        string memory evm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).getEvmVersion();
+        require(keccak256(bytes(evm)) == keccak256("cancun"), evm);
+    }
+}
+"#;
+    prj.add_raw_source("Foo.sol", "pragma solidity ^0.8.0; contract Foo {}");
+    prj.add_test(
+        "EvmVersion.t.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionTest {{ function test_evm_version() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+    prj.add_script(
+        "EvmVersion.s.sol",
+        &format!(
+            "{assertion}\ncontract EvmVersionScript {{ function run() public pure {{ EvmVersionAssert.check(); }} }}"
+        ),
+    );
+
+    let solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
+    fs::write(
+        prj.root().join(Config::FILE_NAME),
+        format!(
+            r#"[profile.default]
+solc = '{}'
+compilation_restrictions = [{{ paths = "src/**", evm_version = "cancun" }}]
+"#,
+            solc.solc.display()
+        ),
+    )
+    .unwrap();
+
+    cmd.arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+    cmd.forge_fuse().arg("test").assert_success();
+    cmd.forge_fuse().arg("coverage").assert_success();
+    cmd.forge_fuse().args(["script", "script/EvmVersion.s.sol"]).assert_success();
 }
 
 // test to ensure yul optimizer can be set as intended
@@ -2051,7 +2227,9 @@ contract ReadLinkTest is Test {
 
 // tests if evm version is normalized for config output
 #[forgetest]
-fn normalize_config_evm_version(cmd: _) {
+fn normalize_config_evm_version(prj: _, cmd: _) {
+    fs::write(prj.root().join(Config::FILE_NAME), "[profile.default]\nsolc = '0.8.13'\n").unwrap();
+
     let output = cmd
         .args(["config", "--use", "0.8.0", "--json"])
         .assert_success()

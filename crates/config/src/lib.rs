@@ -266,6 +266,10 @@ pub struct Config {
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// Whether `evm_version` is derived from the local `solc` binary once it is resolved.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub evm_version_from_local_solc: bool,
     /// The runtime hardfork to use when executing tests and scripts.
     pub hardfork: Option<FoundryHardfork>,
     /// List of contracts to generate gas reports for.
@@ -770,6 +774,8 @@ impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::Default;
 
+    const DEFAULT_EVM_VERSION: EvmVersion = EvmVersion::Osaka;
+
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
 
@@ -876,7 +882,30 @@ impl Config {
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
-        Self::from_figment(Figment::from(provider.legacy_labels()))
+        let figment = Figment::from(provider);
+        // Read provenance before wrapping, since `LegacyLabelsProvider` drops value metadata.
+        // Values with unknown metadata come from nested providers, such as `extends`, not
+        // the defaults.
+        let evm_version_configured = figment
+            .find_metadata("evm_version")
+            .is_none_or(|metadata| metadata.name.as_ref() != "Foundry Config");
+        let mut config = Self::from_figment(Figment::from(figment.legacy_labels()))?;
+        // Derive the default EVM version from the final compiler version, after all providers
+        // have been merged. See <https://github.com/foundry-rs/foundry/issues/7014>.
+        if !evm_version_configured && config.evm_version == Self::DEFAULT_EVM_VERSION {
+            match &config.solc {
+                Some(SolcReq::Version(version)) => {
+                    if let Some(evm_version) = config.evm_version.normalize_version_solc(version) {
+                        config.evm_version = evm_version;
+                    }
+                }
+                // The version of a local binary is only known by running it, so defer until the
+                // compiler is resolved.
+                Some(SolcReq::Local(_)) => config.evm_version_from_local_solc = true,
+                None => {}
+            }
+        }
+        Ok(config)
     }
 
     /// Applies an inline provider on top of the current config without reloading external
@@ -1223,8 +1252,8 @@ impl Config {
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc_version()
-            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        if let Some(SolcReq::Version(version)) = &self.solc
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(version)
         {
             return evm_version;
         }
@@ -1297,12 +1326,72 @@ impl Config {
         self.create_project(false, true)
     }
 
+    /// An ephemeral project for commands that do not compile, such as parsing or cleaning sources.
+    ///
+    /// Configured local compiler binaries are never run, since their version is only known by
+    /// running them. Local Solc is replaced by auto-detection and Vyper is not instantiated.
+    pub fn parsing_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
+        let solc = if matches!(self.solc, Some(SolcReq::Local(_))) {
+            SolcCompiler::AutoDetect
+        } else {
+            self.solc_compiler()?
+        };
+        let mut project = self.create_project_with_compiler(
+            false,
+            true,
+            MultiCompiler { solc: Some(solc), vyper: None },
+        )?;
+        // Version resolution is only used to parse sources and must not depend on locally installed
+        // compilers.
+        project.offline = false;
+        if self.evm_version_from_local_solc {
+            // The default EVM version is derived from the local compiler's version, which is
+            // unknown here, so EVM version restrictions cannot be matched.
+            for restriction in project.restrictions.values_mut() {
+                restriction.restrictions.solc.evm_version = Default::default();
+                restriction.restrictions.vyper.evm_version = Default::default();
+            }
+        }
+        Ok(project)
+    }
+
+    /// Derives the default EVM version from the local Solc binary selected for `project`.
+    ///
+    /// See [`Self::local_solc_evm_version`].
+    pub fn normalize_evm_version_for_project(&mut self, project: &Project<MultiCompiler>) {
+        if let Some(SolcCompiler::Specific(solc)) = &project.compiler.solc
+            && let Some(evm_version) = self.local_solc_evm_version(&solc.version)
+        {
+            self.evm_version = evm_version;
+            self.evm_version_from_local_solc = false;
+        }
+    }
+
+    /// Returns the default EVM version supported by a configured local Solc binary with the given
+    /// version.
+    ///
+    /// Returns `None` if the EVM version is not derived from a local Solc binary, such as when it
+    /// is explicitly configured. Pinned Solc versions are normalized while loading the config
+    /// instead.
+    pub fn local_solc_evm_version(&self, solc_version: &Version) -> Option<EvmVersion> {
+        if self.evm_version_from_local_solc {
+            self.evm_version.normalize_version_solc(solc_version)
+        } else {
+            None
+        }
+    }
+
     /// A cached, in-memory project that does not request any artifacts.
     ///
     /// Use this when you just want the source graph or the Solar compiler context.
     pub fn solar_project(&self) -> Result<Project<MultiCompiler>, SolcError> {
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
-        let mut project = self.create_project(self.cache && !ui_testing, false)?;
+        // Solar only handles Solidity, so the configured Vyper binary is never instantiated.
+        let mut project = self.create_project_with_compiler(
+            self.cache && !ui_testing,
+            false,
+            MultiCompiler { solc: Some(self.solc_compiler()?), vyper: None },
+        )?;
         project.update_output_selection(|selection| {
             // We have to request something to populate `contracts` in the output and thus
             // artifacts.
@@ -1383,8 +1472,26 @@ impl Config {
     ///
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let settings = self.compiler_settings()?;
+        self.create_project_with_compiler(cached, no_artifacts, self.compiler()?)
+    }
+
+    fn create_project_with_compiler(
+        &self,
+        cached: bool,
+        no_artifacts: bool,
+        compiler: MultiCompiler,
+    ) -> Result<Project, SolcError> {
+        let mut settings = self.compiler_settings()?;
         let paths = self.project_paths();
+
+        // Settings are matched against restrictions before compiler inputs are sanitized, so apply
+        // the default EVM version of a local compiler before deriving additional profiles.
+        if let Some(SolcCompiler::Specific(solc)) = &compiler.solc
+            && let Some(evm_version) = self.local_solc_evm_version(&solc.version)
+        {
+            settings.solc.evm_version = Some(evm_version);
+            settings.vyper.evm_version = Some(evm_version);
+        }
 
         // Strip "./" prefix for consistent path matching
         let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
@@ -1415,7 +1522,7 @@ impl Config {
             builder = builder.sparse_output(filter);
         }
 
-        let project = builder.build(self.compiler()?)?;
+        let project = builder.build(compiler)?;
 
         // `ProjectBuilder` slashes paths on Windows. Re-encode a contextual remapping's trailing
         // directory boundary with the native separator so a later `Remapping::to_string` does not
@@ -2777,26 +2884,7 @@ impl Config {
     }
 
     /// Check if any defaults need to be normalized.
-    ///
-    /// This normalizes the default `evm_version` if a `solc` was provided in the config.
-    ///
-    /// See also <https://github.com/foundry-rs/foundry/issues/7014>
     fn normalize_defaults(&self, mut figment: Figment) -> Figment {
-        if figment.contains("evm_version") {
-            return figment;
-        }
-
-        // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
-            && let Some(version) = solc
-                .try_version()
-                .ok()
-                .and_then(|version| self.evm_version.normalize_version_solc(&version))
-        {
-            let profile = figment.profile().clone();
-            figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
-        }
-
         // Normalize `deny` based on the provided `deny_warnings` value.
         if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
             && figment.extract_inner("deny") == Ok(DenyLevel::Never)
@@ -3022,7 +3110,8 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Osaka,
+            evm_version: Self::DEFAULT_EVM_VERSION,
+            evm_version_from_local_solc: false,
             hardfork: None,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
@@ -3394,6 +3483,9 @@ mod tests {
 
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
@@ -6150,6 +6242,92 @@ mod tests {
             );
             let loaded = Config::from_provider(figment).unwrap().sanitized();
             assert_eq!(loaded.evm_version, EvmVersion::Amsterdam);
+            Ok(())
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_solc_is_only_probed_when_creating_project() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+                solc = './fake-solc'
+            ",
+            )?;
+            jail.create_file(
+                "fake-solc",
+                r#"#!/bin/sh
+touch fake-solc.invoked
+echo "solc, the solidity compiler commandline interface"
+echo "Version: 0.8.13+commit.abaa5c0e"
+"#,
+            )?;
+            let solc = jail.directory().join("fake-solc");
+            let mut permissions = fs::metadata(&solc).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(solc, permissions).unwrap();
+
+            let mut config = Config::load().unwrap().sanitized();
+            config.parsing_project().unwrap();
+            assert!(!jail.directory().join("fake-solc.invoked").exists());
+            assert_eq!(config.evm_version, EvmVersion::Osaka);
+
+            // The default EVM version is derived once the local compiler is resolved.
+            let project = config.project().unwrap();
+            assert!(jail.directory().join("fake-solc.invoked").exists());
+            assert_eq!(project.settings.solc.evm_version, Some(EvmVersion::London));
+            config.normalize_evm_version_for_project(&project);
+            assert_eq!(config.evm_version, EvmVersion::London);
+
+            // An explicit EVM version is preserved.
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [default]
+                solc = './fake-solc'
+                evm_version = 'osaka'
+            ",
+            )?;
+            let mut config = Config::load().unwrap().sanitized();
+            let project = config.project().unwrap();
+            assert_eq!(project.settings.solc.evm_version, Some(EvmVersion::Osaka));
+            config.normalize_evm_version_for_project(&project);
+            assert_eq!(config.evm_version, EvmVersion::Osaka);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn evm_version_is_normalized_from_final_solc() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                solc = '0.8.13'
+            ",
+            )?;
+
+            let implicit = Config::load().unwrap();
+            assert_eq!(implicit.evm_version, EvmVersion::London);
+
+            let overridden =
+                Config::from_provider(Config::figment().merge(("solc", "0.8.37"))).unwrap();
+            assert_eq!(overridden.evm_version, EvmVersion::Osaka);
+
+            let explicit =
+                Config::from_provider(Config::figment().merge(("evm_version", "osaka"))).unwrap();
+            assert_eq!(explicit.evm_version, EvmVersion::Osaka);
+
+            jail.set_env("FOUNDRY_EVM_VERSION", "cancun");
+            let explicit_env = Config::load().unwrap();
+            assert_eq!(explicit_env.evm_version, EvmVersion::Cancun);
+
+            let roundtrip = Config::from_provider(&explicit_env).unwrap();
+            assert_eq!(roundtrip.evm_version, EvmVersion::Cancun);
             Ok(())
         });
     }

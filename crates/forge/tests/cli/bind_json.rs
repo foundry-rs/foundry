@@ -5,6 +5,11 @@ use foundry_test_utils::snapbox;
 // that generated bindings are correct
 #[forgetest_init]
 fn test_bind_json(prj: _, cmd: _) {
+    std::fs::write(
+        prj.root().join("src/Unrelated.vy"),
+        "@external\ndef value() -> uint256: return 1\n",
+    )
+    .unwrap();
     prj.add_test(
         "JsonBindings",
         r#"

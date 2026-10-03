@@ -63,7 +63,7 @@ impl DocArgs {
         install::install_missing_dependencies(&mut config, || self.config())?;
 
         let root = &config.root;
-        let project = config.ephemeral_project()?;
+        let project = config.parsing_project()?;
         let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
         let source_status = compiler.enter_mut(|compiler| -> Result<_> {
             let mut pcx = compiler.parse();
@@ -74,14 +74,26 @@ impl DocArgs {
             Ok(status)
         })?;
 
-        // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old,
-        // mixed-version, and Solidity-free projects by using the existing compiler-backed parser.
+        // Solar does not support Solidity versions prior to 0.8.0. Preserve support for old and
+        // mixed-version projects by compiling Solidity sources with the configured compiler.
         let mut output = if source_status.is_fully_supported() {
             None
         } else {
-            let mut compile_project = config.solar_project()?;
-            compile_project.no_artifacts = true;
-            Some(ProjectCompiler::new().compile(&compile_project)?)
+            let files = project
+                .paths
+                .input_files_iter()
+                .filter(|path| path.extension().is_some_and(|extension| extension == "sol"))
+                .filter(|path| {
+                    project.sparse_output.as_ref().is_none_or(|filter| filter.is_match(path))
+                })
+                .collect::<Vec<_>>();
+            if files.is_empty() {
+                None
+            } else {
+                let mut compile_project = config.solar_project()?;
+                compile_project.no_artifacts = true;
+                Some(ProjectCompiler::new().files(files).compile(&compile_project)?)
+            }
         };
 
         let mut doc_cfg = config.doc;

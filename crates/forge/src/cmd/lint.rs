@@ -51,7 +51,7 @@ impl LintArgs {
         let format_json = shell::is_json();
         let config = self.load_config_with_dependencies()?;
 
-        let project = config.ephemeral_project()?;
+        let project = config.parsing_project()?;
         let path_config = config.project_paths();
 
         // Expand ignore globs and canonicalize from the get go
