@@ -1512,6 +1512,33 @@ async fn test_trace_replays_report_unavailable_historical_state() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_unknown_block_and_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let head = provider.get_block_number().await.unwrap();
+    let next = BlockId::number(head + 1);
+
+    let error = provider.trace_block(next).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+    let error = provider.trace_replay_block_transactions(next).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+
+    let replay = provider
+        .client()
+        .request::<_, Option<TraceResults>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, None);
+
+    let filter = TraceFilter::default().from_block(head).to_block(head + 1);
+    let error = provider.trace_filter(&filter).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_rejects_unknown_hash() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let error = handle
@@ -2692,6 +2719,18 @@ async fn test_trace_replay_transaction_fork() {
     }
     assert_eq!(replays[0].transaction_hash, hash);
     assert_eq!(replays[0], replays[1]);
+
+    // A hash unknown upstream as well is null.
+    let unknown = handle
+        .http_provider()
+        .client()
+        .request::<_, Option<TraceResultsWithTransactionHash>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
