@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -905,6 +905,35 @@ async fn test_set_next_block_prevrandao_restored_on_revert() {
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));
+}
+
+// Tests that `anvil_setNextBlockParentBeaconBlockRoot` sets the parent beacon block root of the
+// next mined block only, and that the EIP-4788 contract stores it for that block's timestamp.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, Some(root));
+    let stored = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .to(BEACON_ROOTS_ADDRESS)
+                .input(U256::from(block.header.timestamp).to_be_bytes::<32>().to_vec().into()),
+        ))
+        .block(BlockId::latest())
+        .await
+        .unwrap();
+    assert_eq!(stored, Bytes::from(root.0));
+
+    api.mine_one().await.unwrap();
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(next.header.parent_beacon_block_root, Some(B256::ZERO));
 }
 
 // test that after a snapshot revert, the env block is reset

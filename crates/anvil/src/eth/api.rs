@@ -490,6 +490,19 @@ impl<N: Network> EthApi<N> {
         Ok(())
     }
 
+    /// Sets the parent beacon block root of the next block.
+    ///
+    /// This is a one-shot override: it applies to the next mined block only, after which anvil
+    /// resumes using the zero root. From Cancun the root is stored by the EIP-4788 beacon roots
+    /// contract when the block is mined.
+    ///
+    /// Handler for RPC call: `anvil_setNextBlockParentBeaconBlockRoot`
+    pub async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> Result<()> {
+        node_info!("anvil_setNextBlockParentBeaconBlockRoot");
+        self.backend.set_next_block_parent_beacon_block_root(root);
+        Ok(())
+    }
+
     /// Retrieves the Anvil node configuration params.
     ///
     /// Handler for RPC call: `anvil_nodeInfo`
@@ -2414,6 +2427,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
             EthRequest::SetNextBlockPrevRandao(prevrandao) => {
                 self.anvil_set_next_block_prevrandao(prevrandao).await.to_rpc_result()
+            }
+            EthRequest::SetNextBlockParentBeaconBlockRoot(root) => {
+                self.anvil_set_next_block_parent_beacon_block_root(root).await.to_rpc_result()
             }
             EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
