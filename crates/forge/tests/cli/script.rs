@@ -1355,6 +1355,117 @@ contract InterruptedResume is Script {
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
 }
 
+#[forgetest_init]
+async fn resume_stops_after_reverted_transaction(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "RevertedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Reverter {
+    function fail() external pure {
+        revert("reverted on chain");
+    }
+
+    function later() external {}
+}
+
+contract RevertedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        Reverter reverter = new Reverter();
+        // A fixed gas limit skips estimation, so the call is submitted and reverts on chain.
+        (bool success,) = address(reverter).call{gas: 100_000}(abi.encodeCall(Reverter.fail, ()));
+        require(!success);
+        reverter.later{gas: 100_000}();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/RevertedResume.s.sol/31337/run-latest.json");
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--skip-simulation",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Transaction Failure: 0x[..]
+
+"#]]);
+
+    // The reverted receipt is persisted as the operation's outcome and the later operation is
+    // never submitted.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let transactions = sequence["transactions"].as_array().unwrap();
+    assert_eq!(transactions.len(), 3);
+    let reverted_hash = transactions[1]["hash"].as_str().unwrap().to_string();
+    assert!(transactions[2]["hash"].is_null());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 2);
+    let reverted = receipts.iter().find(|receipt| receipt["transactionHash"] == reverted_hash);
+    assert_eq!(reverted.unwrap()["status"], "0x0");
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+
+    // Older snapshots dropped the reverted hash from pending without its receipt, and an
+    // interrupted checkpoint can also lose its operation hash. A fresh, non-sequential resume must
+    // reconcile that signed attempt instead of replaying it alongside the unsigned successor.
+    let recovery_path =
+        prj.root().join("cache/RevertedResume.s.sol/31337/run-latest.json.recovery.json");
+    let mut recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
+    let data = &mut recovery["data"]["sequence"];
+    data["receipts"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|receipt| receipt["transactionHash"] != reverted_hash);
+    data["transactions"][1]["hash"] = Value::Null;
+    foundry_common::fs::write_json_file(&recovery_path, &recovery).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_failure().stderr_eq(format!("Error: Transaction Failure: {reverted_hash}\n"));
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let reverted = sequence["receipts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|receipt| receipt["transactionHash"] == reverted_hash);
+    assert_eq!(reverted.unwrap()["status"], "0x0");
+
+    // Resume stops at the reverted operation before requesting a signer or submitting anything.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
+    ));
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+}
+
 #[forgetest]
 async fn can_deploy_script_remember_key(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -5711,6 +5822,108 @@ async fn tempo_batch_resume_reuses_signed_payload(prj: _, cmd: _) {
         U256::from_be_slice(deployed[0].as_slice())
     );
     assert_eq!(provider.get_storage_at(deployed[2], U256::ZERO).await.unwrap(), U256::from(0x1234));
+}
+
+#[forgetest_init]
+async fn tempo_batch_resume_persists_reverted_batch(prj: _, cmd: _) {
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        false,
+    )
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(30), reached.notified())
+        .await
+        .expect("Forge did not reach the blocked batch submission");
+    let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| {
+            path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+        })
+        .expect("no latest Tempo broadcast artifact");
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let deployed = sequence["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| tx["contractAddress"].as_str().unwrap().parse::<Address>().unwrap())
+        .collect::<Vec<_>>();
+    assert!(child.is_running(), "Forge exited before it could be interrupted");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success(), "Forge unexpectedly succeeded");
+    release.notify_one();
+
+    // Occupy the first CREATE2 address so replaying the saved batch reverts on chain.
+    api.anvil_set_code(deployed[0], Bytes::from_static(&[0x00])).await.unwrap();
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: Batch transaction 0x[..] failed (reverted)
+
+"#]]);
+
+    // Every batch member records the reverted receipt without claiming a deployment.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 3);
+    let hash = receipts[0]["transactionHash"].as_str().unwrap().to_string();
+    assert!(receipts.iter().all(|receipt| receipt["transactionHash"] == hash
+        && receipt["status"] == "0x0"
+        && receipt["contractAddress"].is_null()));
+    {
+        let submissions = submissions.lock().unwrap();
+        assert_eq!(submissions.len(), 2);
+        assert_eq!(submissions[0], submissions[1]);
+    }
+
+    // A later resume stops at the reverted batch without requesting a signer or resubmitting.
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: transaction {hash} on chain {} reverted; resume will not submit the remaining transactions\n",
+        sequence["chain"]
+    ));
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+    for address in &deployed[1..] {
+        assert!(provider.get_code_at(*address).await.unwrap().is_empty());
+    }
 }
 
 #[forgetest_init]

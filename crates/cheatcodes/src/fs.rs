@@ -1048,6 +1048,7 @@ impl Cheatcode for getBroadcastCall {
             *chainId,
             &state.config.broadcast,
             vec![map_broadcast_tx_type(*txType)],
+            false,
         )?;
 
         Ok(latest_broadcast.abi_encode())
@@ -1105,6 +1106,7 @@ impl Cheatcode for getDeployment_0Call {
             chain_id,
             &ccx.state.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
+            true,
         )?;
 
         Ok(latest_broadcast.contractAddress.abi_encode())
@@ -1120,6 +1122,7 @@ impl Cheatcode for getDeployment_1Call {
             *chainId,
             &state.config.broadcast,
             vec![CallKind::Create, CallKind::Create2],
+            true,
         )?;
 
         Ok(latest_broadcast.contractAddress.abi_encode())
@@ -1144,8 +1147,11 @@ impl Cheatcode for getDeploymentsCall {
             })
             .collect::<Vec<_>>();
 
-        let deployed_addresses =
-            summaries.into_iter().map(|summary| summary.contractAddress).collect::<Vec<_>>();
+        let deployed_addresses = summaries
+            .into_iter()
+            .filter(|summary| summary.success)
+            .map(|summary| summary.contractAddress)
+            .collect::<Vec<_>>();
 
         Ok(deployed_addresses.abi_encode())
     }
@@ -1185,6 +1191,7 @@ fn latest_broadcast<N: Network>(
     chain_id: u64,
     broadcast_path: &Path,
     filters: Vec<CallKind>,
+    successful_only: bool,
 ) -> Result<BroadcastTxSummary>
 where
     N::TxEnvelope: for<'d> serde::Deserialize<'d>,
@@ -1202,16 +1209,16 @@ where
     let summaries = parse_broadcast_results(results);
 
     summaries
-        .first()
+        .into_iter()
+        .find(|summary| !successful_only || summary.success)
         .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
-        .cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Address, address, b256};
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
@@ -1722,6 +1729,7 @@ mod tests {
             31337,
             &broadcast_path,
             vec![CallKind::Create],
+            false,
         )
         .unwrap();
 
@@ -1733,6 +1741,70 @@ mod tests {
         assert!(matches!(latest.txType, BroadcastTxType::Create));
         assert_eq!(latest.contractAddress, address!("20c0000000000000000000000000000000000000"));
         assert!(latest.success);
+
+        // A later reverted deployment is a broadcast result but not a deployment.
+        let mut sequence = sequence;
+        let reverted_hash = "0x14548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f";
+        let mut reverted_tx = sequence["transactions"][0].clone();
+        reverted_tx["hash"] = reverted_hash.into();
+        reverted_tx["contractAddress"] = "0x20c0000000000000000000000000000000000001".into();
+        let mut reverted_receipt = sequence["receipts"][0].clone();
+        reverted_receipt["status"] = "0x0".into();
+        reverted_receipt["transactionHash"] = reverted_hash.into();
+        reverted_receipt["blockNumber"] = "0x8".into();
+        sequence["transactions"].as_array_mut().unwrap().push(reverted_tx);
+        sequence["receipts"].as_array_mut().unwrap().push(reverted_receipt);
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+
+        let latest = |successful_only| {
+            latest_broadcast::<<TempoEvmNetwork as FoundryEvmNetwork>::Network>(
+                &"Counter".to_owned(),
+                31337,
+                &broadcast_path,
+                vec![CallKind::Create],
+                successful_only,
+            )
+            .unwrap()
+        };
+        let broadcast = latest(false);
+        assert_eq!(broadcast.blockNumber, 8);
+        assert!(!broadcast.success);
+        let deployment = latest(true);
+        assert_eq!(deployment.blockNumber, 7);
+        assert_eq!(
+            deployment.contractAddress,
+            address!("20c0000000000000000000000000000000000000")
+        );
+
+        let mut cheats = Cheatcodes::<TempoEvmNetwork>::new(Arc::new(CheatsConfig {
+            broadcast: broadcast_path.clone(),
+            ..Default::default()
+        }));
+        let mut outcomes = || {
+            let deployments = getDeploymentsCall { contractName: "Counter".into(), chainId: 31337 }
+                .apply(&mut cheats)
+                .unwrap();
+            let broadcasts = getBroadcasts_1Call { contractName: "Counter".into(), chainId: 31337 }
+                .apply(&mut cheats)
+                .unwrap();
+            (
+                Vec::<Address>::abi_decode(&deployments).unwrap(),
+                Vec::<BroadcastTxSummary>::abi_decode(&broadcasts)
+                    .unwrap()
+                    .into_iter()
+                    .map(|summary| summary.success)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            outcomes(),
+            (vec![address!("20c0000000000000000000000000000000000000")], vec![false, true])
+        );
+
+        // When every deployment reverted, broadcasts still expose the failed outcomes.
+        sequence["receipts"][0]["status"] = "0x0".into();
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+        assert_eq!(outcomes(), (vec![], vec![false, false]));
 
         stdfs::remove_dir_all(root).unwrap();
     }

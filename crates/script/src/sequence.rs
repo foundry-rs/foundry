@@ -457,6 +457,21 @@ where
         Ok(())
     }
 
+    /// Fails if a persisted receipt reverted, so resume never submits work planned after a failed
+    /// operation.
+    pub(crate) fn ensure_no_reverted_receipts(&self) -> Result<()> {
+        for deployment in self.sequences() {
+            if let Some(receipt) = deployment.receipts.iter().find(|receipt| !receipt.status()) {
+                bail!(
+                    "transaction {} on chain {} reverted; resume will not submit the remaining transactions",
+                    receipt.transaction_hash(),
+                    deployment.chain
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub const fn is_multi(&self) -> bool {
         self.recovery.data().is_multi()
     }
