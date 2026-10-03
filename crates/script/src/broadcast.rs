@@ -21,7 +21,7 @@ use alloy_network::{
     TransactionResponse,
 };
 use alloy_primitives::{
-    Address, Bytes, TxHash, TxKind, U256, keccak256,
+    Address, B256, Bytes, TxHash, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressHashSet, HashMap},
     utils::format_units,
 };
@@ -452,29 +452,32 @@ where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
     let deployment = &sequence.sequences()[sequence_index];
-    deployment
-        .transactions
-        .iter()
+    sequence
+        .operation_hashes(sequence_index)
+        .into_iter()
         .enumerate()
-        .filter_map(|(index, transaction)| {
-            let hash = sequence
-                .signed_payload(sequence_index, index)
-                .map(|signed| signed.hash)
-                .or_else(|| match sequence.delegated_status(sequence_index, index) {
-                    Some(DelegatedStatus::Pending { hash }) => Some(hash),
-                    _ => None,
-                })
-                .or(transaction.hash)
-                .or_else(|| match transaction.tx() {
-                    TransactionMaybeSigned::Signed { tx, .. } => Some(tx.trie_hash()),
-                    TransactionMaybeSigned::Unsigned(_) => None,
-                });
+        .filter_map(|(index, hash)| {
             let completed = hash.is_some_and(|hash| {
                 deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
             });
             (!completed).then_some(index)
         })
         .collect()
+}
+
+/// Returns the operation hashes used to detect transactions queued behind a missing predecessor.
+///
+/// Tempo nonce keys and expiring nonces do not follow the sequential account nonce, so detection is
+/// disabled there.
+pub(crate) fn predecessor_hashes<N: Network>(
+    sequence: &ScriptSequenceKind<N>,
+    sequence_index: usize,
+    tempo: bool,
+) -> Vec<Option<B256>>
+where
+    N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
+    if tempo { Vec::new() } else { sequence.operation_hashes(sequence_index) }
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -567,7 +570,16 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress_ref = &progress;
         let config = &self.script_config.config;
         let submission_hashes = (0..self.sequence.sequences().len())
-            .map(|sequence| self.sequence.submission_hashes(sequence))
+            .map(|sequence| {
+                (
+                    self.sequence.submission_hashes(sequence),
+                    predecessor_hashes(
+                        &self.sequence,
+                        sequence,
+                        self.script_config.evm_opts.networks.is_tempo(),
+                    ),
+                )
+            })
             .collect::<Vec<_>>();
         let futs = self
             .sequence
@@ -575,21 +587,26 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             .iter_mut()
             .zip(submission_hashes)
             .enumerate()
-            .map(|(sequence_idx, (sequence, (durable_hashes, replayable_hashes)))| async move {
-                let rpc_url = sequence.rpc_url();
-                let provider =
-                    Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
-                progress_ref
-                    .wait_for_pending(
-                        sequence_idx,
-                        sequence,
-                        &provider,
-                        self.script_config.config.transaction_timeout,
-                        self.args.confirmations,
-                        (&durable_hashes, &replayable_hashes),
-                    )
-                    .await
-            })
+            .map(
+                |(
+                    sequence_idx,
+                    (sequence, ((durable_hashes, replayable_hashes), operation_hashes)),
+                )| async move {
+                    let rpc_url = sequence.rpc_url();
+                    let provider =
+                        Arc::new(ProviderBuilder::from_config_with_url(config, rpc_url)?.build()?);
+                    progress_ref
+                        .wait_for_pending(
+                            sequence_idx,
+                            sequence,
+                            &provider,
+                            self.script_config.config.transaction_timeout,
+                            self.args.confirmations,
+                            (&durable_hashes, &replayable_hashes, &operation_hashes),
+                        )
+                        .await
+                },
+            )
             .collect::<Vec<_>>();
 
         let errors = join_all(futs).await.into_iter().filter_map(Result::err).collect::<Vec<_>>();
@@ -1042,6 +1059,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         self.sequence.save(true, false)?;
                         let (durable_hashes, replayable_hashes) =
                             self.sequence.submission_hashes(i);
+                        let operation_hashes = predecessor_hashes(
+                            &self.sequence,
+                            i,
+                            self.script_config.evm_opts.networks.is_tempo(),
+                        );
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                         progress
@@ -1051,7 +1073,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 &provider,
                                 self.script_config.config.transaction_timeout,
                                 self.args.confirmations,
-                                (&durable_hashes, &replayable_hashes),
+                                (&durable_hashes, &replayable_hashes, &operation_hashes),
                             )
                             .await?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
@@ -1800,7 +1822,7 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_eips::BlockId;
     use alloy_network::Ethereum;
-    use alloy_primitives::{B256, Bloom, address, hex};
+    use alloy_primitives::{Bloom, address, hex};
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;

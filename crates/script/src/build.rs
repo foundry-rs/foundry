@@ -1,6 +1,6 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions_for_recovery},
+    broadcast::{BundledState, predecessor_hashes, remaining_unsigned_transactions_for_recovery},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
@@ -352,6 +352,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     continue;
                 }
                 let (durable_hashes, replayable_hashes) = sequence.submission_hashes(index);
+                let operation_hashes = predecessor_hashes(
+                    &sequence,
+                    index,
+                    self.script_config.evm_opts.networks.is_tempo(),
+                );
                 let provider = ProviderBuilder::from_config_with_url(
                     &self.script_config.config,
                     sequence.sequences()[index].rpc_url(),
@@ -364,7 +369,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         &provider,
                         self.script_config.config.transaction_timeout,
                         self.args.confirmations,
-                        (&durable_hashes, &replayable_hashes),
+                        (&durable_hashes, &replayable_hashes, &operation_hashes),
                     )
                     .await;
                 sequence.save(true, false)?;

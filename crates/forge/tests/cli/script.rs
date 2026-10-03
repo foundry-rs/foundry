@@ -4,6 +4,7 @@ use crate::{
     constants::TEMPLATE_CONTRACT,
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
+use alloy_consensus::Transaction as _;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, Bytes, U256, address, hex, keccak256};
@@ -6903,4 +6904,103 @@ fn script_unlocked_conflicts_with_remote_signers(cmd: _) {
                  For more information, try '--help'.\n"
             ));
     }
+}
+
+#[forgetest_init]
+async fn resume_reports_transaction_queued_behind_missing_nonce(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "QueuedResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract QueuedResumeTarget {}
+
+contract QueuedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new QueuedResumeTarget();
+        new QueuedResumeTarget();
+        new QueuedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let path = prj.root().join("broadcast/QueuedResume.s.sol/31337/run-latest.json");
+    let args = ["--tc", "QueuedResume", "--rpc-url", &rpc, "--private-key", private_key];
+
+    // All three transactions are accepted and recorded as pending before Forge is interrupted.
+    cmd.arg("script").arg(&script).args(args).arg("--broadcast");
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 3)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the submissions were not checkpointed");
+    assert!(child.is_running(), "Forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+
+    let provider = handle.http_provider();
+    let mut hashes = [B256::ZERO; 3];
+    let mut payloads = vec![Bytes::new(); 3];
+    let submitted = submissions.lock().unwrap().clone();
+    for params in &submitted {
+        let payload = Bytes::from(hex::decode(params[0].as_str().unwrap()).unwrap());
+        let hash = keccak256(&payload);
+        let nonce = provider.get_transaction_by_hash(hash).await.unwrap().unwrap().inner.nonce();
+        hashes[nonce as usize] = hash;
+        payloads[nonce as usize] = payload;
+    }
+    assert!(hashes.iter().all(|hash| !hash.is_zero()));
+
+    // Nonce 0 stays visible but unmined, nonce 1 disappears, and nonce 2 is queued behind it.
+    // Anvil also evicts dependents of a dropped transaction, so nonce 2 is inserted again directly.
+    api.anvil_drop_transaction(hashes[1]).await.unwrap();
+    assert!(provider.get_transaction_by_hash(hashes[2]).await.unwrap().is_none());
+    let _ = provider.send_raw_transaction(&payloads[2]).await.unwrap();
+    assert!(provider.get_transaction_by_hash(hashes[1]).await.unwrap().is_none());
+    assert!(provider.get_transaction_by_hash(hashes[2]).await.unwrap().is_some());
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("resume kept waiting on a transaction queued behind a missing nonce");
+    let output = child.kill_and_wait();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "resume reported success: {stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "transaction {} appears to be blocked: the RPC endpoint reports nonce 1 from {sender} as unfilled and does not return its saved transaction",
+            hashes[2]
+        )),
+        "{stderr}"
+    );
+
+    // Resume submits nothing, and the unresolved submissions keep their identities.
+    assert_eq!(submissions.lock().unwrap().len(), 3);
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let pending = sequence["pending"].as_array().unwrap();
+    for hash in [hashes[0], hashes[2]] {
+        assert!(pending.contains(&Value::from(hash.to_string())), "{pending:?}");
+    }
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
 }
