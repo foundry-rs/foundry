@@ -111,8 +111,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(from))
-                .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
             return Ok(());
@@ -124,13 +123,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(
-                fee_provider,
-                Some(chain),
-                &mut tx,
-                Some(config.sender),
-            )
-            .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(config.sender)).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -142,13 +135,8 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(
-                fee_provider,
-                Some(chain),
-                &mut tx,
-                Some(prepared.account()),
-            )
-            .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(prepared.account()))
+                .await?;
             tx.sign_with_tempo_wallet(&prepared).await?
         } else {
             let (signer, from) = tx::resolve_send_signer(signer, &eth).await?;
@@ -156,8 +144,7 @@ impl BatchMakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(from))
-                .await?;
+            tempo::resolve_and_print_fee_token(fee_provider, &mut tx, Some(from)).await?;
             tx.build(&EthereumWallet::new(signer)).await?.encoded_2718()
         };
 

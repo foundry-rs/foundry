@@ -701,7 +701,9 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             if !self.args.skip_simulation {
                 let tx = tx.tx_mut();
 
-                if has_different_gas_calc(provider_info.chain) {
+                if has_different_gas_calc(provider_info.chain)
+                    || self.script_config.evm_opts.networks.is_tempo()
+                {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");

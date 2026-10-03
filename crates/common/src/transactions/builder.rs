@@ -166,6 +166,11 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         false
     }
 
+    /// Returns true when this request type can pay fees in a Tempo fee token.
+    fn supports_fee_token(&self) -> bool {
+        false
+    }
+
     /// Set the fee token for a Tempo transaction.
     fn set_fee_token(&mut self, _fee_token: Address) {}
 
@@ -455,6 +460,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn is_tempo_aa(&self) -> bool {
         NetworkTransactionBuilder::<TempoNetwork>::output_tx_type(self) == TempoTxType::AA
+    }
+
+    fn supports_fee_token(&self) -> bool {
+        true
     }
 
     fn set_fee_token(&mut self, fee_token: Address) {
