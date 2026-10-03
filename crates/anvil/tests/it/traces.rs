@@ -27,7 +27,10 @@ use alloy_rpc_types::{
             GethTrace, PreStateConfig, PreStateFrame, TraceResult,
         },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
-        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
+        parity::{
+            Action, ChangedType, LocalizedTransactionTrace, TraceResults,
+            TraceResultsWithTransactionHash, TraceType,
+        },
     },
 };
 use alloy_rpc_types_eth::AccountInfo;
@@ -2628,7 +2631,7 @@ async fn test_trace_replay_transaction() {
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let result: TraceResults = provider
+    let TraceResultsWithTransactionHash { full_trace: result, transaction_hash } = provider
         .client()
         .request(
             "trace_replayTransaction",
@@ -2637,6 +2640,7 @@ async fn test_trace_replay_transaction() {
         .await
         .unwrap();
 
+    assert_eq!(transaction_hash, receipt.transaction_hash);
     assert!(!result.trace.is_empty());
     match &result.trace[0].action {
         Action::Call(call) => {

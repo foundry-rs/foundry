@@ -4033,30 +4033,26 @@ impl<N: Network> Backend<N> {
         &self,
         hash: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResults, BlockchainError> {
+    ) -> Result<TraceResultsWithTransactionHash, BlockchainError> {
         let mined = self.blockchain.storage.read().transactions.contains_key(&hash);
 
         // If the transaction was mined locally, replay it locally. Do not fall
         // through to the fork when the local replay fails; that would misreport
         // a local data problem as an upstream transaction lookup.
-        if mined {
+        let full_trace = if mined {
             let inspector =
                 TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
-            return self.replay_tx_with_inspector(
-                hash,
-                inspector,
-                |result, cache_db, inspector, _, _| {
-                    parity_trace_results(inspector, &result, &trace_types, &cache_db)
-                },
-            )?;
-        }
+            self.replay_tx_with_inspector(hash, inspector, |result, cache_db, inspector, _, _| {
+                parity_trace_results(inspector, &result, &trace_types, &cache_db)
+            })??
+        } else if let Some(fork) = self.get_fork() {
+            // Not known locally: forward to the fork if present.
+            fork.trace_replay_transaction(hash, trace_types).await?
+        } else {
+            return Err(BlockchainError::TransactionNotFound);
+        };
 
-        // Not known locally: forward to the fork if present.
-        if let Some(fork) = self.get_fork() {
-            return Ok(fork.trace_replay_transaction(hash, trace_types).await?);
-        }
-
-        Err(BlockchainError::TransactionNotFound)
+        Ok(TraceResultsWithTransactionHash { transaction_hash: hash, full_trace })
     }
 
     /// Traces a raw transaction without committing it to the chain state or mempool.
