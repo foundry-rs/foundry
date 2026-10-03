@@ -13,7 +13,7 @@ use alloy_network::{
     TxSignerSync,
 };
 use alloy_primitives::{
-    Address, B256, ChainId, Keccak256, U256, b256, bytes, keccak256,
+    Address, B256, Bytes, ChainId, Keccak256, U256, bytes, keccak256,
     map::{AddressHashMap, B256HashMap, HashMap},
 };
 use alloy_provider::{PendingTransactionConfig, Provider};
@@ -26,7 +26,6 @@ use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolCall;
 use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
-use foundry_test_utils::rpc;
 use futures::join;
 use std::time::Duration;
 
@@ -950,17 +949,17 @@ async fn can_send_tx_sync() {
     assert_eq!(receipt.from(), wallets[0].address());
 }
 
+// A fork resolves code it has not loaded yet through the upstream's `debug_codeByHash`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "no debug_"]
-async fn can_get_code_by_hash() {
-    let (api, _) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+async fn can_get_code_by_hash_from_fork() {
+    let (origin_api, origin) = spawn(NodeConfig::test()).await;
+    let code = Bytes::from(B256::random().to_vec());
+    let code_hash = keccak256(&code);
+    origin_api.anvil_set_code(Address::random(), code.clone()).await.unwrap();
+    assert_eq!(origin_api.debug_code_by_hash(code_hash, None).await.unwrap(), Some(code.clone()));
 
-    // The code hash for DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
-    let code_hash = b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
-
-    let code = api.debug_code_by_hash(code_hash, None).await.unwrap();
-    assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE);
+    let (api, _) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin.http_endpoint()))).await;
+    assert_eq!(api.debug_code_by_hash(code_hash, None).await.unwrap(), Some(code));
 }
 
 #[tokio::test(flavor = "multi_thread")]
