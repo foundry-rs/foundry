@@ -864,6 +864,38 @@ async fn test_trace_get_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_omits_nested_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Zero-value CALL to the identity precompile, then a zero-value CALL to 0xbeef.
+    let caller = Address::repeat_byte(0x42);
+    let code =
+        Bytes::from_hex("0x6000600060006000600060045af1506000600060006000600061beef5af15000")
+            .unwrap();
+    api.anvil_set_code(caller, code).await.unwrap();
+
+    let tx = TransactionRequest::default().from(from).to(caller);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    let hash = receipt.transaction_hash;
+
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0].subtraces, 1);
+    assert_eq!(traces[1].trace_address, vec![0]);
+    let Action::Call(call) = &traces[1].action else { panic!("expected a call") };
+    assert_eq!(call.to, Address::left_padding_from(&[0xbe, 0xef]));
+
+    let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+    assert_eq!(replay.trace, traces);
+
+    let block = provider.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    assert_eq!(block.into_iter().map(|trace| trace.trace).collect::<Vec<_>>(), traces);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_unknown_hash_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
