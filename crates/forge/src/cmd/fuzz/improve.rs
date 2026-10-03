@@ -144,7 +144,7 @@ struct ProposalFeedback {
     tests: Vec<CandidateTest>,
     reasons: Vec<String>,
     candidate_results: Vec<MutationResultSummary>,
-    minimum_resolved_survivors: usize,
+    resolved_survivors: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -162,7 +162,7 @@ struct Evaluation {
     reasons: Vec<String>,
     baseline: Vec<MutationResultSummary>,
     candidate: Vec<MutationResultSummary>,
-    minimum_resolved_survivors: usize,
+    resolved_survivors: usize,
 }
 
 impl FuzzImproveArgs {
@@ -255,7 +255,7 @@ impl FuzzImproveArgs {
                             reasons: vec![error.to_string()],
                             baseline: mutation_result_summaries(&baseline),
                             candidate: vec![],
-                            minimum_resolved_survivors: 0,
+                            resolved_survivors: 0,
                         });
                     let candidate_cache = cache_root.join(&evaluation.candidate_digest);
                     fs::create_dir_all(&candidate_cache)?;
@@ -269,10 +269,10 @@ impl FuzzImproveArgs {
                     )?;
                     if evaluation.accepted
                         && best.as_ref().is_none_or(|(score, _): &(usize, PathBuf)| {
-                            evaluation.minimum_resolved_survivors > *score
+                            evaluation.resolved_survivors > *score
                         })
                     {
-                        best = Some((evaluation.minimum_resolved_survivors, candidate_cache));
+                        best = Some((evaluation.resolved_survivors, candidate_cache));
                     }
                     feedback.push(proposal_feedback(Some(&candidate), &evaluation));
                     evaluation
@@ -285,7 +285,7 @@ impl FuzzImproveArgs {
                         reasons: vec![error.to_string()],
                         baseline: mutation_result_summaries(&baseline),
                         candidate: vec![],
-                        minimum_resolved_survivors: 0,
+                        resolved_survivors: 0,
                     };
                     feedback.push(proposal_feedback(None, &evaluation));
                     evaluation
@@ -298,11 +298,11 @@ impl FuzzImproveArgs {
         if let Some((resolved_survivors, path)) = best {
             let path = path.strip_prefix(&config.root).unwrap_or(&path);
             sh_println!(
-                "accepted candidate: {} (resolved at least {resolved_survivors} baseline survivor(s) per seed)",
+                "accepted candidate: {} (reproducibly resolved {resolved_survivors} baseline survivor(s))",
                 path.display()
             )?;
         } else {
-            sh_println!("no candidate resolved a mutation survivor on every seed")?;
+            sh_println!("no candidate reproducibly resolved a mutation survivor")?;
         }
         Ok(())
     }
@@ -399,15 +399,13 @@ impl FuzzImproveArgs {
             }
         }
 
-        let (candidate_results, resolved_survivors) = if reasons.is_empty() {
+        let candidate_results = if reasons.is_empty() {
             let base_filter = self
                 .match_contract
                 .as_deref()
                 .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
             let contract_filter = candidate_contract_filter(base_filter, candidate);
             let mut results = Vec::with_capacity(self.seed.len());
-            let mut resolved_survivors = Vec::with_capacity(self.seed.len());
-            // Candidates must improve every seed, so the first failing seed is decisive.
             for before in baseline {
                 let after = self.run_mutation(
                     forge,
@@ -424,37 +422,7 @@ impl FuzzImproveArgs {
                             mutants.iter().any(|mutant| !baseline.contains(mutant))
                         })
                     });
-                // Adaptive span skipping can expose a new surviving sibling and skip mutants that
-                // the baseline killed, so aggregate kill counts are not monotonic. Compare stable
-                // survivor identities instead: candidate files cannot alter the mutated sources.
-                let mut after_survivors = BTreeSet::new();
-                for (path, mutants) in &after.output.survived_mutants {
-                    for mutant in mutants {
-                        after_survivors.insert((
-                            path.as_str(),
-                            mutant.line,
-                            mutant.column,
-                            mutant.original.as_str(),
-                            mutant.mutant.as_str(),
-                        ));
-                    }
-                }
-                let mut resolved = 0;
-                for (path, mutants) in &before.output.survived_mutants {
-                    for mutant in mutants {
-                        if !after_survivors.contains(&(
-                            path.as_str(),
-                            mutant.line,
-                            mutant.column,
-                            mutant.original.as_str(),
-                            mutant.mutant.as_str(),
-                        )) {
-                            resolved += 1;
-                        }
-                    }
-                }
                 results.push(after);
-                resolved_survivors.push(resolved);
 
                 if changed_population {
                     reasons.push(format!(
@@ -470,21 +438,28 @@ impl FuzzImproveArgs {
                     ));
                     break;
                 }
-                if resolved == 0 {
-                    reasons.push(format!(
-                        "candidate did not resolve a baseline mutation survivor on seed {}",
-                        before.seed
-                    ));
-                    break;
-                }
             }
-            (results, resolved_survivors)
+            results
         } else {
-            (vec![], vec![])
+            vec![]
         };
-        let minimum_resolved_survivors = resolved_survivors.into_iter().min().unwrap_or_default();
         if reasons.is_empty() && candidate_results.len() != baseline.len() {
             reasons.push("candidate mutation results did not cover every seed".to_string());
+        }
+        // Adaptive span skipping can expose a new surviving sibling and skip mutants that the
+        // baseline killed, so aggregate kill counts are not monotonic. Compare stable survivor
+        // identities instead: candidate files cannot alter the mutated sources. A useful property
+        // must eliminate an identity on every seed where that identity survived; it need not add a
+        // new kill on seeds where the baseline already killed that mutant.
+        let resolved_survivors = if reasons.is_empty() {
+            resolved_survivor_count(baseline, &candidate_results)
+        } else {
+            0
+        };
+        if reasons.is_empty() && resolved_survivors == 0 {
+            reasons.push(
+                "candidate did not reproducibly resolve a baseline mutation survivor".to_string(),
+            );
         }
         Ok(Evaluation {
             candidate_digest: digest,
@@ -493,7 +468,7 @@ impl FuzzImproveArgs {
             reasons,
             baseline: mutation_result_summaries(baseline),
             candidate: mutation_result_summaries(&candidate_results),
-            minimum_resolved_survivors,
+            resolved_survivors,
         })
     }
 
@@ -684,6 +659,48 @@ fn mutation_result_summaries(results: &[SeedMutation]) -> Vec<MutationResultSumm
         .collect()
 }
 
+fn resolved_survivor_count(baseline: &[SeedMutation], candidate: &[SeedMutation]) -> usize {
+    let baseline = baseline
+        .iter()
+        .map(|result| (result.seed, survivor_identities(&result.output)))
+        .collect::<BTreeMap<_, _>>();
+    let candidate = candidate
+        .iter()
+        .map(|result| (result.seed, survivor_identities(&result.output)))
+        .collect::<BTreeMap<_, _>>();
+    let identities = baseline.values().flatten().cloned().collect::<BTreeSet<_>>();
+
+    identities
+        .into_iter()
+        .filter(|identity| {
+            baseline.iter().all(|(seed, survivors)| {
+                !survivors.contains(identity)
+                    || candidate.get(seed).is_some_and(|after| !after.contains(identity))
+            })
+        })
+        .count()
+}
+
+fn survivor_identities(
+    output: &MutationJsonOutput,
+) -> BTreeSet<(String, usize, usize, String, String)> {
+    output
+        .survived_mutants
+        .iter()
+        .flat_map(|(path, mutants)| {
+            mutants.iter().map(|mutant| {
+                (
+                    path.clone(),
+                    mutant.line,
+                    mutant.column,
+                    mutant.original.clone(),
+                    mutant.mutant.clone(),
+                )
+            })
+        })
+        .collect()
+}
+
 fn read_candidate(path: &Path, generated_tests: &Path) -> Result<Candidate> {
     let candidate: Candidate = serde_json::from_slice(
         &fs::read(path).wrap_err_with(|| format!("failed to read {}", path.display()))?,
@@ -741,7 +758,7 @@ fn proposal_feedback(candidate: Option<&Candidate>, evaluation: &Evaluation) -> 
         tests: candidate.map(|candidate| candidate.tests.clone()).unwrap_or_default(),
         reasons: evaluation.reasons.clone(),
         candidate_results: evaluation.candidate.clone(),
-        minimum_resolved_survivors: evaluation.minimum_resolved_survivors,
+        resolved_survivors: evaluation.resolved_survivors,
     }
 }
 
@@ -763,4 +780,53 @@ fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path)
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().chars().take(2_000).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mutation::{MutationSummaryJson, SurvivedMutantJson};
+
+    fn mutation_result(seed: u64, mutants: &[(usize, &str, &str)]) -> SeedMutation {
+        let survived_mutants = BTreeMap::from([(
+            "src/Example.sol".to_string(),
+            mutants
+                .iter()
+                .map(|(line, original, mutant)| SurvivedMutantJson {
+                    line: *line,
+                    column: 1,
+                    original: (*original).to_string(),
+                    mutant: (*mutant).to_string(),
+                })
+                .collect(),
+        )]);
+        SeedMutation {
+            seed: U256::from(seed),
+            output: MutationJsonOutput {
+                summary: MutationSummaryJson {
+                    total: mutants.len(),
+                    killed: 0,
+                    survived: mutants.len(),
+                    invalid: 0,
+                    skipped: 0,
+                    timed_out: 0,
+                    mutation_score: 0.0,
+                    duration_secs: 0.0,
+                },
+                survived_mutants,
+                timed_out_mutants: BTreeMap::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn counts_survivors_resolved_where_they_existed() {
+        let baseline = [
+            mutation_result(1, &[(1, "a", "b"), (2, "c", "d")]),
+            mutation_result(2, &[(1, "a", "b")]),
+        ];
+        let candidate = [mutation_result(1, &[(2, "c", "d")]), mutation_result(2, &[])];
+
+        assert_eq!(resolved_survivor_count(&baseline, &candidate), 1);
+    }
 }

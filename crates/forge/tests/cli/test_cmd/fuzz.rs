@@ -6389,7 +6389,7 @@ JSON
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8bf2460df62b08aeb9d58c552f (resolved at least 6 baseline survivor(s) per seed)
+accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8bf2460df62b08aeb9d58c552f (reproducibly resolved 6 baseline survivor(s))
 
 "#]]);
 
@@ -6400,14 +6400,14 @@ accepted candidate: cache/fuzz-improve/0x0e39ff6373097ca5c5dbc71d4bb87f2d676e4a8
     assert_eq!(rounds[0]["accepted"], false);
     assert!(rounds[0]["reasons"][0].as_str().unwrap().contains("would overwrite"));
     assert_eq!(rounds[1]["accepted"], false);
-    assert_eq!(rounds[1]["candidate"].as_array().unwrap().len(), 1);
+    assert_eq!(rounds[1]["candidate"].as_array().unwrap().len(), 2);
     assert!(
         rounds[1]["reasons"][0]
             .as_str()
             .unwrap()
-            .contains("did not resolve a baseline mutation survivor")
+            .contains("did not reproducibly resolve a baseline mutation survivor")
     );
     assert_eq!(rounds[2]["accepted"], true);
     assert_eq!(rounds[2]["generator"]["model"], "deterministic");
-    assert!(rounds[2]["minimum_resolved_survivors"].as_u64().unwrap() > 0);
+    assert!(rounds[2]["resolved_survivors"].as_u64().unwrap() > 0);
 }
