@@ -1314,9 +1314,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
     )
     .get_output()
     .stdout_lossy();
-    for reason in ["symbolic external CALL value"] {
-        assert!(!stdout.contains(reason), "{stdout}");
-    }
+    assert!(!stdout.contains("symbolic external CALL value"), "{stdout}");
 }
 
 #[forgetest_init]
