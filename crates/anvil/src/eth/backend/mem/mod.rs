@@ -5,7 +5,7 @@ use crate::{
     config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
     eth::{
         backend::{
-            cheats::{CheatEcrecover, CheatsManager},
+            cheats::{CheatEcrecover, CheatsManager, NextBlockOverrides},
             db::{
                 AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
                 SerializableState, StateDb,
@@ -1041,7 +1041,7 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time_offset: i128,
     next_block_timestamp: Option<u64>,
-    next_block_prevrandao: Option<B256>,
+    next_block: NextBlockOverrides,
 }
 
 #[cfg(test)]
@@ -1338,6 +1338,14 @@ impl<N: Network> Backend<N> {
     /// default per-block `prevrandao` derivation.
     pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
         self.cheats.set_next_block_prevrandao(prevrandao);
+    }
+
+    /// Sets the parent beacon block root to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block; afterwards anvil resumes
+    /// using the zero root.
+    pub fn set_next_block_parent_beacon_block_root(&self, root: B256) {
+        self.cheats.set_next_block_parent_beacon_block_root(root);
     }
 
     /// Sets the nonce of the given address
@@ -1909,7 +1917,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time_offset,
                 next_block_timestamp,
-                next_block_prevrandao: self.cheats.next_block_prevrandao(),
+                next_block: self.cheats.next_block_overrides(),
             },
         );
         id
@@ -5118,7 +5126,7 @@ impl<N: Network> Backend<N> {
         self.states.write().clear();
         self.active_state_snapshots.lock().clear();
         self.time.reset(timestamp);
-        self.cheats.clear_next_block_prevrandao();
+        self.cheats.clear_next_block_overrides();
 
         trace!(target: "backend", "reset fork");
         Ok(())
@@ -5298,7 +5306,7 @@ impl<N: Network> Backend<N> {
         self.states.write().clear();
         self.active_state_snapshots.lock().clear();
         self.time.reset(timestamp);
-        self.cheats.clear_next_block_prevrandao();
+        self.cheats.clear_next_block_overrides();
         trace!(target: "backend", "reset to fresh in-memory state");
         Ok(())
     }
@@ -5308,7 +5316,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5316,7 +5324,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time_offset,
                     snapshot.next_block_timestamp,
-                    snapshot.next_block_prevrandao,
+                    snapshot.next_block,
                 )
             })
         else {
@@ -5342,11 +5350,7 @@ impl<N: Network> Backend<N> {
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
-        if let Some(prevrandao) = next_block_prevrandao {
-            self.cheats.set_next_block_prevrandao(prevrandao);
-        } else {
-            self.cheats.clear_next_block_prevrandao();
-        }
+        self.cheats.restore_next_block_overrides(&next_block);
 
         {
             let mut env = self.evm_env.write();
@@ -6039,12 +6043,15 @@ where
             let mut input = [0u8; 40];
             input[..32].copy_from_slice(best_hash.as_slice());
             input[32..].copy_from_slice(&block_number.to_le_bytes());
-            // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
-            // one was provided, otherwise derive it from the parent hash and block number. The
-            // manual override is consumed here so it only applies to this single block.
-            let next_prevrandao = self.cheats.prepare_next_block_prevrandao();
+            // Use the values set via `anvil_setNextBlockPrevRandao` and
+            // `anvil_setNextBlockParentBeaconBlockRoot` for this block if provided, otherwise
+            // derive `prevrandao` from the parent hash and block number and use the zero root.
+            // The overrides are consumed once the block is committed so they only apply to it.
+            let next_block = self.cheats.next_block_overrides();
             evm_env.block_env.prevrandao =
-                Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
+                Some(next_block.prevrandao.value.unwrap_or_else(|| keccak256(input)));
+            let parent_beacon_block_root =
+                Some(next_block.parent_beacon_block_root.value.unwrap_or_default());
 
             let (
                 db_guard,
@@ -6092,7 +6099,7 @@ where
                     &mining_evm_env,
                     best_hash,
                     hardfork,
-                    Some(B256::ZERO),
+                    parent_beacon_block_root,
                     BlockExecutionKind::Complete,
                     &pool_transactions,
                     &gas_config,
@@ -6125,7 +6132,7 @@ where
                     block_result,
                     pool_result.txs,
                     pool_result.tx_info,
-                    Some(B256::ZERO),
+                    parent_beacon_block_root,
                     block_access_list.as_ref(),
                 );
 
@@ -6133,9 +6140,7 @@ where
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
                 self.time.commit_next_timestamp(pending_timestamp);
-                if let Some(pending) = next_prevrandao {
-                    self.cheats.consume_next_block_prevrandao(pending);
-                }
+                self.cheats.consume_next_block_overrides(&next_block);
 
                 let header = &block_info.block.header;
                 let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(header);
@@ -7487,8 +7492,8 @@ where
             env.block_env.prevrandao = common_block.header.mix_hash();
 
             self.time.reset(env.block_env.timestamp.saturating_to());
-            // drop any pending next-block prevrandao override so it does not leak into a block
-            self.cheats.clear_next_block_prevrandao();
+            // drop any pending next-block overrides so they do not leak into a block
+            self.cheats.clear_next_block_overrides();
         }
 
         // Only collect the last 256 block hashes since that's all BLOCKHASH can access.
