@@ -445,7 +445,7 @@ impl CallArgs {
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
-            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
+            if debug_trace_call { Some(evm_opts.fork_endpoint_identity().await?) } else { None };
         let sender = match auth_sender {
             Some(sender) => sender,
             None => {
@@ -597,7 +597,7 @@ impl CallArgs {
             } else {
                 Default::default()
             };
-            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
             ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
             // The remote node executed this trace, so its reported family is authoritative for
