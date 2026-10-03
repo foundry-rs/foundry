@@ -725,7 +725,7 @@ where
             self.tx.set_access_list(access_list);
         }
         if fill && self.tx.gas_limit().is_none() {
-            let request = if self.browser && self.chain.is_tempo() {
+            let request = if self.browser {
                 self.tx.browser_wallet_gas_estimation_request()
             } else {
                 self.tx.clone()
@@ -1036,7 +1036,7 @@ mod tests {
         assert_eq!(tx.fee_token, None);
 
         // Fee resolution happens after building and can change the submission type to Tempo AA.
-        resolve_and_set_fee_token(Some(&provider), Some(chain), &mut tx, None).await.unwrap();
+        resolve_and_set_fee_token(Some(&provider), &mut tx, None).await.unwrap();
         tx.prep_for_submission();
         assert_eq!(tx.inner.transaction_type, Some(0x76));
         assert_eq!(tx.fee_token, Some(token));

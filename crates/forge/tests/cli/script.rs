@@ -6237,6 +6237,95 @@ contract DeployTempoAA is Script {
     }
 }
 
+// A local Tempo node runs on chain 31337. Broadcasts must still resolve the sender's stored fee
+// token, with and without `--batch`.
+#[forgetest_init]
+async fn tempo_script_resolves_fee_token_on_local_chain_id(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoFeeToken.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoFeeTokenTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoFeeToken is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoFeeTokenTarget target = new TempoFeeTokenTarget();
+        target.set(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let alpha_usd = "0x20c0000000000000000000000000000000000001";
+    let broadcast = prj.root().join("broadcast");
+    let receipts = || {
+        let run_latest = foundry_common::fs::json_files(&broadcast)
+            .find(|path| {
+                path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+            })
+            .expect("no broadcast artifact found");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        json["receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|receipt| {
+                (receipt["type"].as_str().unwrap().to_owned(), receipt["feeToken"].clone())
+            })
+            .collect::<Vec<_>>()
+    };
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoFeeToken",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    cmd.assert_success().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    // CREATE requests stay Ethereum transactions; the protocol still charges the stored token.
+    assert_eq!(
+        receipts(),
+        [("0x2".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "TempoFeeToken",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+    ]);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: --batch rewrites CREATE → CREATE2 via the Arachnid factory; deployed addresses follow the CREATE2 formula and constructor msg.sender is the factory, not the EOA.
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    assert_eq!(
+        receipts(),
+        [("0x76".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
+    );
+}
+
 #[forgetest_init]
 async fn tempo_batch_broadcasts_deploy_code_via_create2(prj: _, cmd: _) {
     prj.add_source(
