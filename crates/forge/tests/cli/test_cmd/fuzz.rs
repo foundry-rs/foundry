@@ -6310,6 +6310,7 @@ output="$2"
 grep -q '"mutation_gaps"' "$prompt"
 grep -q '"original"' "$prompt"
 grep -q '"mutant"' "$prompt"
+grep -q 'surviving mutants may be semantically equivalent' "$prompt"
 if grep -q '"round": 2' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
 cat > "$output" <<'JSON'
