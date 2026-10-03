@@ -5,7 +5,7 @@ use crate::{
         Severity, SolLint,
         analysis::{
             branch_always_exits, for_each_lhs_var, guard_vars, is_protected, is_sender_member,
-            is_zero_value, lhs_local_var, referenced_item, underlying_var,
+            is_zero_value, lhs_local_var, loop_stmts, referenced_item, underlying_var,
         },
     },
 };
@@ -15,7 +15,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, EventId, Expr, ExprKind, FunctionId, ItemId, Stmt, StmtKind, VariableId, Visit,
+            self, EventId, Expr, ExprKind, FunctionId, ItemId, LoopSource, Stmt, StmtKind,
+            VariableId, Visit,
         },
     },
 };
@@ -359,7 +360,7 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 self.visit_expr(expr)?;
                 self.record_emit(expr);
             }
-            StmtKind::Loop(block, _source) => {
+            StmtKind::Loop(block, source) => {
                 // A loop body may not run to completion on the iteration containing an emit — a
                 // `for`/`while` may run zero times, and even a `do-while` (which always starts
                 // its body) can `break`/`continue`/`revert` past the emit on that first pass — so
@@ -369,8 +370,25 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 let evented_before: Vec<bool> =
                     self.state.writes.iter().map(|w| w.evented).collect();
                 let emits_before = self.state.emits.clone();
-                for stmt in block.stmts {
-                    self.visit_stmt(stmt)?;
+                if let LoopSource::For { update: Some(update) } = source
+                    && let [stmt] = block.stmts
+                    && let StmtKind::If(cond, body, Some(exit)) = stmt.kind
+                    && matches!(exit.kind, StmtKind::Break)
+                {
+                    // Solar lowers the loop condition to `if (cond) body else break`.
+                    // The update belongs to the continuing arm, so correlate its writes
+                    // with body events before discarding that arm's pending emits.
+                    self.visit_expr(cond)?;
+                    let base = self.state.clone();
+                    self.visit_stmt(body)?;
+                    self.visit_stmt(update)?;
+                    self.correlate_pending();
+                    let body_state = std::mem::take(&mut self.state);
+                    self.state = merge_branches(base.clone(), body_state, base, false, false);
+                } else {
+                    for stmt in loop_stmts(block, source) {
+                        self.visit_stmt(stmt)?;
+                    }
                 }
                 self.correlate_pending();
                 for (write, was_evented) in self.state.writes[..n].iter_mut().zip(evented_before) {

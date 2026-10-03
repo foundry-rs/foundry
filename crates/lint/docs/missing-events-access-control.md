@@ -15,7 +15,8 @@ clearing the authority used to authorize the update.
 A related event can appear before or after the write within the same straight-line path,
 including in an internal helper. An event confined to a conditional branch, a
 short-circuit operand, a loop, or a try/catch clause does not cover a write on a
-path that can skip that event.
+path that can skip that event. Writes in a `for` loop's update expression also
+require a related event.
 
 ## Why is this bad?
 
