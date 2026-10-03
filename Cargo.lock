@@ -5576,7 +5576,10 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "snapbox",
  "tempfile",
+ "toml",
+ "wait-timeout",
 ]
 
 [[package]]

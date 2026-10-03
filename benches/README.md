@@ -320,6 +320,143 @@ The artifact bundle exposes:
   `benches/schema/benchmark-result-v1.schema.json`
 - `--symbolic-sidecar-output <FILE.json>` - Write the opt-in v1 symbolic samples sidecar (requires exactly one version)
 
+## Seeded Fuzzing Evaluation
+
+`foundry-fuzz-eval` is a fast, repeatable scorer for fuzzer changes. It runs a fixed set of
+targets once per seed, records which planted bugs each run found and, optionally, the source
+coverage it reached, and reports means with 95% confidence intervals separately for a train and a
+held-out test split. The default fixture suite runs 6 targets x 3 seeds, with coverage, in about
+a second with a release `forge`, so an automated loop can call it hundreds of times. Use
+`foundry-scfuzzbench` for the slower, realistic campaign signal.
+
+```bash
+cargo build --release --bin forge
+cargo build --release -p foundry-bench --bin foundry-fuzz-eval
+
+# Baseline.
+target/release/foundry-fuzz-eval \
+  --manifest benches/fixtures/fuzz-eval/manifest.toml \
+  --forge-bin target/release/forge \
+  --seeds 10 --coverage --label baseline \
+  --output-dir /tmp/fuzz-eval/baseline
+
+# Candidate: the same forge with an extra flag, or a forge built from another branch.
+target/release/foundry-fuzz-eval \
+  --manifest benches/fixtures/fuzz-eval/manifest.toml \
+  --forge-bin target/release/forge \
+  --seeds 10 --coverage --label candidate \
+  --extra-forge-args "--invariant-depth 64" \
+  --compare /tmp/fuzz-eval/baseline/results.json \
+  --output-dir /tmp/fuzz-eval/candidate
+```
+
+Each run writes `results.json` (every target and seed: per-test status, bugs found, unexpected
+failures, wall time, time to first failure, and LCOV counters), `SUMMARY.md`, and forge logs under
+`logs/`. With `--compare`, it also writes `COMPARE.md` and ends with a verdict line. To compare two
+existing results without running forge, pass `--compare <baseline.json> --current <current.json>`.
+`--fail-unless-keep` exits with status 2 unless the verdict is `KEEP`.
+
+Useful options:
+
+- `--seeds N` runs seeds `1..=N`; `--seed-list 3,7,11` runs explicit seeds. Use the same seeds
+  for baseline and candidate so deltas are paired.
+- `--extra-forge-args "<args>"` is appended to every `forge test` and `forge coverage`
+  invocation (split on whitespace, repeatable). This is how a treatment flag is evaluated without
+  changing the harness. Do not pass `--fuzz-seed`; the harness sets it.
+- `--fuzz-runs`, `--fuzz-timeout`, `--invariant-runs`, `--invariant-depth`, and
+  `--invariant-timeout` override every target's budget. `--timeout-secs` overrides the
+  per-invocation timeout.
+- `--split train|test` and `--targets a,b` select a subset. `--cache-dir` sets where `repo`
+  targets are cloned (default `<output-dir>/cache`).
+
+### Manifest
+
+Manifests are TOML. Local `path` values are relative to the manifest.
+
+```toml
+[defaults]
+timeout_secs = 300             # per forge invocation
+forge_args = []                # appended to forge test and forge coverage
+coverage_args = []             # appended to forge coverage only
+coverage_paths = ["src/"]      # source prefixes counted for coverage (default ["src/"])
+env = { FOUNDRY_INVARIANT_SHRINK_RUN_LIMIT = "0" }
+
+[defaults.budget]              # passed as FOUNDRY_FUZZ_RUNS, FOUNDRY_INVARIANT_DEPTH, ...
+fuzz_runs = 256
+invariant_runs = 8
+invariant_depth = 8
+# fuzz_timeout, invariant_timeout (seconds)
+
+[[targets]]
+name = "share-vault-rounding"
+split = "test"                 # "train" or "test"
+path = "project"               # local Foundry project, or `repo` + `ref` (+ optional `path` subdir)
+match_contract = "ShareVaultInvariantTest"   # also match_test, match_path
+expected_failures = ["invariant_depositRoundingIsBounded"]  # `test` or `Contract::test`
+coverage_paths = ["src/ShareVault.sol"]
+budget = { invariant_runs = 4, invariant_depth = 16 }
+# forge_args, coverage_args, env, timeout_secs extend or override the defaults.
+# failures_are_bugs = true counts every failing test as a found bug (for unenumerated targets).
+# fresh_corpus = true gives every run an empty corpus directory (enables coverage-guided mode).
+```
+
+A run finds a bug when the matching expected test fails. Other failing tests are reported as
+unexpected failures, which usually point at a harness or target problem. Every run gets fresh
+fuzz and invariant failure-persistence directories so a counterexample found by one seed is never
+replayed by another. Inherited `FOUNDRY_*` and `DAPP_*` variables are removed so the caller's shell
+cannot change the configuration; set them through `env` instead. Budget variables are skipped when
+the matching flag (for example `--fuzz-runs`) appears in the forge arguments, because forge lets
+the environment take precedence over the flag.
+
+`benches/fixtures/fuzz-eval/manifest.toml` is the default suite: one dependency-free Foundry
+project with six planted bugs, four train and two test.
+
+| Target | Split | Bug | Detector |
+| --- | --- | --- | --- |
+| `magic-lock` | train | backdoor behind two exact constants | stateless fuzz test |
+| `fee-threshold` | train | off-by-one at a fee tier boundary | stateless fuzz test |
+| `ether-bank-reentrancy` | train | balance written from a stale read after an external call | accounting invariant |
+| `fee-config-access` | train | keeper path skips the caller check | only-authorized-changes invariant |
+| `share-vault-rounding` | test | share rounding with no virtual shares (donation inflation) | bounded-loss invariant |
+| `escrow-state-machine` | test | timeout claim accepted for a disputed deal | multi-step state-machine invariant |
+
+Budgets are tuned per target so the default fuzzer finds each bug with roughly half of the seeds.
+If a target reports no headroom for the baseline, lower its budget rather than removing it.
+`manifest.scfuzzbench.toml` lists opt-in held-out targets from the scfuzzbench Recon-Fuzz
+repositories; they need network access and take minutes per seed.
+
+### Statistics and verdict
+
+Seeds are the unit of replication. For each split and seed, the harness sums bugs found over the
+split's targets (also reported as a fraction of expected bugs), averages branch and line coverage
+over targets, and sums `forge test` wall time. `SUMMARY.md` reports the mean and a two-sided 95%
+Student t-interval of those per-seed values, plus a per-target table and diagnostics:
+
+- variance: per-target standard deviation across seeds; targets with a bugs-found std dev above
+  0.4 or a branch coverage std dev above 5 percentage points are flagged as needing more seeds
+- headroom: targets where every seed found every expected bug, every seed reached 100% branch
+  coverage, or no seed found any expected bug
+- problems: timed-out or failed forge runs, unexpected failing tests, and expected failures that
+  matched no test
+
+Timed-out or failed `forge test` runs count as finding no bugs, so a treatment that breaks or
+slows forge is penalized; they are always listed under problems. With few seeds, t-intervals of
+bounded counts can extend past the feasible range; add seeds for tighter intervals.
+
+`--compare` computes `current - baseline` for each metric and split. When both runs used the same
+seeds it uses a paired t-interval over per-seed differences, otherwise Welch's t-interval. A metric
+counts as changed only when that interval excludes zero. A split improves when bugs found
+increased, or when branch coverage increased and bugs found did not decrease. The verdict is:
+
+- `KEEP`: the test split improved.
+- `REVERT`: the test split regressed, or only the train split improved (suspected overfitting).
+- `NEUTRAL`: neither split changed significantly, or only the train split regressed.
+
+Tune changes against the train split and keep them only on a `KEEP` verdict. Time to first failure
+is the reported duration of the failing test, so it includes setup and any shrinking; the fixture
+manifest disables invariant shrinking. Coverage comes from a separate `forge coverage` campaign
+with the same seed and budget, so it can differ from the `forge test` run.
+
 ## Benchmark Structure
 
 - `forge_test` - Benchmarks non-isolated `forge test` command across repos
