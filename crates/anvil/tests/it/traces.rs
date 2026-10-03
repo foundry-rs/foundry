@@ -864,6 +864,19 @@ async fn test_trace_get_local() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_block_traces_reject_pending() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+
+    let pending = BlockId::Number(BlockNumberOrTag::Pending);
+    let error = provider.trace_block(pending).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+    let error = provider.trace_replay_block_transactions(pending).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_unknown_hash_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
