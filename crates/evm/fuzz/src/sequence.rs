@@ -132,6 +132,8 @@ enum MutationType {
     Suffix,
     Abi,
     Cmp,
+    CrossoverInsert,
+    CrossoverReplace,
 }
 
 impl SequenceGenerator {
@@ -192,6 +194,8 @@ impl SequenceGenerator {
             weights.mutation_weight_suffix,
             weights.mutation_weight_abi,
             weights.mutation_weight_cmp,
+            weights.mutation_weight_crossover_insert,
+            weights.mutation_weight_crossover_replace,
         ];
         let mutations =
             WeightedIndex::new(all).map_err(|e| eyre!("invalid corpus mutation weights: {e}"))?;
@@ -323,7 +327,9 @@ impl SequenceGenerator {
             3 => MutationType::Prefix,
             4 => MutationType::Suffix,
             5 => MutationType::Abi,
-            _ => MutationType::Cmp,
+            6 => MutationType::Cmp,
+            7 => MutationType::CrossoverInsert,
+            _ => MutationType::CrossoverReplace,
         };
         let a = runner.rng().random_range(0..corpus_len);
         let b = runner.rng().random_range(0..corpus_len);
@@ -415,6 +421,23 @@ impl SequenceGenerator {
                             )?
                         }
                     }
+                }
+                (seq, i)
+            }
+            MutationType::CrossoverInsert | MutationType::CrossoverReplace => {
+                let i = if runner.rng().random() { a } else { b };
+                let base = if i == a { primary } else { secondary };
+                let donor = if i == a { secondary } else { primary };
+                let mut seq = base.transactions.to_vec();
+                let donor = donor.transactions
+                    [runner.rng().random_range(0..donor.transactions.len())]
+                .clone();
+                if matches!(kind, MutationType::CrossoverInsert) {
+                    let index = runner.rng().random_range(0..=seq.len());
+                    seq.insert(index, donor);
+                } else {
+                    let index = runner.rng().random_range(0..seq.len());
+                    seq[index] = donor;
                 }
                 (seq, i)
             }
@@ -661,6 +684,8 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 0,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
         };
         match kind {
             0 => weights.mutation_weight_splice = 1,
@@ -669,7 +694,9 @@ mod tests {
             3 => weights.mutation_weight_prefix = 1,
             4 => weights.mutation_weight_suffix = 1,
             5 => weights.mutation_weight_abi = 1,
-            _ => weights.mutation_weight_cmp = 1,
+            6 => weights.mutation_weight_cmp = 1,
+            7 => weights.mutation_weight_crossover_insert = 1,
+            _ => weights.mutation_weight_crossover_replace = 1,
         }
         weights
     }
@@ -986,6 +1013,8 @@ mod tests {
             mutation_weight_suffix: 0,
             mutation_weight_abi: 0,
             mutation_weight_cmp: 1,
+            mutation_weight_crossover_insert: 0,
+            mutation_weight_crossover_replace: 0,
         };
         let generator = SequenceGenerator::invariant(
             generator_tx(9),
@@ -1054,5 +1083,55 @@ mod tests {
             )
             .unwrap();
         assert_eq!(accesses, 2);
+    }
+    #[test]
+    fn invariant_crossover_insert_uses_corpus_transactions() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(7);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let base = [tx(1)];
+        let plan = generator
+            .start(&mut TestRunner::deterministic(), 1, |_| CorpusEntryView::new(&base, &[]), true)
+            .unwrap();
+        assert_eq!(plan.initial().len(), 2);
+        assert!(plan.initial().iter().all(|call| call.sender == base[0].sender));
+        assert_eq!(plan.source(), Some(0));
+    }
+
+    #[test]
+    fn invariant_crossover_replace_uses_corpus_transactions() {
+        let mut config = config();
+        config.mutation_weights = forced_weights(8);
+        let generator = SequenceGenerator::invariant(
+            generator_tx(9),
+            state(),
+            FuzzRunIdentifiedContracts::new(TargetedContracts::new(), false),
+            &config,
+        )
+        .unwrap();
+        let entries = [[tx(1)], [tx(2)]];
+        let mut runner = TestRunner::deterministic();
+        let mut replaced = false;
+        for _ in 0..100 {
+            let plan = generator
+                .start(
+                    &mut runner,
+                    entries.len(),
+                    |index| CorpusEntryView::new(&entries[index], &[]),
+                    true,
+                )
+                .unwrap();
+            assert_eq!(plan.initial().len(), 1);
+            let sender = plan.initial()[0].sender;
+            assert!(entries.iter().any(|entry| entry[0].sender == sender));
+            replaced |= sender != entries[plan.source().unwrap()][0].sender;
+        }
+        assert!(replaced, "crossover replacement never selected a distinct donor");
     }
 }
