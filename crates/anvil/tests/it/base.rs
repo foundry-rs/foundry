@@ -11,6 +11,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     BlockId, TransactionRequest,
+    anvil::Forking,
     trace::geth::{
         CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
         GethDebugTracingOptions, GethTrace,
@@ -25,12 +26,16 @@ use base_common_consensus::{
     BaseTimeDepositSource, Call, DepositSourceDomain, Eip8130Constants, Eip8130Contracts,
     Eip8130Signed, Predeploys, SystemAddresses, TxEip8130,
 };
+use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
+use base_protocol::{BaseTimeUpdateTx, L1BlockInfoTx};
+use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
 use foundry_evm::{hardforks::BaseUpgrade, opts::EvmOpts};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use op_alloy_consensus::TxDeposit;
+use std::time::Duration;
 
 const ACTIVATION_REGISTRY: Address = address!("8453000000000000000000000000000000000001");
 const MAINNET_BERYL_ACTIVATION_ADMIN: Address =
@@ -483,6 +488,13 @@ async fn base_standalone_denim_system_transactions_are_valid() {
     assert_eq!(l1_info.from, SystemAddresses::DEPOSITOR_ACCOUNT);
     assert_eq!(l1_info.to, TxKind::Call(Predeploys::L1_BLOCK_INFO));
     assert!(!l1_info.is_system_transaction);
+    let info = L1BlockInfoTx::decode_calldata(&l1_info.input).unwrap();
+    assert_eq!(info.id().number, block.header.number);
+    assert_eq!(info.time(), block.header.timestamp);
+    assert_eq!(
+        provider.get_storage_at(Predeploys::L1_BLOCK_INFO, U256::ZERO).await.unwrap(),
+        U256::from(block.header.number) | (U256::from(block.header.timestamp) << 64)
+    );
 
     let base_time = FoundryTxEnvelope::decode_2718(
         &mut api.raw_transaction(hashes[1]).await.unwrap().unwrap().as_ref(),
@@ -493,6 +505,10 @@ async fn base_standalone_denim_system_transactions_are_valid() {
     };
     assert_eq!(base_time.from, SystemAddresses::DEPOSITOR_ACCOUNT);
     assert_eq!(base_time.to, TxKind::Call(Predeploys::BASE_TIME));
+    assert_eq!(
+        base_time.encoded_2718(),
+        BaseTimeUpdateTx::new(200).unwrap().into_deposit_tx(block.header.number).encoded_2718()
+    );
     assert_eq!(
         base_time.source_hash,
         DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number: block.header.number })
@@ -541,13 +557,14 @@ async fn base_fork_denim_preserves_l1_fee_state() {
     let source_config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()));
     let (source_api, source_handle) = spawn(source_config).await;
     // Give the source chain L1 fee parameters that differ from the standalone defaults.
-    for slot in 0..8u64 {
+    for slot in 0..9u64 {
+        let value = match slot {
+            3 => (U256::from(1_234_567) << 96) | (U256::from(7_654) << 64) | U256::from(17),
+            8 => (U256::from(650) << 96) | (U256::from(42) << 64) | U256::from(789),
+            _ => U256::from(0x1234_5678_u64 + slot),
+        };
         source_api
-            .anvil_set_storage_at(
-                Predeploys::L1_BLOCK_INFO,
-                U256::from(slot),
-                B256::from(U256::from(0x1234_5678_u64 + slot)),
-            )
+            .anvil_set_storage_at(Predeploys::L1_BLOCK_INFO, U256::from(slot), B256::from(value))
             .await
             .unwrap();
     }
@@ -564,23 +581,28 @@ async fn base_fork_denim_preserves_l1_fee_state() {
 
     let l1_block_state = async || {
         let mut slots = Vec::new();
-        for slot in 0..8u64 {
+        for slot in 0..9u64 {
             slots.push(
                 provider.get_storage_at(Predeploys::L1_BLOCK_INFO, U256::from(slot)).await.unwrap(),
             );
         }
         slots
     };
-    let before = l1_block_state().await;
+    let mut expected = l1_block_state().await;
+    // Continuing the same L1 origin advances its sequence and retains all fee fields.
+    expected[3] += U256::ONE;
     target_api.mine_one().await.unwrap();
-    assert_eq!(l1_block_state().await, before, "fork L1Block state must not be overwritten");
+    assert_eq!(l1_block_state().await, expected, "fork L1Block fee state must be preserved");
 
-    // Only the BaseTime deposit prefixes forked Denim blocks, and it succeeds.
+    // Both protocol deposits prefix forked Denim blocks and execute successfully.
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let hashes = block.transactions.hashes().collect::<Vec<_>>();
-    assert_eq!(hashes.len(), 1);
-    let receipt = provider.get_transaction_receipt(hashes[0]).await.unwrap().unwrap();
-    assert!(receipt.status());
+    assert_eq!(hashes.len(), 2);
+    for (index, hash) in hashes.into_iter().enumerate() {
+        let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.transaction_index, Some(index as u64));
+    }
     let millis_part = provider
         .call(WithOtherFields::new(
             TransactionRequest::default()
@@ -590,10 +612,7 @@ async fn base_fork_denim_preserves_l1_fee_state() {
         .block(BlockId::latest())
         .await
         .unwrap();
-    assert_eq!(
-        IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(),
-        u16::try_from(block.header.number % 5).unwrap() * 200
-    );
+    assert_eq!(IBaseTime::timestampMillisPartCall::abi_decode_returns(&millis_part).unwrap(), 200);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1608,4 +1627,143 @@ async fn base_eip8130_is_rejected_by_non_base_networks() {
 
         assert!(error.to_string().contains("gated behind Zenith"), "{error}");
     }
+}
+
+async fn base_time_ms(provider: &RetryProvider, block: BlockId) -> u64 {
+    let result = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(Predeploys::BASE_TIME)
+                .with_input(IBaseTime::timestampMsCall {}.abi_encode()),
+        ))
+        .block(block)
+        .await
+        .unwrap();
+    IBaseTime::timestampMsCall::abi_decode_returns(&result).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_denim_interval_cadence() {
+    let config = NodeConfig::test_base()
+        .with_hardfork(Some(BaseUpgrade::Denim.into()))
+        .with_genesis_timestamp(Some(1_000u64))
+        .with_genesis_block_number(Some(17u64))
+        .with_blocktime(Some(Duration::from_millis(200)));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while provider.get_block_number().await.unwrap() < 27 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    for number in 17..=27u64 {
+        assert_eq!(base_time_ms(&provider, number.into()).await, 1_000_000 + (number - 17) * 200);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_fork_denim_continues_every_parent_phase() {
+    let config = NodeConfig::test_base()
+        .with_hardfork(Some(BaseUpgrade::Denim.into()))
+        .with_genesis_block_number(Some(2u64));
+    let (source_api, source_handle) = spawn(config).await;
+    let admin = B256::from(U256::from(0x1234));
+    source_api
+        .anvil_set_storage_at(Predeploys::BASE_TIME, BaseTime::ADMIN_SLOT, admin)
+        .await
+        .unwrap();
+    let source_provider = source_handle.http_provider();
+    for _ in 0..5 {
+        let before = base_time_ms(&source_provider, BlockId::latest()).await;
+        let config = NodeConfig::test_base()
+            .with_hardfork(Some(BaseUpgrade::Denim.into()))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        assert_eq!(
+            provider.get_storage_at(Predeploys::BASE_TIME, BaseTime::ADMIN_SLOT).await.unwrap(),
+            U256::from_be_bytes(admin.0)
+        );
+        assert_eq!(base_time_ms(&provider, BlockId::pending()).await, before + 200);
+        api.mine_one().await.unwrap();
+        assert_eq!(base_time_ms(&provider, BlockId::latest()).await, before + 200);
+        api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: None })).await.unwrap();
+        assert_eq!(base_time_ms(&provider, BlockId::pending()).await, before + 200);
+        api.mine_one().await.unwrap();
+        assert_eq!(base_time_ms(&provider, BlockId::latest()).await, before + 200);
+        source_api.mine_one().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_denim_time_controls_and_state_restore() {
+    let config = NodeConfig::test_base()
+        .with_hardfork(Some(BaseUpgrade::Denim.into()))
+        .with_genesis_timestamp(Some(1_000u64));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    for _ in 0..4 {
+        api.mine_one().await.unwrap();
+    }
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 1_000_800);
+    api.evm_increase_time(U256::from(10)).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::pending()).await, 1_011_000);
+    assert_eq!(base_time_ms(&provider, BlockId::pending()).await, 1_011_000);
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 1_011_000);
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 1_011_200);
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 1_011_000);
+
+    api.evm_set_next_block_timestamp(2_000).unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::pending()).await, 2_000_200);
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 2_000_400);
+    api.evm_set_block_timestamp_interval(2).unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 2_002_600);
+    api.evm_remove_block_timestamp_interval().unwrap();
+    api.evm_set_time(3_000).unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 3_000_800);
+
+    let dump = api.anvil_dump_state(Some(true)).await.unwrap();
+    let (loaded_api, loaded_handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()))).await;
+    loaded_api.anvil_load_state(dump).await.unwrap();
+    loaded_api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&loaded_handle.http_provider(), BlockId::latest()).await, 3_001_000);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_denim_failed_deposit_preserves_state_and_time_override() {
+    let config = NodeConfig::test_base()
+        .with_hardfork(Some(BaseUpgrade::Denim.into()))
+        .with_genesis_timestamp(Some(1_000u64));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let code = provider.get_code_at(Predeploys::BASE_TIME).await.unwrap();
+    api.anvil_set_code(Predeploys::BASE_TIME, Bytes::from_static(&[0x5f, 0x5f, 0xfd]))
+        .await
+        .unwrap();
+    api.evm_set_next_block_timestamp(2_000).unwrap();
+    let error = api.mine_one().await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Internal error: \"required Base system deposit at transaction index 1 failed\""
+    );
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+    assert_eq!(
+        provider.get_storage_at(Predeploys::L1_BLOCK_INFO, U256::ZERO).await.unwrap(),
+        U256::ZERO
+    );
+    api.anvil_set_code(Predeploys::BASE_TIME, code).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 2_000_200);
 }

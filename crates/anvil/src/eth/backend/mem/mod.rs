@@ -31,7 +31,7 @@ use crate::{
                 prepare_fork_transaction_replay,
             },
             tempo::AnvilStorageProvider,
-            time::{TimeManager, utc_from_secs},
+            time::{PendingBlockTimestamp, TimeManager, TimeSnapshot, utc_from_secs},
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
@@ -215,7 +215,7 @@ use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 #[cfg(any(feature = "base", feature = "optimism"))]
 use foundry_primitives::get_deposit_tx_parts;
 #[cfg(any(feature = "base", feature = "optimism"))]
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 #[cfg(any(feature = "base", feature = "optimism"))]
 use op_revm::transaction::deposit::DepositTransactionParts;
 
@@ -225,8 +225,7 @@ use alloy_hardforks::ForkCondition;
 use base_common_chains::{ChainConfig, ChainUpgrades};
 #[cfg(feature = "base")]
 use base_common_consensus::{
-    BaseTimeDepositSource, BaseTransactionInfo, BaseTxEnvelope, DepositSourceDomain,
-    EIP8130_REJECTION_MSG, Eip8130Constants, L1InfoDepositSource, Predeploys, SystemAddresses,
+    BaseTransactionInfo, BaseTxEnvelope, EIP8130_REJECTION_MSG, Eip8130Constants, Predeploys,
 };
 #[cfg(feature = "base")]
 use base_common_evm::{
@@ -904,8 +903,9 @@ fn ensure_base_time_predeploy(
     mut db: &mut dyn crate::eth::backend::db::Db,
     reset_admin: bool,
 ) -> Result<(), DatabaseError> {
+    base::ensure_l1_block_predeploy(db)?;
     let mut proxy = db.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
-    let missing_code = proxy.code.as_ref().is_none_or(|code| code.is_empty());
+    let missing_code = proxy.is_empty_code_hash();
     if missing_code {
         let code = revm::state::Bytecode::new_raw(BaseTime::proxy_bytecode());
         proxy.code_hash = code.hash_slow();
@@ -1052,8 +1052,7 @@ struct StateSnapshot {
     block_number: u64,
     block_hash: B256,
     fees: FeeSnapshot,
-    time_offset: i128,
-    next_block_timestamp: Option<u64>,
+    time: TimeSnapshot,
 }
 
 #[cfg(test)]
@@ -1552,131 +1551,33 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    /// Builds the canonical BaseTime metadata deposit for a local Denim block.
-    #[cfg(feature = "base")]
-    fn base_time_update_transaction(
+    /// Prepares the clock for a candidate block without consuming its time controls.
+    fn prepare_block_timestamp(
         &self,
-        block_number: u64,
-    ) -> Option<Arc<PoolTransaction<FoundryTxEnvelope>>> {
-        if !self.is_base() || self.base_upgrade() < BaseUpgrade::Denim {
-            return None;
+        db: &dyn revm::DatabaseRef<Error = DatabaseError>,
+        parent_timestamp: u64,
+    ) -> Result<PendingBlockTimestamp, DatabaseError> {
+        #[cfg(feature = "base")]
+        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+            return base::prepare_block_timestamp(db, &self.time, parent_timestamp);
         }
-
-        let timestamp_millis_part = (block_number % 5) as u16 * 200;
-        let mut input = Vec::with_capacity(36);
-        input.extend(BaseTime::SET_TIMESTAMP_MILLIS_PART_SELECTOR);
-        input.extend([0; 30]);
-        input.extend(timestamp_millis_part.to_be_bytes());
-        let source_hash =
-            DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number }).source_hash();
-        let transaction = FoundryTxEnvelope::Deposit(alloy_consensus::Sealed::new(TxDeposit {
-            source_hash,
-            from: SystemAddresses::DEPOSITOR_ACCOUNT,
-            to: TxKind::Call(Predeploys::BASE_TIME),
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 1_000_000,
-            is_system_transaction: false,
-            input: input.into(),
-        }));
-        Some(Self::system_deposit(transaction))
+        let _ = (db, parent_timestamp);
+        Ok(self.time.prepare_next_timestamp())
     }
 
-    /// Builds a deterministic L1-info deposit for a local Denim block.
-    ///
-    /// Standalone Anvil has no L1 derivation pipeline, so it uses the parent L2 hash and the L2
-    /// block number as a stable synthetic L1 origin. The packed Ecotone payload keeps the L1 fee
-    /// parameters aligned with the standalone genesis state. Replace this hand-encoding with the
-    /// canonical encoder once it moves out of the broader `base-protocol` crate.
-    #[cfg(feature = "base")]
-    fn l1_info_update_transaction(
-        &self,
-        block_number: u64,
-        timestamp: u64,
-        l1_block_hash: B256,
-    ) -> Option<Arc<PoolTransaction<FoundryTxEnvelope>>> {
-        // Forks inherit live `L1Block` fee parameters; writing the standalone defaults over them
-        // would change L1 fees for every later transaction.
-        if !self.is_base() || self.is_fork() || self.base_upgrade() < BaseUpgrade::Denim {
-            return None;
-        }
-
-        let mut input = Vec::with_capacity(164);
-        input.extend([0x44, 0x0a, 0x5e, 0x20]); // setL1BlockValuesEcotone()
-        input.extend(DEFAULT_BASE_L1_FEE_SCALAR.to_be_bytes());
-        input.extend(0u32.to_be_bytes());
-        input.extend(block_number.to_be_bytes());
-        input.extend(timestamp.to_be_bytes());
-        input.extend(block_number.to_be_bytes());
-        input.extend(U256::from(DEFAULT_BASE_L1_BASE_FEE).to_be_bytes::<32>());
-        input.extend(U256::ONE.to_be_bytes::<32>());
-        input.extend(l1_block_hash.as_slice());
-        input.extend(B256::ZERO.as_slice());
-
-        let source_hash = DepositSourceDomain::L1Info(L1InfoDepositSource {
-            l1_block_hash,
-            seq_number: block_number,
-        })
-        .source_hash();
-        let transaction = FoundryTxEnvelope::Deposit(alloy_consensus::Sealed::new(TxDeposit {
-            source_hash,
-            from: SystemAddresses::DEPOSITOR_ACCOUNT,
-            to: TxKind::Call(Predeploys::L1_BLOCK_INFO),
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 1_000_000,
-            is_system_transaction: false,
-            input: input.into(),
-        }));
-        Some(Self::system_deposit(transaction))
-    }
-
-    /// Wraps a protocol deposit for block execution.
-    ///
-    /// Deposits carry their sender explicitly, so recovery keeps the canonical transaction hash
-    /// instead of the synthetic hash Anvil assigns to impersonated transactions.
-    #[cfg(feature = "base")]
-    fn system_deposit(transaction: FoundryTxEnvelope) -> Arc<PoolTransaction<FoundryTxEnvelope>> {
-        let pending = anvil_core::eth::transaction::PendingTransaction::new(transaction)
-            .expect("deposit sender is explicit");
-        Arc::new(PoolTransaction::new(pending))
-    }
-
-    /// Returns the protocol deposits that prefix a local Base block, in canonical order.
-    ///
-    /// Mined and pending blocks share this prefix so pending calls observe the same BaseTime and
-    /// L1-info state the next mined block will.
+    /// Builds the required deposits from the same parent state used to prepare the clock.
     #[cfg(feature = "base")]
     fn base_system_transactions(
         &self,
+        db: &dyn revm::DatabaseRef<Error = DatabaseError>,
         block_number: u64,
         timestamp: u64,
         parent_hash: B256,
-    ) -> impl Iterator<Item = Arc<PoolTransaction<FoundryTxEnvelope>>> {
-        self.l1_info_update_transaction(block_number, timestamp, parent_hash)
-            .into_iter()
-            .chain(self.base_time_update_transaction(block_number))
-    }
-
-    /// Returns the timestamp for the next block after applying Base's 200 ms cadence.
-    ///
-    /// Base headers retain second precision. A new second begins after every fifth Base block;
-    /// the sub-second component is carried by the BaseTime deposit. Deriving from the parent
-    /// header rather than local genesis also keeps a fork continuation from moving backwards.
-    #[cfg(feature = "base")]
-    fn next_block_timestamp(
-        &self,
-        block_number: u64,
-        parent_timestamp: u64,
-        default_timestamp: u64,
-    ) -> u64 {
+    ) -> Result<Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>, DatabaseError> {
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
-            // Explicit timestamp controls may advance farther than the cadence; retain that
-            // caller decision while preventing the scheduled path from moving behind a parent.
-            default_timestamp
-                .max(parent_timestamp.saturating_add(u64::from(block_number.is_multiple_of(5))))
+            base::system_transactions(db, block_number, timestamp, parent_hash, self.is_fork())
         } else {
-            default_timestamp
+            Ok(Vec::new())
         }
     }
 
@@ -2033,7 +1934,6 @@ impl<N: Network> Backend<N> {
         let num = self.best_number();
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
-        let (time_offset, next_block_timestamp) = self.time.snapshot();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
@@ -2041,8 +1941,7 @@ impl<N: Network> Backend<N> {
                 block_number: num,
                 block_hash: hash,
                 fees: self.fees.snapshot(),
-                time_offset,
-                next_block_timestamp,
+                time: self.time.snapshot(),
             },
         );
         id
@@ -2070,21 +1969,19 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the environment for the next block
-    fn next_evm_env(&self) -> EvmEnv {
+    fn next_evm_env(
+        &self,
+        db: &dyn revm::DatabaseRef<Error = DatabaseError>,
+    ) -> Result<EvmEnv, DatabaseError> {
         let mut evm_env = self.evm_env.read().clone();
         // increase block number for this block
         evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
-        let default_timestamp = self.time.current_call_timestamp();
-        #[cfg(feature = "base")]
-        let default_timestamp = self.next_block_timestamp(
-            self.best_number().saturating_add(1),
-            evm_env.block_env.timestamp.saturating_to(),
-            default_timestamp,
-        );
-        evm_env.block_env.timestamp = U256::from(default_timestamp);
-        evm_env
+        let pending =
+            self.prepare_block_timestamp(db, evm_env.block_env.timestamp.saturating_to())?;
+        evm_env.block_env.timestamp = U256::from(pending.timestamp);
+        Ok(evm_env)
     }
 
     /// Returns the environment for replaying transactions from a historical block.
@@ -5465,15 +5362,9 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset, next_block_timestamp)) =
+        let Some((num, hash, fees, time)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
-                (
-                    snapshot.block_number,
-                    snapshot.block_hash,
-                    snapshot.fees,
-                    snapshot.time_offset,
-                    snapshot.next_block_timestamp,
-                )
+                (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time)
             })
         else {
             return Ok(false);
@@ -5494,8 +5385,7 @@ impl<N: Network> Backend<N> {
             self.notify_on_removed_logs(removed_logs);
         }
 
-        let reset_time = block.header.timestamp();
-        self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
+        self.time.restore(time);
         // drop any pending next-block prevrandao override so it does not leak into a block
         self.cheats.clear_next_block_prevrandao();
 
@@ -5526,8 +5416,8 @@ impl<N: Network> Backend<N> {
         (InstructionResult, Option<Output>, u64, State, Vec<revm::primitives::Log>),
         BlockchainError,
     > {
-        let evm_env = self.next_evm_env();
         let db = self.db.read().await;
+        let evm_env = self.next_evm_env(&**db)?;
         let mut inspector = self.build_inspector();
         #[cfg(feature = "monad")]
         let mut monad_context = self
@@ -6214,19 +6104,15 @@ where
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                let pending_timestamp = self.time.prepare_next_timestamp();
+                let pending_timestamp = self
+                    .prepare_block_timestamp(&**db, evm_env.block_env.timestamp.saturating_to())?;
                 let block_timestamp = pending_timestamp.timestamp;
-                #[cfg(feature = "base")]
-                let block_timestamp = self.next_block_timestamp(
-                    block_number,
-                    evm_env.block_env.timestamp.saturating_to(),
-                    block_timestamp,
-                );
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
 
                 #[cfg(feature = "base")]
                 let protocol_transactions = self
-                    .base_system_transactions(block_number, block_timestamp, best_hash)
+                    .base_system_transactions(&**db, block_number, block_timestamp, best_hash)?
+                    .into_iter()
                     .chain(pool_transactions.iter().cloned())
                     .collect::<Vec<_>>();
                 #[cfg(not(feature = "base"))]
@@ -6270,6 +6156,12 @@ where
                 )?;
                 let block_access_list = candidate_db.take_block_access_list();
 
+                #[cfg(feature = "base")]
+                base::validate_system_transactions(
+                    &protocol_transactions[..protocol_transactions.len() - pool_transactions.len()],
+                    &pool_result,
+                )?;
+
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
@@ -6296,7 +6188,7 @@ where
                 // Update the new blockhash in the db itself.
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
-                self.time.commit_next_timestamp_at(pending_timestamp, block_timestamp);
+                self.time.commit_next_timestamp(pending_timestamp);
                 if let Some(pending) = next_prevrandao {
                     self.cheats.consume_next_block_prevrandao(pending);
                 }
@@ -6503,7 +6395,7 @@ where
         F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockInfo<N>) -> T,
     {
         let db = self.db.read().await;
-        let evm_env = self.next_evm_env();
+        let evm_env = self.next_evm_env(&**db)?;
 
         let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
@@ -6511,12 +6403,16 @@ where
         let block_number = self.best_number().saturating_add(1);
 
         #[cfg(feature = "base")]
+        let user_transaction_count = pool_transactions.len();
+        #[cfg(feature = "base")]
         let pool_transactions = self
             .base_system_transactions(
+                &**db,
                 block_number,
                 evm_env.block_env.timestamp.saturating_to(),
                 parent_hash,
-            )
+            )?
+            .into_iter()
             .chain(pool_transactions)
             .collect::<Vec<_>>();
 
@@ -6536,6 +6432,12 @@ where
             &|pool_tx, account| {
                 self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, &evm_env)
             },
+        )?;
+
+        #[cfg(feature = "base")]
+        base::validate_system_transactions(
+            &pool_transactions[..pool_transactions.len() - user_transaction_count],
+            &pool_result,
         )?;
 
         // Extract inner CacheDB (which implements MaybeFullDatabase)
@@ -9771,7 +9673,7 @@ where
         let address = *tx.sender();
         let account = self.get_account(address).await?;
         #[cfg_attr(not(feature = "base"), allow(unused_mut))]
-        let mut evm_env = self.next_evm_env();
+        let mut evm_env = self.next_evm_env(&**self.db.read().await)?;
         #[cfg(feature = "base")]
         if tx.transaction.as_ref().is_eip8130() {
             evm_env.block_env.timestamp = U256::from(self.eip8130_pool_timestamp());

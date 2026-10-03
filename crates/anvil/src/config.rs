@@ -1536,14 +1536,16 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
-        // Fork setup initializes its own timestamp. For a local BSC chain, keep the initial EVM
-        // and genesis block on the same resolved timestamp so chain precompiles are available
-        // immediately. Preserve the default timestamp behavior for all other local chains.
+        // Fork setup initializes its own timestamp. Local BSC and Base chains also need their
+        // initial call environment aligned with genesis for time-dependent predeploys.
         let is_bsc = matches!(
             NamedChain::try_from(evm_env.cfg_env.chain_id),
             Ok(NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet)
         );
-        if fork.is_none() && (self.genesis_timestamp.is_some() || is_bsc) {
+        let align_genesis_timestamp = self.genesis_timestamp.is_some() || is_bsc;
+        #[cfg(feature = "base")]
+        let align_genesis_timestamp = align_genesis_timestamp || self.networks.is_base();
+        if fork.is_none() && align_genesis_timestamp {
             evm_env.block_env.timestamp = U256::from(genesis_timestamp);
         }
 
