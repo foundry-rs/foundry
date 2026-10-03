@@ -5483,7 +5483,6 @@ Script ran successfully.
 // fork block pinning used the remapped L1 block number, causing the fork to
 // fetch state from an ancient block where contracts did not exist.
 #[forgetest_init]
-#[ignore]
 fn flaky_can_call_arbitrum_contract_in_script(prj: _, cmd: _) {
     let script = prj.add_source(
         "ArbScript",

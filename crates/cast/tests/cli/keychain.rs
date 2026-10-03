@@ -1,5 +1,6 @@
 //! CLI tests for `cast keychain` subcommands.
 
+use crate::PRECOMPUTED_VADDR_SALT_FOR_ADDR1;
 use alloy_consensus::{TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, U256, hex};
@@ -192,9 +193,6 @@ const MISSING_SESSION_ID: &str =
 fn batch_send_transfer_call(path_usd: &str) -> String {
     format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
 }
-
-const PRECOMPUTED_VADDR_SALT_FOR_ADDR1: &str =
-    "0x00000000000000000000000000000000000000000000000000000000abf52baf";
 
 fn assert_wrong_chain_error(stderr: &str) {
     assert!(stderr.contains("is for chain 31338"), "unexpected stderr:\n{stderr}");
