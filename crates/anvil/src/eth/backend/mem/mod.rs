@@ -194,6 +194,7 @@ use tempo_precompiles::{
     NONCE_PRECOMPILE_ADDRESS, TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
     nonce::NonceManager,
     storage::{Handler, StorageActions, StorageCtx},
+    tempo_precompiles,
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
     tip20_factory::TIP20Factory,
@@ -2220,9 +2221,15 @@ impl<N: Network> Backend<N> {
     /// Returns the precompile addresses that were active while executing the given mined block.
     fn mined_block_precompiles(&self, block: &Block) -> AddressHashSet {
         let (evm_env, _) = self.tx_replay_evm_env(block);
-        let mut precompiles = PrecompilesMap::from_static(Precompiles::new(
-            PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
-        ));
+        // Tempo selects its base precompiles by hardfork rather than by the Ethereum spec.
+        let mut precompiles = if self.is_tempo() {
+            let tempo_env = Self::build_tempo_evm_env(&evm_env, self.tempo_hardfork());
+            tempo_precompiles(&tempo_env.cfg_env, StorageActions::disabled(), Default::default())
+        } else {
+            PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(
+                *evm_env.spec_id(),
+            )))
+        };
         self.inject_precompiles(&mut precompiles, &evm_env);
         precompiles.addresses().copied().collect()
     }
