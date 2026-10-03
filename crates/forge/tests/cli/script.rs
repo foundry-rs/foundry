@@ -6988,7 +6988,7 @@ contract QueuedResume is Script {
     assert!(!output.status.success(), "resume reported success: {stderr}");
     assert!(
         stderr.contains(&format!(
-            "transaction {} cannot be mined until nonce 1 from {sender} is submitted, and that transaction is not visible to the RPC endpoint",
+            "transaction {} appears to be blocked: the RPC endpoint reports nonce 1 from {sender} as unfilled and does not return its saved transaction",
             hashes[2]
         )),
         "{stderr}"

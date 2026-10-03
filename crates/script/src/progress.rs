@@ -12,7 +12,6 @@ use foundry_cli::utils::init_progress;
 use foundry_common::shell;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use yansi::Paint;
@@ -348,7 +347,7 @@ Add `--resume` to your command to try and continue broadcasting the transactions
 #[derive(Debug, Default)]
 struct Predecessors {
     sender: Address,
-    /// Nonce and latest known submission hash of each operation, in ascending nonce order.
+    /// Nonce and latest known submission hash of each operation.
     operations: Vec<(u64, Option<B256>)>,
 }
 
@@ -383,7 +382,6 @@ fn predecessors<N: Network>(
                 .filter(|&earlier| earlier < nonce)
                 .map(|earlier| (earlier, hash))
         })
-        .sorted_by_key(|&(nonce, _)| nonce)
         .collect();
     Predecessors { sender, operations }
 }
@@ -405,7 +403,7 @@ async fn blocked_transaction<N: Network>(
                 return (
                     *hash,
                     format!(
-                        "transaction {hash} cannot be mined until nonce {nonce} from {} is submitted, and that transaction is not visible to the RPC endpoint",
+                        "transaction {hash} appears to be blocked: the RPC endpoint reports nonce {nonce} from {} as unfilled and does not return its saved transaction",
                         predecessors.sender
                     ),
                 );
@@ -414,25 +412,29 @@ async fn blocked_transaction<N: Network>(
     }
 }
 
-/// Returns the lowest predecessor nonce that is not filled on the node and whose known submission
-/// the node does not return.
+/// Returns the predecessor nonce that the node reports as the sender's next unfilled nonce, when
+/// the script's known submission for it is not returned by the node.
 ///
-/// The sender's pending nonce counts mined and executable pool transactions, so a nonce below it is
-/// filled even when its original submission was replaced. A predecessor without a known hash, or
-/// whose lookup fails, is not evidence of absence.
+/// Nonces above the pending nonce can still be filled by queued transactions, including
+/// replacements, so only the operation at the pending nonce is checked. The pending nonce is read
+/// again after the lookup, since the node can fill or open nonces in between. A gap outside the
+/// script's operations, a predecessor without a known hash, or a failed lookup is not evidence that
+/// the script must resubmit anything.
 async fn missing_predecessor<N: Network>(
     provider: &RootProvider<N>,
     predecessors: &Predecessors,
 ) -> Option<u64> {
-    let filled = provider.get_transaction_count(predecessors.sender).pending().await.ok()?;
-    for &(nonce, hash) in predecessors.operations.iter().filter(|(nonce, _)| *nonce >= filled) {
-        if let Some(hash) = hash
-            && matches!(provider.get_transaction_by_hash(hash).await, Ok(None))
-        {
-            return Some(nonce);
-        }
+    let pending_nonce =
+        async || provider.get_transaction_count(predecessors.sender).pending().await.ok();
+    let unfilled = pending_nonce().await?;
+    let hash = predecessors
+        .operations
+        .iter()
+        .find_map(|&(nonce, hash)| (nonce == unfilled).then_some(hash))??;
+    if !matches!(provider.get_transaction_by_hash(hash).await, Ok(None)) {
+        return None;
     }
-    None
+    (pending_nonce().await? == unfilled).then_some(unfilled)
 }
 
 #[cfg(test)]
@@ -465,11 +467,13 @@ mod tests {
             missing_predecessor::<Ethereum>(&provider, &Predecessors { sender, operations }).await
         };
 
-        // A known submission the node does not return blocks its successors.
+        // A known submission the node does not return at the first unfilled nonce blocks its
+        // successors.
         assert_eq!(missing(vec![(0, Some(unknown))]).await, Some(0));
-        // An unknown submission hash is not evidence that the predecessor is absent.
+        // An unknown submission hash at that nonce is not evidence that it is absent, and later
+        // nonces may be filled by queued transactions.
         assert_eq!(missing(vec![(0, None)]).await, None);
-        assert_eq!(missing(vec![(0, None), (1, Some(unknown))]).await, Some(1));
+        assert_eq!(missing(vec![(0, None), (1, Some(unknown))]).await, None);
 
         // A visible predecessor can still be mined.
         let visible = send(&provider, sender, 0).await;
@@ -510,22 +514,70 @@ mod tests {
         assert!(provider.get_transaction_receipt(successor).await.unwrap().is_some());
     }
 
+    /// A replacement can also fill a queued nonce above an unrelated gap, so a missing original
+    /// hash there does not mean the nonce needs resubmission.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn missing_predecessor_accepts_replaced_queued_submission() {
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let provider = ProviderBuilder::new()
+            .connect_http(handle.http_endpoint().parse().unwrap())
+            .root()
+            .clone();
+        let sender = handle.dev_accounts().next().unwrap();
+        let submit = async |nonce: u64, fee_multiplier: u128| {
+            let tx = TransactionRequest::default()
+                .with_from(sender)
+                .with_to(sender)
+                .with_value(U256::from(1))
+                .with_nonce(nonce)
+                .with_max_fee_per_gas(100_000_000_000 * fee_multiplier)
+                .with_max_priority_fee_per_gas(1_000_000_000 * fee_multiplier);
+            *provider.send_transaction(tx).await.unwrap().tx_hash()
+        };
+        // Nonce 0 is outside the script; its operations start at nonce 1.
+        let original = submit(1, 1).await;
+        let successor = submit(2, 1).await;
+        submit(1, 2).await;
+        assert!(provider.get_transaction_by_hash(original).await.unwrap().is_none());
+
+        let predecessors = Predecessors { sender, operations: vec![(1, Some(original))] };
+        assert_eq!(missing_predecessor::<Ethereum>(&provider, &predecessors).await, None);
+        submit(0, 1).await;
+        api.mine_one().await.unwrap();
+        assert!(provider.get_transaction_receipt(successor).await.unwrap().is_some());
+    }
+
     #[tokio::test]
-    async fn missing_predecessor_continues_past_failed_lookup() {
+    async fn missing_predecessor_checks_only_a_stable_pending_nonce() {
         let asserter = Asserter::new();
         let provider =
             ProviderBuilder::<_, _, Ethereum>::default().connect_mocked_client(asserter.clone());
-        asserter.push_success(&U64::ZERO);
-        asserter.push_failure_msg("lookup unavailable");
-        asserter.push_success(&Option::<serde_json::Value>::None);
-
         let predecessors = Predecessors {
             sender: Address::repeat_byte(0x11),
             operations: vec![
                 (0, Some(B256::repeat_byte(0xaa))),
                 (1, Some(B256::repeat_byte(0xbb))),
+                (2, Some(B256::repeat_byte(0xcc))),
             ],
         };
-        assert_eq!(missing_predecessor(provider.root(), &predecessors).await, Some(1));
+        let not_found = Option::<serde_json::Value>::None;
+
+        // Each check reads the pending nonce and looks up only the operation at that nonce.
+        asserter.push_success(&U64::from(1));
+        asserter.push_failure_msg("lookup unavailable");
+        assert_eq!(missing_predecessor(provider.root(), &predecessors).await, None);
+
+        // The gap is reported only if the pending nonce is unchanged after the lookup.
+        for recheck in [Some(2), Some(0), None, Some(1)] {
+            asserter.push_success(&U64::from(1));
+            asserter.push_success(&not_found);
+            match recheck {
+                Some(nonce) => asserter.push_success(&U64::from(nonce)),
+                None => asserter.push_failure_msg("nonce unavailable"),
+            }
+            let expected = (recheck == Some(1)).then_some(1);
+            assert_eq!(missing_predecessor(provider.root(), &predecessors).await, expected);
+        }
+        assert!(asserter.read_q().is_empty());
     }
 }
