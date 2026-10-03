@@ -15,7 +15,7 @@ use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
-use toml_edit::{DocumentMut, Item};
+use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 impl Cheatcode for keyExistsTomlCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
@@ -288,13 +288,14 @@ fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Resu
         let mut current_level = document.as_item_mut();
 
         for segment in path_to_parent {
+            let is_inline = current_level.is_inline_table();
             let Some(table) = current_level.as_table_like_mut() else {
                 return Err(fmt_err!("path segment '{segment}' does not resolve to an object."));
             };
             if !table.contains_key(segment) {
-                let mut intermediary = toml_edit::Table::new();
+                let mut intermediary = Table::new();
                 intermediary.set_implicit(true);
-                table.insert(segment, Item::Table(intermediary));
+                insert_toml_item(table, is_inline, segment, Item::Table(intermediary));
             }
             current_level = table.get_mut(segment).unwrap();
         }
@@ -307,77 +308,76 @@ fn upsert_toml_value(document: &mut DocumentMut, value: &str, key: &str) -> Resu
         let value =
             serde_json::from_str(value).unwrap_or_else(|_| JsonValue::String(value.to_owned()));
         let mut item = json_to_toml_item(value)?;
-        if is_inline {
-            // Inline tables can only hold values.
-            item = item.into_value().map_or_else(|item| item, Item::Value);
-        }
 
         // Replace an existing item in place: `insert` would reset the key's formatting, which holds
         // the comments above it.
         match parent.get_mut(key_to_insert) {
             Some(existing) if !existing.is_none() => {
-                let representation_changed =
+                if existing.is_value() {
+                    // Keep inline values inline instead of turning them into table sections.
+                    item = item.into_value().map_or_else(|item| item, Item::Value);
+                }
+                let shape_changed =
                     std::mem::discriminant(existing) != std::mem::discriminant(&item);
-                let new_is_value = item.is_value();
+                // The comments above a table header are part of the table's decor.
+                let header_prefix =
+                    tables(existing).first().and_then(|table| table.decor().prefix()).cloned();
                 match (&*existing, &mut item) {
                     (Item::Value(old), Item::Value(new)) => {
                         *new.decor_mut() = old.decor().clone();
                     }
-                    (Item::Table(old), Item::Table(new)) => {
-                        *new.decor_mut() = old.decor().clone();
-                        new.set_position(old.position());
-                        if !old.is_implicit() {
-                            new.set_implicit(false);
-                        }
-                    }
-                    (Item::ArrayOfTables(old), Item::ArrayOfTables(new)) => {
-                        for (old, new) in old.iter().zip(new.iter_mut()) {
+                    (old, new) => {
+                        for (old, new) in tables(old).into_iter().zip(tables_mut(new)) {
                             *new.decor_mut() = old.decor().clone();
                             new.set_position(old.position());
+                            if !old.is_implicit() {
+                                new.set_implicit(false);
+                            }
                         }
                     }
-                    _ => {}
                 }
+                let new_is_value = item.is_value();
                 *existing = item;
-                if representation_changed {
+                if shape_changed {
                     let mut key = parent.key_mut(key_to_insert).expect("replaced key must exist");
-                    key.leaf_decor_mut().clear();
+                    let decor = key.leaf_decor_mut();
+                    decor.clear();
                     if new_is_value {
-                        key.leaf_decor_mut().set_suffix(" ");
+                        decor.set_suffix(" ");
+                        if let Some(prefix) = header_prefix {
+                            decor.set_prefix(prefix);
+                        }
                     }
                 }
             }
-            _ => {
-                let inline_key_prefix = is_inline.then(|| {
-                    parent
-                        .iter_mut()
-                        .filter_map(|(_, item)| item.as_value_mut())
-                        .last()
-                        .and_then(|value| {
-                            let suffix = value.decor().suffix()?.as_str()?;
-                            if suffix.is_empty() {
-                                return None;
-                            }
-                            let suffix = suffix.to_owned();
-                            value.decor_mut().set_suffix("");
-                            Some(suffix)
-                        })
-                        .unwrap_or_else(|| " ".to_string())
-                });
-                parent.insert(key_to_insert, item);
-                if let Some(prefix) = inline_key_prefix {
-                    // Separate the new key without reformatting the existing inline table.
-                    parent
-                        .key_mut(key_to_insert)
-                        .expect("inserted key must exist")
-                        .leaf_decor_mut()
-                        .set_prefix(prefix);
-                }
-            }
+            _ => insert_toml_item(parent, is_inline, key_to_insert, item),
         }
     }
 
     Ok(())
+}
+
+/// Inserts a new `item` at `key` into `parent`.
+///
+/// Inline tables can only hold values. There, the new value takes over the whitespace or comment
+/// that followed the previous last value, so the inline table keeps its layout.
+fn insert_toml_item(parent: &mut dyn TableLike, is_inline: bool, key: &str, mut item: Item) {
+    if is_inline {
+        let trailing =
+            parent.iter_mut().filter_map(|(_, item)| item.as_value_mut()).last().and_then(|last| {
+                let suffix = last.decor().suffix().cloned();
+                last.decor_mut().set_suffix("");
+                suffix
+            });
+        item = item.into_value().map_or_else(|item| item, Item::Value);
+        if let Some(value) = item.as_value_mut() {
+            value.decor_mut().clear();
+            if let Some(trailing) = trailing {
+                value.decor_mut().set_suffix(trailing);
+            }
+        }
+    }
+    parent.insert(key, item);
 }
 
 /// Converts a JSON value to a TOML item, formatted the same way as [`format_json_to_toml`].
@@ -395,17 +395,30 @@ fn json_to_toml_item(value: JsonValue) -> Result<Item> {
 
 /// Recursively clears the document position and header whitespace of all tables in `item`.
 fn reset_table_layout(item: &mut Item) {
-    let tables: Vec<&mut toml_edit::Table> = match item {
-        Item::Table(table) => vec![table],
-        Item::ArrayOfTables(array) => array.iter_mut().collect(),
-        _ => return,
-    };
-    for table in tables {
+    for table in tables_mut(item) {
         table.set_position(None);
         table.decor_mut().clear();
         for (_, item) in table.iter_mut() {
             reset_table_layout(item);
         }
+    }
+}
+
+/// Returns the tables of `item` that are written with a header.
+fn tables(item: &Item) -> Vec<&Table> {
+    match item {
+        Item::Table(table) => vec![table],
+        Item::ArrayOfTables(array) => array.iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Returns the tables of `item` that are written with a header.
+fn tables_mut(item: &mut Item) -> Vec<&mut Table> {
+    match item {
+        Item::Table(table) => vec![table],
+        Item::ArrayOfTables(array) => array.iter_mut().collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -463,6 +476,10 @@ chain_id = 8453
             upsert(CONFIG, "{\"chain_id\": 10}", "base").unwrap(),
             CONFIG.replace("chain_id = 8453", "chain_id = 10")
         );
+        assert_eq!(
+            upsert(CONFIG, "{\"daily\": 2000}", ".mainnet.limits").unwrap(),
+            CONFIG.replace("daily = 1_000, weekly = 5_000", "daily = 2000")
+        );
     }
 
     #[test]
@@ -483,6 +500,16 @@ chain_id = 8453
 
     #[test]
     fn upsert_toml_preserves_inline_table_formatting_when_adding_keys() {
+        let toml = "limits = { daily = 1_000, weekly = 5_000 }\n";
+        assert_eq!(
+            upsert(toml, "9000", ".limits.monthly").unwrap(),
+            "limits = { daily = 1_000, weekly = 5_000, monthly = 9000 }\n"
+        );
+        assert_eq!(
+            upsert(toml, "9000", ".limits.extra.monthly").unwrap(),
+            "limits = { daily = 1_000, weekly = 5_000, extra = { monthly = 9000 } }\n"
+        );
+
         let toml = "limits={daily=1_000,weekly = 5_000}\n";
         assert_eq!(
             upsert(toml, "9000", ".limits.monthly").unwrap(),
@@ -506,14 +533,23 @@ chain_id = 8453
     }
 
     #[test]
-    fn upsert_toml_formats_keys_when_the_item_shape_changes() {
+    fn upsert_toml_keeps_comments_when_the_item_shape_changes() {
         let toml = "# Deployment settings.\n[deployment] # maintained by the deploy script\nchain_id = 1\n";
-        assert_eq!(upsert(toml, "disabled", ".deployment").unwrap(), "deployment = \"disabled\"\n");
+        assert_eq!(
+            upsert(toml, "disabled", ".deployment").unwrap(),
+            "# Deployment settings.\ndeployment = \"disabled\"\n"
+        );
+
+        let toml = "# Production RPC endpoint.\n[rpc]\nurl = \"a\"\n";
+        assert_eq!(
+            upsert(toml, r#"[{"url":"a"},{"url":"b"}]"#, ".rpc").unwrap(),
+            "# Production RPC endpoint.\n[[rpc]]\nurl = \"a\"\n\n[[rpc]]\nurl = \"b\"\n"
+        );
 
         let toml = "# Production RPC endpoints.\nrpc = []\n";
         assert_eq!(
             upsert(toml, r#"[{"url":"a"},{"url":"b"}]"#, ".rpc").unwrap(),
-            "[[rpc]]\nurl = \"a\"\n\n[[rpc]]\nurl = \"b\"\n"
+            "# Production RPC endpoints.\nrpc = [{ url = \"a\" }, { url = \"b\" }]\n"
         );
     }
 

@@ -879,13 +879,13 @@ pub(super) fn upsert_json_value(data: &mut Value, value: &str, key: &str) -> Res
 pub(super) fn split_value_key(key: &str) -> Result<Vec<String>> {
     // Parse the path key into segments.
     let canonical_key = canonicalize_json_path(key);
-    let parts: Vec<String> = canonical_key
+    let parts = canonical_key
         .strip_prefix("$.")
         .unwrap_or(key)
         .split('.')
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .collect();
+        .collect::<Vec<_>>();
 
     if parts.is_empty() {
         return Err(fmt_err!("'valueKey' cannot be empty or just '$'"));
