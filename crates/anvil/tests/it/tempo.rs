@@ -4887,6 +4887,34 @@ async fn test_gas_estimation_with_value_fails() {
     assert!(result.is_err(), "Gas estimation with native value should fail in Tempo mode");
 }
 
+/// An Ethereum-typed request without a nonce must be estimated at the sender's current nonce, not
+/// as a first transaction, which Tempo charges the account-creation cost for.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gas_estimation_without_nonce_uses_sender_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+
+    let calldata = IERC20::approveCall { spender: accounts[1], amount: U256::ZERO }.abi_encode();
+    let tx = TransactionRequest::default().from(sender).to(PATH_USD).with_input(calldata);
+
+    provider
+        .send_transaction(WithOtherFields::new(tx.clone().with_gas_limit(TIP20_TRANSFER_GAS)))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let without_nonce = provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap();
+    let with_nonce = provider.estimate_gas(WithOtherFields::new(tx.nonce(nonce))).await.unwrap();
+    assert_eq!(without_nonce, with_nonce);
+}
+
 // ============================================================================
 // Gas Price & Base Fee
 // ============================================================================

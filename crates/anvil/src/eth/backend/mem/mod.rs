@@ -3510,12 +3510,20 @@ impl<N: Network> Backend<N> {
                     simulated_envelope,
                 })
             }
-            FoundryTransactionRequest::Ethereum(request) => self.prepare_base_call_env_with_base(
-                WithOtherFields::new(request),
-                fee_details,
-                block_env,
-                base_evm_env,
-            ),
+            FoundryTransactionRequest::Ethereum(mut request) => {
+                // Tempo charges the account-creation cost for nonce 0, so an omitted nonce must
+                // not default to it.
+                if self.is_tempo() && request.nonce.is_none() {
+                    request.nonce =
+                        Some(tempo_nonce(state, request.from.unwrap_or_default(), U256::ZERO)?);
+                }
+                self.prepare_base_call_env_with_base(
+                    WithOtherFields::new(request),
+                    fee_details,
+                    block_env,
+                    base_evm_env,
+                )
+            }
             #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTransactionRequest::Op(request) => {
                 self.prepare_base_call_env_with_base(request, fee_details, block_env, base_evm_env)
