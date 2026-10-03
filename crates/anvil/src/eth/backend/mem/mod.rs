@@ -3916,19 +3916,15 @@ impl<N: Network> Backend<N> {
         Ok(None)
     }
 
-    /// Returns a transaction trace at a given index.
+    /// Returns the transaction trace at the given trace address, where `[]` is the root call.
     pub async fn trace_get(
         &self,
         hash: B256,
         indices: Vec<Index>,
     ) -> Result<Option<LocalizedTransactionTrace>, BlockchainError> {
-        if indices.len() != 1 {
-            return Ok(None);
-        }
-
-        let index: usize = indices[0].into();
         if let Some(traces) = self.mined_parity_trace_transaction(hash) {
-            return Ok(traces.into_iter().nth(index));
+            let trace_address = indices.iter().copied().map(usize::from).collect::<Vec<_>>();
+            return Ok(traces.into_iter().find(|trace| trace.trace.trace_address == trace_address));
         }
 
         if let Some(fork) = self.get_fork() {

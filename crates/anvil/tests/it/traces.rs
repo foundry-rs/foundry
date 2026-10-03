@@ -832,35 +832,59 @@ async fn test_trace_call_many_defaults_to_latest() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_get_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    let from = accounts[0].address();
-    let to = accounts[1].address();
-    let amount = U256::from(1000);
-    let tx = TransactionRequest::default().to(to).value(amount).from(from);
-    let tx = WithOtherFields::new(tx);
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-
-    let traces = provider.trace_transaction(receipt.transaction_hash).await.unwrap();
-    assert!(!traces.is_empty());
-
-    let trace = provider.trace_get(receipt.transaction_hash, 0).await.unwrap();
-    assert_eq!(trace, traces[0]);
-
-    let missing: Option<LocalizedTransactionTrace> = provider
-        .client()
-        .request("trace_get", (receipt.transaction_hash, vec![Index::from(999)]))
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let get_value = Multicall::Call {
+        target: *storage.address(),
+        callData: storage.getValue().calldata().clone(),
+    };
+    let nested = Multicall::Call {
+        target: *multicall.address(),
+        callData: multicall.aggregate(vec![get_value.clone()]).calldata().clone(),
+    };
+    let receipt = multicall
+        .aggregate(vec![get_value, nested])
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
         .await
         .unwrap();
-    assert_eq!(missing, None);
+    let hash = receipt.transaction_hash;
 
-    let invalid_indices: Option<LocalizedTransactionTrace> = provider
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let addresses =
+        traces.iter().map(|trace| trace.trace.trace_address.clone()).collect::<Vec<_>>();
+    assert_eq!(addresses, vec![vec![], vec![0], vec![1], vec![1, 0]]);
+
+    let trace_get = async |path: &[usize]| {
+        let path = path.iter().copied().map(Index::from).collect::<Vec<_>>();
+        provider
+            .client()
+            .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, path))
+            .await
+            .unwrap()
+    };
+    for trace in &traces {
+        assert_eq!(trace_get(&trace.trace.trace_address).await.as_ref(), Some(trace));
+    }
+    for missing in [&[2][..], &[0, 0], &[1, 1], &[1, 0, 0]] {
+        assert_eq!(trace_get(missing).await, None);
+    }
+
+    let unknown = provider
         .client()
-        .request("trace_get", (receipt.transaction_hash, vec![Index::from(0), Index::from(1)]))
+        .request::<_, Option<LocalizedTransactionTrace>>(
+            "trace_get",
+            (B256::ZERO, Vec::<Index>::new()),
+        )
         .await
         .unwrap();
-    assert_eq!(invalid_indices, None);
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
