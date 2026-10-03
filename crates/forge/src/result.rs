@@ -96,11 +96,6 @@ impl TestOutcome {
         self.tests().filter(|(_, t)| t.status.is_success())
     }
 
-    /// Returns an iterator over all individual skipped tests and their names.
-    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status.is_skipped())
-    }
-
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status.is_failure())
@@ -290,11 +285,6 @@ impl SuiteResult {
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status.is_success())
-    }
-
-    /// Returns an iterator over all individual skipped tests and their names.
-    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
@@ -1235,13 +1225,11 @@ impl SymbolicCounterexampleCall {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
     /// The test status, indicating whether the test case succeeded, failed, or was marked as
-    /// skipped. This means that the transaction executed properly, the test was marked as
-    /// skipped with vm.skip(), or that there was a revert and that the test was expected to
-    /// fail (prefixed with `testFail`)
+    /// skipped. This means that the transaction executed properly, or the test was marked as
+    /// skipped with vm.skip().
     pub status: TestStatus,
 
-    /// If there was a revert, this field will be populated. Note that the test can
-    /// still be successful (i.e self.success == true) when it's expected to fail.
+    /// If there was a revert, this field will be populated.
     pub reason: Option<String>,
 
     /// The active fork's block number after execution, if any.
