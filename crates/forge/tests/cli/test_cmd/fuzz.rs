@@ -6317,6 +6317,7 @@ grep -q 'function bucket' "$prompt"
 grep -q 'surviving mutants may be semantically equivalent' "$prompt"
 if ! grep -q '"round": 1' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
+grep -q '"contract": "GeneratedRound1Test"' "$prompt"
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",

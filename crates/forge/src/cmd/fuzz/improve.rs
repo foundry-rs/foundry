@@ -111,6 +111,7 @@ struct OutputContract {
     allowed_path_prefix: PathBuf,
     maximum_files: usize,
     maximum_total_bytes: usize,
+    example: Candidate,
     note: &'static str,
 }
 
@@ -232,6 +233,8 @@ impl FuzzImproveArgs {
             let retained_bytes = current_candidate
                 .as_ref()
                 .map_or(0, |candidate| candidate.files.iter().map(|file| file.content.len()).sum());
+            let example_contract = format!("GeneratedRound{round}Test");
+            let example_path = generated_tests.join(format!("GeneratedRound{round}.t.sol"));
             let prompt = GeneratorPrompt {
                 schema: PROMPT_SCHEMA,
                 round,
@@ -250,7 +253,26 @@ impl FuzzImproveArgs {
                     allowed_path_prefix: generated_tests.clone(),
                     maximum_files: MAX_CANDIDATE_FILES - retained_files,
                     maximum_total_bytes: MAX_CANDIDATE_BYTES - retained_bytes,
-                    note: "Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. An optional generator object may record self-reported agent and model names.",
+                    example: Candidate {
+                        schema: CANDIDATE_SCHEMA.to_string(),
+                        rationale: "Explain the concrete input or sequence that distinguishes the original from the mutant.".to_string(),
+                        generator: Some(GeneratorMetadata {
+                            agent: "generator name".to_string(),
+                            model: "model name".to_string(),
+                        }),
+                        files: vec![CandidateFile {
+                            path: example_path.clone(),
+                            content: format!(
+                                "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
+                            ),
+                        }],
+                        tests: vec![CandidateTest {
+                            path: example_path,
+                            contract: example_contract,
+                            name: "testProperty".to_string(),
+                        }],
+                    },
+                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, tests, and generator metadata with a useful property for this project. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
