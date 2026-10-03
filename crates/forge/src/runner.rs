@@ -1386,12 +1386,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut executor = self.clone_executor();
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
-        if executor.is_raw_call_success(
-            self.address,
-            Cow::Borrowed(&raw.state_changeset),
-            &raw,
-            false,
-        ) {
+        if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
         if let Some(reason) = raw.skip_reason() {
@@ -1917,8 +1912,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let Ok((mut raw_call_result, reason)) = self.call_test(func, &[]) else {
             return self.result;
         };
-        let success =
-            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
+        let success = self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result);
         self.result.single_result(success, reason, raw_call_result);
         self.result
     }
@@ -2506,7 +2500,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.address,
             Cow::Borrowed(&raw.state_changeset),
             &raw,
-            false,
         ) {
             // The solver model is not a user-facing counterexample until replay confirms it, so
             // report the mismatch as an incomplete run instead.
@@ -2705,7 +2698,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.address,
                     Cow::Borrowed(&raw.state_changeset),
                     &raw,
-                    false,
                 ) {
                     self.result.single_result(true, None, raw);
                     return Ok(());
@@ -3688,7 +3680,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 self.address,
                 Cow::Borrowed(&raw.state_changeset),
                 &raw,
-                false,
             ),
         )
     }
@@ -3773,7 +3764,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             HitMaps::merge_opt(&mut result.line_coverage, raw_call_result.line_coverage.clone());
 
             let is_success =
-                self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
+                self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result);
             // Record counterexample if test fails.
             if !is_success {
                 result.counterexample =
