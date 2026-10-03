@@ -6336,6 +6336,9 @@ grep -q 'example/=lib/example/' "$prompt"
 grep -q '"path": "tests/Arithmetic.t.sol"' "$prompt"
 grep -q 'contract ArithmeticTest' "$prompt"
 grep -q '"truncated": true' "$prompt"
+if grep -q '"round": 1' "$prompt" && grep -q '"last_rejected_sources"' "$prompt"; then
+    exit 1
+fi
 if grep -q '"round": 1' "$prompt" &&
     grep -q '"path": "tests/generated/Existing.t.sol"' "$prompt"; then
     exit 1
@@ -6347,20 +6350,22 @@ cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
   "rationale": "exercise candidate rejection",
-  "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n"}],
+  "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-overwrite-marker\n"}],
   "tests": [{"path": "tests/generated/Existing.t.sol", "contract": "ExistingTest", "name": "testExisting"}]
 }
 JSON
 exit 0
 fi
 if grep -q '"round": 2' "$prompt"; then
+grep -q '"last_rejected_sources"' "$prompt"
+grep -q 'rejected-overwrite-marker' "$prompt"
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
   "rationale": "duplicate the existing small-value example",
   "files": [{
     "path": "tests/generated/ArithmeticNoGain.t.sol",
-    "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
+    "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\n// rejected-no-gain-marker\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
   }],
   "tests": [{
     "path": "tests/generated/ArithmeticNoGain.t.sol",
@@ -6372,6 +6377,9 @@ JSON
 exit 0
 fi
 if grep -q '"round": 3' "$prompt"; then
+grep -q '"last_rejected_sources"' "$prompt"
+grep -q 'rejected-no-gain-marker' "$prompt"
+if grep -q 'rejected-overwrite-marker' "$prompt"; then exit 1; fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
@@ -6393,16 +6401,20 @@ fi
 grep -q '"current_candidate"' "$prompt"
 grep -q 'ArithmeticLowerTest' "$prompt"
 if grep -q '"round": 4' "$prompt"; then
+if grep -q '"last_rejected_sources"' "$prompt"; then exit 1; fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
   "rationale": "try to replace an accepted property",
-  "files": [{"path": "tests/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\n"}],
+  "files": [{"path": "tests/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-retained-path-marker\n"}],
   "tests": [{"path": "tests/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
 }
 JSON
 exit 0
 fi
+grep -q '"last_rejected_sources"' "$prompt"
+grep -q 'rejected-retained-path-marker' "$prompt"
+if grep -q 'rejected-no-gain-marker' "$prompt"; then exit 1; fi
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/fuzz-improve-candidate-v1",
