@@ -18,6 +18,7 @@ use tempo_alloy::contracts::precompiles::{
 };
 use tempo_primitives::TempoAddressExt;
 
+mod hardfork;
 mod keystore;
 mod lane;
 mod session;
@@ -28,6 +29,9 @@ mod tip20;
 
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
+pub use hardfork::{
+    active_tempo_hardfork, ensure_expiring_nonce_discriminator_active, is_tempo_hardfork_active,
+};
 pub use keystore::*;
 pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
 pub use session::*;

@@ -43,7 +43,9 @@ use foundry_common::{
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
     shell,
-    tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        TempoSponsor, is_tempo_hardfork_active, maybe_print_fee_token, resolve_and_set_fee_token,
+    },
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -53,6 +55,7 @@ use foundry_evm::{
         fork::ResolvedFork,
         opts::EvmOpts,
     },
+    hardfork::TempoHardfork,
     traces::CallKind,
 };
 use foundry_wallets::{
@@ -65,7 +68,7 @@ use tempo_alloy::{
     TempoNetwork,
     rpc::{TempoTransactionReceipt, TempoTransactionRequest},
 };
-use tempo_primitives::transaction::{Call, TempoTxEnvelope};
+use tempo_primitives::transaction::{Call, TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
 
 /// Represents how to send a single transaction.
 #[derive(Clone)]
@@ -136,7 +139,9 @@ where
 
         reject_access_key_create::<N>(tx, tempo_wallet.is_some())?;
 
-        if sequential_broadcast {
+        // An expiring nonce is a TIP-1106 discriminator rather than a position in the sender's
+        // nonce sequence, so there is no provider nonce to wait for.
+        if sequential_broadcast && tx.nonce_key() != Some(TEMPO_EXPIRING_NONCE_KEY) {
             let from = tx.from().expect("no sender");
 
             let tx_nonce = tx.nonce().expect("no nonce");
@@ -805,6 +810,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     }
                 };
 
+                // TIP-1106: from T12 the nonce of an expiring nonce transaction is an opaque
+                // discriminator. Each transaction gets its index in the sequence, which is
+                // monotonic and stable across `--resume`, so that otherwise identical
+                // transactions keep distinct signing and replay hashes. Earlier hardforks only
+                // accept 0, which is also the fallback when the hardfork cannot be determined.
+                let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
+                    && !all_signed
+                    && is_tempo_hardfork_active(provider.as_ref(), TempoHardfork::T12)
+                        .await
+                        .unwrap_or(false);
+
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
                 let sequence_chain = sequence.chain;
@@ -846,7 +862,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                             }
 
-                            self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
+                            self.script_config.tempo.apply::<FEN::Network>(
+                                &mut tx,
+                                expiring_nonce_discriminators.then_some(index as u64),
+                            );
 
                             send_kind.for_sender(sequence_chain, &from, tx)?
                         }

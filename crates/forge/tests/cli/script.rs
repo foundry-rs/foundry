@@ -12,7 +12,7 @@ use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_evm::constants::CALLER;
+use foundry_evm::{constants::CALLER, hardfork::TempoHardfork};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
@@ -6473,6 +6473,104 @@ contract DeploySponsoredTempoAA is Script {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
+}
+
+const TEMPO_IDENTICAL_TRANSFERS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+interface ITIP20Transfer {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
+contract IdenticalTransfers is Script {
+    function run() external {
+        ITIP20Transfer token = ITIP20Transfer(0x20C0000000000000000000000000000000000000);
+        // The recipient is a funded dev account, so both transfers also cost the same gas.
+        address recipient = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+        vm.startBroadcast();
+        token.transfer(recipient, 1);
+        token.transfer(recipient, 1);
+        vm.stopBroadcast();
+    }
+}
+"#;
+
+// TIP-1106: from T12 each expiring nonce transaction carries its sequence index as discriminator,
+// which keeps identical transactions distinct.
+#[forgetest_init]
+async fn tempo_script_assigns_expiring_nonce_discriminators(prj: _, cmd: _) {
+    let script = prj.add_script("IdenticalTransfers.s.sol", TEMPO_IDENTICAL_TRANSFERS_SCRIPT);
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let provider = handle.http_provider();
+
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--tempo.expires",
+        "30",
+    ]);
+    cmd.assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("no broadcast artifact found");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let mut transactions = Vec::new();
+    for transaction in json["transactions"].as_array().unwrap() {
+        let hash = transaction["hash"].as_str().unwrap().to_string();
+        transactions.push(
+            provider
+                .raw_request::<_, Value>("eth_getTransactionByHash".into(), (hash,))
+                .await
+                .unwrap(),
+        );
+    }
+    let nonces = transactions.iter().map(|tx| tx["nonce"].clone()).collect::<Vec<_>>();
+    assert_eq!(nonces, ["0x0", "0x1"]);
+
+    // Only the discriminator, and what is derived from it, tells the two transactions apart.
+    for transaction in &mut transactions {
+        assert_eq!(transaction["nonceKey"], format!("{:#x}", U256::MAX));
+        let fields = transaction.as_object_mut().unwrap();
+        for derived in [
+            "nonce",
+            "hash",
+            "signature",
+            "blockHash",
+            "blockNumber",
+            "blockTimestamp",
+            "transactionIndex",
+        ] {
+            fields.remove(derived);
+        }
+    }
+    assert_eq!(transactions[0], transactions[1]);
+}
+
+// Before T12 the nonce must be 0, so identical expiring nonce transactions are one transaction.
+#[forgetest_init]
+async fn tempo_script_rejects_identical_expiring_nonce_transactions_before_t12(prj: _, cmd: _) {
+    let script = prj.add_script("IdenticalTransfers.s.sol", TEMPO_IDENTICAL_TRANSFERS_SCRIPT);
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T11.into()))).await;
+
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--tempo.expires",
+        "30",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: transaction 1 is identical to an earlier transaction of this script ([..]) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)
+
+"#]]);
 }
 
 #[forgetest_init]
