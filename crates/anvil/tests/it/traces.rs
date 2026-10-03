@@ -6,7 +6,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_eips::BlockId;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     hex::{self, FromHex},
@@ -266,14 +266,21 @@ async fn test_trace_raw_transaction_rejects_code_sender() {
     let raw_tx = hex::decode(&signed_tx[2..]).unwrap();
 
     api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
-    let err = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap_err();
-    assert!(err.to_string().contains("sender not an eoa"), "{err}");
+    let error = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!((error.code, error.message.as_ref()), (-32003, "sender not an eoa"));
 
     // An EIP-7702 delegation keeps the account an EOA.
     let delegation = [&[0xef, 0x01, 0x00][..], accounts[2].address().as_slice()].concat();
     api.anvil_set_code(from, delegation.into()).await.unwrap();
     let traces = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap();
     assert_eq!(traces.trace.len(), 1);
+
+    // Mining keeps EIP-3607 disabled, so the code sender's transaction is still included.
+    api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
+    let receipt =
+        provider.send_raw_transaction(&raw_tx).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
 }
 
 #[tokio::test(flavor = "multi_thread")]
