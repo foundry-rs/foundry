@@ -201,6 +201,24 @@ async fn test_tip_above_fee_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn priced_calls_without_gas_limit_are_capped_by_allowance() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // The sender can pay for 100_000 gas, far below the block gas limit.
+    let from = Address::repeat_byte(0x11);
+    let gas_price = 10_000_000_000_000u128;
+    api.anvil_set_balance(from, U256::from(gas_price * 100_000)).await.unwrap();
+
+    // Returns GAS.
+    let contract = Address::repeat_byte(0x5a);
+    api.anvil_set_code(contract, bytes!("5a5f5260205ff3")).await.unwrap();
+    let request = TransactionRequest::default().from(from).to(contract).gas_price(gas_price);
+    let output = provider.call(WithOtherFields::new(request)).await.unwrap();
+    assert!(U256::from_be_slice(&output) < U256::from(100_000 - 21_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_zero_block_fee_history_is_empty() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 

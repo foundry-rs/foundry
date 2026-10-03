@@ -3225,8 +3225,32 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         base_evm_env: Option<&EvmEnv>,
     ) -> Result<PreparedCall, BlockchainError> {
+        let gas_omitted = request.gas.is_none();
         let request = self.parse_transaction_request(request)?;
-        self.prepare_typed_call_env_with_base(state, request, fee_details, block_env, base_evm_env)
+        let mut prepared = self.prepare_typed_call_env_with_base(
+            state,
+            request,
+            fee_details,
+            block_env,
+            base_evm_env,
+        )?;
+        // Without a gas limit, a priced call gets at most the gas its sender can pay for, rather
+        // than failing the funds check for the default limit.
+        if gas_omitted
+            && let CallTxEnv::Eth(tx_env) = &mut prepared.tx_env
+            && tx_env.gas_price > 0
+        {
+            let balance =
+                state.basic_ref(tx_env.caller)?.map(|info| info.balance).unwrap_or_default();
+            let upfront = tx_env
+                .value
+                .saturating_add(revm::context_interface::Transaction::calc_max_data_fee(tx_env));
+            if let Some(available) = balance.checked_sub(upfront) {
+                let allowance = available / U256::from(tx_env.gas_price);
+                tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
+            }
+        }
+        Ok(prepared)
     }
 
     const fn base_call_tx_env(&self, tx_env: TxEnv) -> CallTxEnv {
