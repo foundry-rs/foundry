@@ -1608,7 +1608,7 @@ impl<N: Network> EthApi<N> {
         &self,
         transaction: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResults> {
+    ) -> Result<TraceResultsWithTransactionHash> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
     }
