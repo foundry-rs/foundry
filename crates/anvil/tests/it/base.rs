@@ -1767,3 +1767,41 @@ async fn base_denim_failed_deposit_preserves_state_and_time_override() {
     api.mine_one().await.unwrap();
     assert_eq!(base_time_ms(&provider, BlockId::latest()).await, 2_000_200);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_denim_system_deposits_do_not_retry_unfittable_transaction() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let (api, handle) = spawn(config).await;
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    // The system deposits consume block gas first, so this transaction cannot fit in a Denim
+    // block. Their inclusion must not count as pool progress and retrigger automine.
+    let pending = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(accounts[0].address())
+                .with_to(accounts[1].address())
+                .with_value(U256::from(1))
+                .with_gas_limit(api.gas_limit().to())
+                .into(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while provider.get_block_number().await.unwrap() == 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // A retry loop would keep mining deposit-only blocks during this window.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert_eq!(provider.get_block_number().await.unwrap(), 1);
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 2);
+    assert!(provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_none());
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
+}

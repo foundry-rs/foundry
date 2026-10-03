@@ -6187,12 +6187,20 @@ where
                 let block_access_list = candidate_db.take_block_access_list();
 
                 #[cfg(feature = "base")]
+                let system_transaction_count =
+                    protocol_transactions.len() - pool_transactions.len();
+                #[cfg(feature = "base")]
                 base::validate_system_transactions(
-                    &protocol_transactions[..protocol_transactions.len() - pool_transactions.len()],
+                    &protocol_transactions[..system_transaction_count],
                     &pool_result,
                 )?;
 
-                let included = pool_result.included;
+                #[cfg_attr(not(feature = "base"), allow(unused_mut))]
+                let mut included = pool_result.included;
+                // System deposits are generated per block rather than taken from the pool. Report
+                // only pool transactions so the pool does not treat every block as progress.
+                #[cfg(feature = "base")]
+                included.drain(..system_transaction_count);
                 let stale = pool_result.stale;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
