@@ -2683,6 +2683,45 @@ async fn test_trace_replay_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_transaction_fork() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1000))
+        .from(accounts[0].address());
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let config = NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (_api, handle) = spawn(config).await;
+
+    // The pre-fork transaction is replayed upstream and keeps its hash.
+    let mut replays = Vec::new();
+    for provider in [handle.http_provider(), origin] {
+        replays.push(
+            provider
+                .client()
+                .request::<_, TraceResultsWithTransactionHash>(
+                    "trace_replayTransaction",
+                    (hash, vec![TraceType::Trace]),
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(replays[0].transaction_hash, hash);
+    assert_eq!(replays[0], replays[1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_replay_state_diff_account_lifecycle() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
