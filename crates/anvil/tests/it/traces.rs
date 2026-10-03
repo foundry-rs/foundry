@@ -896,6 +896,50 @@ async fn test_trace_transaction_omits_nested_precompile_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let identity = Address::with_last_byte(4);
+
+    // CALL to the identity precompile forwarding 1 wei.
+    let caller = Address::repeat_byte(0x42);
+    api.anvil_set_code(caller, Bytes::from_hex("0x6000600060006000600160045af15000").unwrap())
+        .await
+        .unwrap();
+    // DELEGATECALL to the identity precompile, which inherits the frame's value.
+    let delegator = Address::repeat_byte(0x43);
+    api.anvil_set_code(delegator, Bytes::from_hex("0x600060006000600060045af45000").unwrap())
+        .await
+        .unwrap();
+
+    let tx = |to, value| TransactionRequest::default().from(from).to(to).value(U256::from(value));
+    for (tx, frames) in [
+        (tx(caller, 1), vec![caller, identity]),
+        (tx(delegator, 1), vec![delegator, identity]),
+        (tx(delegator, 0), vec![delegator]),
+        (tx(identity, 0).input(Bytes::from_static(b"echo").into()), vec![identity]),
+    ] {
+        let receipt =
+            provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+        let hash = receipt.transaction_hash;
+        let traces = provider.trace_transaction(hash).await.unwrap();
+        let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+        let targets = traces
+            .iter()
+            .map(|trace| match &trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, frames);
+
+        let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+        assert_eq!(replay.trace, traces);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_transaction_unknown_hash_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
 
