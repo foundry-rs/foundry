@@ -17,7 +17,7 @@ use alloy_network::{
 };
 use alloy_primitives::{Address, Bytes, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockId, TransactionRequest};
+use alloy_rpc_types::{Authorization, BlockId, TransactionRequest, trace::parity::TraceType};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use anvil::{NodeConfig, spawn};
@@ -1099,7 +1099,11 @@ async fn call_defaults_blob_fee_cap_to_zero() {
         ),
         (plain_call, blob_base_fee),
     ] {
-        let output = provider.call(WithOtherFields::new(request)).await.unwrap();
+        let request = WithOtherFields::new(request);
+        let output = provider.call(request.clone()).await.unwrap();
         assert_eq!(U256::from_be_slice(&output), expected);
+        let traced =
+            api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
+        assert_eq!(U256::from_be_slice(&traced.output), expected);
     }
 }
