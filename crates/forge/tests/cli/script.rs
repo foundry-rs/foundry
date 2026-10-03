@@ -20,7 +20,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_mapping_method, spawn_rpc_proxy_recording_method,
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
-    snapbox::IntoData,
+    snapbox::{IntoData, cmd::OutputAssert},
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
 };
 use regex::Regex;
@@ -28,6 +28,7 @@ use serde_json::Value;
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -1353,6 +1354,95 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
+async fn broadcast_stops_after_dropped_transaction(prj: _, cmd: _) {
+    prj.update_config(|config| config.transaction_timeout = 1);
+    let script = prj.add_script(
+        "DroppedBroadcast.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract DroppedBroadcastTarget {}
+
+contract DroppedBroadcast is Script {
+    function run() external {
+        vm.broadcast(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        new DroppedBroadcastTarget();
+        vm.broadcast(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+        new DroppedBroadcastTarget();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut accounts = handle.dev_accounts();
+    let (first_sender, second_sender) = (accounts.next().unwrap(), accounts.next().unwrap());
+    let path = prj.root().join("broadcast/DroppedBroadcast.s.sol/31337/run-latest.json");
+    let rpc = handle.http_endpoint();
+    let args = [
+        "--tc",
+        "DroppedBroadcast",
+        "--rpc-url",
+        &rpc,
+        "--private-keys",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--private-keys",
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    ];
+
+    // Two signers force a sequential broadcast; drop the first transaction from the mempool.
+    cmd.arg("script").arg(&script).args(args).arg("--broadcast");
+    let child = cmd.cmd().stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let broadcast = tokio::task::spawn_blocking(move || child.wait_with_output().unwrap());
+    let first_hash = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 1)
+                && let Some(hash) = sequence["transactions"][0]["hash"].as_str()
+            {
+                break hash.parse().unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("first transaction was not checkpointed");
+    api.anvil_drop_transaction(first_hash).await.unwrap();
+    api.anvil_set_auto_mine(true).await.unwrap();
+    OutputAssert::new(broadcast.await.unwrap()).failure().stderr_eq(str![[r#"
+Warning: Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.
+Error: Some transactions were not confirmed. Add `--resume` to your command to retry them.
+
+"#]]);
+
+    // The second signer's transaction must not be released after the first one was dropped.
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(sequence["transactions"][1]["hash"].is_null());
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let provider = handle.http_provider();
+    assert_eq!(provider.get_transaction_count(first_sender).await.unwrap(), 0);
+    assert_eq!(provider.get_transaction_count(second_sender).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
+    cmd.assert_success();
+
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(
+        sequence["transactions"][0]["hash"].as_str().unwrap().parse::<B256>().unwrap(),
+        first_hash
+    );
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(first_sender).await.unwrap(), 1);
+    assert_eq!(provider.get_transaction_count(second_sender).await.unwrap(), 1);
+    for transaction in sequence["transactions"].as_array().unwrap() {
+        let address = transaction["contractAddress"].as_str().unwrap().parse::<Address>().unwrap();
+        assert!(!provider.get_code_at(address).await.unwrap().is_empty());
+    }
 }
 
 #[forgetest]
