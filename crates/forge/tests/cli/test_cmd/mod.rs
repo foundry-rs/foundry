@@ -2576,10 +2576,11 @@ contract SetupThenTestSelfdestructTest is Test {
     .assert_success();
 }
 
+// `waste()` spends more gas than the forked block's gas limit, so it only succeeds with
+// `--disable-block-gas-limit`.
 #[forgetest_init]
-#[ignore = "Too slow"]
-fn can_disable_block_gas_limit(prj: _, cmd: _) {
-    let endpoint = rpc::next_http_archive_rpc_url();
+async fn can_disable_block_gas_limit_on_fork(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(30_000_000))).await;
 
     prj.add_test(
         "Contract.t.sol",
@@ -2605,10 +2606,44 @@ contract GasLimitTest is Test {
     }
 }
    "#
-        .replace("<rpc>", &endpoint),
+        .replace("<rpc>", &handle.http_endpoint()),
     );
 
-    cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+    cmd.args(["test", "--isolate"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:GasLimitTest
+[FAIL: EvmError: Revert] test() (block: 0) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Contract.t.sol:GasLimitTest
+[FAIL: EvmError: Revert] test() (block: 0) ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--isolate", "--disable-block-gas-limit"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Contract.t.sol:GasLimitTest
+[PASS] test() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 }
 
 #[forgetest]
