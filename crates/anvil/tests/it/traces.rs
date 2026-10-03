@@ -874,6 +874,10 @@ async fn test_block_traces_reject_pending() {
     assert_eq!(error.as_error_resp().unwrap().code, -32602);
     let error = provider.trace_replay_block_transactions(pending).await.unwrap_err();
     assert_eq!(error.as_error_resp().unwrap().code, -32602);
+
+    // Mined block tags still resolve.
+    provider.trace_block(BlockId::latest()).await.unwrap();
+    provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
