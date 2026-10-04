@@ -57,7 +57,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         let is_forked = db.is_forked_mode();
         let spec = *evm_env.spec_id();
         let mut tempo_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
-        tempo_evm.cfg.gas_params = tempo_gas_params(spec);
+        Self::set_execution_spec(tempo_evm.ctx_mut(), spec);
         tempo_evm.cfg.tx_chain_id_check = true;
         if tempo_evm.cfg.tx_gas_limit_cap.is_none() {
             tempo_evm.cfg.tx_gas_limit_cap = spec.tx_gas_limit_cap();
@@ -87,6 +87,11 @@ impl FoundryEvmFactory for TempoEvmFactory {
         I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db,
     {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+    }
+
+    fn set_execution_spec(context: &mut Self::FoundryContext<'_>, spec: Self::Spec) {
+        context.cfg.spec = spec;
+        context.cfg.set_gas_params(tempo_gas_params(spec));
     }
 }
 
@@ -198,4 +203,29 @@ pub(crate) fn initialize_tempo_evm<
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::Backend;
+    use revm::{
+        context_interface::cfg::GasParams, inspector::NoOpInspector, primitives::hardfork::SpecId,
+    };
+
+    #[test]
+    fn tempo_execution_spec_preserves_network_gas() {
+        let mut db = Backend::<TempoEvmNetwork>::spawn(None).unwrap();
+        let mut evm = TempoEvmFactory::default().create_foundry_evm_with_inspector(
+            &mut db,
+            EvmEnv::default(),
+            NoOpInspector,
+        );
+        for spec in [TempoHardfork::T3, TempoHardfork::T7, TempoHardfork::T14] {
+            TempoEvmFactory::set_execution_spec(evm.ctx_mut(), spec);
+            assert_eq!(evm.cfg.spec, spec);
+            assert_eq!(evm.cfg.gas_params, tempo_gas_params(spec));
+            assert_ne!(evm.cfg.gas_params, GasParams::new_spec(SpecId::OSAKA));
+        }
+    }
 }

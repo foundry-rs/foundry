@@ -17,7 +17,8 @@ use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
-forgetest_async!(can_deploy_multi_chain_script_without_lib, |prj, cmd| {
+#[forgetest]
+async fn can_deploy_multi_chain_script_without_lib(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -34,9 +35,10 @@ forgetest_async!(can_deploy_multi_chain_script_without_lib, |prj, cmd| {
 
     assert_eq!(api2.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 2);
     assert_eq!(api2.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 3);
-});
+}
 
-forgetest_async!(can_not_deploy_multi_chain_script_with_lib, |prj, cmd| {
+#[forgetest]
+async fn can_not_deploy_multi_chain_script_with_lib(prj: _, cmd: _) {
     let (_, handle1) = spawn(NodeConfig::test()).await;
     let (_, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -48,9 +50,10 @@ forgetest_async!(can_not_deploy_multi_chain_script_with_lib, |prj, cmd| {
         .add_sig("MultiChainBroadcastLink", "deploy(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::UnsupportedLibraries);
-});
+}
 
-forgetest_async!(can_not_change_fork_during_broadcast, |prj, cmd| {
+#[forgetest]
+async fn can_not_change_fork_during_broadcast(prj: _, cmd: _) {
     let (_, handle1) = spawn(NodeConfig::test()).await;
     let (_, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -62,9 +65,10 @@ forgetest_async!(can_not_change_fork_during_broadcast, |prj, cmd| {
         .add_sig("MultiChainBroadcastNoLink", "deployError(string memory,string memory)")
         .args(&[&handle1.http_endpoint(), &handle2.http_endpoint()])
         .broadcast(ScriptOutcome::ErrorSelectForkOnBroadcast);
-});
+}
 
-forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
+#[forgetest]
+async fn can_resume_multi_chain_script(prj: _, cmd: _) {
     let (_, handle1) = spawn(NodeConfig::test()).await;
     let (_, handle2) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast_without_endpoint(cmd, prj.root());
@@ -77,9 +81,10 @@ forgetest_async!(can_resume_multi_chain_script, |prj, cmd| {
         .await
         .arg("--multi")
         .resume(ScriptOutcome::OkBroadcast);
-});
+}
 
-forgetest_async!(resume_multi_chain_does_not_replay_completed_chain, |prj, cmd| {
+#[forgetest]
+async fn resume_multi_chain_does_not_replay_completed_chain(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     let (rpc1, chain1_submissions) =
@@ -187,9 +192,10 @@ forgetest_async!(resume_multi_chain_does_not_replay_completed_chain, |prj, cmd| 
             assert!(!provider.get_code_at(address).await.unwrap().is_empty());
         }
     }
-});
+}
 
-forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
+#[forgetest]
+async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     let (rpc1, chain1_submissions) =
@@ -313,4 +319,4 @@ forgetest_async!(resume_multi_chain_after_lost_submission_response, |prj, cmd| {
             assert!(!provider.get_code_at(address).await.unwrap().is_empty());
         }
     }
-});
+}

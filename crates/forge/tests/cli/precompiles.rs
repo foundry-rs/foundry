@@ -1,9 +1,11 @@
 //! Contains various tests for `forge test` with precompiles.
 
+use alloy_chains::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_test_utils::{str, util::OutputExt};
+use foundry_test_utils::{rpc::next_rpc_endpoint, str, util::OutputExt};
 
-forgetest_init!(precompile_trace_decoding, |prj, cmd| {
+#[forgetest_init]
+fn precompile_trace_decoding(prj: _, cmd: _) {
     prj.add_test(
         "PrecompileTrace.t.sol",
         r#"
@@ -328,9 +330,10 @@ Traces:
     │   └─ ← [Return] true
 ...
 "#]]);
-});
+}
 
-forgetest_init!(precompile_cheatcode_load_is_read_only, |prj, cmd| {
+#[forgetest_init]
+fn precompile_cheatcode_load_is_read_only(prj: _, cmd: _) {
     prj.add_test(
         "PrecompileCheatcodeLoad.t.sol",
         r#"
@@ -367,9 +370,10 @@ contract PrecompileCheatcodeLoadTest is Test {
     );
 
     cmd.args(["test", "--match-contract", "PrecompileCheatcodeLoadTest"]).assert_success();
-});
+}
 
-forgetest_init!(tempo_t5_hardfork_precompile_smoke, |prj, cmd| {
+#[forgetest_init]
+fn tempo_t5_hardfork_precompile_smoke(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = NetworkConfigs::with_tempo();
         config.hardfork = Some("tempo:T5".parse::<foundry_config::FoundryHardfork>().unwrap());
@@ -419,9 +423,10 @@ contract TempoT5PrecompileSmokeTest is Test {
         .stdout_lossy();
     assert!(stdout.contains("AddressRegistry::isImplicitlyApproved"), "{stdout}");
     assert!(stdout.contains("TIP20ChannelReserve::domainSeparator"), "{stdout}");
-});
+}
 
-forgetest_init!(tempo_t6_keychain_helpers_and_decoding, |prj, cmd| {
+#[forgetest_init]
+fn tempo_t6_keychain_helpers_and_decoding(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = NetworkConfigs::with_tempo();
         config.hardfork = Some("tempo:T6".parse::<foundry_config::FoundryHardfork>().unwrap());
@@ -577,9 +582,10 @@ contract TempoT6KeychainHelpersTest is Test {
     assert!(stdout.contains("SignatureVerifier::verifyKeychainAdmin"), "{stdout}");
     assert!(stdout.contains("TIP403Registry::validateReceivePolicy"), "{stdout}");
     assert!(stdout.contains("ReceivePolicyGuard::balanceOf"), "{stdout}");
-});
+}
 
-forgetest_init!(tempo_t8_current_committee_decoding, |prj, cmd| {
+#[forgetest_init]
+fn tempo_t8_current_committee_decoding(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = NetworkConfigs::with_tempo();
         config.hardfork = Some("tempo:T8".parse::<foundry_config::FoundryHardfork>().unwrap());
@@ -634,11 +640,12 @@ contract TempoT8CurrentCommitteeTest is Test {
     assert!(stdout.contains("← [Return] 0, []"), "{stdout}");
     assert!(stdout.contains("CurrentCommittee::setCommitteeMembers(1"), "{stdout}");
     assert!(stdout.contains("← [Revert] Unauthorized()"), "{stdout}");
-});
+}
 
 // tests transfer using celo precompile.
 // <https://github.com/foundry-rs/foundry/issues/11622>
-forgetest_init!(celo_transfer, |prj, cmd| {
+#[forgetest_init]
+fn celo_transfer(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = NetworkConfigs::with_celo();
     });
@@ -692,15 +699,13 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
-forgetest_init!(
-    #[ignore]
-    arbitrum_fork_arbsys_arb_block_number,
-    |prj, cmd| {
-        prj.add_test(
-            "ArbitrumArbSys.t.sol",
-            r#"
+#[forgetest_init]
+fn flaky_arbitrum_fork_arbsys_arb_block_number(prj: _, cmd: _) {
+    prj.add_test(
+        "ArbitrumArbSys.t.sol",
+        &r#"
 import "forge-std/Test.sol";
 
 interface ArbSys {
@@ -709,7 +714,7 @@ interface ArbSys {
 
 contract ArbitrumArbSysTest is Test {
     function test_arbitrum_fork_arbsys_arb_block_number() public {
-        vm.createSelectFork("https://arbitrum-one.public.blastapi.io", 75219831);
+        vm.createSelectFork("<rpc>", 75219831);
 
         assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219831);
         assertLt(block.number, 75219831);
@@ -723,17 +728,18 @@ contract ArbitrumArbSysTest is Test {
         assertEq(ArbSys(address(0x64)).arbBlockNumber(), 75219832);
     }
 }
-   "#,
-        );
+   "#
+        .replace("<rpc>", &next_rpc_endpoint(NamedChain::Arbitrum)),
+    );
 
-        cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
-    }
-);
+    cmd.args(["test", "--mt", "test_arbitrum_fork_arbsys_arb_block_number"]).assert_success();
+}
 
 // Nitro serves ArbSys as a precompile, so calls to it pay the warm account access cost, and
 // `arbBlockNumber()` charges 803 gas: 800 to open the ArbOS state and 3 to copy the result.
 // Without a fork it reports the current block, following `vm.roll`.
-forgetest_init!(arbitrum_arbsys_arb_block_number_gas, |prj, cmd| {
+#[forgetest_init]
+fn arbitrum_arbsys_arb_block_number_gas(prj: _, cmd: _) {
     prj.add_test(
         "ArbSysGas.t.sol",
         r#"
@@ -815,4 +821,4 @@ contract ArbSysGasTest is Test {
 
     cmd.env("FOUNDRY_CHAIN_ID", "42161");
     cmd.args(["test", "--mt", "test_arbsys_", "--isolate"]).assert_success();
-});
+}

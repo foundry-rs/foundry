@@ -19,7 +19,7 @@ use foundry_config::{Chain, Config};
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
+use revm_inspectors::tracing::OpcodeFilter;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -89,8 +89,9 @@ pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
     TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
-        CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
-        DecodedCallTrace, TraceMemberOrder,
+        CallKind, CallLog, CallTrace, CallTraceNode, CallTraceStep, DecodedCallData,
+        DecodedCallLog, DecodedCallTrace, DecodedInternalCall, DecodedTraceStep, RecordedMemory,
+        StorageChange, StorageChangeReason, TraceMemberOrder,
     },
 };
 
@@ -741,7 +742,6 @@ mod tests {
     use alloy_primitives::Bytes;
     use foundry_config::NamedChain;
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
 
     #[test]
     fn trace_context_uses_the_execution_network_hardfork_namespace() {

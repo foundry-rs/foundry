@@ -19,6 +19,7 @@ use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
         next_rpc_endpoint, next_ws_rpc_endpoint, spawn_rpc_proxy_method_not_found_before,
+        spawn_rpc_proxy_recording_method,
     },
     snapbox::IntoData as _,
     str,
@@ -49,6 +50,12 @@ mod selectors;
 mod tempo;
 
 const PRESIGNED_EIP7702_AUTH: &str = "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576";
+
+/// A TIP-1022 salt that satisfies the 4-byte proof of work for anvil dev account 0
+/// (`0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`), so tests can register a virtual master without
+/// mining one.
+const PRECOMPUTED_VADDR_SALT_FOR_ADDR1: &str =
+    "0x00000000000000000000000000000000000000000000000000000000abf52baf";
 
 fn valid_touch_id_sidecar_fixture(version: u32, policy: &str) -> String {
     let sealed_password = format!("04{}", "00".repeat(92));

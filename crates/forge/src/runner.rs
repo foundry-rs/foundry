@@ -2420,14 +2420,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         let symbolic_config = self.config.symbolic.clone();
         let mut symbolic = SymbolicExecutor::new(symbolic_config.clone());
-        // Progress rendering must finish before verbose SMT diagnostics are printed.
-        if self.cr.progress.is_some() && symbolic_config.dump_smt {
-            symbolic.capture_diagnostics();
-        }
         let result =
             symbolic.run(self.symbolic_run_input(func, self.sender, false, corpus_seeds, None));
-        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
-        let symbolic_diagnostics = symbolic.take_diagnostics();
 
         let (status, reason, counterexample, symbolic_result) = match result {
             SymbolicRunResult::Safe { stats, .. } => {
@@ -2456,8 +2450,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             None => symbolic_result,
         };
         self.result.symbolic_result(status, reason, counterexample, symbolic_result);
-        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-        self.result.symbolic_diagnostics = symbolic_diagnostics;
         self.result
     }
 

@@ -9,7 +9,8 @@ use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection}
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 // <https://github.com/foundry-rs/foundry/issues/16852>
-forgetest!(preprocess_parenthesized_new, |prj, cmd| {
+#[forgetest]
+fn preprocess_parenthesized_new(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
@@ -121,10 +122,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapped_bytecode_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_bytecode_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
@@ -192,10 +194,11 @@ Encountered 2 failing tests in test/Impl.t.sol:ImplTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16901>
-forgetest!(preprocess_external_bytecode_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_external_bytecode_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
@@ -239,9 +242,10 @@ Compiler run successful!
 [FAIL: stale remapped implementation] test_remapped() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_external_dependencies_invalidate_independently, |prj, cmd| {
+#[forgetest]
+fn preprocess_external_dependencies_invalidate_independently(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
@@ -296,9 +300,10 @@ contract RelativeTest {
 [FAIL: stale relative implementation] test_relative() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_native_bytecode_forms, |prj, cmd| {
+#[forgetest]
+fn preprocess_native_bytecode_forms(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -337,9 +342,10 @@ contract NativeTest {
 [FAIL: stale runtime bytecode] test_runtime_code() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_same_file_free_function_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_same_file_free_function_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -367,9 +373,10 @@ contract FreeFunctionTest {
 [FAIL: stale free function bytecode] test_free_function() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_script_native_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_script_native_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -392,9 +399,10 @@ contract NativeScript {
 
     prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
     cmd.forge_fuse().args(["script", "script/Native.s.sol:NativeScript"]).assert_failure();
-});
+}
 
-forgetest!(preprocess_imported_free_function_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_imported_free_function_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -437,9 +445,10 @@ contract FreeFunctionTest {
 [FAIL: stale imported free function bytecode] test_free_function() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_function_reference_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_function_reference_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -482,9 +491,10 @@ contract FunctionReferenceTest {
 [FAIL: stale overloaded function bytecode] test_overloaded_function() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_shared_free_function_is_not_rewritten, |prj, cmd| {
+#[forgetest]
+fn preprocess_shared_free_function_is_not_rewritten(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     prj.add_source("Impl.sol", "contract Impl {}");
     prj.add_test(
@@ -503,9 +513,10 @@ contract SecondTest {
     );
 
     cmd.args(["test"]).assert_success();
-});
+}
 
-forgetest!(preprocess_try_call_option_dependency_is_not_rewritten, |prj, cmd| {
+#[forgetest]
+fn preprocess_try_call_option_dependency_is_not_rewritten(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     prj.add_source("Created.sol", "contract Created {}");
     prj.add_source("Salt.sol", "contract Salt {}");
@@ -526,9 +537,10 @@ contract TryCallOptionTest {
     );
 
     cmd.args(["test"]).assert_success();
-});
+}
 
-forgetest!(preprocess_internal_library_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_internal_library_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -565,9 +577,10 @@ contract LibraryTest {
 [FAIL: stale library bytecode] test_library() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_namespace_library_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_namespace_library_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -607,9 +620,10 @@ contract NamespaceLibraryTest {
 [FAIL: stale namespace library bytecode] test_namespace_library() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_using_library_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_using_library_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -647,9 +661,10 @@ contract UsingLibraryTest {
 [FAIL: stale using library bytecode] test_using_library() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_try_constructor_argument_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_try_constructor_argument_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -716,9 +731,10 @@ contract TryNamespaceLibraryTest {
 [FAIL: stale try plain library bytecode] test_try_plain_library() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_external_inheritance_dependency, |prj, cmd| {
+#[forgetest]
+fn preprocess_external_inheritance_dependency(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -745,9 +761,10 @@ contract InheritanceTest is Base {
 [FAIL: stale inherited bytecode] test_inherited() ([..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_expanded_source_context_invalidates_prior_artifacts, |prj, cmd| {
+#[forgetest]
+fn preprocess_expanded_source_context_invalidates_prior_artifacts(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -785,9 +802,10 @@ contract BTest { function test_b() public { new Impl(); } }
 ...
 "#]],
     );
-});
+}
 
-forgetest!(preprocess_nested_absolute_imports, |prj, cmd| {
+#[forgetest]
+fn preprocess_nested_absolute_imports(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["dep/=lib/dep/".parse::<Remapping>().unwrap().into()];
@@ -817,9 +835,10 @@ contract NestedTest { function test_nested() public { new Base(); } }
     );
 
     cmd.args(["test"]).assert_success();
-});
+}
 
-forgetest!(preprocess_analysis_failure_is_conservative, |prj, cmd| {
+#[forgetest]
+fn preprocess_analysis_failure_is_conservative(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
@@ -856,10 +875,11 @@ contract FallbackTest {
 [FAIL: stale conservative bytecode] test_fallback() ([..])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapping_identity, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapping_identity(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = ["@p/=src/../src/", "src/=lib/alternate/"]
@@ -922,10 +942,11 @@ Encountered 1 failing test in test/Impl.t.sol:ImplTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapping_context_uses_running_test, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapping_context_uses_running_test(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings =
@@ -966,10 +987,11 @@ contract ImplTest is Helper {
 [FAIL: stale implementation] test_new() ([GAS])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapped_helper_source, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_helper_source(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = ["@p/=src/", "test/:foundry-pp/=lib/alternate/"]
@@ -1003,10 +1025,11 @@ contract ImplTest {
 [FAIL: stale implementation] test_new() ([GAS])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_ambiguous_artifact_stays_native, |prj, cmd| {
+#[forgetest]
+fn preprocess_ambiguous_artifact_stays_native(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 contract Impl {
@@ -1048,10 +1071,11 @@ contract ImplTest {
 [FAIL: stale implementation] test_new() ([GAS])
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
-forgetest!(preprocess_remapped_mock_inheritance, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_mock_inheritance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
@@ -1114,11 +1138,12 @@ Encountered 1 failing test in test/Impl.t.sol:ImplTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16682>
 #[cfg(unix)]
-forgetest!(preprocess_remapped_symlinked_source, |prj, cmd| {
+#[forgetest]
+fn preprocess_remapped_symlinked_source(prj: _, cmd: _) {
     use std::{fs, os::unix::fs::symlink};
 
     fs::remove_dir_all(prj.root().join("src")).unwrap();
@@ -1166,10 +1191,11 @@ Encountered 1 failing test in test/Impl.t.sol:ImplTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 ...
 "#]]);
-});
+}
 
 #[cfg(unix)]
-forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
+#[forgetest_init]
+fn abi_commands_reuse_preprocessed_cache(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| config.dynamic_test_linking = true);
     cmd.arg("build").assert_success();
@@ -1277,10 +1303,11 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
     }
     cmd.forge_fuse().arg("clean").assert_success();
     assert!(!abi_cache.exists());
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
-forgetest_init!(filtered_tests_compile_unimported_test_fixtures, |prj, cmd| {
+#[forgetest_init]
+fn filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| config.solc = None);
     prj.add_raw_test(
         "fixtures/Fixture.sol",
@@ -1361,10 +1388,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
-forgetest_init!(path_filtered_tests_compile_unimported_test_fixtures, |prj, cmd| {
+#[forgetest_init]
+fn path_filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = None;
         config.dynamic_test_linking = false;
@@ -1402,10 +1430,11 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16529>
-forgetest_init!(filtered_tests_preserve_compilation_restrictions, |prj, cmd| {
+#[forgetest_init]
+fn filtered_tests_preserve_compilation_restrictions(prj: _, cmd: _) {
     prj.wipe_contracts();
     prj.add_lib(
         "dep/src/Clz.sol",
@@ -1457,9 +1486,10 @@ contract Root {
     });
 
     cmd.args(["test", "--match-path", "test/RootTest.sol"]).assert_success();
-});
+}
 
-forgetest_init!(filtered_tests_support_overlapping_source_roots, |prj, cmd| {
+#[forgetest_init]
+fn filtered_tests_support_overlapping_source_roots(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.script = ".".into();
         config.dynamic_test_linking = true;
@@ -1502,10 +1532,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Test cache is invalidated when `forge build` if optimize test option toggled.
-forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
+#[forgetest_init]
+fn toggle_invalidate_cache_on_build(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -1536,10 +1567,11 @@ Compiling 23 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Test cache is invalidated when `forge test` if optimize test option toggled.
-forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
+#[forgetest_init]
+fn toggle_invalidate_cache_on_test(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -1570,10 +1602,11 @@ Compiling 21 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16468>
-forgetest_init!(unchecked_artifacts_support_dynamic_linking, |prj, cmd| {
+#[forgetest_init]
+fn unchecked_artifacts_support_dynamic_linking(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.unchecked_cheatcode_artifacts = true;
@@ -1641,7 +1674,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // Counter contract without interface instantiated in CounterTest
 //
@@ -1649,7 +1682,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // │ └── Counter.sol
 // └── test
 //     └── Counter.t.sol
-forgetest_init!(preprocess_contract_with_no_interface, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_no_interface(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1761,7 +1795,7 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Counter contract with interface instantiated in CounterTest
 //
@@ -1771,7 +1805,8 @@ Compiling 1 files with [..]
 // │     └── CounterIf.sol
 // └── test
 //     └── Counter.t.sol
-forgetest_init!(preprocess_contract_with_interface, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_interface(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -1894,7 +1929,7 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // - Counter contract instantiated in CounterMock
 // - CounterMock instantiated in CounterTest
@@ -1905,7 +1940,8 @@ Compiling 1 files with [..]
 //     ├── Counter.t.sol
 //     └── mock
 //         └── CounterMock.sol
-forgetest_init!(preprocess_mock_without_inheritance, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_without_inheritance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2045,7 +2081,7 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // - CounterMock contract is Counter contract
 // - CounterMock instantiated in CounterTest
@@ -2056,7 +2092,8 @@ Compiling 2 files with [..]
 //    ├── Counter.t.sol
 //    └── mock
 //        └── CounterMock.sol
-forgetest_init!(preprocess_mock_with_inheritance, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_with_inheritance(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2178,9 +2215,10 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
 
-forgetest!(preprocess_contract_to_free_function_clears_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_contract_to_free_function_clears_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| config.dynamic_test_linking = true);
     let dependency =
         "contract Dep { function value() public pure returns (uint256) { return 1; } }";
@@ -2239,7 +2277,7 @@ Ran 1 test suite [..]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
     }
-});
+}
 
 // - CounterMock contract is Counter contract
 // - CounterMock instantiated in CounterTest
@@ -2250,7 +2288,8 @@ Ran 1 test suite [..]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 //    ├── Counter.t.sol
 //    └── mock
 //        └── CounterMock.sol
-forgetest_init!(preprocess_mock_to_non_mock, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_to_non_mock(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2357,7 +2396,7 @@ Compiling 1 files with [..]
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/12452>
 // - CounterMock contract is Counter contract
@@ -2367,7 +2406,8 @@ Compiler run successful!
 // │ └── Counter.sol
 // └── test
 //    ├── Counter.t.sol
-forgetest_init!(preprocess_mock_declared_in_test_contract, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_mock_declared_in_test_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2433,7 +2473,7 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // ├── src
 // │ ├── CounterA.sol
@@ -2443,7 +2483,8 @@ Compiling 2 files with [..]
 // │     └── Counter.sol
 // └── test
 // └── Counter.t.sol
-forgetest_init!(preprocess_multiple_contracts_with_constructors, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_multiple_contracts_with_constructors(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2697,10 +2738,11 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Test preprocessing contracts with payable constructor, value and salt named args.
-forgetest_init!(flaky_preprocess_contracts_with_payable_constructor_and_salt, |prj, cmd| {
+#[forgetest_init]
+fn flaky_preprocess_contracts_with_payable_constructor_and_salt(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2843,10 +2885,11 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Counter contract with constructor reverts and emitted events.
-forgetest_init!(preprocess_contract_with_require_and_emit, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_require_and_emit(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -2972,10 +3015,11 @@ Compiling 1 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10312>
-forgetest_init!(preprocess_contract_with_constructor_args_struct, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_constructor_args_struct(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3014,10 +3058,11 @@ Compiling 21 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // Test preprocessed contracts with decode internal fns.
-forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_decode_internal(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
@@ -3078,12 +3123,13 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10492>
 // Preprocess test contracts with try constructor statements.
 // Synthetic deployments must respect static execution without changing native try boundaries.
-forgetest!(preprocess_static_deployment, |prj, cmd| {
+#[forgetest]
+fn preprocess_static_deployment(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
@@ -3189,9 +3235,10 @@ Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
 "#]]);
         }
     }
-});
+}
 
-forgetest_init!(preprocess_contract_with_try_ctor_stmt, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_try_ctor_stmt(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3356,11 +3403,12 @@ Compiling 2 files with [..]
 ...
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11978>
 // Preprocess test contracts when active prank.
-forgetest_init!(preprocess_contract_with_active_prank, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_active_prank(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3437,10 +3485,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-});
+}
 
 // Preprocess test contracts with try constructor statements that bind return type.
-forgetest_init!(preprocess_contract_with_try_ctor_stmt_and_returns, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_contract_with_try_ctor_stmt_and_returns(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3498,9 +3547,10 @@ contract Counter {
         "#,
     );
     cmd.assert_success();
-});
+}
 
-forgetest!(preprocess_typed_try_new_preserves_catches, |prj, cmd| {
+#[forgetest]
+fn preprocess_typed_try_new_preserves_catches(prj: _, cmd: _) {
     let targets = r#"
 error ConstructorError(uint256 value);
 
@@ -3594,11 +3644,12 @@ Suite result: FAILED. 4 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
 // Test that `type(Contract).creationCode` can be used in view functions.
 // https://github.com/foundry-rs/foundry/issues/13086
-forgetest_init!(preprocess_creation_code_in_view_function, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_creation_code_in_view_function(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3640,10 +3691,11 @@ contract TargetTest is Test {
     );
 
     cmd.args(["build"]).assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/16487>
-forgetest_init!(preprocess_custom_layout_contract, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_custom_layout_contract(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
@@ -3682,11 +3734,12 @@ contract TargetTest is Test {
     );
 
     cmd.args(["test"]).assert_success();
-});
+}
 
 // Test that `type(Contract).creationCode` keeps native pure semantics when dynamic linking is
 // enabled.
-forgetest_init!(preprocess_creation_code_in_pure_function, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_creation_code_in_pure_function(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3728,10 +3781,11 @@ contract TargetTest is Test {
     );
 
     cmd.args(["build"]).assert_success();
-});
+}
 
 // Constant initializers must stay native and retain their bytecode dependencies.
-forgetest!(preprocess_creation_code_in_constant_initializer, |prj, cmd| {
+#[forgetest]
+fn preprocess_creation_code_in_constant_initializer(prj: _, cmd: _) {
     let target = r#"
 contract Target {
     function value() external pure returns (uint256) { return 111; }
@@ -3785,11 +3839,12 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         prj.add_source("Target.sol", target);
         cmd.forge_fuse().arg("test").assert_success();
     }
-});
+}
 
 // Test that `type(Contract).creationCode` keeps native pure semantics when it is used in a
 // modifier body that is applied to a pure function.
-forgetest_init!(preprocess_creation_code_in_modifier_used_by_pure_function, |prj, cmd| {
+#[forgetest_init]
+fn preprocess_creation_code_in_modifier_used_by_pure_function(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
     });
@@ -3819,10 +3874,11 @@ contract ModifierCreationCodeTest {
     );
 
     cmd.args(["build"]).assert_success();
-});
+}
 
 // Nested call options are copied verbatim and must retain native dependency edges.
-forgetest!(preprocess_nested_deployment_options, |prj, cmd| {
+#[forgetest]
+fn preprocess_nested_deployment_options(prj: _, cmd: _) {
     let other = r#"
 contract Other {
     function value() external pure returns (uint256) { return 111; }
@@ -3889,10 +3945,11 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 "#]]);
         cmd.forge_fuse().args(["test", "--force"]).assert_failure();
     }
-});
+}
 
 // Constructor helper fields use type spans, independent of parameter data-location spelling.
-forgetest!(preprocess_constructor_parameter_types, |prj, cmd| {
+#[forgetest]
+fn preprocess_constructor_parameter_types(prj: _, cmd: _) {
     let target = r#"
 contract Target {
     uint256 public value;
@@ -3952,9 +4009,10 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 "#]]);
         cmd.forge_fuse().args(["test", "--force"]).assert_failure();
     }
-});
+}
 
-forgetest!(preprocess_private_constructor_array_dimensions, |prj, cmd| {
+#[forgetest]
+fn preprocess_private_constructor_array_dimensions(prj: _, cmd: _) {
     let targets = r#"
 contract Nested {
     uint256 private constant N = 2;
@@ -4040,9 +4098,10 @@ Traces:
     ├─ [0] VM::deployCode("src/Targets.sol:Literal", 0x[..])
 ...
 "#]]);
-});
+}
 
-forgetest!(preprocess_generated_interface_name_collision, |prj, cmd| {
+#[forgetest]
+fn preprocess_generated_interface_name_collision(prj: _, cmd: _) {
     let target = r#"
 contract Target {
     function value() external pure returns (uint256) { return 111; }
@@ -4081,9 +4140,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
-forgetest!(preprocess_generated_constructor_helper_name_collision, |prj, cmd| {
+#[forgetest]
+fn preprocess_generated_constructor_helper_name_collision(prj: _, cmd: _) {
     let base = r#"
 contract Base {
     struct FoundryPpConstructorArgs { uint256 unused; }
@@ -4134,9 +4194,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
-forgetest!(preprocess_try_adapter_name_collision, |prj, cmd| {
+#[forgetest]
+fn preprocess_try_adapter_name_collision(prj: _, cmd: _) {
     let target = r#"
 contract Target {
     function value() external pure returns (uint256) { return 111; }
@@ -4182,9 +4243,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
-forgetest!(preprocess_payable_try_adapter, |prj, cmd| {
+#[forgetest]
+fn preprocess_payable_try_adapter(prj: _, cmd: _) {
     let target = r#"
 contract Target {
     uint256 public value;
@@ -4224,11 +4286,12 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
 // Windows filenames cannot contain double quotes.
 #[cfg(unix)]
-forgetest!(preprocess_generated_path_string_escaping, |prj, cmd| {
+#[forgetest]
+fn preprocess_generated_path_string_escaping(prj: _, cmd: _) {
     let target = r#"
 contract Zero {
     function value() external pure returns (uint256) { return 111; }
@@ -4274,11 +4337,12 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
 // Windows directory names cannot contain colons.
 #[cfg(unix)]
-forgetest!(preprocess_colon_in_artifact_path, |prj, cmd| {
+#[forgetest]
+fn preprocess_colon_in_artifact_path(prj: _, cmd: _) {
     let target = r#"
 contract Zero {
     function value() external pure returns (uint256) { return 111; }
@@ -4372,9 +4436,10 @@ Suite result: FAILED. 1 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
     }
-});
+}
 
-forgetest!(preprocess_create_isolation_boundary, |prj, cmd| {
+#[forgetest]
+fn preprocess_create_isolation_boundary(prj: _, cmd: _) {
     prj.add_source(
         "Target.sol",
         r#"
@@ -4468,9 +4533,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
-forgetest!(preprocess_constructor_validation, |prj, cmd| {
+#[forgetest]
+fn preprocess_constructor_validation(prj: _, cmd: _) {
     // These constraints would disappear with the original new-expression. Solc must reject
     // exactly the same source in both modes, including implicit and explicit constructors.
     for (target, expression) in [
@@ -4504,9 +4570,10 @@ forgetest!(preprocess_constructor_validation, |prj, cmd| {
         prj.update_config(|config| config.dynamic_test_linking = true);
         cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
     }
-});
+}
 
-forgetest!(preprocess_constructor_abi_coder_validation, |prj, cmd| {
+#[forgetest]
+fn preprocess_constructor_abi_coder_validation(prj: _, cmd: _) {
     // Encoding in the generated helper must not bypass the caller's ABI-coder restrictions.
     for (parameters, arguments) in
         [("S memory s", "Target.S(7)"), ("uint256[][] memory xs", "new uint256[][](0)")]
@@ -4544,9 +4611,10 @@ forgetest!(preprocess_constructor_abi_coder_validation, |prj, cmd| {
             }
         }
     }
-});
+}
 
-forgetest!(preprocess_constructor_abi_v1_native_cache, |prj, cmd| {
+#[forgetest]
+fn preprocess_constructor_abi_v1_native_cache(prj: _, cmd: _) {
     prj.add_test(
         "Coder.t.sol",
         r#"
@@ -4584,9 +4652,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
         }
     }
-});
+}
 
-forgetest!(preprocess_constructor_evm_version_validation, |prj, cmd| {
+#[forgetest]
+fn preprocess_constructor_evm_version_validation(prj: _, cmd: _) {
     // The compilation target controls CREATE2 validation, independently of runtime settings.
     prj.update_config(|config| {
         config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 28)));
@@ -4621,9 +4690,10 @@ forgetest!(preprocess_constructor_evm_version_validation, |prj, cmd| {
             cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(native);
         }
     }
-});
+}
 
-forgetest!(preprocess_return_data_observation, |prj, cmd| {
+#[forgetest]
+fn preprocess_return_data_observation(prj: _, cmd: _) {
     prj.add_source("Target.sol", "contract Target {}");
     // Each case has its own contract and helper source, so another observer cannot mask a
     // discovery failure. Abstract bases keep inherited tests in the derived suite only.
@@ -4833,9 +4903,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
             ));
         }
     }
-});
+}
 
-forgetest!(preprocess_inline_verbatim_diagnostics, |prj, cmd| {
+#[forgetest]
+fn preprocess_inline_verbatim_diagnostics(prj: _, cmd: _) {
     prj.add_source("Target.sol", "contract Target {}");
     for expression in ["let n := verbatim_0i_1o(hex\"3d\")", "verbatim_3i_0o(hex\"3e\", 0, 0, 0)"] {
         prj.add_test(
@@ -4855,9 +4926,10 @@ forgetest!(preprocess_inline_verbatim_diagnostics, |prj, cmd| {
         expected.extend(native);
         cmd.forge_fuse().args(["build", "--force"]).assert_failure().stderr_eq(expected);
     }
-});
+}
 
-forgetest!(preprocess_imported_constant_dependencies, |prj, cmd| {
+#[forgetest]
+fn preprocess_imported_constant_dependencies(prj: _, cmd: _) {
     let target =
         "contract Target { function value() external pure returns (uint256) { return 11; } }";
     for (import, value) in [
@@ -4919,10 +4991,11 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
             cmd.forge_fuse().arg("test").assert_success();
         }
     }
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/17220>
-forgetest!(filtered_tests_preserve_cyclic_import_order, |prj, cmd| {
+#[forgetest]
+fn filtered_tests_preserve_cyclic_import_order(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
         config.evm_version = EvmVersion::Cancun;
@@ -4991,12 +5064,13 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
         cmd.forge_fuse()
             .args(["test", "--force", "--match-test", "^__nomatch__$", "--json"])
-            .assert_empty_stdout();
+            .assert_json_stdout("{}");
     }
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/17222>
-forgetest!(preprocess_analysis_fallback_uses_import_invalidation, |prj, cmd| {
+#[forgetest]
+fn preprocess_analysis_fallback_uses_import_invalidation(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));
@@ -5074,4 +5148,4 @@ Compiler run successful!
 Warning: dynamic test linking disabled for 1 files: error: unresolved symbol `now`
 
 "#]]);
-});
+}

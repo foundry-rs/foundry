@@ -239,9 +239,8 @@ fn identify_code(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm_traces::{CallKind, CallTrace};
+    use foundry_evm_traces::{CallKind, CallTrace, CallTraceStep, TraceMemberOrder};
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::{CallTraceStep, TraceMemberOrder};
 
     fn step() -> CallTraceStep {
         CallTraceStep {

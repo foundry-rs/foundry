@@ -12,8 +12,9 @@ use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
 use foundry_common::fmt::format_token;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use foundry_evm_traces::debug::{
-    DebugSourceScope, DebugVariable, decode_step_parameters, function_signature,
+use foundry_evm_traces::{
+    CallKind, DecodedInternalCall, DecodedTraceStep,
+    debug::{DebugSourceScope, DebugVariable, decode_step_parameters, function_signature},
 };
 use ratatui::{
     Frame,
@@ -23,7 +24,6 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use revm::interpreter::InstructionResult;
-use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -1454,7 +1454,11 @@ mod tests {
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
     use foundry_evm_core::{Breakpoints, buffer::BufferKind};
-    use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
+    use foundry_evm_traces::{
+        CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
+        DecodedTraceStep, StorageChange, StorageChangeReason,
+        debug::{ContractSources, DebugSourceScope, DebugVariable},
+    };
     use ratatui::{
         Terminal,
         backend::TestBackend,
@@ -1463,10 +1467,6 @@ mod tests {
         text::Line,
     };
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::{
-        CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
-        DecodedTraceStep, StorageChange, StorageChangeReason,
-    };
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans.iter().map(|span| span.content.as_ref()).collect()

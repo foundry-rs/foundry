@@ -1,96 +1,14 @@
 //! Contains various tests for checking the `forge create` subcommand
 
-use crate::{
-    constants::*,
-    utils::{self, EnvExternalities},
-};
-use alloy_primitives::{Address, hex};
+use crate::constants::*;
+use alloy_primitives::hex;
 use anvil::{NodeConfig, spawn};
-use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
-use foundry_test_utils::{
-    forgetest, forgetest_async,
-    snapbox::IntoData,
-    str,
-    util::{OutputExt, TestCommand, TestProject},
-};
-use std::{fs, str::FromStr, time::Duration};
+use foundry_compilers::artifacts::BytecodeHash;
+use foundry_test_utils::{forgetest, snapbox::IntoData, str, util::OutputExt};
+use std::{fs, time::Duration};
 
-/// This will insert _dummy_ contract that uses a library
-///
-/// **NOTE** This is intended to be linked against a random address and won't actually work. The
-/// purpose of this is _only_ to make sure we can deploy contracts linked against addresses.
-///
-/// This will create a library `remapping/MyLib.sol:MyLib`
-///
-/// returns the contract argument for the create command
-fn setup_with_simple_remapping(prj: &TestProject) -> String {
-    // explicitly set remapping and libraries
-    prj.update_config(|config| {
-        config.remappings = vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()];
-        config.libraries = vec![format!("remapping/MyLib.sol:MyLib:{:?}", Address::random())];
-    });
-
-    prj.add_source(
-        "LinkTest",
-        r#"
-import "remapping/MyLib.sol";
-contract LinkTest {
-    function foo() public returns (uint256) {
-        return MyLib.foobar(1);
-    }
-}
-"#,
-    );
-
-    prj.add_lib(
-        "remapping/MyLib",
-        r"
-library MyLib {
-    function foobar(uint256 a) public view returns (uint256) {
-    	return a * 100;
-    }
-}
-",
-    );
-
-    "src/LinkTest.sol:LinkTest".to_string()
-}
-
-fn setup_oracle(prj: &TestProject) -> String {
-    prj.update_config(|c| {
-        c.libraries = vec![format!(
-            "./src/libraries/ChainlinkTWAP.sol:ChainlinkTWAP:{:?}",
-            Address::random()
-        )];
-    });
-
-    prj.add_source(
-        "Contract",
-        r#"
-import {ChainlinkTWAP} from "./libraries/ChainlinkTWAP.sol";
-contract Contract {
-    function getPrice() public view returns (int latest) {
-        latest = ChainlinkTWAP.getLatestPrice(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
-    }
-}
-"#,
-    );
-
-    prj.add_source(
-        "libraries/ChainlinkTWAP",
-        r"
-library ChainlinkTWAP {
-   function getLatestPrice(address base) public view returns (int256) {
-        return 0;
-   }
-}
-",
-    );
-
-    "src/Contract.sol:Contract".to_string()
-}
-
-forgetest!(create_rejects_unsupported_remote_sponsor, |_prj, cmd| {
+#[forgetest]
+fn create_rejects_unsupported_remote_sponsor(cmd: _) {
     cmd.args([
         "create",
         "src/Counter.sol:Counter",
@@ -102,46 +20,11 @@ forgetest!(create_rejects_unsupported_remote_sponsor, |_prj, cmd| {
 Error: --sponsor-url is not supported by forge create; use --tempo.sponsor with --tempo.sponsor-signer or --tempo.sponsor-sig
 
 "#]]);
-});
-
-/// configures the `TestProject` with the given closure and calls the `forge create` command
-fn create_on_chain<F>(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand, f: F)
-where
-    F: FnOnce(&TestProject) -> String,
-{
-    if let Some(info) = info {
-        let contract_path = f(&prj);
-
-        let output = cmd
-            .arg("create")
-            .args(info.create_args())
-            .arg(contract_path)
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let _address = utils::parse_deployed_address(output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
-    }
 }
 
-// tests `forge` create on goerli if correct env vars are set
-forgetest!(can_create_simple_on_goerli, |prj, cmd| {
-    create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_with_simple_remapping);
-});
-
-// tests `forge` create on goerli if correct env vars are set
-forgetest!(can_create_oracle_on_goerli, |prj, cmd| {
-    create_on_chain(EnvExternalities::goerli(), prj, cmd, setup_oracle);
-});
-
-// tests `forge` create on amoy if correct env vars are set
-forgetest!(can_create_oracle_on_amoy, |prj, cmd| {
-    create_on_chain(EnvExternalities::amoy(), prj, cmd, setup_oracle);
-});
-
 // tests that we can deploy the template contract
-forgetest_async!(can_create_template_contract, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_create_template_contract(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -290,11 +173,11 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
-});
+}
 
 // The deployment is only mined on the next interval tick.
-forgetest_async!(can_create_with_interval_mining, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_create_with_interval_mining(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) =
@@ -323,10 +206,10 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
-});
+}
 
-forgetest_async!(create_rejects_from_signer_mismatch, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn create_rejects_from_signer_mismatch(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -379,10 +262,10 @@ Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
 
 "#]]);
     assert!(api.transaction_count(signer.address(), None).await.unwrap().is_zero());
-});
+}
 
-forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn create_rejects_invalid_eip1559_fees_before_access_list(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -413,10 +296,10 @@ forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, c
         stderr.contains("Error: max priority fee per gas (2) cannot exceed max fee per gas (1)"),
         "{stderr}"
     );
-});
+}
 
-forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn create_resolves_tempo_expires_before_broadcast(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -450,10 +333,10 @@ forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
         "expected create to print resolved tempo expiry, got:\n{stderr}",
     );
     assert!(stdout.contains("Deployed to:"), "{stdout}");
-});
+}
 
-forgetest_async!(create_broadcasts_with_local_tempo_sponsor, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn create_broadcasts_with_local_tempo_sponsor(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -490,10 +373,10 @@ forgetest_async!(create_broadcasts_with_local_tempo_sponsor, |prj, cmd| {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("Deployed to:"), "{stdout}");
     assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
-});
+}
 
-forgetest_async!(create_rejects_tempo_access_key_before_broadcast, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn create_rejects_tempo_access_key_before_broadcast(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -518,11 +401,11 @@ forgetest_async!(create_rejects_tempo_access_key_before_broadcast, |prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("Tempo access-key transactions cannot use CREATE"), "{stderr}");
-});
+}
 
 // tests that we can deploy the template contract
-forgetest_async!(can_create_using_unlocked, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
+#[forgetest_init]
+async fn can_create_using_unlocked(prj: _, cmd: _) {
     prj.initialize_default_contracts();
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -585,12 +468,11 @@ Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
 [TX_HASH]
 
 "#]]);
-});
+}
 
 // tests that we can deploy with constructor args
-forgetest_async!(can_create_with_constructor_args, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
-
+#[forgetest_init]
+async fn can_create_with_constructor_args(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -671,12 +553,11 @@ Deployed to: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
 [TX_HASH]
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/6332>
-forgetest_async!(can_create_and_call, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
-
+#[forgetest_init]
+async fn can_create_and_call(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -724,10 +605,11 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10156>
-forgetest_async!(should_err_if_no_bytecode, |prj, cmd| {
+#[forgetest]
+async fn should_err_if_no_bytecode(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
@@ -762,11 +644,12 @@ abstract contract AbstractCounter {
 Error: no bytecode found in bin object for AbstractCounter
 
 "#]]);
-});
+}
 
 // Tests that `forge create` fails when the deployment transaction reverts
 // <https://github.com/foundry-rs/foundry/issues/13954>
-forgetest_async!(flaky_should_fail_on_reverted_deployment, |prj, cmd| {
+#[forgetest]
+async fn flaky_should_fail_on_reverted_deployment(prj: _, cmd: _) {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
@@ -801,4 +684,4 @@ contract RevertingContract {
 Error: deployment transaction failed (receipt status 0): [..]
 
 "#]]);
-});
+}

@@ -8,6 +8,10 @@
 Flags `delegatecall` targets other than a trusted literal, constant, zero address, or
 `address(this)`.
 
+Equality guards can establish that a target is trusted, including through integer casts
+that preserve all 160 address bits. A comparison of a truncated target does not authorize
+the original address: its unchecked bits can still select an attacker-controlled contract.
+
 Warnings can remain for owner-controlled proxies, allowlisted implementations, and
 constructor-initialized immutable targets. Review how the target is authorized before
 suppressing the lint; these patterns are not automatically unsafe.

@@ -373,7 +373,7 @@ impl RunArgs {
         let tracing = self.configure_tracing(&mut config, &evm_opts);
         let with_local_artifacts = self.with_local_artifacts;
 
-        let endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let endpoint_identity = evm_opts.fork_endpoint_identity().await?;
         let tx_inclusion = tx
             .block_hash_num()
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
@@ -450,7 +450,7 @@ impl RunArgs {
             &endpoint_identity,
             Some(transaction_block.header().timestamp()),
         );
-        let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
         ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
         let current_tx = provider.get_transaction_by_hash(tx_hash).await?;

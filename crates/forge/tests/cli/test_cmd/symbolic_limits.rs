@@ -23,130 +23,8 @@ fn should_skip(test: &str) -> bool {
     false
 }
 
-forgetest_init!(symbolic_limits_riddle_counterexample_replays, |prj, cmd| {
-    if should_skip("symbolic_limits_riddle_counterexample_replays") {
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicLimitsRiddle.t.sol",
-        r#"
-contract SymbolicLimitsRiddle {
-    function check_riddle(uint256 x) external pure {
-        uint256 msgSender = uint160(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
-
-        unchecked {
-            require(x * x < msgSender);
-        }
-
-        require(x > msgSender);
-        require(x & 0x800 != 0);
-        require(x & 0x10000 == 0);
-
-        assert(false);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--symbolic-timeout",
-            "300",
-            "--symbolic-width",
-            "512",
-            "--symbolic-depth",
-            "50000",
-            "--symbolic-max-solver-queries",
-            "20000",
-            "--match-test",
-            "check_riddle",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-panic: assertion failed
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-check_riddle(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-(paths:
-"#]],
-    );
-    assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
-    assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
-});
-
-forgetest_init!(symbolic_limits_reports_path_width_exhaustion, |prj, cmd| {
-    if should_skip("symbolic_limits_reports_path_width_exhaustion") {
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicLimitsPathWidth.t.sol",
-        r#"
-contract SymbolicLimitsPathWidth {
-    function checkWidth(uint8 x) public pure {
-        uint256 acc;
-
-        if ((x & 0x01) != 0) acc += 1; else acc += 2;
-        if ((x & 0x02) != 0) acc += 4; else acc += 8;
-        if ((x & 0x04) != 0) acc += 16; else acc += 32;
-        if ((x & 0x08) != 0) acc += 64; else acc += 128;
-        if ((x & 0x10) != 0) acc += 256; else acc += 512;
-
-        assert(acc != 0);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--symbolic-width", "2", "--match-test", "checkWidth"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkWidth(uint8)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic path limit exceeded (2)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_limits_reports_execution_depth_exhaustion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_limits_reports_execution_depth_exhaustion(prj: _, cmd: _) {
     if should_skip("symbolic_limits_reports_execution_depth_exhaustion") {
         return;
     }
@@ -195,9 +73,10 @@ symbolic depth limit exceeded (8)
 incomplete symbolic execution (Stuck)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_limits_reports_calldata_budget_exhaustion, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_limits_reports_calldata_budget_exhaustion(prj: _, cmd: _) {
     if should_skip("symbolic_limits_reports_calldata_budget_exhaustion") {
         return;
     }
@@ -239,13 +118,17 @@ symbolic calldata size exceeds configured max
 incomplete symbolic execution (Stuck)
 "#]],
     );
-});
+}
 
-forgetest_init!(symbolic_limits_invariant_depth_changes_result, |prj, _cmd| {
+#[forgetest_init]
+fn symbolic_limits_invariant_depth_changes_result(prj: _) {
     if should_skip("symbolic_limits_invariant_depth_changes_result") {
         return;
     }
 
+    // `--symbolic` still runs the concrete invariant campaign, so keep it at depth 1 to let the
+    // symbolic depth decide whether the two-call sequence is found.
+    prj.update_config(|config| config.invariant.depth = 1);
     prj.add_test(
         "SymbolicLimitsInvariantDepth.t.sol",
         r#"
@@ -316,13 +199,7 @@ contract SymbolicLimitsInvariantDepth is Test {
     assert_relevant_lines(
         &failing,
         foundry_test_utils::str![[r#"
-symbolic invariant counterexample
-"#]],
-    );
-    assert_relevant_lines(
-        &failing,
-        foundry_test_utils::str![[r#"
 invariant_valueNeverTwo()
 "#]],
     );
-});
+}

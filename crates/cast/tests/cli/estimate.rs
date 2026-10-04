@@ -3,7 +3,8 @@
 use super::*;
 
 // tests that `cast estimate` is working correctly.
-casttest!(estimate_function_gas, |_prj, cmd| {
+#[casttest]
+fn estimate_function_gas(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // ensure we get a positive non-error value for gas estimate
@@ -24,10 +25,11 @@ casttest!(estimate_function_gas, |_prj, cmd| {
         .parse()
         .unwrap();
     assert!(output.ge(&0));
-});
+}
 
 // tests that `cast estimate --cost` is working correctly.
-casttest!(estimate_function_cost, |_prj, cmd| {
+#[casttest]
+fn estimate_function_cost(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // ensure we get a positive non-error value for cost estimate
@@ -49,10 +51,11 @@ casttest!(estimate_function_cost, |_prj, cmd| {
         .parse()
         .unwrap();
     assert!(output > 0f64);
-});
+}
 
 // tests that `cast estimate --create` is working correctly.
-casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
+#[casttest]
+fn estimate_contract_deploy_gas(cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
     // sample contract code bytecode. Wouldn't run but is valid bytecode that the estimate method
     // accepts and could be deployed.
@@ -75,9 +78,10 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     // ensure we get a positive non-error value for gas estimate
     let output: u32 = output.trim().parse().unwrap();
     assert!(output > 0);
-});
+}
 
-casttest!(estimate_eip7702_auth_disclosure_declined, |prj, cmd| {
+#[casttest]
+fn estimate_eip7702_auth_disclosure_declined(prj: _, cmd: _) {
     prj.update_config(|config| config.chain = Some(31337.into()));
 
     cmd.args([
@@ -99,9 +103,10 @@ Warning: This command will send a signed EIP-7702 authorization to the RPC endpo
 Continue anyway? [y/N] Aborted.
 
 "#]]);
-});
+}
 
-casttest!(estimate_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+#[casttest]
+fn estimate_eip7702_auth_disclosure_requires_signer(prj: _, cmd: _) {
     prj.update_config(|config| config.chain = Some(31337.into()));
 
     cmd.args([
@@ -122,9 +127,10 @@ casttest!(estimate_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
 Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
 
 "#]]);
-});
+}
 
-casttest!(estimate_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+#[casttest]
+async fn estimate_eip7702_auth_disclosure_accepted_and_forced(cmd: _) {
     let (api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
@@ -178,29 +184,27 @@ Continue anyway? [y/N] "#]])
         .get_output()
         .stdout_lossy();
     assert!(output.trim().parse::<u64>().unwrap() > 21_000);
-});
+}
 
 // <https://basescan.org/block/30558838>
-casttest!(
-    #[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
-    flaky_estimate_base_da,
-    |_prj, cmd| {
-        cmd.args(["da-estimate", "30558838", "-r", next_rpc_endpoint(NamedChain::Base).as_str()])
-            .assert_success()
-            .stdout_eq(str![[r#"
+#[casttest]
+fn flaky_estimate_base_da(cmd: _) {
+    cmd.args(["da-estimate", "30558838", "-r", next_rpc_endpoint(NamedChain::Base).as_str()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 52916546100
 
 "#]])
-            .stderr_eq(str![[r#"
+        .stderr_eq(str![[r#"
 Estimated data availability size for block 30558838 with 225 transactions:
 
 "#]]);
-    }
-);
+}
 
 // Test that cast estimate --create works correctly with constructor arguments
 // <https://github.com/foundry-rs/foundry/issues/10947>
-casttest!(cast_estimate_create_with_constructor_args, |prj, cmd| {
+#[casttest]
+fn cast_estimate_create_with_constructor_args(prj: _, cmd: _) {
     let eth_rpc_url = next_http_rpc_endpoint();
 
     // Add a simple contract with constructor arguments
@@ -250,14 +254,15 @@ contract EstimateContract {
     // Gas estimate should be positive and reasonable for contract deployment
     assert!(gas_estimate > 50000, "Gas estimate too low for contract deployment");
     assert!(gas_estimate < 5000000, "Gas estimate unreasonably high");
-});
+}
 
 // Tests for negative number argument parsing
 // Ensures that negative numbers in function arguments are properly parsed
 // instead of being treated as command flags
 
 // Test cast estimate with negative numbers
-casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
+#[casttest]
+fn cast_estimate_negative_numbers(cmd: _) {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
     cmd.args([
         "estimate",
@@ -268,10 +273,11 @@ casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
         rpc.as_str(),
     ])
     .assert_success();
-});
+}
 
 #[cfg(any(feature = "base", feature = "optimism"))]
-casttest!(cast_da_estimate_honors_config_and_cli_override, |prj, cmd| {
+#[casttest]
+fn cast_da_estimate_honors_config_and_cli_override(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.networks = foundry_evm_networks::NetworkConfigs::with_tempo();
     });
@@ -290,4 +296,4 @@ curl -X POST -H 'Content-Type: application/json' --data-raw '{"method":"eth_getB
 
 "#]])
         .stderr_eq(str![""]);
-});
+}

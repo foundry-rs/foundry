@@ -12,7 +12,8 @@ use foundry_evm::{
 use foundry_test_utils::util::OutputExt;
 use serde_json::json;
 
-forgetest!(base_azul_excludes_beryl_precompiles, |prj, cmd| {
+#[forgetest]
+fn base_azul_excludes_beryl_precompiles(prj: _, cmd: _) {
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     cmd.args([
@@ -27,9 +28,10 @@ forgetest!(base_azul_excludes_beryl_precompiles, |prj, cmd| {
         "test_azul_excludes_beryl_precompiles",
     ])
     .assert_success();
-});
+}
 
-forgetest!(base_defaults_to_azul, |prj, cmd| {
+#[forgetest]
+fn base_defaults_to_azul(prj: _, cmd: _) {
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     cmd.args([
@@ -42,9 +44,10 @@ forgetest!(base_defaults_to_azul, |prj, cmd| {
         "test_azul_excludes_beryl_precompiles",
     ])
     .assert_success();
-});
+}
 
-forgetest!(base_beryl_precompiles_and_nested_evm, |prj, cmd| {
+#[forgetest]
+fn base_beryl_precompiles_and_nested_evm(prj: _, cmd: _) {
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     let stdout = cmd
@@ -65,9 +68,10 @@ forgetest!(base_beryl_precompiles_and_nested_evm, |prj, cmd| {
         .stdout_lossy();
     assert!(stdout.contains("ActivationRegistry"), "{stdout}");
     assert!(stdout.contains("B20Factory"), "{stdout}");
-});
+}
 
-forgetest!(base_list_accepts_base_network, |prj, cmd| {
+#[forgetest]
+fn base_list_accepts_base_network(prj: _, cmd: _) {
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     cmd.args([
@@ -81,11 +85,12 @@ forgetest!(base_list_accepts_base_network, |prj, cmd| {
         "--list",
     ])
     .assert_success();
-});
+}
 
 // Stateful Base precompile calls must work against a forked endpoint, not just locally: read-only
 // ActivationRegistry/B20 calls already passed while `activate`/`createB20` reverted.
-forgetest_async!(base_fork_allows_stateful_precompile_writes, |prj, cmd| {
+#[forgetest]
+async fn base_fork_allows_stateful_precompile_writes(prj: _, cmd: _) {
     let (_api, handle) =
         spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;
 
@@ -104,9 +109,10 @@ forgetest_async!(base_fork_allows_stateful_precompile_writes, |prj, cmd| {
         "-vvvv",
     ])
     .assert_success();
-});
+}
 
-forgetest!(base_local_allows_stateful_precompile_writes, |prj, cmd| {
+#[forgetest]
+fn base_local_allows_stateful_precompile_writes(prj: _, cmd: _) {
     prj.add_test("BaseForkWrites.t.sol", include_str!("../../fixtures/BaseForkWrites.t.sol"));
 
     cmd.args([
@@ -122,9 +128,10 @@ forgetest!(base_local_allows_stateful_precompile_writes, |prj, cmd| {
         "-vvvv",
     ])
     .assert_success();
-});
+}
 
-forgetest!(base_script_uses_native_network, |prj, cmd| {
+#[forgetest]
+fn base_script_uses_native_network(prj: _, cmd: _) {
     let script = prj.add_script(
         "BaseScript.s.sol",
         r#"
@@ -150,9 +157,10 @@ contract BaseScript {
         .arg(script)
         .args(["--network", "base", "--hardfork", "base:Beryl", "--chain-id", "8453"])
         .assert_success();
-});
+}
 
-forgetest!(base_execute_transaction_rejects_eip8130, |prj, cmd| {
+#[forgetest]
+fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
     let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
     let mut envelope = json!({
         "type": "0x79",
@@ -217,9 +225,10 @@ contract BaseExecuteTransactionTest {{
         "BaseExecuteTransactionTest",
     ])
     .assert_success();
-});
+}
 
-forgetest!(base_isolated_calls_do_not_charge_callers, |prj, cmd| {
+#[forgetest]
+fn base_isolated_calls_do_not_charge_callers(prj: _, cmd: _) {
     prj.add_test(
         "BaseIsolatedFees.t.sol",
         r#"
@@ -318,9 +327,10 @@ contract BaseIsolatedFeesTest {
         "BaseIsolatedFeesTest",
     ])
     .assert_success();
-});
+}
 
-forgetest!(base_isolated_snapshot_does_not_disable_broadcast_fees, |prj, cmd| {
+#[forgetest]
+fn base_isolated_snapshot_does_not_disable_broadcast_fees(prj: _, cmd: _) {
     let signer = PrivateKeySigner::from_bytes(&B256::with_last_byte(1)).unwrap();
     let recipient = Address::with_last_byte(0x43);
     let mut transaction = TxEip1559 {
@@ -444,9 +454,10 @@ contract BaseIsolatedSnapshotFeesTest {{
         "BaseIsolatedSnapshotFeesTest",
     ])
     .assert_success();
-});
+}
 
-forgetest_async!(base_fork_isolated_snapshot_fee_tracks_roll, |prj, cmd| {
+#[forgetest]
+async fn base_fork_isolated_snapshot_fee_tracks_roll(prj: _, cmd: _) {
     let (api, handle) =
         spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Azul.into()))).await;
     let provider = handle.http_provider();
@@ -546,9 +557,10 @@ contract BaseForkIsolatedSnapshotFeeTest {{
         "BaseForkIsolatedSnapshotFeeTest",
     ])
     .assert_success();
-});
+}
 
-forgetest_async!(base_fork_isolated_inactive_hash_roll_charges_replayed_fees, |prj, cmd| {
+#[forgetest]
+async fn base_fork_isolated_inactive_hash_roll_charges_replayed_fees(prj: _, cmd: _) {
     let (api, handle) =
         spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Azul.into()))).await;
     let provider = handle.http_provider();
@@ -646,4 +658,4 @@ contract BaseForkIsolatedReplayFeesTest {{
         "BaseForkIsolatedReplayFeesTest",
     ])
     .assert_success();
-});
+}

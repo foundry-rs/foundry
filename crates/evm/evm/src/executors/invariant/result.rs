@@ -21,9 +21,9 @@ use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
+use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::TestError;
 use revm::interpreter::InstructionResult;
-use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};
 
 /// The outcome of an invariant fuzz test

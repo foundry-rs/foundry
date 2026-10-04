@@ -334,10 +334,11 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
         EthereumHardfork::Cancun => SpecId::CANCUN,
         EthereumHardfork::Prague => SpecId::PRAGUE,
         EthereumHardfork::Osaka => SpecId::OSAKA,
-        EthereumHardfork::Bpo1 | EthereumHardfork::Bpo2 => SpecId::OSAKA,
-        EthereumHardfork::Bpo3 | EthereumHardfork::Bpo4 | EthereumHardfork::Bpo5 => {
-            unimplemented!()
-        }
+        EthereumHardfork::Bpo1
+        | EthereumHardfork::Bpo2
+        | EthereumHardfork::Bpo3
+        | EthereumHardfork::Bpo4
+        | EthereumHardfork::Bpo5 => SpecId::OSAKA,
         EthereumHardfork::Amsterdam => SpecId::AMSTERDAM,
         f => unreachable!("unimplemented {}", f),
     }
@@ -711,14 +712,35 @@ mod tests {
 
     #[test]
     fn test_ethereum_spec_id_mapping() {
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Frontier), SpecId::FRONTIER);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Homestead), SpecId::HOMESTEAD);
-
-        // Test latest hardforks
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Cancun), SpecId::CANCUN);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Prague), SpecId::PRAGUE);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Osaka), SpecId::OSAKA);
-        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Amsterdam), SpecId::AMSTERDAM);
+        for (hardfork, expected) in [
+            (EthereumHardfork::Frontier, SpecId::FRONTIER),
+            (EthereumHardfork::Homestead, SpecId::HOMESTEAD),
+            (EthereumHardfork::Dao, SpecId::HOMESTEAD),
+            (EthereumHardfork::Tangerine, SpecId::TANGERINE),
+            (EthereumHardfork::SpuriousDragon, SpecId::SPURIOUS_DRAGON),
+            (EthereumHardfork::Byzantium, SpecId::BYZANTIUM),
+            (EthereumHardfork::Constantinople, SpecId::PETERSBURG),
+            (EthereumHardfork::Petersburg, SpecId::PETERSBURG),
+            (EthereumHardfork::Istanbul, SpecId::ISTANBUL),
+            (EthereumHardfork::MuirGlacier, SpecId::ISTANBUL),
+            (EthereumHardfork::Berlin, SpecId::BERLIN),
+            (EthereumHardfork::London, SpecId::LONDON),
+            (EthereumHardfork::ArrowGlacier, SpecId::LONDON),
+            (EthereumHardfork::GrayGlacier, SpecId::LONDON),
+            (EthereumHardfork::Paris, SpecId::MERGE),
+            (EthereumHardfork::Shanghai, SpecId::SHANGHAI),
+            (EthereumHardfork::Cancun, SpecId::CANCUN),
+            (EthereumHardfork::Prague, SpecId::PRAGUE),
+            (EthereumHardfork::Osaka, SpecId::OSAKA),
+            (EthereumHardfork::Bpo1, SpecId::OSAKA),
+            (EthereumHardfork::Bpo2, SpecId::OSAKA),
+            (EthereumHardfork::Bpo3, SpecId::OSAKA),
+            (EthereumHardfork::Bpo4, SpecId::OSAKA),
+            (EthereumHardfork::Bpo5, SpecId::OSAKA),
+            (EthereumHardfork::Amsterdam, SpecId::AMSTERDAM),
+        ] {
+            assert_eq!(spec_id_from_ethereum_hardfork(hardfork), expected, "{hardfork}");
+        }
     }
 
     #[test]

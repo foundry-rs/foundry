@@ -1,5 +1,6 @@
 //! CLI tests for `cast keychain` subcommands.
 
+use crate::PRECOMPUTED_VADDR_SALT_FOR_ADDR1;
 use alloy_consensus::{TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, U256, hex};
@@ -193,9 +194,6 @@ fn batch_send_transfer_call(path_usd: &str) -> String {
     format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
 }
 
-const PRECOMPUTED_VADDR_SALT_FOR_ADDR1: &str =
-    "0x00000000000000000000000000000000000000000000000000000000abf52baf";
-
 fn assert_wrong_chain_error(stderr: &str) {
     assert!(stderr.contains("is for chain 31338"), "unexpected stderr:\n{stderr}");
     assert!(stderr.contains("command is using chain 31337"), "unexpected stderr:\n{stderr}");
@@ -315,7 +313,8 @@ fn assert_session_cleanup_failure(stderr: &str) {
 }
 
 // `cast keychain rl --json` must emit `{"remaining":"<value>"}`, not a bare string.
-casttest!(keychain_rl_json_is_object, async |_prj, cmd| {
+#[casttest]
+async fn keychain_rl_json_is_object(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -346,11 +345,12 @@ casttest!(keychain_rl_json_is_object, async |_prj, cmd| {
     );
     // Must not be a bare string (old bug: `"0"`)
     assert!(!parsed.is_string(), "JSON output must not be a bare string, got: {output}");
-});
+}
 
 // `cast keychain authorize --tempo.print-sponsor-hash --json` must emit
 // `{"sponsor_hash":"0x..."}`, not a raw hex string.
-casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
+#[casttest]
+async fn keychain_authorize_sponsor_hash_json_is_object(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -379,9 +379,10 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
         .unwrap_or_else(|| panic!("expected 'sponsor_hash' key in JSON output, got: {output}"));
     assert!(hash.starts_with("0x"), "sponsor_hash should be 0x-prefixed, got: {hash}");
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
-});
+}
 
-casttest!(keychain_rejects_remote_sponsor_instead_of_ignoring_it, async |_prj, cmd| {
+#[casttest]
+async fn keychain_rejects_remote_sponsor_instead_of_ignoring_it(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -403,10 +404,11 @@ casttest!(keychain_rejects_remote_sponsor_instead_of_ignoring_it, async |_prj, c
         .stderr_lossy();
 
     assert!(stderr.contains("--sponsor-url is not supported by cast keychain"), "{stderr}");
-});
+}
 
 // TODO: remove this check once browser supports T5/T6 KeyAuthorization fields
-casttest!(key_authorization_sign_rejects_browser_witness_before_browser_run, |_prj, cmd| {
+#[casttest]
+fn key_authorization_sign_rejects_browser_witness_before_browser_run(cmd: _) {
     let stderr = cmd
         .args([
             "key-authorization",
@@ -433,10 +435,11 @@ casttest!(key_authorization_sign_rejects_browser_witness_before_browser_run, |_p
         !stderr.contains("Waiting for browser wallet connection"),
         "browser flow should not start before rejecting --browser --witness:\n{stderr}"
     );
-});
+}
 
 // Offline: signing an admin key authorization round-trips `is_admin`/`account` into the JSON.
-casttest!(key_authorization_sign_admin_emits_admin_json, |_prj, cmd| {
+#[casttest]
+fn key_authorization_sign_admin_emits_admin_json(cmd: _) {
     // `sign --admin` derives the bound account from the signer (it has no auth-level --account),
     // so signing with PK1 binds the authorization to ADDR1.
     let output = cmd
@@ -468,10 +471,11 @@ casttest!(key_authorization_sign_admin_emits_admin_json, |_prj, cmd| {
         parsed["signed_key_authorization"].as_str().is_some_and(|s| s.starts_with("0x")),
         "got: {output}"
     );
-});
+}
 
 // Offline: `--admin` without `--account` is rejected before any signing happens.
-casttest!(key_authorization_encode_admin_requires_account, |_prj, cmd| {
+#[casttest]
+fn key_authorization_encode_admin_requires_account(cmd: _) {
     let stderr = cmd
         .args(["key-authorization", "encode", accounts::ADDR2, "--chain-id", "31337", "--admin"])
         .assert_failure()
@@ -479,10 +483,11 @@ casttest!(key_authorization_encode_admin_requires_account, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("--admin requires --account"), "unexpected stderr:\n{stderr}");
-});
+}
 
 // Offline: an admin key authorization cannot carry an expiry.
-casttest!(key_authorization_encode_admin_rejects_expiry, |_prj, cmd| {
+#[casttest]
+fn key_authorization_encode_admin_rejects_expiry(cmd: _) {
     let stderr = cmd
         .args([
             "key-authorization",
@@ -501,10 +506,11 @@ casttest!(key_authorization_encode_admin_rejects_expiry, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("--expiry"), "unexpected stderr:\n{stderr}");
-});
+}
 
 // Offline: `key-authorization inspect` decodes a signed admin authorization and exposes T6 fields.
-casttest!(key_authorization_inspect_signed_admin_json, |_prj, cmd| {
+#[casttest]
+fn key_authorization_inspect_signed_admin_json(cmd: _) {
     let signed = cmd
         .args([
             "key-authorization",
@@ -542,10 +548,11 @@ casttest!(key_authorization_inspect_signed_admin_json, |_prj, cmd| {
         Some(accounts::ADDR1.to_lowercase()),
         "got: {output}"
     );
-});
+}
 
 // Offline: inspecting with a mismatched `--account` rejects a replayed admin authorization.
-casttest!(key_authorization_inspect_account_mismatch_rejected, |_prj, cmd| {
+#[casttest]
+fn key_authorization_inspect_account_mismatch_rejected(cmd: _) {
     let signed = cmd
         .args([
             "key-authorization",
@@ -570,10 +577,11 @@ casttest!(key_authorization_inspect_account_mismatch_rejected, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("is bound to account"), "unexpected stderr:\n{stderr}");
-});
+}
 
 // On-chain (T6): authorize an admin key, then confirm it via `keychain is-admin --json`.
-casttest!(keychain_authorize_admin_then_is_admin, async |_prj, cmd| {
+#[casttest]
+async fn keychain_authorize_admin_then_is_admin(cmd: _) {
     use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
@@ -611,11 +619,12 @@ casttest!(keychain_authorize_admin_then_is_admin, async |_prj, cmd| {
         .expect("cast keychain is-admin --json should emit valid JSON");
     assert!(parsed.is_object(), "expected JSON object, got: {output}");
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
-});
+}
 
 // On-chain: authorize a regular access key, then use the real `cast send` binary to sign,
 // broadcast, and mine an account transaction with it.
-casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
+#[casttest]
+async fn send_with_authorized_access_key_succeeds(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -658,10 +667,11 @@ casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
         serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
     assert!(receipt["transactionHash"].is_string(), "unexpected receipt: {output}");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
-});
+}
 
 // On-chain: key authorization and `keychain set-scope` keep the tuple ABI through T14.
-casttest!(keychain_set_scope_succeeds_through_t14, async |_prj, cmd| {
+#[casttest]
+async fn keychain_set_scope_succeeds_through_t14(cmd: _) {
     for hardfork in [
         TempoHardfork::T10,
         TempoHardfork::T11,
@@ -721,10 +731,11 @@ casttest!(keychain_set_scope_succeeds_through_t14, async |_prj, cmd| {
             "unexpected {hardfork:?} key info: {output}"
         );
     }
-});
+}
 
 // Scope presence is preserved by both ordinary and witness-based authorization.
-casttest!(keychain_authorize_preserves_empty_scopes, async |_prj, cmd| {
+#[casttest]
+async fn keychain_authorize_preserves_empty_scopes(cmd: _) {
     for (hardfork, witness) in [(TempoHardfork::T3, false), (TempoHardfork::T5, true)] {
         for (scope_args, mode) in [(&[][..], "any"), (&["--scopes", "[]"][..], "none")] {
             let (_, handle) =
@@ -786,9 +797,10 @@ casttest!(keychain_authorize_preserves_empty_scopes, async |_prj, cmd| {
                 );
         }
     }
-});
+}
 
-casttest!(keychain_authorize_rejects_scopes_before_t3, async |_prj, cmd| {
+#[casttest]
+async fn keychain_authorize_rejects_scopes_before_t3(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T2.into()))).await;
     let rpc = handle.http_endpoint();
@@ -803,9 +815,10 @@ Error: call scopes (--scope / --scopes) require a Tempo T3-capable chain
 "#]])
             .stdout_eq(str![""]);
     }
-});
+}
 
-casttest!(send_with_local_sponsor_reports_sponsor_as_fee_payer, async |_prj, cmd| {
+#[casttest]
+async fn send_with_local_sponsor_reports_sponsor_as_fee_payer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -850,9 +863,10 @@ casttest!(send_with_local_sponsor_reports_sponsor_as_fee_payer, async |_prj, cmd
         path_usd.parse::<alloy_primitives::Address>().unwrap(),
         "unexpected receipt: {output}"
     );
-});
+}
 
-casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
+#[casttest]
+async fn send_uses_access_key_from_accounts_store(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -895,9 +909,10 @@ casttest!(send_uses_access_key_from_accounts_store, async |_prj, cmd| {
     let receipt: serde_json::Value =
         serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
-});
+}
 
-casttest!(send_with_accounts_store_and_remote_sponsor_sync_succeeds, async |_prj, cmd| {
+#[casttest]
+async fn send_with_accounts_store_and_remote_sponsor_sync_succeeds(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -954,9 +969,10 @@ casttest!(send_with_accounts_store_and_remote_sponsor_sync_succeeds, async |_prj
         Some(path_usd.to_lowercase()),
         "unexpected receipt: {output}"
     );
-});
+}
 
-casttest!(tempo_unlocked_send_does_not_require_accounts_store_entry, async |_prj, cmd| {
+#[casttest]
+async fn tempo_unlocked_send_does_not_require_accounts_store_entry(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -988,9 +1004,10 @@ casttest!(tempo_unlocked_send_does_not_require_accounts_store_entry, async |_prj
     let receipt: serde_json::Value =
         serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
-});
+}
 
-casttest!(tempo_accounts_store_does_not_change_ethereum_send_or_mktx, async |_prj, cmd| {
+#[casttest]
+async fn tempo_accounts_store_does_not_change_ethereum_send_or_mktx(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1037,9 +1054,10 @@ casttest!(tempo_accounts_store_does_not_change_ethereum_send_or_mktx, async |_pr
         .stdout_lossy();
     let raw = alloy_primitives::hex::decode(output.trim()).expect("decode raw transaction");
     TxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode Ethereum transaction");
-});
+}
 
-casttest!(corrupt_tempo_store_does_not_break_ethereum_unlocked_send, async |_prj, cmd| {
+#[casttest]
+async fn corrupt_tempo_store_does_not_break_ethereum_unlocked_send(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1067,10 +1085,11 @@ casttest!(corrupt_tempo_store_does_not_break_ethereum_unlocked_send, async |_prj
     cmd.args(["call", accounts::ADDR3, "--from", accounts::ADDR1, "--rpc-url", &rpc])
         .assert_success()
         .stdout_eq("0x\n");
-});
+}
 
 // On-chain (T6): a keychain signature from an authorized admin key passes `verify-admin`.
-casttest!(keychain_verify_admin_accepts_admin_signature, async |_prj, cmd| {
+#[casttest]
+async fn keychain_verify_admin_accepts_admin_signature(cmd: _) {
     use alloy_primitives::{Address, B256, hex};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -1127,10 +1146,11 @@ casttest!(keychain_verify_admin_accepts_admin_signature, async |_prj, cmd| {
     let parsed: serde_json::Value = serde_json::from_str(output.trim())
         .expect("cast keychain verify-admin --json should emit valid JSON");
     assert_eq!(parsed["valid"], serde_json::Value::Bool(true), "got: {output}");
-});
+}
 
 // On-chain (T6): `keychain authorize --admin` rejects spending limits before submitting.
-casttest!(keychain_authorize_admin_rejects_limits, async |_prj, cmd| {
+#[casttest]
+async fn keychain_authorize_admin_rejects_limits(cmd: _) {
     use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
@@ -1153,12 +1173,13 @@ casttest!(keychain_authorize_admin_rejects_limits, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("spending limits"), "unexpected stderr:\n{stderr}");
-});
+}
 
 // An access-key signer is rejected for admin-gated keychain mutators even when it is an active
 // admin key, because submitting the mutator as access-key-signed calldata reverts on-chain with
 // `UnauthorizedCaller()` on the pinned Tempo build.
-casttest!(keychain_access_key_cannot_submit_admin_mutator, async |_prj, cmd| {
+#[casttest]
+async fn keychain_access_key_cannot_submit_admin_mutator(cmd: _) {
     use tempo_hardfork::TempoHardfork;
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
@@ -1200,12 +1221,13 @@ casttest!(keychain_access_key_cannot_submit_admin_mutator, async |_prj, cmd| {
         stderr.contains("currently reverts on-chain with UnauthorizedCaller()"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
 // Offline (T6): an admin access key signing a child authorization binds the authorization to the
 // root account it manages, not to the signing admin key. This covers the delegated admin-signing
 // path in `run_key_auth_sign`.
-casttest!(key_authorization_sign_admin_access_key_binds_root_account, |_prj, cmd| {
+#[casttest]
+fn key_authorization_sign_admin_access_key_binds_root_account(cmd: _) {
     let output = cmd
         .args([
             "key-authorization",
@@ -1239,9 +1261,10 @@ casttest!(key_authorization_sign_admin_access_key_binds_root_account, |_prj, cmd
         Some(accounts::ADDR1.to_lowercase()),
         "got: {output}"
     );
-});
+}
 
-casttest!(tempo_import_access_key_writes_accounts_store, |prj, cmd| {
+#[casttest]
+fn tempo_import_access_key_writes_accounts_store(prj: _, cmd: _) {
     let tempo_home = prj.root().join("tempo-home");
     let authorization = cmd
         .args([
@@ -1284,9 +1307,10 @@ casttest!(tempo_import_access_key_writes_accounts_store, |prj, cmd| {
     assert_eq!(keys[0].chain_id(), 42431);
     assert!(keys[0].key_authorization().is_some());
     assert!(keys[0].is_locally_signable());
-});
+}
 
-casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
+#[casttest]
+async fn keychain_doctor_json_keeps_report_schema_version(cmd: _) {
     let output = cmd
         .args([
             "keychain",
@@ -1305,9 +1329,10 @@ casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
     let parsed: serde_json::Value = serde_json::from_str(output.trim())
         .expect("cast keychain doctor --json should emit valid JSON");
     assert_eq!(parsed["schema_version"], 1);
-});
+}
 
-casttest!(keychain_show_json_no_match_returns_empty_array, |prj, cmd| {
+#[casttest]
+fn keychain_show_json_no_match_returns_empty_array(prj: _, cmd: _) {
     let tempo_home = prj.root().join("tempo-home");
     fs::create_dir_all(tempo_home.join("wallet")).expect("create Tempo wallet dir");
     let store = serde_json::json!({
@@ -1341,9 +1366,10 @@ casttest!(keychain_show_json_no_match_returns_empty_array, |prj, cmd| {
         parsed["data"].as_array().expect("keychain show --json data should be an array").len(),
         0
     );
-});
+}
 
-casttest!(keychain_eip7702_auth_disclosure, |_prj, cmd| {
+#[casttest]
+fn keychain_eip7702_auth_disclosure(cmd: _) {
     let authorization = signed_eip7702_authorization();
     let args = [
         "keychain",
@@ -1374,9 +1400,10 @@ Continue anyway? [y/N] Aborted.
         cmd.cast_fuse().args(args).arg("--force").assert_failure().get_output().stderr_lossy();
     assert!(!stderr.contains("Continue anyway?"), "unexpected stderr:\n{stderr}");
     assert!(stderr.contains("error sending request"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(keychain_eip7702_address_auth_uses_wallet_signer, async |_prj, cmd| {
+#[casttest]
+async fn keychain_eip7702_address_auth_uses_wallet_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -1404,9 +1431,10 @@ casttest!(keychain_eip7702_address_auth_uses_wallet_signer, async |_prj, cmd| {
     let checked: serde_json::Value =
         serde_json::from_str(output.trim()).expect("keychain check emits JSON");
     assert_eq!(checked["data"]["provisioned"], true);
-});
+}
 
-casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, cmd| {
+#[casttest]
+async fn wallet_session_revoke_revokes_provisioned_key_on_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1477,9 +1505,10 @@ Continue anyway? [y/N] Aborted.
     assert_eq!(checked["is_revoked"], true);
 
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(wallet_session_revoke_sponsor_hash_does_not_mark_revoked, async |_prj, cmd| {
+#[casttest]
+async fn wallet_session_revoke_sponsor_hash_does_not_mark_revoked(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1532,9 +1561,10 @@ casttest!(wallet_session_revoke_sponsor_hash_does_not_mark_revoked, async |_prj,
     assert_eq!(checked["is_revoked"], false);
 
     assert_accounts_store_key_signable(tempo_home.path(), "active");
-});
+}
 
-casttest!(wallet_session_revoke_marks_unprovisioned_key_revoked_locally, async |_prj, cmd| {
+#[casttest]
+async fn wallet_session_revoke_marks_unprovisioned_key_revoked_locally(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1575,9 +1605,10 @@ casttest!(wallet_session_revoke_marks_unprovisioned_key_revoked_locally, async |
     assert_eq!(checked["is_revoked"], false);
 
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(wallet_session_revoke_local_cleans_key_without_rpc, async |_prj, cmd| {
+#[casttest]
+async fn wallet_session_revoke_local_cleans_key_without_rpc(cmd: _) {
     let tempo_home = tempfile::tempdir().unwrap();
     let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31337");
 
@@ -1594,9 +1625,10 @@ casttest!(wallet_session_revoke_local_cleans_key_without_rpc, async |_prj, cmd| 
     assert_eq!(revoked["reason"], "local");
 
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(wallet_session_store_preserves_existing_access_keys, async |prj, cmd| {
+#[casttest]
+async fn wallet_session_store_preserves_existing_access_keys(prj: _, cmd: _) {
     let tempo_home = prj.root().join("tempo-home");
     write_accounts_store(&tempo_home, 31337);
     let before = fs::read_to_string(tempo_home.join("wallet/store.json")).unwrap();
@@ -1633,9 +1665,10 @@ casttest!(wallet_session_store_preserves_existing_access_keys, async |prj, cmd| 
     assert!(retired.get("privateKey").is_none());
     assert!(retired.get("keyAuthorization").is_some());
     assert!(!tempo_home.join("wallet/sessions.toml").exists());
-});
+}
 
-casttest!(wallet_session_revoke_wrong_chain_preserves_local_key, async |_prj, cmd| {
+#[casttest]
+async fn wallet_session_revoke_wrong_chain_preserves_local_key(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1656,21 +1689,20 @@ casttest!(wallet_session_revoke_wrong_chain_preserves_local_key, async |_prj, cm
     .assert_failure();
 
     assert_accounts_store_key_signable(tempo_home.path(), "active");
-});
+}
 
-casttest!(
-    wallet_session_run_for_without_key_use_fails_closed_and_cleans_key_material,
-    async |_prj, cmd| {
-        let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
-        let rpc = handle.http_endpoint();
-        let tempo_home = tempfile::tempdir().unwrap();
-        let path_usd = path_usd();
-        let child_dir = tempfile::tempdir().unwrap();
-        let child_script = child_dir.path().join("session-child.sh");
-        let child_session_out = child_dir.path().join("child-session-id.txt");
-        fs::write(
-            &child_script,
-            r#"#!/bin/sh
+#[casttest]
+async fn wallet_session_run_for_without_key_use_fails_closed_and_cleans_key_material(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let child_dir = tempfile::tempdir().unwrap();
+    let child_script = child_dir.path().join("session-child.sh");
+    let child_session_out = child_dir.path().join("child-session-id.txt");
+    fs::write(
+        &child_script,
+        r#"#!/bin/sh
 set -eu
 test -n "${TEMPO_SESSION_ID:-}"
 store_file="${TEMPO_HOME}/wallet/store.json"
@@ -1679,51 +1711,51 @@ grep -q '"privateKey":' "${store_file}"
 grep -q '"keyAuthorization":' "${store_file}"
 printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
 "#,
-        )
-        .expect("write child script");
+    )
+    .expect("write child script");
 
-        // Git Bash (the `sh` on Windows) treats backslashes as escapes, so embed the script
-        // paths with forward slashes; `to_slash_lossy` is a no-op on Unix.
-        let for_command =
-            format!("sh {} {}", child_script.to_slash_lossy(), child_session_out.to_slash_lossy());
+    // Git Bash (the `sh` on Windows) treats backslashes as escapes, so embed the script
+    // paths with forward slashes; `to_slash_lossy` is a no-op on Unix.
+    let for_command =
+        format!("sh {} {}", child_script.to_slash_lossy(), child_session_out.to_slash_lossy());
 
-        cmd.cast_fuse();
-        cmd.env("TEMPO_HOME", tempo_home.path());
-        let stderr = cmd
-            .args([
-                "wallet",
-                "session",
-                "--root",
-                accounts::ADDR1,
-                "--expires",
-                "10m",
-                "--scope",
-                &path_usd,
-                "--spend-limit",
-                "PathUSD=0",
-                "--for",
-                &for_command,
-                "--private-key",
-                accounts::PK1,
-                "--rpc-url",
-                &rpc,
-            ])
-            .assert_failure()
-            .get_output()
-            .stderr_lossy();
-        assert_session_cleanup_failure(&stderr);
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "wallet",
+            "session",
+            "--root",
+            accounts::ADDR1,
+            "--expires",
+            "10m",
+            "--scope",
+            &path_usd,
+            "--spend-limit",
+            "PathUSD=0",
+            "--for",
+            &for_command,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert_session_cleanup_failure(&stderr);
 
-        let child_session_id =
-            fs::read_to_string(&child_session_out).expect("child wrote TEMPO_SESSION_ID");
-        assert!(
-            child_session_id.trim().starts_with("0x"),
-            "unexpected child session id: {child_session_id}"
-        );
-        assert_accounts_store_key_retired(tempo_home.path(), "revoking");
-    }
-);
+    let child_session_id =
+        fs::read_to_string(&child_session_out).expect("child wrote TEMPO_SESSION_ID");
+    assert!(
+        child_session_id.trim().starts_with("0x"),
+        "unexpected child session id: {child_session_id}"
+    );
+    assert_accounts_store_key_retired(tempo_home.path(), "revoking");
+}
 
-casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj, cmd| {
+#[casttest]
+async fn wallet_session_run_for_cast_send_submits_with_session_key(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1762,9 +1794,10 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
 
     assert_contains_tx_hash(&stdout, "child cast send");
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj, cmd| {
+#[casttest]
+async fn wallet_session_run_for_batch_send_submits_with_session_key(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1816,9 +1849,10 @@ printf '%s\n' "$tx_hash"
 
     assert_contains_tx_hash(&stdout, "child cast batch-send");
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(wallet_session_run_for_forge_script_submits_with_session_key, async |prj, cmd| {
+#[casttest]
+async fn wallet_session_run_for_forge_script_submits_with_session_key(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1915,9 +1949,10 @@ contract SessionForgeScript is Script {{
         "forge broadcast tx should have a submitted hash: {tx}"
     );
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(batch_commands_validate_tempo_sender, async |_prj, cmd| {
+#[casttest]
+async fn batch_commands_validate_tempo_sender(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let call = batch_send_transfer_call(&path_usd());
@@ -1965,9 +2000,10 @@ Error: sender 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC does not match Tempo ac
             }
         }
     }
-});
+}
 
-casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
+#[casttest]
+async fn batch_send_uses_tempo_session_id_env(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -1994,9 +2030,10 @@ casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
         .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "cast batch-send");
-});
+}
 
-casttest!(batch_mktx_uses_tempo_session_id_env, async |_prj, cmd| {
+#[casttest]
+async fn batch_mktx_uses_tempo_session_id_env(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2017,9 +2054,10 @@ casttest!(batch_mktx_uses_tempo_session_id_env, async |_prj, cmd| {
         stdout.trim().starts_with("0x"),
         "expected cast batch-mktx to print raw tx hex, got:\n{stdout}"
     );
-});
+}
 
-casttest!(batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata, async |_prj, cmd| {
+#[casttest]
+async fn batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2053,9 +2091,10 @@ casttest!(batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata, async |_pr
         stderr.contains("--tempo.root-account is required when --tempo.access-key is set"),
         "raw unsigned must still resolve Tempo access-key metadata, got:\n{stderr}"
     );
-});
+}
 
-casttest!(virtual_master_registration_requires_t3, async |_prj, cmd| {
+#[casttest]
+async fn virtual_master_registration_requires_t3(cmd: _) {
     for hardfork in [TempoHardfork::T2, TempoHardfork::T3] {
         for command in [
             ["vaddr", "create", "--owner", accounts::ADDR1],
@@ -2087,9 +2126,10 @@ Error: virtual master registration requires a Tempo T3-capable AddressRegistry R
                 .stdout_eq(if hardfork == TempoHardfork::T2 { "0\n" } else { "1\n" });
         }
     }
-});
+}
 
-casttest!(vaddr_create_sync_json_uses_tempo_session_id_env, async |_prj, cmd| {
+#[casttest]
+async fn vaddr_create_sync_json_uses_tempo_session_id_env(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2124,9 +2164,10 @@ casttest!(vaddr_create_sync_json_uses_tempo_session_id_env, async |_prj, cmd| {
             .is_some_and(|hash| hash.starts_with("0x")),
         "expected vaddr create --json to include registration tx hash, got:\n{stdout}"
     );
-});
+}
 
-casttest!(tip20_create_uses_tempo_session_id_env, async |_prj, cmd| {
+#[casttest]
+async fn tip20_create_uses_tempo_session_id_env(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2158,9 +2199,10 @@ casttest!(tip20_create_uses_tempo_session_id_env, async |_prj, cmd| {
         .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "cast tip20 create");
-});
+}
 
-casttest!(tip20_mine_register_uses_tempo_session_id_env, async |_prj, cmd| {
+#[casttest]
+async fn tip20_mine_register_uses_tempo_session_id_env(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2187,9 +2229,10 @@ casttest!(tip20_mine_register_uses_tempo_session_id_env, async |_prj, cmd| {
         .stdout_lossy();
 
     assert_contains_tx_hash(&stdout, "cast tip20 mine --register");
-});
+}
 
-casttest!(erc20_transfer_uses_tempo_session_id_env, async |_prj, cmd| {
+#[casttest]
+async fn erc20_transfer_uses_tempo_session_id_env(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2217,9 +2260,10 @@ casttest!(erc20_transfer_uses_tempo_session_id_env, async |_prj, cmd| {
         .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "cast erc20 transfer");
-});
+}
 
-casttest!(batch_mktx_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn batch_mktx_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2245,9 +2289,10 @@ casttest!(batch_mktx_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(erc20_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn erc20_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2274,9 +2319,10 @@ casttest!(erc20_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(batch_mktx_rejects_session_with_ethsign, |_prj, cmd| {
+#[casttest]
+fn batch_mktx_rejects_session_with_ethsign(cmd: _) {
     let path_usd = path_usd();
     let call = batch_send_transfer_call(&path_usd);
 
@@ -2297,9 +2343,10 @@ casttest!(batch_mktx_rejects_session_with_ethsign, |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("cannot be combined with --ethsign"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(batch_mktx_rejects_session_with_raw_unsigned, |_prj, cmd| {
+#[casttest]
+fn batch_mktx_rejects_session_with_raw_unsigned(cmd: _) {
     let path_usd = path_usd();
     let call = batch_send_transfer_call(&path_usd);
 
@@ -2321,9 +2368,10 @@ casttest!(batch_mktx_rejects_session_with_raw_unsigned, |_prj, cmd| {
         stderr.contains("cannot be combined with --raw-unsigned"),
         "unexpected stderr:\n{stderr}"
     );
-});
+}
 
-casttest!(batch_mktx_rejects_session_on_wrong_chain, async |_prj, cmd| {
+#[casttest]
+async fn batch_mktx_rejects_session_on_wrong_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2350,9 +2398,10 @@ casttest!(batch_mktx_rejects_session_on_wrong_chain, async |_prj, cmd| {
         .stderr_lossy();
 
     assert_wrong_chain_error(&stderr);
-});
+}
 
-casttest!(vaddr_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn vaddr_create_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -2377,9 +2426,10 @@ casttest!(vaddr_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(vaddr_create_rejects_session_with_browser, async |_prj, cmd| {
+#[casttest]
+async fn vaddr_create_rejects_session_with_browser(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -2403,9 +2453,10 @@ casttest!(vaddr_create_rejects_session_with_browser, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(vaddr_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
+#[casttest]
+async fn vaddr_create_rejects_session_on_wrong_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2432,9 +2483,10 @@ casttest!(vaddr_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
         .stderr_lossy();
 
     assert_wrong_chain_error(&stderr);
-});
+}
 
-casttest!(tip20_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn tip20_create_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2464,9 +2516,10 @@ casttest!(tip20_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(tip20_create_rejects_session_with_browser, async |_prj, cmd| {
+#[casttest]
+async fn tip20_create_rejects_session_with_browser(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2495,9 +2548,10 @@ casttest!(tip20_create_rejects_session_with_browser, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(tip20_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
+#[casttest]
+async fn tip20_create_rejects_session_on_wrong_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2529,9 +2583,10 @@ casttest!(tip20_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
         .stderr_lossy();
 
     assert_wrong_chain_error(&stderr);
-});
+}
 
-casttest!(tip20_mine_register_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn tip20_mine_register_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -2556,9 +2611,10 @@ casttest!(tip20_mine_register_rejects_session_with_explicit_signer, async |_prj,
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(tip20_mine_register_rejects_session_with_browser, async |_prj, cmd| {
+#[casttest]
+async fn tip20_mine_register_rejects_session_with_browser(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -2582,9 +2638,10 @@ casttest!(tip20_mine_register_rejects_session_with_browser, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(tip20_mine_register_rejects_session_on_wrong_chain, async |_prj, cmd| {
+#[casttest]
+async fn tip20_mine_register_rejects_session_on_wrong_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2611,9 +2668,10 @@ casttest!(tip20_mine_register_rejects_session_on_wrong_chain, async |_prj, cmd| 
         .stderr_lossy();
 
     assert_wrong_chain_error(&stderr);
-});
+}
 
-casttest!(erc20_rejects_session_with_browser, async |_prj, cmd| {
+#[casttest]
+async fn erc20_rejects_session_with_browser(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2639,9 +2697,10 @@ casttest!(erc20_rejects_session_with_browser, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(erc20_rejects_session_on_wrong_chain, async |_prj, cmd| {
+#[casttest]
+async fn erc20_rejects_session_on_wrong_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2669,9 +2728,10 @@ casttest!(erc20_rejects_session_on_wrong_chain, async |_prj, cmd| {
         .stderr_lossy();
 
     assert_wrong_chain_error(&stderr);
-});
+}
 
-casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, async |prj, cmd| {
+#[casttest]
+async fn wallet_session_run_for_grandchild_cast_send_inherits_session_key(prj: _, cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2724,9 +2784,10 @@ sh "$1"
 
     assert_contains_tx_hash(&stdout, "grandchild cast send");
     assert_accounts_store_key_retired(tempo_home.path(), "revoked");
-});
+}
 
-casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn cast_send_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
 
@@ -2749,9 +2810,10 @@ casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(batch_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
+#[casttest]
+async fn batch_send_rejects_session_with_explicit_signer(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2777,9 +2839,10 @@ casttest!(batch_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(batch_send_rejects_session_with_unlocked, async |_prj, cmd| {
+#[casttest]
+async fn batch_send_rejects_session_with_unlocked(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
@@ -2806,9 +2869,10 @@ casttest!(batch_send_rejects_session_with_unlocked, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("cannot be combined with --unlocked"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(batch_send_rejects_session_on_wrong_chain, async |_prj, cmd| {
+#[casttest]
+async fn batch_send_rejects_session_on_wrong_chain(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2836,9 +2900,10 @@ casttest!(batch_send_rejects_session_on_wrong_chain, async |_prj, cmd| {
 
     assert!(stderr.contains("is for chain 31338"), "unexpected stderr:\n{stderr}");
     assert!(stderr.contains("command is using chain 31337"), "unexpected stderr:\n{stderr}");
-});
+}
 
-casttest!(wallet_session_run_for_cleans_key_material_when_child_fails, async |_prj, cmd| {
+#[casttest]
+async fn wallet_session_run_for_cleans_key_material_when_child_fails(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -2884,54 +2949,52 @@ exit 7
         .stderr_lossy();
     assert!(stderr.contains("exited with code 7"), "unexpected stderr:\n{stderr}");
     assert_accounts_store_key_retired(tempo_home.path(), "failed");
-});
+}
 
-casttest!(
-    wallet_session_run_for_retires_local_key_when_revoke_preflight_fails,
-    async |_prj, cmd| {
-        let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
-        let rpc = handle.http_endpoint();
-        let tempo_home = tempfile::tempdir().unwrap();
-        let path_usd = path_usd();
-        let child_dir = tempfile::tempdir().unwrap();
-        let child_script = child_dir.path().join("session-child.sh");
-        fs::write(
-            &child_script,
-            r#"#!/bin/sh
+#[casttest]
+async fn wallet_session_run_for_retires_local_key_when_revoke_preflight_fails(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let child_dir = tempfile::tempdir().unwrap();
+    let child_script = child_dir.path().join("session-child.sh");
+    fs::write(
+        &child_script,
+        r#"#!/bin/sh
 set -eu
 test -n "${TEMPO_SESSION_ID:-}"
 "#,
-        )
-        .expect("write child script");
+    )
+    .expect("write child script");
 
-        let for_command = format!("sh {}", child_script.to_slash_lossy());
+    let for_command = format!("sh {}", child_script.to_slash_lossy());
 
-        cmd.cast_fuse();
-        cmd.env("TEMPO_HOME", tempo_home.path());
-        let stderr = cmd
-            .args([
-                "wallet",
-                "session",
-                "--root",
-                accounts::ADDR1,
-                "--chain-id",
-                "31338",
-                "--expires",
-                "10m",
-                "--scope",
-                &path_usd,
-                "--for",
-                &for_command,
-                "--private-key",
-                accounts::PK1,
-                "--rpc-url",
-                &rpc,
-            ])
-            .assert_failure()
-            .get_output()
-            .stderr_lossy();
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "wallet",
+            "session",
+            "--root",
+            accounts::ADDR1,
+            "--chain-id",
+            "31338",
+            "--expires",
+            "10m",
+            "--scope",
+            &path_usd,
+            "--for",
+            &for_command,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
 
-        assert!(stderr.contains("created for chain 31338"), "unexpected stderr:\n{stderr}");
-        assert_accounts_store_key_retired(tempo_home.path(), "revoking");
-    }
-);
+    assert!(stderr.contains("created for chain 31338"), "unexpected stderr:\n{stderr}");
+    assert_accounts_store_key_retired(tempo_home.path(), "revoking");
+}

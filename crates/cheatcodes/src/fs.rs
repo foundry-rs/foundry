@@ -14,11 +14,11 @@ use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
+use foundry_evm_traces::CallKind;
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
 };
-use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
