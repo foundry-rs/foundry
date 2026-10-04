@@ -1,24 +1,20 @@
 //! Fork state compatibility with RPC endpoints that reject EIP-1898 block objects.
 
 use alloy_primitives::{B256, U256, address, bytes};
-use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
-use axum::{Json, Router, extract::Path, http::StatusCode, response::IntoResponse, routing::post};
+use axum::{Json, Router, extract::Path, routing::post};
 use foundry_config::{RpcEndpointUrl, RpcEndpoints};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 #[forgetest]
-async fn fork_state_compatibility_script_and_test(prj: _) {
+async fn fork_state_by_number_script_and_test(prj: _, cmd: _) {
     let (api, anvil) = spawn(NodeConfig::test().with_no_mining(true)).await;
     let target = address!("0000000000000000000000000000000000001234");
     api.anvil_set_balance(target, U256::from(42)).await.unwrap();
     api.anvil_set_code(target, bytes!("00")).await.unwrap();
     api.anvil_set_storage_at(target, U256::ZERO, B256::from(U256::from(7))).await.unwrap();
-    api.mine_one().await.unwrap();
-    let old_hash =
-        anvil.http_provider().get_block_by_number(1.into()).await.unwrap().unwrap().header.hash;
     api.mine_one().await.unwrap();
     let sender = anvil.dev_wallets().next().unwrap().address().to_string();
     let upstream = anvil.http_endpoint();
@@ -34,8 +30,7 @@ async fn fork_state_compatibility_script_and_test(prj: _) {
                 // Exercise the path used by public RPC providers rather than Anvil discovery.
                 if matches!(method, "anvil_nodeInfo" | "anvil_metadata") {
                     return Json(json!({"jsonrpc": "2.0", "id": request["id"],
-                        "error": {"code": -32601, "message": "method not found"}}))
-                    .into_response();
+                        "error": {"code": -32601, "message": "method not found"}}));
                 }
                 if matches!(
                     method,
@@ -45,23 +40,11 @@ async fn fork_state_compatibility_script_and_test(prj: _) {
                         | "eth_getStorageAt"
                 ) {
                     recorded.lock().push(request.clone());
-                    let selector = request["params"].as_array().unwrap().last().unwrap();
-                    if selector.is_object()
-                        && (mode == "relay" || selector["blockHash"] == json!(old_hash))
+                    if mode == "number"
+                        && !request["params"].as_array().unwrap().last().unwrap().is_string()
                     {
-                        // Hedera rejects objects over HTTP 400. Monad accepts them for recent
-                        // blocks, but returns invalid params for older historical state.
-                        let (status, message) = if mode == "relay" {
-                            (StatusCode::BAD_REQUEST, "Invalid parameter: [object Object]")
-                        } else {
-                            (StatusCode::OK, "Block requested not found")
-                        };
-                        return (
-                            status,
-                            Json(json!({"jsonrpc": "2.0", "id": if mode == "relay" { Value::Null } else { request["id"].clone() },
-                            "error": {"code": -32602, "message": message}})),
-                        )
-                            .into_response();
+                        return Json(json!({"jsonrpc": "2.0", "id": request["id"],
+                            "error": {"code": -32602, "message": "block objects unsupported"}}));
                     }
                 }
                 Json(
@@ -75,12 +58,11 @@ async fn fork_state_compatibility_script_and_test(prj: _) {
                         .await
                         .unwrap(),
                 )
-                .into_response()
             }
         }),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/relay", listener.local_addr().unwrap());
+    let endpoint = format!("http://{}/number", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     prj.add_source(
         "Probe.sol",
@@ -90,6 +72,10 @@ interface Vm {
     function startBroadcast() external;
     function stopBroadcast() external;
     function createSelectFork(string calldata, uint256) external returns (uint256);
+    function createSelectFork(string calldata, bytes32) external returns (uint256);
+    function rollFork(bytes32) external;
+    function envBytes32(string calldata) external view returns (bytes32);
+    function envString(string calldata) external view returns (string memory);
     function rollFork(uint256) external;
     function rpcUrl(string calldata) external view returns (string memory);
     function expectRevert(bytes calldata) external;
@@ -113,9 +99,8 @@ contract Probe {
         vm.rollFork(1);
         checkState();
     }
-    function testReplayRejectsNumberState() public {
-        checkState();
-        vm.expectRevert(bytes("vm.transact: transaction replay requires hash-addressed state; create a fresh transaction-targeted fork"));
+    function testForkReplayRejectsNumberState() public {
+        vm.expectRevert(bytes("vm.transact: transaction replay requires hash-addressed state; create a transaction-targeted fork or disable fork_state_by_number"));
         this.replay();
     }
     function replay() external { vm.transact(bytes32(0)); }
@@ -133,7 +118,14 @@ contract Probe {
         config.rpc_endpoints =
             RpcEndpoints::new([("relay", RpcEndpointUrl::Url(endpoint.clone()))]);
     });
-    for explicit_block in [false, true] {
+    // The default still uses block hashes, which this relay rejects.
+    cmd.args(["script", "src/Probe.sol:Probe", "--rpc-url", &endpoint, "--sender", &sender])
+        .assert_failure();
+    assert!(requests.lock().iter().any(|request| {
+        request["method"] == "eth_getTransactionCount" && request["params"][1].is_object()
+    }));
+    for configured in [false, true] {
+        prj.update_config(|config| config.fork_state_by_number = configured);
         for script in [false, true] {
             requests.lock().clear();
             let mut command = prj.forge_command();
@@ -143,8 +135,11 @@ contract Probe {
                 command.args(["test", "--match-contract", "Probe"]);
             }
             command.args(["--rpc-url", &endpoint]);
-            if explicit_block {
+            if configured {
                 command.args(["--fork-block-number", "1"]);
+            }
+            if !configured {
+                command.arg("--fork-state-by-number");
             }
             command.assert_success();
             let requests = requests.lock();
@@ -156,67 +151,62 @@ contract Probe {
                     "missing {method}"
                 );
             }
-            assert!(
-                requests.iter().any(|request| request["params"]
-                    .as_array()
-                    .unwrap()
-                    .last()
-                    .unwrap()
-                    .is_object())
-            );
-            assert!(
-                requests.iter().any(|request| request["params"]
-                    .as_array()
-                    .unwrap()
-                    .last()
-                    .unwrap()
-                    .is_string())
-            );
             for request in requests.iter() {
-                let selector = request["params"].as_array().unwrap().last().unwrap();
-                if selector.is_object() {
-                    assert_eq!(selector.as_object().unwrap().len(), 1);
-                    assert!(selector["blockHash"].is_string());
-                } else {
-                    assert!(selector == "0x1" || selector == "0x2", "{selector}");
-                }
+                assert_eq!(
+                    request["params"].as_array().unwrap().last().unwrap(),
+                    "0x1",
+                    "{request}"
+                );
             }
         }
     }
-    // The same policy applies when the first fork is created by a cheatcode.
+    // Also inherit the setting when the first fork is created by a cheatcode.
     prj.forge_command().args(["test", "--match-test", "testForkCheatcodes"]).assert_success();
-    let archive = endpoint.replace("/relay", "/archive");
-    for block in ["1", "2"] {
-        requests.lock().clear();
-        prj.forge_command()
-            .args([
-                "test",
-                "--match-test",
-                "testForkState",
-                "--rpc-url",
-                &archive,
-                "--fork-block-number",
-                block,
-            ])
-            .assert_success();
-        let requests = requests.lock();
-        assert!(
-            requests.iter().any(|request| request["params"]
-                .as_array()
-                .unwrap()
-                .last()
-                .unwrap()
-                .is_object())
-        );
-        assert_eq!(
-            requests.iter().any(|request| request["params"]
-                .as_array()
-                .unwrap()
-                .last()
-                .unwrap()
-                .is_string()),
-            block == "1"
-        );
+    // Transaction-targeted creation and rolling still use hashes even with the opt-in enabled.
+    let transaction = api
+        .send_transaction(
+            serde_json::from_value(json!({
+                "from": sender, "to": target, "gas": "0x186a0", "gasPrice": "0x77359400"
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    prj.add_test(
+        "Replay.t.sol",
+        r#"
+import {Probe} from "../src/Probe.sol";
+contract ReplayProbe is Probe {
+    function testForkTransactionTargetsUseHashes() public {
+        string memory url = vm.envString("HASH_RPC_URL");
+        bytes32 transaction = vm.envBytes32("TARGET_TRANSACTION");
+        vm.createSelectFork(url, transaction);
+        checkState();
+        vm.transact(transaction);
+        vm.createSelectFork(url, 1);
+        vm.rollFork(transaction);
+        checkState();
     }
+}
+"#,
+    );
+    requests.lock().clear();
+    let mut command = prj.forge_command();
+    command.env("HASH_RPC_URL", endpoint.replace("/number", "/hash"));
+    command.env("TARGET_TRANSACTION", transaction.to_string());
+    command.args(["test", "--match-test", "testForkTransactionTargetsUseHashes"]).assert_success();
+    let reads = requests.lock();
+    let target_reads =
+        reads.iter().filter(|request| request["params"][0] == json!(target)).collect::<Vec<_>>();
+    assert!(!target_reads.is_empty());
+    assert!(
+        target_reads.iter().all(|request| request["params"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .is_object())
+    );
     server.abort();
 }

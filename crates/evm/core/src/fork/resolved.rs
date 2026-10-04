@@ -1,7 +1,6 @@
 use crate::opts::ForkContext;
 use alloy_eips::{BlockId, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, keccak256};
-use foundry_fork_db::ForkState;
 use std::fmt;
 
 /// An exact fork snapshot resolved from a fully configured RPC source.
@@ -9,16 +8,18 @@ use std::fmt;
 /// The snapshot binds three layers that must travel together: the source URL, request headers, and
 /// JWT; the configured selector (`latest` or a block number); and the observed exact block (number
 /// and hash) plus endpoint context. `latest` is retained as the configured selector, while `block`
-/// is always exact. Preflight and backend reads share one hash-first policy, with checked
-/// number-based retries for RPCs that reject hash selectors. Those retries are best effort and
-/// disable disk caching. Endpoint profiles are canonical, so equivalent network selections share
-/// the same identity. Transaction-targeted forks require hash-addressed state.
+/// is always exact. Reusing this value keeps preflight reads, environment reconstruction, cache
+/// identity, and backend construction on the same remote state. Endpoint profiles are canonical,
+/// so equivalent network selections share the same identity. The optional number-based state
+/// mode retains this anchor, but state reads may follow a replacement block after a reorganization.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
     selector: Option<BlockNumber>,
-    pub(crate) state: ForkState,
+    block: BlockNumHash,
     context: ForkContext,
+    /// Whether state reads use the RPC block number instead of the exact hash.
+    pub(crate) state_by_number: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -47,8 +48,9 @@ impl ResolvedFork {
                 jwt: jwt.map(str::to_string),
             },
             selector,
-            state: ForkState::new(block),
+            block,
             context,
+            state_by_number: false,
         }
     }
 
@@ -76,12 +78,12 @@ impl ResolvedFork {
 
     /// Returns the resolved block number.
     pub const fn number(&self) -> BlockNumber {
-        self.state.block().number
+        self.block.number
     }
 
     /// Returns the resolved block hash.
     pub const fn hash(&self) -> B256 {
-        self.state.block().hash
+        self.block.hash
     }
 
     /// Returns the endpoint and network identity resolved with this block.
@@ -97,24 +99,24 @@ impl ResolvedFork {
         BlockId::from((self.hash(), Some(false)))
     }
 
+    /// Returns the state selector, honoring the RPC compatibility opt-out.
+    pub(crate) fn state_block_id(&self) -> BlockId {
+        if self.state_by_number { BlockId::number(self.number()) } else { self.exact_block_id() }
+    }
+
     /// Returns the resolved block number and hash.
     pub(crate) const fn block(&self) -> BlockNumHash {
-        self.state.block()
+        self.block
     }
 
     /// Returns this resolution advanced to another exact block on the same RPC source.
     pub(crate) fn at_block(&self, block: BlockNumHash) -> Self {
         let mut resolved = self.clone();
         resolved.selector = Some(block.number);
-        resolved.state = ForkState::exact(block);
+        resolved.block = block;
+        resolved.state_by_number = false;
         resolved.context.block_number = block.number;
         resolved
-    }
-
-    /// Requires hash-addressed state for consumers that replay a specific chain history.
-    pub fn into_exact(mut self) -> Self {
-        self.state = ForkState::exact(self.state.block());
-        self
     }
 
     /// Returns an opaque identity for the complete configured RPC source.
@@ -136,24 +138,30 @@ impl ResolvedFork {
         } else {
             encoded.push(0);
         }
-        // A compatible backend must never be reused by a strict replay consumer.
-        if !self.state.is_exact() {
-            encoded.extend_from_slice(b"hash-preferred-state");
-        }
         keccak256(encoded)
     }
 
     /// Returns a redacted, opaque fingerprint of the complete resolved fork identity.
     pub fn fingerprint(&self) -> B256 {
-        let encoded = serde_json::to_vec(&(
+        let mut encoded = serde_json::to_vec(&(
             "foundry-resolved-fork-v1",
             self.source_id(),
-            self.state.block(),
+            self.block,
             self.context,
         ))
         .expect("resolved fork identity is serializable");
+        // Distinguish execution policies without invalidating existing hash-based disk caches.
+        if self.state_by_number {
+            encoded.extend_from_slice(b"state-by-number");
+        }
         keccak256(encoded)
     }
+}
+
+fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
+    let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
+    encoded.extend_from_slice(&len.to_be_bytes());
+    encoded.extend_from_slice(part);
 }
 
 impl fmt::Debug for ResolvedFork {
@@ -167,12 +175,6 @@ impl fmt::Debug for ResolvedFork {
         }
         debug.field("number", &self.number()).field("hash", &self.hash()).finish()
     }
-}
-
-fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
-    let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
-    encoded.extend_from_slice(&len.to_be_bytes());
-    encoded.extend_from_slice(part);
 }
 
 #[cfg(test)]
@@ -215,6 +217,23 @@ mod tests {
                 "requireCanonical": false,
             })
         );
+    }
+
+    #[test]
+    fn fork_state_by_number_preserves_anchor_and_separates_identity() {
+        let block = BlockNumHash::new(42, B256::with_last_byte(1));
+        let exact =
+            ResolvedFork::new("http://localhost:8545", None, None, None, block, context(42));
+        let mut numbered = exact.clone();
+        numbered.state_by_number = true;
+        assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
+        assert_eq!(exact.state_block_id(), exact.exact_block_id());
+        assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
+        assert_ne!(numbered, exact);
+        assert_eq!(numbered.source_id(), exact.source_id());
+        assert_ne!(numbered.fingerprint(), exact.fingerprint());
+        let rolled = numbered.at_block(BlockNumHash::new(43, B256::with_last_byte(2)));
+        assert_eq!(rolled.state_block_id(), rolled.exact_block_id());
     }
 
     #[test]
@@ -285,20 +304,5 @@ mod tests {
         assert_eq!(implicit.context(), explicit.context());
         assert_eq!(implicit.fingerprint(), explicit.fingerprint());
         assert_eq!(HashSet::from([implicit, explicit]).len(), 1);
-    }
-    #[test]
-    fn resolved_fork_replay_cannot_reuse_compatible_backends() {
-        let block = BlockNumHash::new(1, B256::with_last_byte(1));
-        let fork =
-            ResolvedFork::new("http://localhost:8545", None, None, Some(1), block, context(1));
-        let exact = fork.clone().into_exact();
-        assert_eq!(exact.block(), fork.block());
-        assert_eq!(exact.context(), fork.context());
-        assert_ne!(exact.source_id(), fork.source_id());
-        assert_ne!(exact.fingerprint(), fork.fingerprint());
-        assert_eq!(HashSet::from([fork.clone(), exact]).len(), 2);
-        let rolled = fork.at_block(BlockNumHash::new(2, B256::with_last_byte(2)));
-        assert!(rolled.state.is_exact());
-        assert_eq!(rolled.number(), 2);
     }
 }

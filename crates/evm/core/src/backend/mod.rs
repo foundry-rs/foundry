@@ -2269,9 +2269,16 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
-        self.inner.get_fork_by_id(id)?.backend().require_hash_state()?;
         let affects_active = self.is_active_fork(id);
         let fork_id = self.ensure_fork_id(id).cloned()?;
+        let options = self
+            .forks
+            .get_fork_options(fork_id.clone())?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{id}` does not exist"))?;
+        eyre::ensure!(
+            !options.resolved.as_ref().expect("created fork is resolved").state_by_number,
+            "transaction replay requires hash-addressed state; create a transaction-targeted fork or disable fork_state_by_number"
+        );
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
         // the current context, but we're assuming the user wants to transact the transaction as it
