@@ -153,7 +153,7 @@ use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
     context_interface::{
-        JournalTr,
+        JournalTr, Transaction as _,
         block::BlobExcessGasAndPrice,
         result::{
             EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output, ResultAndState,
@@ -3235,18 +3235,20 @@ impl<N: Network> Backend<N> {
             base_evm_env,
         )?;
         // Without a gas limit, a priced call gets at most the gas its sender can pay for, rather
-        // than failing the funds check for the default limit.
-        if gas_omitted
-            && let CallTxEnv::Eth(tx_env) = &mut prepared.tx_env
-            && tx_env.gas_price > 0
-        {
+        // than failing the funds check for the default limit. Tempo pays fees in tokens instead.
+        let tempo = matches!(prepared.tx_env, CallTxEnv::Tempo(_));
+        let tx_env = prepared.tx_env.base_mut();
+        if gas_omitted && !tempo && tx_env.gas_price > 0 {
             let balance =
                 state.basic_ref(tx_env.caller)?.map(|info| info.balance).unwrap_or_default();
-            let upfront = tx_env
-                .value
-                .saturating_add(revm::context_interface::Transaction::calc_max_data_fee(tx_env));
-            if let Some(available) = balance.checked_sub(upfront) {
-                let allowance = available / U256::from(tx_env.gas_price);
+            let upfront = tx_env.value.saturating_add(tx_env.calc_max_data_fee());
+            // A sender that cannot pay for the cheapest transaction keeps the default limit, so
+            // the call fails the funds check.
+            if let Some(allowance) = balance
+                .checked_sub(upfront)
+                .map(|available| available / U256::from(tx_env.gas_price))
+                && allowance >= U256::from(MIN_TRANSACTION_GAS)
+            {
                 tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
             }
         }

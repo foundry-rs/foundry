@@ -205,7 +205,13 @@ async fn test_tip_above_fee_cap() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn priced_calls_without_gas_limit_are_capped_by_allowance() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
+    for config in [NodeConfig::test(), NodeConfig::test().with_optimism()] {
+        priced_calls_without_gas_limit_are_capped_by_allowance_on(config).await;
+    }
+}
+
+async fn priced_calls_without_gas_limit_are_capped_by_allowance_on(config: NodeConfig) {
+    let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
 
     // The sender can pay for 100_000 gas, far below the block gas limit.
@@ -230,14 +236,17 @@ async fn priced_calls_without_gas_limit_are_capped_by_allowance() {
         assert_eq!(traced.output, output);
     }
 
-    // An explicit gas limit is not lowered to what the sender can pay for.
-    let request = WithOtherFields::new(request.gas_limit(200_000));
-    let error = provider.call(request).await.unwrap_err();
-    let error = error.as_error_resp().unwrap();
-    assert_eq!(
-        (error.code, error.message.as_ref()),
-        (-32003, "Insufficient funds for gas * price + value")
-    );
+    // An explicit gas limit is not lowered to what the sender can pay for, and a sender that
+    // cannot pay for any transaction still fails the funds check.
+    let unfunded = request.clone().from(Address::repeat_byte(0x12));
+    for request in [request.gas_limit(200_000), unfunded] {
+        let error = provider.call(WithOtherFields::new(request)).await.unwrap_err();
+        let error = error.as_error_resp().unwrap();
+        assert_eq!(
+            (error.code, error.message.as_ref()),
+            (-32003, "Insufficient funds for gas * price + value")
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
