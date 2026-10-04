@@ -4067,6 +4067,9 @@ impl<N: Network> Backend<N> {
             let cache_db = CacheDB::new(state);
             let mut evm_env = self.evm_env.read().clone();
             evm_env.block_env = block_env;
+            // A signed transaction cannot be impersonated, so reject senders with code that is not
+            // an EIP-7702 delegation, as block execution would.
+            evm_env.cfg_env.disable_eip3607 = false;
 
             let mut inspector = TracingInspector::new(trace_config);
             let (result, _) = self.transact_envelope_with_inspector_ref_and_context(
