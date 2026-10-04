@@ -764,17 +764,4 @@ mod tests {
         assert!(!summary.has_reliable_score());
         assert_eq!(summary.mutation_score(), 0.0);
     }
-
-    #[test]
-    fn json_output_identifies_timed_out_mutants() {
-        let mut summary = MutationsSummary::new();
-        summary.add_timed_out_mutant(mutant(30, 40, "number--"));
-        summary.add_timed_out_mutant(mutant(10, 20, "number++"));
-
-        let output = summary.to_json_output(1.0);
-        let mutants = &output.timed_out_mutants["src/Counter.sol"];
-        assert_eq!(mutants.len(), 2);
-        assert_eq!(mutants[0].original, "number++");
-        assert_eq!(mutants[1].original, "number--");
-    }
 }

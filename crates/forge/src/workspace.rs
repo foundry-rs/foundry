@@ -358,22 +358,16 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         &handled_extra_roots,
     )?;
 
-    // Copy scripts too when present and distinct from src/test. Tests may import helper contracts
-    // from the configured script directory or the conventional plural `scripts/` directory.
+    // Copy `script/` too when present and distinct from src/test. Many real
+    // projects keep helper contracts, deployment scripts, or fixtures under
+    // `script/` and reference them from tests via relative imports. Without
+    // this, baselines that compile fine produce a sea of `Invalid` mutants
+    // for purely-environmental reasons.
     if config.script.exists() && config.script != config.src && config.script != config.test {
         let script_rel = relative_to_root(&config.root, &config.script);
         ensure_safe_relative_path(&script_rel, "script", &config.script)?;
         ensure_within_root(&config.root, &config.script, "script", &config.script)?;
         copy_project_dir_recursive(&config.root, &config.script, &temp_dir.join(&script_rel))?;
-    }
-
-    let scripts = config.root.join("scripts");
-    if scripts.exists()
-        && scripts != config.src
-        && scripts != config.test
-        && scripts != config.script
-    {
-        copy_project_dir_recursive(&config.root, &scripts, &temp_dir.join("scripts"))?;
     }
 
     for lib_path in &config.libs {
@@ -432,15 +426,6 @@ pub(crate) fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
 
     if config.script.exists() && config.script != config.src && config.script != config.test {
         push_handled_project_root(&mut roots, &config.root, &config.script, "script")?;
-    }
-
-    let scripts = config.root.join("scripts");
-    if scripts.exists()
-        && scripts != config.src
-        && scripts != config.test
-        && scripts != config.script
-    {
-        push_handled_project_root(&mut roots, &config.root, &scripts, "scripts")?;
     }
 
     for lib_path in &config.libs {
@@ -1009,29 +994,6 @@ mod tests {
         assert_eq!(temp_config.include_paths, vec![external.clone()]);
         assert_eq!(temp_config.allow_paths, vec![external.clone()]);
         assert_eq!(remappings[0].path, format!("{}/", external.display()));
-    }
-
-    #[test]
-    fn test_copy_project_copies_conventional_plural_scripts() {
-        let temp = TempDir::new().unwrap();
-        let root = temp.path().join("project");
-        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
-        create_test_dir_structure(
-            &root,
-            &["src/Target.sol", "test/Target.t.sol", "scripts/Deploy.s.sol"],
-        );
-
-        let config = Config {
-            root: root.clone(),
-            src: root.join("src"),
-            test: root.join("test"),
-            script: root.join("script"),
-            ..Default::default()
-        };
-
-        copy_project(&config, &workspace).unwrap();
-
-        assert!(workspace.join("scripts/Deploy.s.sol").exists());
     }
 
     #[test]

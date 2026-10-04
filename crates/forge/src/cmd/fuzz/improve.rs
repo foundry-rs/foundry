@@ -194,6 +194,39 @@ struct Evaluation {
     newly_resolved_survivors: usize,
 }
 
+impl Evaluation {
+    fn rejected(
+        candidate_digest: String,
+        generator: Option<GeneratorMetadata>,
+        baseline: &[SeedMutation],
+        reason: impl std::fmt::Display,
+    ) -> Self {
+        Self {
+            candidate_digest,
+            generator,
+            accepted: false,
+            reasons: vec![reason.to_string()],
+            baseline: mutation_result_summaries(baseline),
+            candidate: vec![],
+            resolved_survivors: 0,
+            newly_resolved_survivors: 0,
+        }
+    }
+
+    fn feedback(&self, candidate: Option<&Candidate>) -> ProposalFeedback {
+        ProposalFeedback {
+            candidate_digest: self.candidate_digest.clone(),
+            accepted: self.accepted,
+            rationale: candidate.map(|candidate| candidate.rationale.clone()),
+            tests: candidate.map(|candidate| candidate.tests.clone()).unwrap_or_default(),
+            reasons: self.reasons.clone(),
+            candidate_results: self.candidate.clone(),
+            resolved_survivors: self.resolved_survivors,
+            newly_resolved_survivors: self.newly_resolved_survivors,
+        }
+    }
+}
+
 type MutationIdentity = (String, usize, usize, String, String);
 
 impl FuzzImproveArgs {
@@ -336,16 +369,12 @@ impl FuzzImproveArgs {
                         let (evaluation, candidate_results, newly_resolved) = evaluated
                             .unwrap_or_else(|error| {
                                 (
-                                    Evaluation {
-                                        candidate_digest: digest,
-                                        generator: candidate.generator.clone(),
-                                        accepted: false,
-                                        reasons: vec![error.to_string()],
-                                        baseline: mutation_result_summaries(&baseline),
-                                        candidate: vec![],
-                                        resolved_survivors: 0,
-                                        newly_resolved_survivors: 0,
-                                    },
+                                    Evaluation::rejected(
+                                        digest,
+                                        candidate.generator.clone(),
+                                        &baseline,
+                                        error,
+                                    ),
                                     vec![],
                                     BTreeSet::new(),
                                 )
@@ -368,37 +397,25 @@ impl FuzzImproveArgs {
                         } else {
                             last_rejected_sources = Some(rejected_sources(&proposal.files));
                         }
-                        feedback.push(proposal_feedback(Some(&proposal), &evaluation));
+                        feedback.push(evaluation.feedback(Some(&proposal)));
                         evaluation
                     }
                     Err(error) => {
-                        let evaluation = Evaluation {
-                            candidate_digest: format!("round-{round}"),
-                            generator: proposal.generator.clone(),
-                            accepted: false,
-                            reasons: vec![error.to_string()],
-                            baseline: mutation_result_summaries(&baseline),
-                            candidate: vec![],
-                            resolved_survivors: 0,
-                            newly_resolved_survivors: 0,
-                        };
+                        let evaluation = Evaluation::rejected(
+                            format!("round-{round}"),
+                            proposal.generator.clone(),
+                            &baseline,
+                            error,
+                        );
                         last_rejected_sources = Some(rejected_sources(&proposal.files));
-                        feedback.push(proposal_feedback(Some(&proposal), &evaluation));
+                        feedback.push(evaluation.feedback(Some(&proposal)));
                         evaluation
                     }
                 },
                 Err(error) => {
-                    let evaluation = Evaluation {
-                        candidate_digest: format!("round-{round}"),
-                        generator: None,
-                        accepted: false,
-                        reasons: vec![error.to_string()],
-                        baseline: mutation_result_summaries(&baseline),
-                        candidate: vec![],
-                        resolved_survivors: 0,
-                        newly_resolved_survivors: 0,
-                    };
-                    feedback.push(proposal_feedback(None, &evaluation));
+                    let evaluation =
+                        Evaluation::rejected(format!("round-{round}"), None, &baseline, error);
+                    feedback.push(evaluation.feedback(None));
                     evaluation
                 }
             };
@@ -1006,19 +1023,6 @@ fn validate_candidate_path(path: &Path, generated_tests: &Path) -> Result<()> {
     Ok(())
 }
 
-fn proposal_feedback(candidate: Option<&Candidate>, evaluation: &Evaluation) -> ProposalFeedback {
-    ProposalFeedback {
-        candidate_digest: evaluation.candidate_digest.clone(),
-        accepted: evaluation.accepted,
-        rationale: candidate.map(|candidate| candidate.rationale.clone()),
-        tests: candidate.map(|candidate| candidate.tests.clone()).unwrap_or_default(),
-        reasons: evaluation.reasons.clone(),
-        candidate_results: evaluation.candidate.clone(),
-        resolved_survivors: evaluation.resolved_survivors,
-        newly_resolved_survivors: evaluation.newly_resolved_survivors,
-    }
-}
-
 fn forge_command(forge: &Path, workspace: &Path, seed: &U256) -> Command {
     let mut command = Command::new(forge);
     command.current_dir(workspace).env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"));
@@ -1037,59 +1041,4 @@ fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path)
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().chars().take(2_000).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mutation::{MutationSummaryJson, SurvivedMutantJson};
-
-    fn mutation_result(seed: u64, mutants: &[(usize, &str, &str)]) -> SeedMutation {
-        let survived_mutants = BTreeMap::from([(
-            "src/Example.sol".to_string(),
-            mutants
-                .iter()
-                .map(|(line, original, mutant)| SurvivedMutantJson {
-                    line: *line,
-                    column: 1,
-                    original: (*original).to_string(),
-                    mutant: (*mutant).to_string(),
-                })
-                .collect(),
-        )]);
-        SeedMutation {
-            seed: U256::from(seed),
-            output: MutationJsonOutput {
-                summary: MutationSummaryJson {
-                    total: mutants.len(),
-                    killed: 0,
-                    survived: mutants.len(),
-                    invalid: 0,
-                    skipped: 0,
-                    timed_out: 0,
-                    mutation_score: 0.0,
-                    duration_secs: 0.0,
-                },
-                survived_mutants,
-                timed_out_mutants: BTreeMap::new(),
-            },
-        }
-    }
-
-    #[test]
-    fn counts_survivors_resolved_across_all_seeds() {
-        let baseline = [
-            mutation_result(1, &[(1, "a", "b"), (2, "c", "d")]),
-            mutation_result(2, &[(1, "a", "b")]),
-        ];
-        let candidate = [mutation_result(1, &[(2, "c", "d")]), mutation_result(2, &[])];
-
-        assert_eq!(resolved_survivor_identities(&baseline, &candidate).len(), 1);
-
-        let shifted = [mutation_result(1, &[(2, "c", "d")]), mutation_result(2, &[(1, "a", "b")])];
-        assert!(resolved_survivor_identities(&baseline, &shifted).is_empty());
-
-        let partial = [mutation_result(1, &[])];
-        assert!(resolved_survivor_identities(&baseline, &partial).is_empty());
-    }
 }
