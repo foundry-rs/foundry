@@ -1,5 +1,5 @@
 use super::symbolic_helpers::{
-    assert_relevant_lines, assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
+    assert_symbolic, assert_symbolic_engine, assert_symbolic_engine_witness,
     assert_symbolic_witness, json_test_result, read_artifact_ref,
 };
 use crate::skip_unless_z3;
@@ -44,26 +44,28 @@ contract SymbolicInvariantRuns is Test {
 "#,
     );
 
-    let stdout = assert_symbolic_engine_witness(cmd.args([
+    assert_symbolic_engine_witness(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
         "invariant_counterStaysZero",
     ]))
     .failure()
-    .get_output()
-    .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-Encountered 1 failing test in test/SymbolicInvariantRuns.t.sol:SymbolicInvariantRuns
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantRuns.t.sol:SymbolicInvariantRuns
 [FAIL: assertion failed: 1 != 0]
-[Sequence] (original: 1, shrunk: 1)
-calldata=bump(uint8)
-invariant_counterStaysZero()
-"#]],
-    );
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=bump(uint8) [ARGS]
+ invariant_counterStaysZero() (runs: 1, calls: 1, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/SymbolicInvariantRuns.t.sol:SymbolicInvariantRuns
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -244,56 +246,56 @@ contract SymbolicInvariantSetupStorage is Test {
         .root()
         .join("cache/invariant/failures/SymbolicInvariantSetupStorage/invariants/invariant_notHit");
 
-    let fuzz_replay_stdout = cmd
-        .forge_fuse()
-        .args(["fuzz", "replay", "--mc", "SymbolicInvariantSetupStorage"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &fuzz_replay_stdout,
-        str![[r#"
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "fuzz",
+        "replay",
+        "--mc",
+        "SymbolicInvariantSetupStorage",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSetupStorage.t.sol:SymbolicInvariantSetupStorage
 [FAIL: hit]
-"#]],
-    );
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=useStore() [ARGS]
+ invariant_notHit() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     let persisted_failure: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&persisted_failure_path).unwrap()).unwrap();
     assert_eq!(persisted_failure["failure_site"], artifact["invariant_failure"]["site"]);
 
-    let rerun_stdout =
-        cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().get_output().stdout_lossy();
-    assert_relevant_lines(
-        &rerun_stdout,
-        str![[r#"
+    cmd.forge_fuse().args(["test", "--rerun"]);
+    assert_symbolic_witness(&mut cmd).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSetupStorage.t.sol:SymbolicInvariantSetupStorage
 [FAIL: hit]
-"#]],
-    );
-    assert_relevant_lines(
-        &rerun_stdout,
-        str![[r#"
-invariant_notHit()
-"#]],
-    );
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=useStore() [ARGS]
+ invariant_notHit() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     let artifact_path = artifact_ref["path"].as_str().expect("artifact path").to_string();
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args(["test", "--replay-symbolic-artifact", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        str![[r#"
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        &artifact_path,
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSetupStorage.t.sol:SymbolicInvariantSetupStorage
 [FAIL: hit]
-"#]],
-    );
-    assert_relevant_lines(
-        &replay_stdout,
-        str![[r#"
-invariant_notHit()
-"#]],
-    );
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=useStore() [ARGS]
+ invariant_notHit() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -873,21 +875,19 @@ contract SymbolicInvariantCopiedStorage is Test {
         "invariant_notHit",
     ]))
     .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantCopiedStorage.t.sol:SymbolicInvariantCopiedStorage
+[FAIL: hit]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=useStore() [ARGS]
+ invariant_notHit() (runs: 1, calls: 1, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
     .get_output()
     .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[FAIL: hit]
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-calldata=useStore()
-"#]],
-    );
     assert!(!stdout.contains("symbolic invariant counterexample did not replay"), "{stdout}");
 }
 
