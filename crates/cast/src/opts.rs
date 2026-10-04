@@ -625,7 +625,7 @@ pub enum AbiSubcommand {
     /// - cast decode-event $DATA (topic0-prefixed data; looks up the signature)
     #[command(verbatim_doc_comment, visible_aliases = &["event-decode", "--event-decode", "ed"])]
     DecodeEvent {
-        /// The event signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
+        /// The event signature. If none provided then tries to decode from local cache or <https://4byte.sourcify.dev>.
         #[arg(long, visible_alias = "event-sig")]
         sig: Option<String>,
         /// The event data to decode.
@@ -635,7 +635,7 @@ pub enum AbiSubcommand {
     /// Decode custom error data.
     #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
     DecodeError {
-        /// The error signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
+        /// The error signature. If none provided then tries to decode from local cache or <https://4byte.sourcify.dev>.
         #[arg(long, visible_alias = "error-sig")]
         sig: Option<String>,
         /// The error data to decode.
@@ -694,21 +694,21 @@ pub enum AbiSubcommand {
         args: Vec<String>,
     },
 
-    /// Get the function signatures for the given selector from <https://openchain.xyz>.
+    /// Get the function signatures for the given selector from <https://4byte.sourcify.dev>.
     #[command(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
         /// The function selector.
         selector: Option<Selector>,
     },
 
-    /// Decode ABI-encoded calldata using <https://openchain.xyz>.
+    /// Decode ABI-encoded calldata using <https://4byte.sourcify.dev>.
     #[command(name = "4byte-calldata", aliases = &["4byte-decode", "4d", "4bd"], visible_aliases = &["4c", "4bc"])]
     FourByteCalldata {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
 
-    /// Get the event signature for a given topic 0 from <https://openchain.xyz>.
+    /// Get the event signature for a given topic 0 from <https://4byte.sourcify.dev>.
     #[command(name = "4byte-event", visible_aliases = &["4e", "4be", "topic0-event", "t0e"])]
     FourByteEvent {
         /// Topic 0
@@ -716,7 +716,7 @@ pub enum AbiSubcommand {
         topic: Option<B256>,
     },
 
-    /// Upload the given signatures to <https://openchain.xyz>.
+    /// Upload the given signatures to <https://4byte.sourcify.dev>.
     ///
     /// Example inputs:
     /// - "transfer(address,uint256)"
@@ -734,13 +734,13 @@ pub enum AbiSubcommand {
 
     /// Pretty print calldata.
     ///
-    /// Tries to decode the calldata using <https://openchain.xyz> unless --offline is passed.
+    /// Tries to decode the calldata using <https://4byte.sourcify.dev> unless --offline is passed.
     #[command(visible_alias = "pc")]
     PrettyCalldata {
         /// The calldata.
         calldata: Option<String>,
 
-        /// Skip the <https://openchain.xyz> lookup.
+        /// Skip the <https://4byte.sourcify.dev> lookup.
         #[arg(long, short)]
         offline: bool,
     },
@@ -1268,7 +1268,7 @@ pub enum QuerySubcommand {
         /// The hex-encoded bytecode.
         bytecode: Option<String>,
 
-        /// Resolve the function signatures for the extracted selectors using <https://openchain.xyz>
+        /// Resolve the function signatures for the extracted selectors using <https://4byte.sourcify.dev>
         #[arg(long, short)]
         resolve: bool,
     },

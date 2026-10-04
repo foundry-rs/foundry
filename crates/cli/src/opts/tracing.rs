@@ -49,7 +49,7 @@ pub struct TracingArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
 
-    /// Disable external trace identification using Sourcify, Etherscan, or OpenChain.
+    /// Disable external trace identification using Sourcify or Etherscan.
     #[arg(long, help_heading = "Trace options")]
     #[serde(skip)]
     pub disable_external_identification: bool,
