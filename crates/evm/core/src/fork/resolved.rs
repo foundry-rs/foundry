@@ -10,13 +10,16 @@ use std::fmt;
 /// and hash) plus endpoint context. `latest` is retained as the configured selector, while `block`
 /// is always exact. Reusing this value keeps preflight reads, environment reconstruction, cache
 /// identity, and backend construction on the same remote state. Endpoint profiles are canonical,
-/// so equivalent network selections share the same identity.
+/// so equivalent network selections share the same identity. The optional number-based state
+/// mode retains this anchor, but state reads may follow a replacement block after a reorganization.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
     selector: Option<BlockNumber>,
     block: BlockNumHash,
     context: ForkContext,
+    /// Whether state reads use the RPC block number instead of the exact hash.
+    pub(crate) state_by_number: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -47,6 +50,7 @@ impl ResolvedFork {
             selector,
             block,
             context,
+            state_by_number: false,
         }
     }
 
@@ -95,6 +99,11 @@ impl ResolvedFork {
         BlockId::from((self.hash(), Some(false)))
     }
 
+    /// Returns the state selector, honoring the RPC compatibility opt-out.
+    pub(crate) fn state_block_id(&self) -> BlockId {
+        if self.state_by_number { BlockId::number(self.number()) } else { self.exact_block_id() }
+    }
+
     /// Returns the resolved block number and hash.
     pub(crate) const fn block(&self) -> BlockNumHash {
         self.block
@@ -127,6 +136,10 @@ impl ResolvedFork {
             encode_source_part(&mut encoded, jwt.as_bytes());
         } else {
             encoded.push(0);
+        }
+        // Keep number-based backends and disk caches separate from exact hash-based snapshots.
+        if self.state_by_number {
+            encoded.extend_from_slice(b"state-by-number");
         }
         keccak256(encoded)
     }
@@ -203,6 +216,23 @@ mod tests {
                 "requireCanonical": false,
             })
         );
+    }
+
+    #[test]
+    fn fork_state_by_number_preserves_anchor_and_separates_identity() {
+        let block = BlockNumHash::new(42, B256::with_last_byte(1));
+        let exact =
+            ResolvedFork::new("http://localhost:8545", None, None, None, block, context(42));
+        let mut numbered = exact.clone();
+        numbered.state_by_number = true;
+        assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
+        assert_eq!(exact.state_block_id(), exact.exact_block_id());
+        assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
+        assert_ne!(numbered, exact);
+        assert_ne!(numbered.source_id(), exact.source_id());
+        assert_ne!(numbered.fingerprint(), exact.fingerprint());
+        let rolled = numbered.at_block(BlockNumHash::new(43, B256::with_last_byte(2)));
+        assert_eq!(rolled.state_block_id(), BlockId::number(43));
     }
 
     #[test]
