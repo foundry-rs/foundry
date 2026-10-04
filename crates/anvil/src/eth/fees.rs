@@ -741,7 +741,6 @@ impl FeeDetails {
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(0) } else { gas_price };
         let max_fee_per_gas = if no_fees { Some(0) } else { max_fee_per_gas };
-        let max_fee_per_blob_gas = if no_fees { None } else { max_fee_per_blob_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas }
     }

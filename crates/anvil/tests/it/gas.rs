@@ -595,6 +595,15 @@ async fn zero_fee_calls_observe_zero_base_fee() {
         assert_eq!(U256::from_be_slice(&traced.output), expected);
     }
 
+    // Like geth, access lists are built at the block's base fee. The contract loads slot BASEFEE.
+    let sload_base_fee = Address::repeat_byte(0x54);
+    api.anvil_set_code(sload_base_fee, bytes!("485400")).await.unwrap();
+    for request in [free.clone(), priced.clone()] {
+        let request = WithOtherFields::new(request.inner.to(sload_base_fee));
+        let result = api.create_access_list(request, None, None).await.unwrap();
+        assert_eq!(result.access_list.0[0].storage_keys, [B256::from(base_fee)]);
+    }
+
     // Each call in a batch gets its own fee environment.
     let batch = [free.clone(), priced, free].map(|request| (request, trace()));
     let traced = api.trace_call_many(batch.to_vec(), Some(BlockId::latest())).await.unwrap();

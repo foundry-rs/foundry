@@ -15,7 +15,7 @@ use alloy_network::{
     AnyRpcTransaction, AnyTxEnvelope, EthereumWallet, ReceiptResponse, TransactionBuilder,
     TransactionBuilder4844,
 };
-use alloy_primitives::{Address, Bytes, U256, b256};
+use alloy_primitives::{Address, B256, Bytes, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{Authorization, BlockId, TransactionRequest, trace::parity::TraceType};
 use alloy_serde::WithOtherFields;
@@ -677,9 +677,27 @@ async fn call_defaults_blob_fee_cap_to_zero() {
         max_fee_per_blob_gas: None,
         ..blob_call.clone()
     };
+
+    // Like geth, access lists are built at the block's blob base fee. The contract loads slot
+    // BLOBBASEFEE.
+    let sload_blob_base_fee = Address::with_last_byte(0x43);
+    api.anvil_set_code(sload_blob_base_fee, Bytes::from_static(&[0x4a, 0x54, 0x00])).await.unwrap();
+    let request = TransactionRequest { to: Some(sload_blob_base_fee.into()), ..blob_call.clone() };
+    let result = api.create_access_list(WithOtherFields::new(request), None, None).await.unwrap();
+    assert_eq!(result.access_list.0[0].storage_keys, [B256::from(blob_base_fee)]);
+
     for (request, expected) in [
         (blob_call.clone(), U256::ZERO),
         (TransactionRequest { max_fee_per_blob_gas: Some(0), ..blob_call.clone() }, U256::ZERO),
+        (
+            TransactionRequest {
+                max_fee_per_gas: None,
+                max_priority_fee_per_gas: None,
+                max_fee_per_blob_gas: Some(1_000_000_000),
+                ..blob_call.clone()
+            },
+            blob_base_fee,
+        ),
         (
             TransactionRequest { max_fee_per_blob_gas: Some(1_000_000_000), ..blob_call },
             blob_base_fee,

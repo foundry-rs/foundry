@@ -3706,6 +3706,7 @@ impl<N: Network> Backend<N> {
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
+        let block_fees = (block_env.basefee, block_env.blob_excess_gas_and_price);
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
         evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
@@ -3714,6 +3715,7 @@ impl<N: Network> Backend<N> {
         }
         if let Some(access_list) = overrides.access_list {
             let tx_env = tx_env.base_mut();
+            Self::use_block_fees(&mut evm_env, tx_env, block_fees);
             tx_env.access_list = access_list;
             if tx_env.tx_type == TransactionType::Legacy as u8 {
                 tx_env.tx_type = TransactionType::Eip2930 as u8;
@@ -3752,8 +3754,10 @@ impl<N: Network> Backend<N> {
         let mut inspector =
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
-        let PreparedCall { evm_env, tx_env, .. } =
+        let block_fees = (block_env.basefee, block_env.blob_excess_gas_and_price);
+        let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
+        Self::use_block_fees(&mut evm_env, tx_env.base_mut(), block_fees);
         let ResultAndState { result, state: _ } = self.transact_call_with_inspector_ref(
             state,
             &evm_env,
@@ -3770,6 +3774,20 @@ impl<N: Network> Backend<N> {
             access_list
         };
         Ok((exit_reason, out, gas_used, access_list))
+    }
+
+    /// Restores the block's base and blob base fees that a zero-fee call env clears. Like geth,
+    /// access lists are built at the block's fees.
+    fn use_block_fees(
+        evm_env: &mut EvmEnv,
+        tx_env: &mut TxEnv,
+        (basefee, blob_excess_gas_and_price): (u64, Option<BlobExcessGasAndPrice>),
+    ) {
+        evm_env.block_env.basefee = basefee;
+        evm_env.block_env.blob_excess_gas_and_price = blob_excess_gas_and_price;
+        if !tx_env.blob_hashes.is_empty() && tx_env.max_fee_per_blob_gas == 0 {
+            tx_env.max_fee_per_blob_gas = evm_env.block_env.blob_gasprice().unwrap_or_default();
+        }
     }
 
     fn arbitrum_block_number(&self, evm_env: &EvmEnv) -> Option<u64> {
