@@ -89,13 +89,10 @@ pub mod lenient_block_number {
     }
 }
 
-/// Deserializes a `trace_get` trace address, whose indices must be quantity strings.
+/// Deserializes a `trace_get` trace address, whose indices must be minimal hex quantities.
 pub mod trace_address {
     use alloy_rpc_types::Index;
-    use serde::{
-        Deserialize, Deserializer,
-        de::{IntoDeserializer, value::StrDeserializer},
-    };
+    use serde::{Deserialize, Deserializer, de::Error};
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Index>, D::Error>
     where
@@ -104,10 +101,22 @@ pub mod trace_address {
         Vec::<String>::deserialize(deserializer)?
             .iter()
             .map(|index| {
-                Index::deserialize::<StrDeserializer<'_, D::Error>>(
-                    index.as_str().into_deserializer(),
-                )
+                parse(index).ok_or_else(|| {
+                    D::Error::custom(format!(
+                        "invalid trace address index {index:?}, expected a hex quantity"
+                    ))
+                })
             })
             .collect()
+    }
+
+    /// Parses `^0x(0|[1-9a-f][0-9a-f]*)$`.
+    fn parse(index: &str) -> Option<Index> {
+        let digits = index.strip_prefix("0x")?;
+        let minimal = digits == "0" || !digits.starts_with('0');
+        if !minimal || !digits.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return None;
+        }
+        usize::from_str_radix(digits, 16).ok().map(Index::from)
     }
 }
