@@ -7,13 +7,14 @@ use crate::{
     render::{code_regions, neutralize_esm, region_contains},
     utils::{git_raw_url, git_source_url},
 };
+use foundry_common::fs::normalize_path;
 use foundry_config::DocConfig;
 use markdown::ParseOptions;
 use path_slash::PathExt;
 use std::{
     collections::HashMap,
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 /// Map from a Solidity source file location to its vocs page URL.
@@ -542,21 +543,6 @@ fn try_rewrite_target(
     };
     url.push_str(suffix);
     Some(url)
-}
-
-/// Lexically resolve `.` and `..` components without touching the filesystem.
-fn normalize_path(p: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for comp in p.components() {
-        match comp {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 // ── package.json ──────────────────────────────────────────────────────────────

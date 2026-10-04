@@ -848,23 +848,9 @@ where
     transaction.rpc.clear();
     let transaction =
         serde_json::from_value::<TransactionWithMetadata<N>>(serde_json::to_value(transaction)?)?;
-    Ok(keccak256(serde_json::to_vec(&canonicalize(serde_json::to_value(transaction)?))?))
-}
-
-fn canonicalize(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.into_iter().map(canonicalize).collect())
-        }
-        serde_json::Value::Object(values) => {
-            let mut values = values.into_iter().collect::<Vec<_>>();
-            values.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-            serde_json::Value::Object(
-                values.into_iter().map(|(key, value)| (key, canonicalize(value))).collect(),
-            )
-        }
-        value => value,
-    }
+    let mut value = serde_json::to_value(transaction)?;
+    value.sort_all_objects();
+    Ok(keccak256(serde_json::to_vec(&value)?))
 }
 
 fn load_plan<N: Network>(path: &Path) -> Result<RecoveryPlan<N>>
