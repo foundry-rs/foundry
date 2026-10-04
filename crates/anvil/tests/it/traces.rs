@@ -1539,6 +1539,46 @@ async fn test_trace_unknown_block_and_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_fork_block() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(1))
+            .from(accounts[0].address()),
+    );
+    origin_handle
+        .http_provider()
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let fork_block = provider.get_block_number().await.unwrap();
+
+    // The fork block is not stored locally, so its traces come from the fork.
+    assert_eq!(provider.trace_block(BlockId::latest()).await.unwrap().len(), 1);
+    assert_eq!(provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap().len(), 1);
+
+    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let filter = TraceFilter::default().from_block(fork_block).to_block(fork_block + 1);
+    let blocks = provider
+        .trace_filter(&filter)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|trace| trace.block_number.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(blocks, [fork_block, fork_block + 1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_rejects_unknown_hash() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let error = handle

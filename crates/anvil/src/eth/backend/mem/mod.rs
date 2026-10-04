@@ -3949,7 +3949,7 @@ impl<N: Network> Backend<N> {
         }
 
         if let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
+            && fork.predates_fork_inclusive(number)
         {
             return Ok(fork.trace_block(number).await?);
         }
@@ -4020,7 +4020,7 @@ impl<N: Network> Backend<N> {
 
         // Fallback to fork if block predates fork
         if let Some(fork) = self.get_fork()
-            && fork.predates_fork(block_number)
+            && fork.predates_fork_inclusive(block_number)
         {
             return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
         }
