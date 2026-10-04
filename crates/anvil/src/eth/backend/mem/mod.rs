@@ -3999,29 +3999,32 @@ impl<N: Network> Backend<N> {
         .await
     }
 
-    /// Replays all transactions in a block and returns the requested traces for each transaction
+    /// Replays all transactions in a block and returns the requested traces for each transaction,
+    /// or `None` if the block is unknown.
     pub async fn trace_replay_block_transactions(
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
+    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
         let block_number = self.convert_block_number(Some(block));
 
         // Try mined blocks first
         if let Some(results) =
             self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
         {
-            return Ok(results);
+            return Ok(Some(results));
         }
 
         // Fallback to fork if block predates fork
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(block_number)
         {
-            return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
+            return Ok(Some(
+                fork.trace_replay_block_transactions(block_number, trace_types).await?,
+            ));
         }
 
-        Err(BlockchainError::BlockNotFound)
+        Ok(None)
     }
 
     /// Replays a mined transaction and returns the requested traces, or `None` if the transaction
@@ -4281,15 +4284,13 @@ impl<N: Network> Backend<N> {
         let start = filter.from_block.unwrap_or(best_number);
         let end = filter.to_block.unwrap_or(best_number);
 
+        if start > best_number || end > best_number {
+            return Err(BlockchainError::BlockNotFound);
+        }
         if start > end {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "invalid block range, ensure that to block is greater than from block".to_string(),
             )));
-        }
-        if end > best_number {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
-                "block range extends beyond current head block {best_number}"
-            ))));
         }
 
         let dist = end - start;

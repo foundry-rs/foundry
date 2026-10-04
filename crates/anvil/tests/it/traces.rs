@@ -1566,6 +1566,7 @@ async fn test_trace_replays_report_unavailable_historical_state() {
             [TraceType::Trace].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     assert!(genesis.is_empty());
 }
@@ -1579,8 +1580,15 @@ async fn test_trace_unknown_block_and_transaction() {
 
     let error = provider.trace_block(next).await.unwrap_err();
     assert_eq!(error.as_error_resp().unwrap().code, -32001);
-    let error = provider.trace_replay_block_transactions(next).await.unwrap_err();
-    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+    let replays = provider
+        .client()
+        .request::<_, Option<Vec<TraceResultsWithTransactionHash>>>(
+            "trace_replayBlockTransactions",
+            (next, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replays, None);
 
     let replay = provider
         .client()
@@ -1594,7 +1602,7 @@ async fn test_trace_unknown_block_and_transaction() {
 
     let filter = TraceFilter::default().from_block(head).to_block(head + 1);
     let error = provider.trace_filter(&filter).await.unwrap_err();
-    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2701,6 +2709,7 @@ async fn test_trace_replay_block_transactions_local() {
             vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
 
     // Verify we have traces for both transactions
@@ -2870,6 +2879,7 @@ async fn test_trace_replay_state_diff_account_lifecycle() {
             [TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(block.len(), expected.len());
 
@@ -2929,6 +2939,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
                 trace_types.iter().copied().collect(),
             )
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(block_results.len(), hashes.len());
         for (index, hash) in hashes.iter().copied().enumerate() {
