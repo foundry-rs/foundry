@@ -288,7 +288,7 @@ async fn can_resend_transaction() {
         provider.get_transaction_by_hash(replacement_hash).await.unwrap().unwrap();
     assert_eq!(replacement_tx.inner.tx_hash(), replacement_hash);
     assert_eq!(replacement_tx.inner.gas_limit(), replacement_gas_limit);
-    assert_eq!(Transaction::max_fee_per_gas(&replacement_tx.inner), replacement_gas_price);
+    assert_eq!(Transaction::max_fee_per_gas(replacement_tx.inner()), replacement_gas_price);
 }
 
 #[tokio::test(flavor = "multi_thread")]

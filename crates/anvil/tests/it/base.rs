@@ -1090,8 +1090,7 @@ async fn base_standalone_mines_eip8130_transaction() {
     let receipt_json = serde_json::to_value(&receipt).unwrap();
     assert!(receipt_json.get("phaseStatuses").is_none(), "{receipt_json}");
     assert_eq!(receipt_json["payer"], serde_json::to_value(sender).unwrap());
-    let mined =
-        provider.get_transaction_by_hash(receipt.transaction_hash()).await.unwrap().unwrap();
+    let mined = provider.get_transaction_by_hash(receipt.tx_hash()).await.unwrap().unwrap();
     assert_eq!(mined.ty(), 0x79);
     let mined_json = serde_json::to_value(mined).unwrap();
     assert_eq!(mined_json["tx"]["nonceKey"], "0x0", "{mined_json}");

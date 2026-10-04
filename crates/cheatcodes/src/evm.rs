@@ -1966,7 +1966,7 @@ fn set_eip2935_blockhash<
     let account_was_cold = ecx.journal_mut().load_account(HISTORY_STORAGE_ADDRESS)?.is_cold;
     let account =
         ecx.journal_mut().evm_state().get(&HISTORY_STORAGE_ADDRESS).expect("account is loaded");
-    if account.info.code_hash != keccak256(&HISTORY_STORAGE_CODE) {
+    if account.info.code_hash() != keccak256(&HISTORY_STORAGE_CODE) {
         restore_eip2935_cold_state(ecx, account_was_cold, None);
         return Ok(());
     }

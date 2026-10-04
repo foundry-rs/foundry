@@ -30,7 +30,6 @@ forge-script-sequence.workspace = true
 serde.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
-dunce.workspace = true
 foundry-compilers.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 tracing.workspace = true

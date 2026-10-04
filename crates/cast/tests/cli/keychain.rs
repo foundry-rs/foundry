@@ -9,6 +9,7 @@ use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
+use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, str, util::OutputExt};
 use path_slash::PathExt;
@@ -336,8 +337,8 @@ async fn keychain_rl_json_is_object(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
-        .expect("cast keychain rl --json should emit valid JSON");
+    let parsed: serde_json::Value =
+        parse_json(output.trim()).expect("cast keychain rl --json should emit valid JSON");
     assert!(parsed.is_object(), "expected JSON object, got: {output}");
     assert!(
         parsed.get("remaining").is_some(),
@@ -370,7 +371,7 @@ async fn keychain_authorize_sponsor_hash_json_is_object(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+    let parsed: serde_json::Value = parse_json(output.trim())
         .expect("cast keychain authorize --tempo.print-sponsor-hash --json should emit valid JSON");
     assert!(parsed.is_object(), "expected JSON object, got: {output}");
     let hash = parsed
@@ -458,7 +459,7 @@ fn key_authorization_sign_admin_emits_admin_json(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+    let parsed: serde_json::Value = parse_json(output.trim())
         .expect("cast key-authorization sign --admin --json should emit valid JSON");
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
     // The bound account equals the signer (ADDR1), not the authorized key (ADDR2).
@@ -534,7 +535,7 @@ fn key_authorization_inspect_signed_admin_json(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+    let parsed: serde_json::Value = parse_json(output.trim())
         .expect("cast key-authorization inspect --json should emit valid JSON");
     assert_eq!(parsed["signed"], serde_json::Value::Bool(true), "got: {output}");
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
@@ -615,8 +616,8 @@ async fn keychain_authorize_admin_then_is_admin(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
-        .expect("cast keychain is-admin --json should emit valid JSON");
+    let parsed: serde_json::Value =
+        parse_json(output.trim()).expect("cast keychain is-admin --json should emit valid JSON");
     assert!(parsed.is_object(), "expected JSON object, got: {output}");
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
 }
@@ -664,7 +665,7 @@ async fn send_with_authorized_access_key_succeeds(cmd: _) {
         .stdout_lossy();
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+        parse_json(output.trim()).expect("cast send emits a JSON receipt");
     assert!(receipt["transactionHash"].is_string(), "unexpected receipt: {output}");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 }
@@ -724,7 +725,7 @@ async fn keychain_set_scope_succeeds_through_t14(cmd: _) {
             .assert_success()
             .get_output()
             .stdout_lossy();
-        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        let parsed: serde_json::Value = parse_json(output.trim()).unwrap();
         assert_eq!(
             parsed["data"]["allowed_calls"]["scopes"][0]["target"].as_str().map(str::to_lowercase),
             Some(accounts::ADDR3.to_lowercase()),
@@ -848,7 +849,7 @@ async fn send_with_local_sponsor_reports_sponsor_as_fee_payer(cmd: _) {
         .stdout_lossy();
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+        parse_json(output.trim()).expect("cast send emits a JSON receipt");
     let fee_payer: alloy_primitives::Address =
         receipt["feePayer"].as_str().expect("feePayer").parse().expect("valid feePayer");
     assert_eq!(
@@ -907,7 +908,7 @@ async fn send_uses_access_key_from_accounts_store(cmd: _) {
         .stdout_lossy();
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+        parse_json(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 }
 
@@ -957,7 +958,7 @@ async fn send_with_accounts_store_and_remote_sponsor_sync_succeeds(cmd: _) {
     sponsor.join().expect("fee payer service completed");
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+        parse_json(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
     assert_eq!(
         receipt["feePayer"].as_str().map(str::to_lowercase),
@@ -1002,7 +1003,7 @@ async fn tempo_unlocked_send_does_not_require_accounts_store_entry(cmd: _) {
         .stdout_lossy();
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+        parse_json(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 }
 
@@ -1032,7 +1033,7 @@ async fn tempo_accounts_store_does_not_change_ethereum_send_or_mktx(cmd: _) {
         .get_output()
         .stdout_lossy();
     let receipt: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
+        parse_json(output.trim()).expect("cast send emits a JSON receipt");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
 
     cmd.cast_fuse();
@@ -1143,7 +1144,7 @@ async fn keychain_verify_admin_accepts_admin_signature(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+    let parsed: serde_json::Value = parse_json(output.trim())
         .expect("cast keychain verify-admin --json should emit valid JSON");
     assert_eq!(parsed["valid"], serde_json::Value::Bool(true), "got: {output}");
 }
@@ -1246,7 +1247,7 @@ fn key_authorization_sign_admin_access_key_binds_root_account(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+    let parsed: serde_json::Value = parse_json(output.trim())
         .expect("cast key-authorization sign --json should emit valid JSON");
     assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
     // The signer is the admin key (ADDR2)...
@@ -2156,8 +2157,7 @@ async fn vaddr_create_sync_json_uses_tempo_session_id_env(cmd: _) {
         .get_output()
         .stdout_lossy();
 
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("vaddr create emits JSON");
+    let envelope: serde_json::Value = parse_json(stdout.trim()).expect("vaddr create emits JSON");
     assert!(
         envelope["data"]["registration_tx_hash"]
             .as_str()

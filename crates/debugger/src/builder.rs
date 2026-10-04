@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn trace_arena_accumulates_stats() {
-        let builder = DebuggerBuilder::new().trace_arena(trace_arena(100, 1));
+        let builder = Debugger::builder().trace_arena(trace_arena(100, 1));
 
         assert_eq!(builder.stats.session_subcalls, 1);
         assert_eq!(builder.stats.session_trace_gas_used, 100);
@@ -303,9 +303,8 @@ mod tests {
 
     #[test]
     fn trace_arena_accumulates_session_stats_across_multiple_arenas() {
-        let builder = DebuggerBuilder::new()
-            .trace_arena(trace_arena(100, 1))
-            .trace_arena(trace_arena(200, 2));
+        let builder =
+            Debugger::builder().trace_arena(trace_arena(100, 1)).trace_arena(trace_arena(200, 2));
 
         assert_eq!(builder.stats.session_subcalls, 3);
         assert_eq!(builder.stats.session_trace_gas_used, 300);

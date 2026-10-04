@@ -216,7 +216,7 @@ impl ForkAccountField {
             Self::Balance => target.balance = refreshed.balance,
             Self::Nonce => target.nonce = refreshed.nonce,
             Self::Code => {
-                target.code_hash = refreshed.code_hash;
+                target.code_hash = refreshed.code_hash();
                 target.code = refreshed.code.clone();
             }
         }
@@ -1979,7 +1979,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             // for failure here.
             if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS)
                 && let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT)
-                && !slot.present_value.is_zero()
+                && !slot.present_value().is_zero()
             {
                 self.set_state_snapshot_failure(true);
             }
@@ -2555,7 +2555,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                     acc.storage.insert(
                         slot,
                         EvmStorageSlot::new_changed(
-                            acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
+                            acc.storage.get(&slot).map(|s| s.present_value()).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
                             TransactionId::ZERO,
                         ),
@@ -3313,9 +3313,9 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
     let Some(acc) = active.cache.accounts.get(&addr) else { return };
 
     // port contract cache over
-    if let Some(code) = active.cache.contracts.get(&acc.info.code_hash) {
+    if let Some(code) = active.cache.contracts.get(&acc.info.code_hash()) {
         trace!("merging contract cache");
-        fork_db.cache.contracts.insert(acc.info.code_hash, code.clone());
+        fork_db.cache.contracts.insert(acc.info.code_hash(), code.clone());
     }
 
     // port account storage over
@@ -4031,15 +4031,15 @@ mod tests {
 
         let expected_hash = keccak256(&code);
         let refreshed = &journaled_state.state[&target].info;
-        assert_eq!(refreshed.code_hash, expected_hash);
+        assert_eq!(refreshed.code_hash(), expected_hash);
         assert_eq!(refreshed.code.as_ref().unwrap().original_bytes(), code);
         assert_eq!(refreshed.balance, U256::ONE);
         let refreshed = &backend.active_fork().unwrap().journaled_state.state[&target].info;
-        assert_eq!(refreshed.code_hash, expected_hash);
+        assert_eq!(refreshed.code_hash(), expected_hash);
         assert_eq!(refreshed.code.as_ref().unwrap().original_bytes(), code);
         assert_eq!(refreshed.balance, U256::from(2));
         let cached = &backend.active_fork().unwrap().db.cache.accounts[&target];
-        assert_eq!(cached.info.code_hash, expected_hash);
+        assert_eq!(cached.info.code_hash(), expected_hash);
         assert_eq!(cached.info.balance, U256::from(3));
     }
 

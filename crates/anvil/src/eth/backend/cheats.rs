@@ -165,11 +165,16 @@ impl CheatEcrecover {
 impl Precompile for CheatEcrecover {
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult {
         if !self.cheats.has_recover_overrides() {
-            return Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir));
+            return Ok(call_eth_precompile(
+                ec_recover_run,
+                input.data,
+                input.gas(),
+                input.reservoir,
+            ));
         }
 
         const ECRECOVER_BASE: u64 = 3_000;
-        if input.gas < ECRECOVER_BASE {
+        if input.gas() < ECRECOVER_BASE {
             return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
         }
         let padded = right_pad::<128>(input.data);
@@ -183,7 +188,7 @@ impl Precompile for CheatEcrecover {
             out[12..].copy_from_slice(addr.as_slice());
             return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::from(out), input.reservoir));
         }
-        Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir))
+        Ok(call_eth_precompile(ec_recover_run, input.data, input.gas(), input.reservoir))
     }
 
     fn precompile_id(&self) -> &PrecompileId {

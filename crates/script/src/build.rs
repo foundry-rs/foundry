@@ -19,7 +19,8 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
-    external_compiler::is_builtin_compiler_source, provider::ProviderBuilder,
+    external_compiler::is_builtin_compiler_source, fs::canonicalize_path,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -209,13 +210,13 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         // If we've received correct path, use it as target_path
         // Otherwise, parse input as <path>:<name> and use the path from the contract info, if
         // present.
-        let target_path = if let Ok(path) = dunce::canonicalize(&args.path) {
+        let target_path = if let Ok(path) = canonicalize_path(&args.path) {
             path
         } else {
             let contract = ContractInfo::from_str(&args.path)?;
             target_name = Some(contract.name.clone());
             if let Some(path) = contract.path {
-                dunce::canonicalize(path)?
+                canonicalize_path(path)?
             } else {
                 project.find_contract_path(contract.name.as_str())?
             }

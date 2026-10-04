@@ -455,7 +455,7 @@ async fn cast_run_replays_elastic_chain_id_on_anvil(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
 
     cmd.args(["run", &tx_hash, "--rpc-url", &handle.http_endpoint()]).assert_success().stdout_eq(
@@ -481,7 +481,7 @@ async fn cast_run_rejects_elastic_chains(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -512,7 +512,7 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
         .get_receipt()
         .await
         .unwrap()
-        .transaction_hash()
+        .tx_hash()
         .to_string();
     let endpoint = spawn_rpc_proxy_method_not_found_before(
         handle.http_endpoint(),
@@ -661,7 +661,7 @@ async fn cast_run_charges_fresh_eip7702_authority(cmd: _) {
     let output = cmd
         .args([
             "run",
-            &receipt.transaction_hash().to_string(),
+            &receipt.tx_hash().to_string(),
             "--rpc-url",
             &handle.http_endpoint(),
             "--evm-version",

@@ -72,7 +72,7 @@ impl<N: Network> Db for ForkedDatabase<N> {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    db.code_by_hash(v.info.code_hash)?
+                    db.code_by_hash(v.info.code_hash())?
                 };
                 Ok((
                     k,

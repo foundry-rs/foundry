@@ -177,7 +177,7 @@ fn next_delegation_nonce(
     {
         Some(auth) => {
             // Increment nonce of last recorded delegation.
-            auth.nonce + 1
+            auth.nonce() + 1
         }
         None => {
             // First time a delegation is added for this authority.
@@ -210,10 +210,10 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
         account_nonce,
     );
 
-    if expected_nonce != auth.nonce {
+    if expected_nonce != auth.nonce() {
         return Err(format!(
             "invalid nonce for {authority:?}: expected {expected_nonce}, got {}",
-            auth.nonce
+            auth.nonce()
         )
         .into());
     }

@@ -2387,7 +2387,7 @@ impl SymbolicBlock {
             .cheatcodes
             .as_ref()
             .and_then(|cheats| cheats.block.as_ref())
-            .unwrap_or(&evm_env.block_env);
+            .unwrap_or(evm_env.block_env());
         let difficulty = block
             .prevrandao()
             .map(|hash| U256::from_be_bytes(hash.0))

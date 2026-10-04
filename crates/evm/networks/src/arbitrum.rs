@@ -51,7 +51,7 @@ fn arb_sys_precompile_call(input: PrecompileInput<'_>, block_number: u64) -> Pre
         ));
     }
 
-    let Some((gas_cost, output)) = arb_block_number_call(input.gas, block_number) else {
+    let Some((gas_cost, output)) = arb_block_number_call(input.gas(), block_number) else {
         return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
     };
 

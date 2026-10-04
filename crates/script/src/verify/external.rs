@@ -837,6 +837,7 @@ pub(super) fn match_candidates<'a>(
 mod tests {
     use super::*;
     use alloy_json_abi::JsonAbi;
+    use foundry_cli::utils::parse_json;
     use tokio::net::TcpListener;
 
     fn input() -> Value {
@@ -915,7 +916,7 @@ mod tests {
     #[test]
     fn cumulative_candidate_metadata_budget_is_enforced() {
         let mut resolver = ExternalResolver::new().unwrap();
-        let retained_candidate = candidate("A.sol:A", JsonAbi::default());
+        let retained_candidate = candidate("A.sol:A", JsonAbi::new());
         let expected = retained_candidate.fqn.len()
             + retained_candidate.fingerprint.len()
             + retained_candidate.version.to_string().len();
@@ -924,9 +925,8 @@ mod tests {
 
         let mut resolver = ExternalResolver::new().unwrap();
         resolver.retained_metadata = MAX_RETAINED_METADATA;
-        let error = resolver
-            .charge_candidates(vec![candidate("A.sol:A", JsonAbi::default())], 0)
-            .unwrap_err();
+        let error =
+            resolver.charge_candidates(vec![candidate("A.sol:A", JsonAbi::new())], 0).unwrap_err();
         assert!(error.contains("metadata"));
         assert_eq!(resolver.retained_metadata, MAX_RETAINED_METADATA);
         assert_eq!(resolver.retained_candidates, 0);
@@ -934,9 +934,8 @@ mod tests {
 
         let mut resolver = ExternalResolver::new().unwrap();
         resolver.retained_creation_bytecode = MAX_CREATION_BYTECODE;
-        let error = resolver
-            .charge_candidates(vec![candidate("A.sol:A", JsonAbi::default())], 0)
-            .unwrap_err();
+        let error =
+            resolver.charge_candidates(vec![candidate("A.sol:A", JsonAbi::new())], 0).unwrap_err();
         assert!(error.contains("bytecode"));
         assert_eq!(resolver.retained_metadata, 0);
         assert_eq!(resolver.retained_candidates, 0);
@@ -1130,7 +1129,7 @@ mod tests {
     #[test]
     fn fingerprint_ignores_object_key_order() {
         let first = input();
-        let second: Value = serde_json::from_str(
+        let second: Value = parse_json(
             r#"{"unknown":{"preserved":true},"settings":{"outputSelection":{"old":[]},"optimizer":{"enabled":true}},"sources":{"A.sol":{"custom":1,"content":"contract A {}"}},"language":"Solidity"}"#,
         )
         .unwrap();
@@ -1329,7 +1328,7 @@ mod tests {
 
     #[test]
     fn no_constructor_and_zero_inputs_accept_and_preserve_suffixes() {
-        let none = candidate("A.sol:A", JsonAbi::default());
+        let none = candidate("A.sol:A", JsonAbi::new());
         assert!(matches!(
             match_candidates(&[0x60, 0x00], std::slice::from_ref(&none)),
             MatchResult::Unique(_)
@@ -1355,7 +1354,7 @@ mod tests {
 
     #[test]
     fn ambiguity_collapses_equivalent_deployments_from_different_inputs() {
-        let a = candidate("A.sol:A", JsonAbi::default());
+        let a = candidate("A.sol:A", JsonAbi::new());
         let first_input = a.input.clone();
         let mut duplicate = a.clone();
         duplicate.fingerprint = "different-provider-input".into();
@@ -1390,7 +1389,7 @@ mod tests {
             MatchResult::Ambiguous(_)
         ));
 
-        let b = candidate("B.sol:B", JsonAbi::default());
+        let b = candidate("B.sol:B", JsonAbi::new());
         let MatchResult::Ambiguous(matches) = match_candidates(&[0x60, 0x00], &[a, b]) else {
             panic!("expected ambiguity")
         };
@@ -1445,14 +1444,14 @@ mod tests {
 
     #[test]
     fn empty_creation_bytecode_never_matches() {
-        let mut empty = candidate("A.sol:A", JsonAbi::default());
+        let mut empty = candidate("A.sol:A", JsonAbi::new());
         empty.creation_bytecode = Bytes::new();
         assert!(matches!(match_candidates(&[], &[empty]), MatchResult::None));
     }
 
     #[test]
     fn candidates_share_source_input() {
-        let first = candidate("A.sol:A", JsonAbi::default());
+        let first = candidate("A.sol:A", JsonAbi::new());
         let second = Candidate { fqn: "A.sol:B".into(), ..first.clone() };
         assert!(Arc::ptr_eq(&first.input, &second.input));
     }

@@ -466,7 +466,7 @@ where
     trace!(transact_result = ?result.exit_reason);
 
     if result.reverted {
-        let decoded_reason = RevertDecoder::default().decode(&result.result, result.exit_reason);
+        let decoded_reason = RevertDecoder::new().decode(&result.result, result.exit_reason);
         eyre::bail!(
             "Failed to deploy contract on fork at block: {decoded_reason}.\n\
             This typically happens when your local bytecode differs from what was actually deployed.\n\
@@ -580,6 +580,7 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 mod tests {
     use super::*;
     use crate::verify::VerifierArgs;
+    use alloy_json_abi::JsonAbi;
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
     use foundry_config::NamedChain;
@@ -620,7 +621,7 @@ mod tests {
     #[test]
     fn typed_constructor_args_require_a_constructor() {
         let artifact = CompactContractBytecode {
-            abi: Some(alloy_json_abi::JsonAbi::default()),
+            abi: Some(JsonAbi::new()),
             bytecode: None,
             deployed_bytecode: None,
         };

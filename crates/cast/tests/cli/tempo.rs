@@ -7,6 +7,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolEvent, SolValue};
 use anvil::NodeConfig;
+use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use tempo_contracts::precompiles::{
@@ -17,8 +18,7 @@ use tempo_contracts::precompiles::{
 use tempo_hardfork::TempoHardfork;
 
 fn json_success_data(output: &str) -> serde_json::Value {
-    let envelope: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("command emits JSON");
+    let envelope: serde_json::Value = parse_json(output.trim()).expect("command emits JSON");
     assert_eq!(envelope["success"], true, "unexpected JSON envelope: {envelope}");
     envelope["data"].clone()
 }
@@ -907,7 +907,7 @@ async fn send_with_presigned_sponsor_signature_keeps_digest_stable(cmd: _) {
     );
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.stdout_lossy().trim()).expect("receipt should be JSON");
+        parse_json(output.stdout_lossy().trim()).expect("receipt should be JSON");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
     let fee_payer: Address =
         receipt["feePayer"].as_str().expect("receipt has feePayer").parse().unwrap();

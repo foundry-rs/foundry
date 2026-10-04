@@ -522,7 +522,7 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &U256Map<U256>) -> Vec<u8> 
 /// Returns the RLP for this account with an already computed storage root.
 fn trie_account_rlp_with_storage_root(info: &AccountInfo, storage_root: B256) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
-    let list: [&dyn Encodable; 4] = [&info.nonce, &info.balance, &storage_root, &info.code_hash];
+    let list: [&dyn Encodable; 4] = [&info.nonce, &info.balance, &storage_root, &info.code_hash()];
 
     alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
 

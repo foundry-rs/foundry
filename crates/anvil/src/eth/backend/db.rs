@@ -186,7 +186,7 @@ pub struct AnvilCacheDB<T>(pub CacheDB<T>, BalState, SpecId);
 
 impl<T: DatabaseRef<Error = DatabaseError>> AnvilCacheDB<T> {
     pub fn new(inner: T, spec: SpecId) -> Self {
-        Self(CacheDB::new(inner), BalState::default(), spec)
+        Self(CacheDB::new(inner), BalState::new(), spec)
     }
 
     /// Enables EIP-7928 block access list recording.
@@ -511,7 +511,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.cache.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash());
             accounts.insert(addr, info);
         }
         let block_hashes = std::mem::take(&mut self.cache.block_hashes);
@@ -525,7 +525,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
         for (addr, acc) in &self.cache.accounts {
             account_storage.insert(*addr, acc.storage.clone());
             let mut info = acc.info.clone();
-            info.code = self.cache.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash()).cloned();
             accounts.insert(*addr, info);
         }
 
@@ -542,7 +542,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.cache.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash(), code);
             }
             self.cache.accounts.insert(
                 addr,

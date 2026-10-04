@@ -362,7 +362,7 @@ mod tests {
                     &expected,
                     "{upgrade:?}: {address}"
                 );
-                assert_eq!(account.info.code_hash, expected.hash_slow());
+                assert_eq!(account.info.code_hash(), expected.hash_slow());
             }
         }
     }
@@ -384,6 +384,6 @@ mod tests {
         );
         let account = evm.ctx_mut().journal_mut().load_account_with_code(address).unwrap();
         assert_eq!(account.info.code.as_ref().unwrap(), &code);
-        assert_eq!(account.info.code_hash, code_hash);
+        assert_eq!(account.info.code_hash(), code_hash);
     }
 }

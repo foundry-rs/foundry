@@ -14,8 +14,9 @@ use eyre::{Context, Result};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
     opts::RpcOpts,
+    utils::parse_json,
 };
-use foundry_common::{errors::FsPathError, fs, sh_println, shell};
+use foundry_common::{errors::FsPathError, fs, fs::canonicalize_path, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{BrowserWalletOpts, RawWalletOpts, WalletOpts, WalletSigner};
 use rand_08::thread_rng;
@@ -1030,11 +1031,7 @@ fn raw_wallet(raw: RawWalletOpts) -> WalletOpts {
 
 /// Parses EIP-712 typed data from a JSON string, or from the file it names when `from_file`.
 fn parse_typed_data(message: &str, from_file: bool) -> Result<TypedData> {
-    if from_file {
-        Ok(fs::read_json_file(Path::new(message))?)
-    } else {
-        Ok(serde_json::from_str(message)?)
-    }
+    if from_file { Ok(fs::read_json_file(Path::new(message))?) } else { Ok(parse_json(message)?) }
 }
 
 /// Strips the 0x prefix from a hex string and decodes it to bytes.
@@ -1061,7 +1058,7 @@ fn password_or_prompt(password: Option<String>, prompt: &str) -> Result<String> 
 /// directory, matching `cast wallet import <name>`. Path-like values and resolution failures
 /// other than `NotFound` still error.
 fn resolve_new_dir(path: String, account_name: &mut Option<String>) -> Result<PathBuf> {
-    match dunce::canonicalize(&path) {
+    match canonicalize_path(&path) {
         Ok(dir) if dir.is_dir() => Ok(dir),
         Ok(dir) => eyre::bail!("`{}` is not a directory", dir.display()),
         Err(e)

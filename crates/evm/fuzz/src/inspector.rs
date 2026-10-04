@@ -67,7 +67,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
 
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
-        if self.call_generator.is_some() && ecx.tx().caller() != inputs.caller {
+        if self.call_generator.is_some() && ecx.tx().caller() != inputs.transfer_from() {
             self.override_call(ecx, inputs);
         }
 
@@ -75,8 +75,8 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         if self.should_record_observed_call(inputs.scheme) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
-                caller: inputs.caller,
-                target: inputs.target_address,
+                caller: inputs.transfer_from(),
+                target: inputs.transfer_to(),
                 calldata: inputs.input.bytes(ecx),
                 value: inputs.transfer_value().filter(|value| !value.is_zero()),
             });
@@ -225,7 +225,7 @@ impl Fuzzer {
     ///
     /// This simulates malicious contracts that immediately reenter when called.
     fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
-        let target_is_cheatcode = self.is_cheatcode_address(call.target_address);
+        let target_is_cheatcode = self.is_cheatcode_address(call.transfer_to());
         let Some(ref mut call_generator) = self.call_generator else {
             return;
         };
@@ -240,7 +240,7 @@ impl Fuzzer {
         // We override calls when either the caller OR target is a handler. This covers:
         // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
         // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
-        if call.caller == call_generator.test_address
+        if call.transfer_from() == call_generator.test_address
             || call.scheme != CallScheme::Call
             || call_generator.override_depth > 0
             || target_is_cheatcode
@@ -249,13 +249,14 @@ impl Fuzzer {
         }
         {
             let handlers = call_generator.handler_addresses.read();
-            if !handlers.contains(&call.caller) && !handlers.contains(&call.target_address) {
+            if !handlers.contains(&call.transfer_from()) && !handlers.contains(&call.transfer_to())
+            {
                 return;
             }
         }
 
         // There's only a ~27% chance that an override happens (90% * 30% from strategy).
-        let Some(tx) = call_generator.next(call.caller, call.target_address) else {
+        let Some(tx) = call_generator.next(call.transfer_from(), call.transfer_to()) else {
             return;
         };
 
@@ -263,7 +264,8 @@ impl Fuzzer {
         // This simulates a malicious receive() that gets the ETH and then reenters.
         let value = call.transfer_value().unwrap_or_default();
         let has_value = !value.is_zero() && call.gas_limit > 2300;
-        if has_value && ecx.journal_mut().transfer(call.caller, call.target_address, value).is_err()
+        if has_value
+            && ecx.journal_mut().transfer(call.transfer_from(), call.transfer_to(), value).is_err()
         {
             return;
         }
@@ -280,7 +282,8 @@ impl Fuzzer {
         // Clear known_bytecode to force REVM to load bytecode from the new target.
         // Without this, REVM uses cached bytecode from the original target (e.g., empty
         // bytecode for EOA), causing the call to short-circuit before executing any code.
-        call.known_bytecode = (target.info.code_hash, target.info.code.clone().unwrap_or_default());
+        call.known_bytecode =
+            (target.info.code_hash(), target.info.code.clone().unwrap_or_default());
         // Clear value since ETH was already transferred above
         call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
 

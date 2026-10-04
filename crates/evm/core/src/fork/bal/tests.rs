@@ -165,13 +165,13 @@ fn fork_bal_cache_preserves_delegation_code_and_final_clearing() {
     let account = &accounts[&authority];
     assert_eq!(account.balance, U256::from(42));
     assert_eq!(account.nonce, 3);
-    assert_eq!(account.code_hash, alloy_primitives::keccak256(&delegation));
+    assert_eq!(account.code_hash(), alloy_primitives::keccak256(&delegation));
     assert_eq!(account.code.as_ref().unwrap().original_bytes(), delegation);
     assert!(account.code.as_ref().unwrap().is_eip7702());
     let account = &accounts[&cleared];
     assert_eq!(account.balance, U256::ZERO);
     assert_eq!(account.nonce, 0);
-    assert_eq!(account.code_hash, alloy_primitives::KECCAK256_EMPTY);
+    assert_eq!(account.code_hash(), alloy_primitives::KECCAK256_EMPTY);
     assert!(account.code.as_ref().unwrap().is_empty());
 }
 
