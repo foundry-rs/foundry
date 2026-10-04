@@ -6154,7 +6154,8 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 }
 
-forgetest_init!(fuzz_guidance_dictionary_finds_magic_value, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_guidance_dictionary_finds_magic_value(prj: _, cmd: _) {
     prj.add_test(
         "FuzzGuidance.t.sol",
         r#"
@@ -6221,9 +6222,10 @@ contract FuzzGuidanceTest {
 [FAIL: magic value found; counterexample: calldata=[..] args=[16045690984503054900 [1.604e19]]] testFuzz_inline(uint256) (runs: 9, [AVG_GAS])
 ...
 "#]]);
-});
+}
 
-forgetest_init!(fuzz_guidance_hex_dictionary_finds_fixed_bytes, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_guidance_hex_dictionary_finds_fixed_bytes(prj: _, cmd: _) {
     prj.add_test(
         "FuzzGuidanceFixedBytes.t.sol",
         r#"
@@ -6258,9 +6260,10 @@ contract FuzzGuidanceFixedBytesTest {
 [FAIL: magic value found; counterexample: calldata=0x521b44cddeadbeef[..] args=[0xdeadbeef]] testFuzz_magic(bytes4) (runs: [..], [AVG_GAS])
 ...
 "#]]);
-});
+}
 
-forgetest_init!(fuzz_guidance_zero_selector_weight_excludes_function, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_guidance_zero_selector_weight_excludes_function(prj: _, cmd: _) {
     prj.add_test(
         "FuzzGuidanceSelectors.t.sol",
         r#"
@@ -6343,9 +6346,10 @@ contract FuzzGuidanceSelectorsTest {
  invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(fuzz_guidance_applies_to_call_overrides, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_guidance_applies_to_call_overrides(prj: _, cmd: _) {
     prj.add_test(
         "FuzzGuidanceCallOverride.t.sol",
         r#"
@@ -6422,9 +6426,10 @@ contract FuzzGuidanceCallOverrideTest {
 [PASS] invariant_notPoked() (runs: 20, calls: 400, reverts: [..])
 ...
 "#]]);
-});
+}
 
-forgetest_init!(fuzz_guidance_keeps_dynamic_target_identity, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_guidance_keeps_dynamic_target_identity(prj: _, cmd: _) {
     prj.add_test(
         "FuzzGuidanceDynamic.t.sol",
         r#"
@@ -6493,9 +6498,10 @@ contract FuzzGuidanceDynamicTest {
  invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
 ...
 "#]]);
-});
+}
 
-forgetest_init!(fuzz_guidance_rejects_unsupported_version, |prj, cmd| {
+#[forgetest_init]
+fn fuzz_guidance_rejects_unsupported_version(prj: _, cmd: _) {
     prj.add_test(
         "FuzzGuidanceVersion.t.sol",
         r#"
@@ -6513,7 +6519,7 @@ Context:
 - unsupported fuzz guidance version 2, expected 1
 
 "#]]);
-});
+}
 
 fn random_failure_reason(stdout: &str) -> String {
     Regex::new(r"\[FAIL: (Random\([^)]+\))")
