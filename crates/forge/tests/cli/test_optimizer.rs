@@ -5064,7 +5064,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
         cmd.forge_fuse()
             .args(["test", "--force", "--match-test", "^__nomatch__$", "--json"])
-            .assert_empty_stdout();
+            .assert_json_stdout("{}");
     }
 }
 

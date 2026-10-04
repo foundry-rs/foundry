@@ -6,7 +6,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_eips::BlockId;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     hex::{self, FromHex},
@@ -249,6 +249,41 @@ async fn test_trace_raw_transaction_local() {
     assert_eq!(provider.get_transaction_count(from).await.unwrap(), 0);
     assert_eq!(provider.get_balance(from).await.unwrap(), from_balance);
     assert_eq!(provider.get_balance(to).await.unwrap(), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_raw_transaction_rejects_code_sender() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(accounts[1].address())
+        .value(U256::from(1))
+        .with_gas_limit(21_000)
+        .max_fee_per_gas(20_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000);
+    let signed_tx = api.sign_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let raw_tx = hex::decode(&signed_tx[2..]).unwrap();
+
+    api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
+    let error = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!((error.code, error.message.as_ref()), (-32003, "sender not an eoa"));
+
+    // An EIP-7702 delegation keeps the account an EOA.
+    let delegation = [&[0xef, 0x01, 0x00][..], accounts[2].address().as_slice()].concat();
+    api.anvil_set_code(from, delegation.into()).await.unwrap();
+    let traces = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap();
+    assert_eq!(traces.trace.len(), 1);
+
+    // Mining keeps EIP-3607 disabled, so the code sender's transaction is still included.
+    api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
+    let receipt =
+        provider.send_raw_transaction(&raw_tx).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -835,35 +870,59 @@ async fn test_trace_call_many_defaults_to_latest() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_get_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    let from = accounts[0].address();
-    let to = accounts[1].address();
-    let amount = U256::from(1000);
-    let tx = TransactionRequest::default().to(to).value(amount).from(from);
-    let tx = WithOtherFields::new(tx);
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-
-    let traces = provider.trace_transaction(receipt.transaction_hash).await.unwrap();
-    assert!(!traces.is_empty());
-
-    let trace = provider.trace_get(receipt.transaction_hash, 0).await.unwrap();
-    assert_eq!(trace, traces[0]);
-
-    let missing: Option<LocalizedTransactionTrace> = provider
-        .client()
-        .request("trace_get", (receipt.transaction_hash, vec![Index::from(999)]))
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let get_value = Multicall::Call {
+        target: *storage.address(),
+        callData: storage.getValue().calldata().clone(),
+    };
+    let nested = Multicall::Call {
+        target: *multicall.address(),
+        callData: multicall.aggregate(vec![get_value.clone()]).calldata().clone(),
+    };
+    let receipt = multicall
+        .aggregate(vec![get_value, nested])
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
         .await
         .unwrap();
-    assert_eq!(missing, None);
+    let hash = receipt.transaction_hash;
 
-    let invalid_indices: Option<LocalizedTransactionTrace> = provider
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let addresses =
+        traces.iter().map(|trace| trace.trace.trace_address.clone()).collect::<Vec<_>>();
+    assert_eq!(addresses, vec![vec![], vec![0], vec![1], vec![1, 0]]);
+
+    let trace_get = async |path: &[usize]| {
+        let path = path.iter().copied().map(Index::from).collect::<Vec<_>>();
+        provider
+            .client()
+            .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, path))
+            .await
+            .unwrap()
+    };
+    for trace in &traces {
+        assert_eq!(trace_get(&trace.trace.trace_address).await.as_ref(), Some(trace));
+    }
+    for missing in [&[2][..], &[0, 0], &[1, 1], &[1, 0, 0]] {
+        assert_eq!(trace_get(missing).await, None);
+    }
+
+    let unknown = provider
         .client()
-        .request("trace_get", (receipt.transaction_hash, vec![Index::from(0), Index::from(1)]))
+        .request::<_, Option<LocalizedTransactionTrace>>(
+            "trace_get",
+            (B256::ZERO, Vec::<Index>::new()),
+        )
         .await
         .unwrap();
-    assert_eq!(invalid_indices, None);
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

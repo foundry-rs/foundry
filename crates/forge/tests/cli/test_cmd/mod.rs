@@ -897,6 +897,31 @@ fn can_run_test_with_json_output_non_verbose(prj: _, cmd: _) {
 }
 
 #[forgetest]
+fn json_and_junit_emit_empty_documents_without_matches(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.insert_console();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    // A filter that matches nothing must still produce a parseable document on stdout.
+    cmd.args(["test", "--json", "--match-test", "testNoSuch"]).assert_success().stdout_eq(str![[
+        r#"
+{}
+
+"#
+    ]]);
+
+    cmd.forge_fuse().args(["test", "--junit", "--match-test", "testNoSuch"]).assert_success().stdout_eq(str![[
+        r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="0" skipped="0" failures="0" errors="0" timestamp="[..]" time="0.000">
+</testsuites>
+
+
+"#
+    ]]);
+}
+
+#[forgetest]
 fn can_write_json_results_without_changing_stdout(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_console();
@@ -5808,30 +5833,6 @@ async fn flaky_can_get_broadcast_txs(prj: _, cmd: _) {
     assert!(broadcast_path.exists() && broadcast_path.is_dir());
 
     cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
-}
-
-// See <https://github.com/foundry-rs/foundry/issues/9297>
-#[forgetest_init]
-#[ignore = "RPC Service Unavailable"]
-fn test_roll_scroll_fork_with_cancun(prj: _, cmd: _) {
-    prj.add_test(
-        "ScrollForkTest.t.sol",
-        r#"
-
-import {Test} from "forge-std/Test.sol";
-
-contract ScrollForkTest is Test {
-    function test_roll_scroll_fork_to_tx() public {
-        vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
-        bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
-        vm.rollFork(targetTxHash);
-    }
-}
-   "#,
-    );
-
-    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
-        .assert_success();
 }
 
 // Test that failed fork errors still surface the provider hostname.

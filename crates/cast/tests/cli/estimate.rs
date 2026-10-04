@@ -188,7 +188,6 @@ Continue anyway? [y/N] "#]])
 
 // <https://basescan.org/block/30558838>
 #[casttest]
-#[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
 fn flaky_estimate_base_da(cmd: _) {
     cmd.args(["da-estimate", "30558838", "-r", next_rpc_endpoint(NamedChain::Base).as_str()])
         .assert_success()
