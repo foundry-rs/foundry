@@ -50,7 +50,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{Database, DatabaseCommit, DatabaseRef},
-    interpreter::{InstructionResult, return_ok},
+    interpreter::{InstructionResult, gas::InitialAndFloorGas, return_ok},
     primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
@@ -1715,12 +1715,19 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
 }
 
 pub(crate) fn calculate_stipend(tx_env: &impl Transaction, cfg: &impl Cfg) -> u64 {
+    calculate_initial_gas(tx_env, cfg).initial_total_gas()
+}
+
+/// Returns the intrinsic gas and EIP-7623 calldata floor of a transaction.
+pub(crate) fn calculate_initial_gas(
+    tx_env: &impl Transaction,
+    cfg: &impl Cfg,
+) -> InitialAndFloorGas {
     let eip2780 = cfg.is_amsterdam_eip2780_enabled().then(|| Eip2780TxInfo {
         value: tx_env.value(),
         is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
     });
     revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, cfg.spec().into(), eip2780)
-        .initial_total_gas()
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
