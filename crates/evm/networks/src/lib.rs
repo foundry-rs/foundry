@@ -63,7 +63,8 @@ pub mod celo;
 #[cfg(feature = "optimism")]
 mod optimism;
 
-const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
+/// Labels of all well-known Tempo precompiles, keyed by address.
+pub const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("Nonce", NONCE_PRECOMPILE_ADDRESS),
     ("StablecoinDex", STABLECOIN_DEX_ADDRESS),
     ("TIP20Factory", TIP20_FACTORY_ADDRESS),
@@ -137,22 +138,15 @@ const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
 const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
 
 /// All well-known Tempo precompile addresses.
-pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
-    NONCE_PRECOMPILE_ADDRESS,
-    STABLECOIN_DEX_ADDRESS,
-    TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS,
-    VALIDATOR_CONFIG_V2_ADDRESS,
-    ACCOUNT_KEYCHAIN_ADDRESS,
-    SIGNATURE_VERIFIER_ADDRESS,
-    ADDRESS_REGISTRY_ADDRESS,
-    TIP20_CHANNEL_RESERVE_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS,
-    STORAGE_CREDITS_ADDRESS,
-    CURRENT_COMMITTEE_ADDRESS,
-];
+pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &{
+    let mut addresses = [Address::ZERO; TEMPO_PRECOMPILES.len()];
+    let mut i = 0;
+    while i < addresses.len() {
+        addresses[i] = TEMPO_PRECOMPILES[i].1;
+        i += 1;
+    }
+    addresses
+};
 
 #[derive(
     Clone,
