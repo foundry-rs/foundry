@@ -27,7 +27,10 @@ use alloy_rpc_types::{
             GethTrace, PreStateConfig, PreStateFrame, TraceResult,
         },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
-        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
+        parity::{
+            Action, ChangedType, LocalizedTransactionTrace, TraceResults,
+            TraceResultsWithTransactionHash, TraceType,
+        },
     },
 };
 use alloy_rpc_types_eth::AccountInfo;
@@ -2628,7 +2631,7 @@ async fn test_trace_replay_transaction() {
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let result: TraceResults = provider
+    let TraceResultsWithTransactionHash { full_trace: result, transaction_hash } = provider
         .client()
         .request(
             "trace_replayTransaction",
@@ -2637,6 +2640,7 @@ async fn test_trace_replay_transaction() {
         .await
         .unwrap();
 
+    assert_eq!(transaction_hash, receipt.transaction_hash);
     assert!(!result.trace.is_empty());
     match &result.trace[0].action {
         Action::Call(call) => {
@@ -2649,6 +2653,45 @@ async fn test_trace_replay_transaction() {
     let ChangedType::<U256> { from, to } =
         result.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
     assert_eq!(to.checked_sub(*from).unwrap(), amount);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_transaction_fork() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1000))
+        .from(accounts[0].address());
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let config = NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (_api, handle) = spawn(config).await;
+
+    // The pre-fork transaction is replayed upstream and keeps its hash.
+    let mut replays = Vec::new();
+    for provider in [handle.http_provider(), origin] {
+        replays.push(
+            provider
+                .client()
+                .request::<_, TraceResultsWithTransactionHash>(
+                    "trace_replayTransaction",
+                    (hash, vec![TraceType::Trace]),
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(replays[0].transaction_hash, hash);
+    assert_eq!(replays[0], replays[1]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
