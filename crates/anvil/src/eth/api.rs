@@ -1577,7 +1577,7 @@ impl<N: Network> EthApi<N> {
         self.backend.trace_filter(filter).await
     }
 
-    /// Returns a transaction trace at a given index.
+    /// Returns the transaction trace at the given trace address.
     ///
     /// Handler for RPC call: `trace_get`.
     pub async fn trace_get(
