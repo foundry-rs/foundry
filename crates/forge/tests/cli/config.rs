@@ -86,7 +86,6 @@ sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 initial_balance = "0xffffffffffffffffffffffff"
 block_number = 1
-fork_state_by_number = false
 gas_limit = 1073741824
 block_base_fee_per_gas = 0
 block_coinbase = "0x0000000000000000000000000000000000000000"
@@ -431,7 +430,6 @@ fn can_extract_config_values(prj: _, cmd: _) {
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
         block_number: U256::from(10),
         fork_block_number: Some(200),
-        fork_state_by_number: true,
         chain: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
         code_size_limit: Some(100000),
@@ -2402,7 +2400,6 @@ fn test_default_config(prj: _, cmd: _) {
   "initial_balance": "0xffffffffffffffffffffffff",
   "block_number": 1,
   "fork_block_number": null,
-  "fork_state_by_number": false,
   "chain_id": null,
   "gas_limit": 1073741824,
   "code_size_limit": null,

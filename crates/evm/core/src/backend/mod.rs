@@ -2269,6 +2269,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
+        self.inner.get_fork_by_id(id)?.backend().require_hash_state()?;
         let affects_active = self.is_active_fork(id);
         let fork_id = self.ensure_fork_id(id).cloned()?;
 

@@ -170,7 +170,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let networks = evm_opts.networks;
         let (evm_env, tx_env, resolved) =
             evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
-        let resolved = resolved.context("fork context is missing for tracing executor")?;
+        let resolved =
+            resolved.context("fork context is missing for tracing executor")?.into_exact();
         let fork = evm_opts
             .get_fork_resolved(config, evm_env.cfg_env.chain_id, Some(&resolved))
             .context("fork URL is missing for tracing executor")?;
