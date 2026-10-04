@@ -1289,7 +1289,6 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
 mod tests {
     use super::*;
     use alloy_chains::NamedChain;
-    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::address;
     use alloy_provider::Provider as _;
@@ -2034,14 +2033,7 @@ mod tests {
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
             .unwrap();
-        assert_eq!(
-            provider
-                .get_transaction_count(replacement_sender)
-                .block_id(BlockId::number(1))
-                .await
-                .unwrap(),
-            0
-        );
+        assert_eq!(provider.get_transaction_count(replacement_sender).number(1).await.unwrap(), 0);
 
         match config.update_sender(replacement_sender).await {
             Ok(()) => assert_eq!(config.sender_nonce, 1),

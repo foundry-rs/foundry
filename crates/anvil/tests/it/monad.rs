@@ -2291,11 +2291,10 @@ async fn monad_safe_and_finalized_block_tags_use_configured_epoch_slots() {
     let latest = provider.get_block_number().await.unwrap();
     assert_eq!(latest, 8);
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, latest - slots_in_an_epoch);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, latest - slots_in_an_epoch * 2);
 
     let fee_history = api.fee_history(U256::ONE, BlockNumberOrTag::Safe, vec![]).await.unwrap();
@@ -2311,12 +2310,11 @@ async fn monad_safe_and_finalized_block_tags_fall_back_to_genesis_before_epoch()
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, genesis.header.number);
     assert_eq!(safe.header.hash, genesis.header.hash);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, genesis.header.number);
     assert_eq!(finalized.header.hash, genesis.header.hash);
 
@@ -2362,7 +2360,7 @@ fn address_and_flags(address: Address, flags: u64) -> U256 {
 }
 
 fn storage_value(value: U256) -> B256 {
-    B256::from(value.to_be_bytes::<32>())
+    B256::from(value)
 }
 
 async fn assert_monad_reset_to_memory(
@@ -2492,7 +2490,7 @@ fn reserve_probe_tx(from: Address, nonce: u64, slot: u64, value: U256) -> Transa
         .with_nonce(nonce)
         .with_value(value)
         .with_gas_limit(100_000)
-        .with_input(Bytes::copy_from_slice(&U256::from(slot).to_be_bytes::<32>()))
+        .with_input(Bytes::from(U256::from(slot).to_be_bytes::<32>()))
 }
 
 fn large_contract_init_code(runtime_len: usize) -> Bytes {

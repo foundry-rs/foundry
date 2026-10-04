@@ -43,7 +43,7 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, ContextTr, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    primitives::hardfork::SpecId,
     state::Account,
 };
 use std::{
@@ -838,7 +838,7 @@ impl Cheatcode for resetNonceCall {
         // Per EIP-161, EOA nonces start at 0, but contract nonces
         // start at 1. Comparing by code_hash instead of code
         // to avoid hitting the case where account's code is None.
-        let empty = account.info.code_hash == KECCAK_EMPTY;
+        let empty = account.info.is_empty_code_hash();
         let nonce = if empty { 0 } else { 1 };
         account.info.nonce = nonce;
         debug!(target: "cheatcodes", nonce, "reset");

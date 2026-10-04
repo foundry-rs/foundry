@@ -1621,7 +1621,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &txes,
             &sequence,
             replay.invariant_contract.address,
-            replay.target_invariant.selector().to_vec().into(),
+            replay.target_invariant.selector().into(),
             CheckSequenceOptions {
                 accumulate_warp_roll: false,
                 fail_on_revert: replay.invariant_config.fail_on_revert,
@@ -1653,7 +1653,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &txes,
             &sequence,
             invariant_contract.address,
-            invariant_contract.anchor().selector().to_vec().into(),
+            invariant_contract.anchor().selector().into(),
             CheckSequenceOptions {
                 accumulate_warp_roll: config.has_delay(),
                 fail_on_revert: config.fail_on_revert,
@@ -2837,7 +2837,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &txes,
                     &sequence,
                     self.setup.address,
-                    invariant.selector().to_vec().into(),
+                    invariant.selector().into(),
                     CheckSequenceOptions {
                         // Artifact replay executes every stored call in order, so each call's
                         // warp/roll delta is applied directly. Accumulation is only needed when a
@@ -5560,7 +5560,7 @@ fn parse_frontier_selectors(selectors: &[String], signature: &str) -> Vec<Select
     selectors
         .iter()
         .filter_map(|selector| {
-            let parsed = hex::decode(selector.strip_prefix("0x").unwrap_or(selector))
+            let parsed = hex::decode(selector)
                 .ok()
                 .filter(|bytes| bytes.len() == 4)
                 .map(|bytes| Selector::from_slice(&bytes));
@@ -5613,7 +5613,7 @@ fn fuzz_test_path_name<'a>(
     config: &FuzzConfig,
     contract_name: &str,
 ) -> Cow<'a, str> {
-    let test_name = format!("{}-{}", func.name, hex::encode(func.selector()));
+    let test_name = format!("{}-{:x}", func.name, func.selector());
     let overloaded = abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1);
     let contract = contract_short_name(contract_name);
     let has_qualified_artifact = config

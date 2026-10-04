@@ -177,15 +177,11 @@ impl Precompile for CheatEcrecover {
         let mut sig_bytes = [0u8; 65];
         sig_bytes[..64].copy_from_slice(&padded[64..128]);
         sig_bytes[64] = v;
-        let sig_bytes_wrapped = Bytes::copy_from_slice(&sig_bytes);
+        let sig_bytes_wrapped = Bytes::from(sig_bytes);
         if let Some(addr) = self.cheats.get_recover_override(&sig_bytes_wrapped) {
             let mut out = [0u8; 32];
             out[12..].copy_from_slice(addr.as_slice());
-            return Ok(PrecompileOutput::new(
-                ECRECOVER_BASE,
-                Bytes::copy_from_slice(&out),
-                input.reservoir,
-            ));
+            return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::from(out), input.reservoir));
         }
         Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir))
     }

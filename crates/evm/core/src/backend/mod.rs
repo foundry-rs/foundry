@@ -39,7 +39,7 @@ use revm::{
     database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
     database_interface::bal::BalState,
     inspector::NoOpInspector,
-    primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
+    primitives::{AddressMap, HashMap as Map, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
@@ -2842,7 +2842,7 @@ impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
         if let Ok(Some(acc)) = self.db.basic_ref(acc)
-            && acc.code_hash != KECCAK_EMPTY
+            && !acc.is_empty_code_hash()
         {
             return true;
         }
@@ -3339,7 +3339,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
 
 /// Returns true of the address is a contract
 fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
-    evm_state.get(&acc).map(|acc| acc.info.code_hash != KECCAK_EMPTY).unwrap_or_default()
+    evm_state.get(&acc).map(|acc| !acc.info.is_empty_code_hash()).unwrap_or_default()
 }
 
 /// Updates the evm env's block with the block's data

@@ -2933,11 +2933,8 @@ mod tests {
         let mut invalid_instance = context.instance_id.unwrap_or_default();
         invalid_instance[31] ^= 1;
         context.instance_id = Some(invalid_instance);
-        let invalid = ResolvedFork::new(
+        let invalid = evm_opts.resolved_fork(
             evm_opts.fork_url.as_deref().unwrap(),
-            evm_opts.fork_source_headers(),
-            evm_opts.rpc_jwt.as_deref(),
-            evm_opts.fork_block_number,
             resolved.block(),
             context,
         );

@@ -561,7 +561,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let info = revm::state::AccountInfo {
                 nonce: account_state.nonce.unwrap_or_default(),
                 balance: account_state.balance.unwrap_or_default(),
-                code_hash: keccak256(code.original_byte_slice()),
+                code_hash: code.hash_slow(),
                 code: Some(code),
                 account_id: Default::default(),
             };
@@ -578,7 +578,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
+        Ok(self.backend().basic_ref(address)?.is_none_or(|acc| acc.is_empty_code_hash()))
     }
 
     #[inline]
@@ -811,7 +811,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         parent_beacon_block_root: alloy_primitives::B256,
     ) -> eyre::Result<()> {
-        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let calldata = Bytes::from(parent_beacon_block_root);
         let mut evm_env = self.evm_env.clone();
         let inspector = self.inspector().clone();
         let mut state = {

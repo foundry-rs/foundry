@@ -456,7 +456,7 @@ fn fallback_candidates_for_var(
     constants: &[U256],
 ) -> Option<Vec<U256>> {
     let hints = MaskHints::for_var(var, constraints);
-    if (hints.one & hints.zero) != U256::ZERO {
+    if !(hints.one & hints.zero).is_zero() {
         return None;
     }
 
@@ -922,7 +922,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
 
     let var = if vars.len() == 1 { *vars.iter().next()? } else { return None };
     let hints = MaskHints::for_var(&var, constraints);
-    if (hints.one & hints.zero) != U256::ZERO {
+    if !(hints.one & hints.zero).is_zero() {
         return None;
     }
 

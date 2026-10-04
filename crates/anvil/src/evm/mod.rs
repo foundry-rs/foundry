@@ -31,14 +31,13 @@ mod tests {
     use revm::{
         Journal,
         context::{BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
-        database::{EmptyDB, EmptyDBTyped},
+        database::EmptyDB,
         handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
         precompile::{PrecompileOutput, PrecompileSpecId, PrecompileStatus, Precompiles},
         primitives::hardfork::SpecId,
     };
-    use std::convert::Infallible;
 
     // A precompile activated in the `Prague` spec (BLS12-381 G2 map).
     pub(super) const ETH_PRAGUE_PRECOMPILE: Address = Address::with_last_byte(0x11);
@@ -92,9 +91,7 @@ mod tests {
     }
 
     /// Creates a new Eth EVM instance.
-    fn create_eth_evm(
-        spec: SpecId,
-    ) -> (TxEnv, EthEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>) {
+    fn create_eth_evm(spec: SpecId) -> (TxEnv, EthEvm<EmptyDB, NoOpInspector, PrecompilesMap>) {
         let tx_env = TxEnv {
             kind: TxKind::Call(PRECOMPILE_ADDR),
             data: PAYLOAD.into(),

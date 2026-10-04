@@ -28,7 +28,7 @@ use tempo_precompiles::{
     tip20::{ITIP20, TIP20Token},
 };
 use tempo_primitives::{
-    AASigned, TempoSignature, TempoTransaction,
+    TempoSignature, TempoTransaction,
     transaction::{Call, KeychainSignature, PrimitiveSignature, calc_gas_balance_spending},
 };
 use tempo_revm::{TempoTxEnv, gas_params::tempo_gas_params};
@@ -121,10 +121,7 @@ where
 
 async fn primitive_tx(account: &PrivateKeySigner, tx: TempoTransaction) -> TempoTxEnv {
     let signature = account.sign_hash(&tx.signature_hash()).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-        tx,
-        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-    ));
+    let envelope = TempoTxEnvelope::AA(tx.into_signed(TempoSignature::from(signature)));
     TempoTxEnv::from_recovered_tx(&envelope, account.address())
 }
 
@@ -199,13 +196,9 @@ async fn keychain_spend_setup() -> (Address, Address, TempoTxEnv, TempoTxEnv) {
     };
     let keychain_hash = KeychainSignature::signing_hash(spend_tx.signature_hash(), root.address());
     let access_signature = access_key.sign_hash(&keychain_hash).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-        spend_tx,
-        TempoSignature::Keychain(KeychainSignature::new(
-            root.address(),
-            PrimitiveSignature::Secp256k1(access_signature),
-        )),
-    ));
+    let envelope = TempoTxEnvelope::AA(spend_tx.into_signed(TempoSignature::Keychain(
+        KeychainSignature::new(root.address(), PrimitiveSignature::Secp256k1(access_signature)),
+    )));
     let spend_env = TempoTxEnv::from_recovered_tx(&envelope, root.address());
     (spend_env.inner.caller, recipient, auth_tx, spend_env)
 }

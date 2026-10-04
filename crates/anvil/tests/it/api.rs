@@ -270,11 +270,10 @@ async fn can_resolve_safe_and_finalized_block_tags_with_configured_epoch_slots()
     let latest = provider.get_block_number().await.unwrap();
     assert_eq!(latest, 8);
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, latest - slots_in_an_epoch);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, latest - slots_in_an_epoch * 2);
 
     let fee_history = api.fee_history(U256::ONE, BlockNumberOrTag::Safe, vec![]).await.unwrap();
@@ -289,12 +288,11 @@ async fn can_resolve_safe_and_finalized_block_tags_to_genesis_before_configured_
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, genesis.header.number);
     assert_eq!(safe.header.hash, genesis.header.hash);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, genesis.header.number);
     assert_eq!(finalized.header.hash, genesis.header.hash);
 
@@ -953,7 +951,7 @@ async fn can_send_tx_sync() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_code_by_hash_from_fork() {
     let (origin_api, origin) = spawn(NodeConfig::test()).await;
-    let code = Bytes::from(B256::random().to_vec());
+    let code = Bytes::from(B256::random());
     let code_hash = keccak256(&code);
     origin_api.anvil_set_code(Address::random(), code.clone()).await.unwrap();
     assert_eq!(origin_api.debug_code_by_hash(code_hash, None).await.unwrap(), Some(code.clone()));

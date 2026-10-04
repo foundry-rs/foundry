@@ -1,3 +1,4 @@
+use alloy_primitives::B256;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
@@ -68,7 +69,7 @@ fn address_and_flags(address: alloy_primitives::Address, flags: u64) -> alloy_pr
 
 #[cfg(feature = "monad")]
 fn storage_value(value: alloy_primitives::U256) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from(value.to_be_bytes::<32>())
+    B256::from(value)
 }
 
 #[cfg(feature = "monad")]

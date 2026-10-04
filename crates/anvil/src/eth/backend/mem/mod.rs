@@ -170,7 +170,7 @@ use revm::{
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    primitives::hardfork::SpecId,
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
@@ -339,7 +339,7 @@ impl ForkCacheNamespace {
     fn new(source_chain_id: u64, rpc_url: &str) -> Option<Self> {
         Some(Self {
             chain_cache_dir: foundry_config::Config::foundry_chain_cache_dir(source_chain_id)?,
-            file_name: format!("storage-{}.json", hex::encode(keccak256(rpc_url))),
+            file_name: format!("storage-{:x}.json", keccak256(rpc_url)),
         })
     }
 
@@ -2157,7 +2157,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns the canonical hash for the given block number.
     pub(crate) fn block_hash_by_number(&self, number: u64) -> Option<B256> {
-        self.blockchain.hash(BlockNumber::Number(number).into(), self.slots_in_an_epoch)
+        self.blockchain.hash(BlockId::number(number), self.slots_in_an_epoch)
     }
 
     /// Returns the block and its hash for the given id
@@ -2493,17 +2493,16 @@ impl<N: Network> Backend<N> {
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
         let current = self.best_number();
-        let requested =
-            match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
-                BlockId::Hash(hash) => {
-                    self.block_by_hash(hash.block_hash)
-                        .await?
-                        .ok_or(BlockchainError::BlockNotFound)?
-                        .header
-                        .number
-                }
-                BlockId::Number(num) => self.convert_block_number(Some(num)),
-            };
+        let requested = match block_id.map(Into::into).unwrap_or(BlockId::latest()) {
+            BlockId::Hash(hash) => {
+                self.block_by_hash(hash.block_hash)
+                    .await?
+                    .ok_or(BlockchainError::BlockNotFound)?
+                    .header
+                    .number
+            }
+            BlockId::Number(num) => self.convert_block_number(Some(num)),
+        };
 
         if requested > current {
             Err(BlockchainError::BlockOutOfRange(current, requested))
@@ -3870,7 +3869,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
         let account = state.basic_ref(address)?.unwrap_or_default();
-        if account.code_hash == KECCAK_EMPTY {
+        if account.is_empty_code_hash() {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default());
         }
@@ -6680,7 +6679,7 @@ where
             Some(BlockRequest::Number(number)) => number,
             None => self.best_number(),
         };
-        let block_id = BlockId::Number(BlockNumber::Number(block_number));
+        let block_id = BlockId::number(block_number);
 
         if let Some(block) = self.get_block(block_id) {
             return self.mined_trace_call_at_tx_index(
@@ -7448,11 +7447,9 @@ where
             for (address, account) in &accounts {
                 keys.push(Bytes::copy_from_slice(address.as_slice()));
                 for slot in account.storage.keys() {
-                    keys.push(Bytes::copy_from_slice(&slot.to_be_bytes::<32>()));
+                    keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
-                if account.info.code_hash != KECCAK_EMPTY
-                    && seen_codes.insert(account.info.code_hash)
-                {
+                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash) {
                     let code = match &account.info.code {
                         Some(code) => code.original_bytes(),
                         None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),
@@ -7708,7 +7705,7 @@ where
     ) -> Result<Vec<TraceResult>, BlockchainError> {
         let number = self.convert_block_number(Some(block_number));
 
-        if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
+        if let Some(block) = self.get_block(BlockId::number(number)) {
             return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
@@ -9638,11 +9635,7 @@ impl Backend<FoundryNetwork> {
         // One consistent snapshot of the current env to build the storage context.
         let (chain_id, timestamp, block_number) = {
             let env = self.evm_env.read();
-            (
-                env.cfg_env.chain_id,
-                U256::from(env.block_env.timestamp),
-                env.block_env.number.to::<u64>(),
-            )
+            (env.cfg_env.chain_id, env.block_env.timestamp, env.block_env.number.to::<u64>())
         };
         let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
@@ -10712,7 +10705,7 @@ mod tests {
                 TransactionRequest::default()
                     .with_from(sender)
                     .with_to(arbitrum::ARB_SYS_ADDRESS)
-                    .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                    .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
             ))
             .await
             .unwrap()
@@ -10747,7 +10740,7 @@ mod tests {
                 WithOtherFields::new(
                     TransactionRequest::default()
                         .with_to(arbitrum::ARB_SYS_ADDRESS)
-                        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                        .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
                 ),
                 None,
                 EvmOverrides::default(),

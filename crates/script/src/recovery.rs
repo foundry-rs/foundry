@@ -1077,7 +1077,7 @@ mod tests {
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{TempoSignature, TempoTxEnvelope, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1134,10 +1134,8 @@ mod tests {
         request: TempoTransactionRequest,
         from: Address,
     ) -> RpcTransaction<TempoTxEnvelope> {
-        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-            request.build_aa().unwrap(),
-            TempoSignature::default(),
-        ));
+        let envelope =
+            TempoTxEnvelope::AA(request.build_aa().unwrap().into_signed(TempoSignature::default()));
         RpcTransaction {
             inner: Recovered::new_unchecked(envelope, from),
             block_hash: None,
@@ -1289,8 +1287,8 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into()).is_err());
             hash
         };
 
@@ -1305,8 +1303,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into()).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into()).is_err());
     }
 
     #[test]
@@ -1517,10 +1515,8 @@ mod tests {
         let request = TransactionRequest::default();
         {
             let mut store = RecoveryStore::create(data, true).unwrap();
-            store
-                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
-                .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into()).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1545,7 +1541,7 @@ mod tests {
                         0,
                         0,
                         TransactionRequest::default(),
-                        SIGNED_TX.to_vec().into(),
+                        SIGNED_TX.into(),
                     )
                     .unwrap();
                 let deployment = &mut store.data_mut().sequences_mut()[0];

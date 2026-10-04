@@ -645,11 +645,10 @@ fn minimize_compound_value(
                 return true;
             }
             minimize_elements(&mut elements, |items| DynSolValue::Array(items.to_vec()), try_value)
-                .map(|candidate| {
+                .is_some_and(|candidate| {
                     *value = candidate;
                     true
                 })
-                .unwrap_or(false)
         }
         DynSolValue::FixedArray(mut elements) => {
             if let Some(candidate) = minimize_elements_batch(
@@ -681,11 +680,10 @@ fn minimize_compound_value(
                 |items| DynSolValue::FixedArray(items.to_vec()),
                 try_value,
             )
-            .map(|candidate| {
+            .is_some_and(|candidate| {
                 *value = candidate;
                 true
             })
-            .unwrap_or(false)
         }
         DynSolValue::Tuple(mut elements) => {
             if let Some(candidate) = minimize_elements_batch(
@@ -713,11 +711,10 @@ fn minimize_compound_value(
                 return true;
             }
             minimize_elements(&mut elements, |items| DynSolValue::Tuple(items.to_vec()), try_value)
-                .map(|candidate| {
+                .is_some_and(|candidate| {
                     *value = candidate;
                     true
                 })
-                .unwrap_or(false)
         }
         DynSolValue::CustomStruct { name, prop_names, mut tuple } => {
             if let Some(candidate) = minimize_elements_batch(
@@ -765,11 +762,10 @@ fn minimize_compound_value(
                 },
                 try_value,
             )
-            .map(|candidate| {
+            .is_some_and(|candidate| {
                 *value = candidate;
                 true
             })
-            .unwrap_or(false)
         }
         _ => false,
     }
@@ -794,7 +790,7 @@ fn minimize_uint(
     let bit_limit = bits.min(256);
     for bit in (0..bit_limit).rev() {
         let mask = U256::ONE << bit;
-        if current & mask == U256::ZERO {
+        if (current & mask).is_zero() {
             continue;
         }
         let candidate = current & !mask;
@@ -868,11 +864,7 @@ fn minimize_int_by_search(
     let mut changed = false;
     while accepted_abs > rejected_abs + U256::ONE {
         let candidate_abs: U256 = rejected_abs + ((accepted_abs - rejected_abs) >> 1usize);
-        let candidate = if current.is_negative() {
-            I256::from_raw(candidate_abs.wrapping_neg())
-        } else {
-            I256::from_raw(candidate_abs)
-        };
+        let candidate = signed_candidate_with_abs(current, candidate_abs);
         if accept_candidate(value, DynSolValue::Int(candidate, bits), try_value) {
             accepted_abs = candidate_abs;
             changed = true;
@@ -898,7 +890,7 @@ fn minimize_address(
 }
 
 fn address_candidates(current: Address) -> Vec<Address> {
-    if current == Address::ZERO {
+    if current.is_zero() {
         return Vec::new();
     }
 
@@ -929,7 +921,7 @@ fn minimize_fixed_bytes(
     size: usize,
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
 ) -> bool {
-    if current != B256::ZERO
+    if !current.is_zero()
         && accept_candidate(value, DynSolValue::FixedBytes(B256::ZERO, size), try_value)
     {
         return true;

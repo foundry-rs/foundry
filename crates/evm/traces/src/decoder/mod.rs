@@ -1931,6 +1931,12 @@ mod tests {
     use foundry_evm_hardforks::BaseUpgrade;
 
     #[cfg(feature = "monad")]
+    use monad_revm::{
+        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
+        staking::interface::IMonadStaking::getEpochCall,
+    };
+
+    #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
         let mut items = functions
             .into_iter()
@@ -3198,8 +3204,8 @@ mod tests {
 
         // signEd25519 redacts the trailing private key argument.
         let call = Vm::signEd25519Call {
-            namespace: b"ns".to_vec().into(),
-            message: b"msg".to_vec().into(),
+            namespace: b"ns".into(),
+            message: b"msg".into(),
             privateKey: B256::from(pk),
         };
         let decoded = decoder.decode_function(&cheatcode_trace(call.abi_encode())).await;
@@ -3452,9 +3458,7 @@ mod tests {
     async fn test_decodes_monad_staking_precompile_call() {
         let trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
-            data: monad_revm::staking::interface::IMonadStaking::getEpochCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: (&getEpochCall::SELECTOR).into(),
             output:
                 monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
                     &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
@@ -3504,9 +3508,7 @@ mod tests {
     async fn test_decodes_monad_reserve_balance_precompile_call() {
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: (&dippedIntoReserveCall::SELECTOR).into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3568,9 +3570,7 @@ mod tests {
 
         let staking_trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
-            data: monad_revm::staking::interface::IMonadStaking::getEpochCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: (&getEpochCall::SELECTOR).into(),
             output:
                 monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
                     &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
@@ -3590,9 +3590,7 @@ mod tests {
 
         let reserve_trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: (&dippedIntoReserveCall::SELECTOR).into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3648,9 +3646,7 @@ mod tests {
 
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: (&dippedIntoReserveCall::SELECTOR).into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3682,9 +3678,7 @@ mod tests {
     async fn test_monad_metadata_refreshes_across_hardforks() {
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: (&dippedIntoReserveCall::SELECTOR).into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3840,7 +3834,7 @@ mod tests {
         arena.nodes_mut()[0].trace = CallTrace {
             address: P256_VERIFY,
             maybe_precompile: Some(false),
-            data: function.selector().to_vec().into(),
+            data: function.selector().into(),
             success: true,
             ..Default::default()
         };
@@ -4052,7 +4046,7 @@ mod tests {
             .unwrap();
         let trace = CallTrace {
             address: CURRENT_COMMITTEE_ADDRESS,
-            data: function.selector().to_vec().into(),
+            data: function.selector().into(),
             output: output.into(),
             success: true,
             ..Default::default()

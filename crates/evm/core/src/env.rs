@@ -1120,10 +1120,7 @@ mod tests {
     use foundry_evm_hardforks::TempoHardfork;
     use revm::database::EmptyDB;
     use std::num::NonZeroU64;
-    use tempo_alloy::primitives::{
-        AASigned, TempoSignature, TempoTransaction,
-        transaction::{Call, PrimitiveSignature},
-    };
+    use tempo_alloy::primitives::{TempoSignature, TempoTransaction, transaction::Call};
     use tempo_evm::TempoEvmFactory;
     use tempo_revm::ExecutionContext;
 
@@ -1482,10 +1479,7 @@ mod tests {
             sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap(),
         );
         let signature = sender.sign_hash_sync(&tempo_tx.signature_hash()).unwrap();
-        let aa_signed = AASigned::new_unhashed(
-            tempo_tx,
-            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-        );
+        let aa_signed = tempo_tx.into_signed(TempoSignature::from(signature));
         let tx_hash = *aa_signed.hash();
         let unique_tx_identifier = aa_signed.expiring_nonce_hash(sender.address());
 

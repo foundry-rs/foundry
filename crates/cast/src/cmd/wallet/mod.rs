@@ -455,8 +455,8 @@ impl WalletSubcommands {
 
                 let mut accounts = Vec::new();
                 for (i, wallet) in wallets.iter().enumerate() {
-                    let public_key = format!("0x{}", hex::encode(wallet.public_key()));
-                    let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+                    let public_key = hex::encode_prefixed(wallet.public_key());
+                    let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
                     if format_json {
                         let mut account = serde_json::Map::new();
                         account.insert("address".into(), json!(wallet.address().to_string()));
@@ -511,7 +511,7 @@ impl WalletSubcommands {
                     };
 
                     let address = wallet.address().to_checksum(None);
-                    let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+                    let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
                     if format_json {
                         accounts_json.push(if insecure {
                             json!({ "address": address, "private_key": private_key })
@@ -544,7 +544,7 @@ impl WalletSubcommands {
                 let WalletSigner::Local(wallet) = wallet else {
                     eyre::bail!("Only local wallets are supported by this command");
                 };
-                print_scalar(format!("0x{}", hex::encode(wallet.public_key())))?;
+                print_scalar(hex::encode_prefixed(wallet.public_key()))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet, browser } => {
                 if browser.browser && no_hash {
@@ -770,7 +770,7 @@ flag to set your key via:
                     eyre::bail!("Only local wallets are supported by this command.");
                 };
 
-                let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+                let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
                 if shell::verbosity() == 0 {
                     print_scalar(private_key)?;
                 } else if shell::is_json() {
@@ -967,7 +967,7 @@ fn new_keystores(
         if shell::is_json() {
             let mut result = json!({
                 "address": address,
-                "public_key": format!("0x{}", hex::encode(wallet.public_key())),
+                "public_key": hex::encode_prefixed(wallet.public_key()),
                 "path": format!("{}", keystore_path.display()),
             });
             if touch_id {
@@ -1000,11 +1000,11 @@ fn new_keypairs(number: u32) -> Result<Vec<Value>> {
     for _ in 0..number {
         let wallet = PrivateKeySigner::random_with(&mut rng);
         let address = wallet.address().to_checksum(None);
-        let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+        let private_key = hex::encode_prefixed(wallet.credential().to_bytes());
         if shell::is_json() {
             json_values.push(json!({
                 "address": address,
-                "public_key": format!("0x{}", hex::encode(wallet.public_key())),
+                "public_key": hex::encode_prefixed(wallet.public_key()),
                 "private_key": private_key,
             }));
         } else {

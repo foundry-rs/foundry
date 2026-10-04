@@ -26,6 +26,9 @@ use revm::{
 };
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
 
+#[cfg(test)]
+use revm::database::InMemoryDB;
+
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
 /// This is to limit the performance impact of fuzz tests that might deploy arbitrarily sized
@@ -66,12 +69,7 @@ pub(crate) trait DictionaryRead: Clone + 'static {
 impl EvmFuzzState {
     #[cfg(test)]
     pub(crate) fn test() -> Self {
-        Self::new(
-            &[],
-            &CacheDB::<revm::database::EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
+        Self::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
     }
 
     pub fn new<DB: DatabaseRef>(
@@ -594,7 +592,7 @@ impl FuzzDictionary {
             // Don't add 0 to the dictionary as it's already present.
             if !inst.immediate.is_empty()
                 && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
-                && push_value != U256::ZERO
+                && !push_value.is_zero()
             {
                 self.insert_push_value_u256(push_value, &mut seen);
             }
@@ -837,11 +835,12 @@ impl FuzzDictionary {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
     use alloy_primitives::keccak256;
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
-    use revm::{bytecode::Bytecode, database::EmptyDB};
+    use revm::bytecode::Bytecode;
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
         let code = Bytecode::new_raw(Bytes::from_static(raw));
@@ -864,11 +863,7 @@ mod tests {
         let contract = TargetedContract::new("Target".to_string(), abi);
         let matched_events = contract.event_lookup.by_topic(&selector, 0).unwrap();
         let word: B256 = U256::from(42).into();
-        let log = Log::new_unchecked(
-            Address::ZERO,
-            vec![selector],
-            Bytes::copy_from_slice(word.as_slice()),
-        );
+        let log = Log::new_unchecked(Address::ZERO, vec![selector], Bytes::from(word));
         let mut samples = Vec::new();
 
         assert!(FuzzDictionary::decode_log_events(
@@ -892,7 +887,7 @@ mod tests {
 
         dictionary.collect_push_bytes(&[0x60, 0x01, 0x60, 0x03]);
 
-        assert_eq!(dictionary.state_values.len(), 3);
+        assert_eq!(dictionary.len(), 3);
         assert!(dictionary.state_values.contains(&B256::ZERO));
         assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
         assert!(dictionary.state_values.contains(&B256::with_last_byte(2)));
@@ -1034,7 +1029,7 @@ mod tests {
 
     #[test]
     fn history_storage_account_is_excluded_from_initial_dictionary() {
-        let mut db = CacheDB::<EmptyDB>::default();
+        let mut db = InMemoryDB::default();
         let code = Bytecode::new_raw(Bytes::from_static(&[0x61, 0x01, 0x23, 0x00]));
         db.insert_account_info(
             HISTORY_STORAGE_ADDRESS,
