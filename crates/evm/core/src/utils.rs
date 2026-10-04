@@ -170,21 +170,7 @@ pub fn get_blob_params(chain_id: ChainId, timestamp: u64) -> BlobParams {
     let hardfork = EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
         .unwrap_or_default();
 
-    match hardfork {
-        EthereumHardfork::Prague => BlobParams::prague(),
-        EthereumHardfork::Osaka => BlobParams::osaka(),
-        EthereumHardfork::Bpo1 => BlobParams::bpo1(),
-        EthereumHardfork::Bpo2 => BlobParams::bpo2(),
-
-        // future hardforks/unknown settings: update once decided
-        EthereumHardfork::Bpo3 => BlobParams::bpo2(),
-        EthereumHardfork::Bpo4 => BlobParams::bpo2(),
-        EthereumHardfork::Bpo5 => BlobParams::bpo2(),
-        EthereumHardfork::Amsterdam => BlobParams::bpo2(),
-
-        // fallback
-        _ => BlobParams::cancun(),
-    }
+    get_blob_params_by_hardfork(hardfork.into())
 }
 
 /// Derive the blob base fee update fraction based on the chain and timestamp by checking the
@@ -219,6 +205,7 @@ pub fn get_blob_params_by_hardfork(hardfork: FoundryHardfork) -> BlobParams {
             | EthereumHardfork::Bpo5
             | EthereumHardfork::Amsterdam,
         ) => BlobParams::bpo2(),
+        FoundryHardfork::Ethereum(_) => BlobParams::cancun(),
         _ => get_blob_params_by_spec_id(hardfork.into()),
     }
 }
@@ -466,6 +453,8 @@ mod tests {
     #[test]
     fn blob_params_by_explicit_hardfork() {
         for (hardfork, expected) in [
+            (EthereumHardfork::Frontier, BlobParams::cancun()),
+            (EthereumHardfork::Bogota, BlobParams::cancun()),
             (EthereumHardfork::Cancun, BlobParams::cancun()),
             (EthereumHardfork::Prague, BlobParams::prague()),
             (EthereumHardfork::Osaka, BlobParams::osaka()),

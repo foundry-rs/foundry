@@ -156,10 +156,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
 
 /// True if it supports broadcasting in batches.
 pub fn has_batch_support(chain_id: u64) -> bool {
-    if let Some(chain) = Chain::from(chain_id).named() {
-        return !chain.is_arbitrum();
-    }
-    true
+    !Chain::from_id(chain_id).is_arbitrum()
 }
 
 /// Helpers for loading configuration.

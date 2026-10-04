@@ -35,7 +35,7 @@ use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::utils::has_different_gas_calc;
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
@@ -498,9 +498,8 @@ const fn should_broadcast_sequentially(
     slow: bool,
     required_signers: usize,
     ordering_senders: usize,
-    batch_supported: bool,
 ) -> bool {
-    estimate_via_rpc || slow || required_signers == 0 || ordering_senders != 1 || !batch_supported
+    estimate_via_rpc || slow || required_signers == 0 || ordering_senders != 1
 }
 
 /// Represents how to send _all_ transactions
@@ -861,14 +860,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We only wait for a transaction receipt before sending the next transaction, if
                 // there is more than one signer. There would be no way of assuring
                 // their order otherwise.
-                // Or if the chain does not support batched transactions (eg. Arbitrum).
                 // Or if we need to invoke eth_estimateGas before sending transactions.
                 let sequential_broadcast = should_broadcast_sequentially(
                     estimate_via_rpc,
                     self.args.slow,
                     required_addresses.len(),
                     ordering_addresses.len(),
-                    has_batch_support(sequence.chain),
                 ) || transactions.iter().any(|(kind, _, _)| {
                     matches!(
                         kind,
@@ -2008,8 +2005,20 @@ mod tests {
 
     #[test]
     fn signed_only_sequences_remain_sequential() {
-        assert!(should_broadcast_sequentially(false, false, 0, 1, true));
-        assert!(!should_broadcast_sequentially(false, false, 1, 1, true));
+        assert!(should_broadcast_sequentially(false, false, 0, 1));
+        assert!(!should_broadcast_sequentially(false, false, 1, 1));
+    }
+
+    #[test]
+    fn arbitrum_rpc_estimation_keeps_broadcasts_sequential() {
+        for chain in [NamedChain::Arbitrum, NamedChain::ArbitrumNova, NamedChain::ArbitrumSepolia] {
+            assert!(should_broadcast_sequentially(
+                has_different_gas_calc(chain as u64),
+                false,
+                1,
+                1,
+            ));
+        }
     }
 
     #[test]

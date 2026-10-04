@@ -264,6 +264,13 @@ use op_alloy_consensus::POST_EXEC_TX_TYPE_ID;
 #[cfg(feature = "optimism")]
 use op_revm::OpTransaction;
 
+/// Converts a halt reason into an [`InstructionResult`].
+///
+/// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
+/// so that anvil code doesn't need to match on each variant directly.
+pub use foundry_evm::core::evm::IntoInstructionResult;
+pub use foundry_evm_networks::arbitrum::is_arbitrum_chain as is_arbitrum;
+
 /// Network-specific transaction data produced by [`Backend::build_call_env_with_base`].
 #[derive(Default, Clone, Debug)]
 struct CallTransactionInfo {
@@ -10220,13 +10227,6 @@ pub fn prove_storage(
     (root, proofs)
 }
 
-pub fn is_arbitrum(chain_id: u64) -> bool {
-    if let Ok(chain) = NamedChain::try_from(chain_id) {
-        return chain.is_arbitrum();
-    }
-    false
-}
-
 /// Commits a fully executed candidate cache to the live database.
 fn commit_cache(db: &mut dyn Db, cache: revm::database::Cache) -> Result<(), BlockchainError> {
     let revm::database::Cache { accounts, contracts, .. } = cache;
@@ -10416,12 +10416,6 @@ fn arbitrum_replay_block_number(block: &AnyRpcBlock) -> U256 {
         .and_then(|number| serde_json::from_value(number).ok())
         .unwrap_or_else(|| U256::from(block.header().number()))
 }
-
-/// Converts a halt reason into an [`InstructionResult`].
-///
-/// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
-/// so that anvil code doesn't need to match on each variant directly.
-pub use foundry_evm::core::evm::IntoInstructionResult;
 
 /// Creates an Ethereum-shaped genesis header from the EVM environment.
 fn genesis_header(

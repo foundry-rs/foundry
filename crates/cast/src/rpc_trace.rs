@@ -17,6 +17,8 @@ use foundry_evm::traces::{
 };
 use revm::interpreter::InstructionResult;
 
+pub use foundry_common::provider::is_rpc_method_not_found as is_method_not_found_error;
+
 /// Returns the `callTracer` config for remote traces: every nested call, with its logs.
 ///
 /// `onlyTopCall` is sent explicitly although `false` is its default, because ZKsync nodes reject a
@@ -39,12 +41,6 @@ pub fn call_frame_to_arena(root: &CallFrame, root_address: Option<Address>) -> C
         root.trace.address = root_address;
     }
     arena
-}
-
-/// Returns `true` if `err` is a JSON-RPC method-not-found rejection (code -32601), which is how
-/// nodes without the `debug` namespace reject `debug_trace*` requests.
-pub fn is_method_not_found_error(err: &TransportError) -> bool {
-    err.as_error_resp().is_some_and(|resp| resp.code == -32601)
 }
 
 /// Returns `true` if `err` looks like a missing-historical-state rejection, hit whenever a
