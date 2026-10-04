@@ -39,6 +39,30 @@ impl<N: Network> Backend<N> {
                 EIP8130_PRE_ZENITH_RPC_ERROR.to_string(),
             ));
         }
+        let mut evm = self.create_base_evm(db, evm_env, inspector, upgrade);
+        let result = Evm::transact_raw(&mut evm, tx)?;
+        Ok(ResultAndState {
+            result: result.result.map_haltreason(|halt| match halt {
+                BaseHaltReason::Base(eth) => eth,
+                BaseHaltReason::FailedDeposit => HaltReason::PrecompileError,
+            }),
+            state: result.state,
+        })
+    }
+
+    /// Creates a Base EVM for `upgrade` with the active precompiles.
+    pub(super) fn create_base_evm<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: I,
+        upgrade: BaseUpgrade,
+    ) -> <BaseEvmFactory as EvmFactory>::Evm<WrapDatabaseRef<&'db DB>, I>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<BaseContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
         let base_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade)),
             evm_env.block_env.clone(),
@@ -53,13 +77,6 @@ impl<N: Network> Backend<N> {
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), base_env, inspector);
         evm.ctx_mut().cfg.tx_chain_id_check = true;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        let result = Evm::transact_raw(&mut evm, tx)?;
-        Ok(ResultAndState {
-            result: result.result.map_haltreason(|halt| match halt {
-                BaseHaltReason::Base(eth) => eth,
-                BaseHaltReason::FailedDeposit => HaltReason::PrecompileError,
-            }),
-            state: result.state,
-        })
+        evm
     }
 }
