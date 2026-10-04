@@ -46,8 +46,7 @@ pub const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7
 ///
 /// These are legacy envelopes with `gasPrice = 0` and a receipt `gasUsed` of `0`, so replaying one
 /// as a regular transaction fails base fee validation and aborts the whole block replay.
-pub const HYPERLIQUID_SYSTEM_ADDRESS: Address =
-    address!("0x2222222222222222222222222222222222222222");
+pub const HYPERLIQUID_SYSTEM_ADDRESS: Address = Address::repeat_byte(0x22);
 
 /// MegaETH system address for `Set Slots` in the MegaETH oracle.
 ///

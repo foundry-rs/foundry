@@ -220,7 +220,7 @@ async fn transaction_prefix_replay_does_not_drain_post_block_queues() {
     let to = wallets.next().unwrap().address();
     let receipt = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(to).value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -272,7 +272,7 @@ async fn eip2935_stores_parent_block_hash() {
     // Query the history storage contract for block 1's hash.
     // The EIP-2935 contract uses raw calldata (not ABI-encoded): pass the block number
     // as a 32-byte big-endian word directly.
-    let call_data: [u8; 32] = U256::from(1).to_be_bytes();
+    let call_data: [u8; 32] = U256::ONE.to_be_bytes();
     let tx = TransactionRequest::default().with_to(HISTORY_STORAGE_ADDRESS).with_input(call_data);
     let result = provider.call(tx.into()).await.unwrap();
 
@@ -288,7 +288,7 @@ async fn eip2935_no_system_call_on_genesis() {
 
     // At genesis (block 0), the contract should exist but no system call should have
     // written any parent hash into its storage. Check raw storage slot 0 directly.
-    let slot = provider.get_storage_at(HISTORY_STORAGE_ADDRESS, U256::from(0)).await.unwrap();
+    let slot = provider.get_storage_at(HISTORY_STORAGE_ADDRESS, U256::ZERO).await.unwrap();
     assert_eq!(slot, U256::ZERO, "No hash should be stored in the contract at genesis");
 }
 
@@ -409,7 +409,7 @@ async fn eip2935_local_block_replay_propagates_pre_execution_errors() {
     let to = wallets.next().unwrap().address();
     let receipt = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(to).value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -502,7 +502,7 @@ async fn geth_block_replay_discards_partial_results_on_execution_error() {
             .from(from)
             .to(target)
             .nonce(nonce as u64)
-            .value(U256::from(1))
+            .value(U256::ONE)
             .gas_limit(30_000);
         hashes.push(api.send_transaction(WithOtherFields::new(transaction)).await.unwrap());
     }

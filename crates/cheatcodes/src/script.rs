@@ -104,7 +104,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
     let SignedDelegation { v, r, s, nonce, implementation } = delegation;
     // Set chain id to 0 if universal deployment is preferred.
     // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#protection-from-malleability-cross-chain
-    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg().chain_id()) };
+    let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.ecx.cfg().chain_id()) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
     let signed_auth = SignedAuthorization::new_unchecked(
@@ -144,7 +144,7 @@ fn sign_delegation<FEN: FoundryEvmNetwork>(
             account_nonce,
         )
     };
-    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg().chain_id()) };
+    let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.ecx.cfg().chain_id()) };
 
     let auth = Authorization { address: implementation, nonce, chain_id };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;

@@ -437,7 +437,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
         assert!(opts.sponsor_sig.is_none());
         assert!(opts.is_tempo());
@@ -462,7 +462,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
         assert!(opts.sponsor_sig.is_some());
     }
 
@@ -477,7 +477,7 @@ mod tests {
         .unwrap();
 
         assert!(opts.print_sponsor_hash);
-        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor, Some(Address::repeat_byte(0x11)));
     }
 
     #[test]

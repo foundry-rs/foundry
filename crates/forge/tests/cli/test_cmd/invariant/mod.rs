@@ -1226,7 +1226,7 @@ fn invariant_selector_focus_workers_respect_user_filters(prj: _, cmd: _) {
         config.invariant.depth = 4;
         config.invariant.workers =
             foundry_config::InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap());
-        config.fuzz.seed = Some(U256::from(1u32));
+        config.fuzz.seed = Some(U256::ONE);
     });
     prj.add_test(
         "InvariantSelectorFocusFiltersTest.t.sol",
@@ -3142,7 +3142,7 @@ PersistedSecondaryNestedRevertTest invariants: 1/2 invariants broken
 #[forgetest_init]
 fn secondary_persisted_skips_generic_reshrink(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.invariant.runs = 100;
         config.invariant.depth = 10;
         config.invariant.shrink_run_limit = 0;

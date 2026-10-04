@@ -4,7 +4,7 @@
 use crate::utils::{self, EnvExternalities};
 use alloy_chains::NamedChain;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{
     Form, Router,
@@ -205,7 +205,7 @@ async fn can_validate_verifier_settings(prj: _, cmd: _) {
             assert_eq!(query.get("action").map(String::as_str), Some("getabi"));
             assert_eq!(
                 query["address"].parse::<Address>().unwrap(),
-                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>().unwrap()
+                address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
             );
             r#"{"status":"1","message":"OK","result":"[]"}"#
         });

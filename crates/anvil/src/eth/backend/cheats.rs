@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn impersonate_returns_false_then_true() {
         let mgr = CheatsManager::default();
-        let addr = Address::from([1u8; 20]);
+        let addr = Address::repeat_byte(1u8);
         assert!(!mgr.impersonate(addr));
         assert!(mgr.impersonate(addr));
     }

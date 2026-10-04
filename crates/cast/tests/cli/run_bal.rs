@@ -14,7 +14,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     BlockResponse, ReceiptResponse, TransactionBuilder, primitives::HeaderResponse,
 };
-use alloy_primitives::{Address, B256, Bytes, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, bytes, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use anvil::{NodeConfig, NodeHandle};
@@ -54,7 +54,7 @@ impl Fixture {
         // contract, this makes accidentally executing the system operation twice observable.
         api.anvil_set_code(
             BEACON_ROOTS_ADDRESS,
-            hex!("3373fffffffffffffffffffffffffffffffffffffffe1460255760005460005260206000f35b60005460010160005500").into(),
+            bytes!("3373fffffffffffffffffffffffffffffffffffffffe1460255760005460005260206000f35b60005460010160005500"),
         )
         .await
         .unwrap();
@@ -87,8 +87,8 @@ impl Fixture {
         api.mine_one().await.unwrap();
         let parent = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
         let parent_hash = parent.header().hash();
-        let system_value = provider.get_storage_at(BEACON_ROOTS_ADDRESS, U256::ZERO).await.unwrap()
-            + U256::from(1);
+        let system_value =
+            provider.get_storage_at(BEACON_ROOTS_ADDRESS, U256::ZERO).await.unwrap() + U256::ONE;
 
         api.anvil_set_auto_mine(false).await.unwrap();
         let mut transactions = [B256::ZERO; 3];
@@ -351,7 +351,7 @@ async fn cast_run_fork_bal_replays_prefix_for_execution_overrides(prj: _, cmd: _
 
     // Empty input stores CLZ(0), while nonempty input returns slot zero. CLZ is invalid under
     // Cancun, so replaying the first transaction there must leave the slot untouched.
-    api.anvil_set_code(target, hex!("361560105760005460005260206000f35b60001e60005500").into())
+    api.anvil_set_code(target, bytes!("361560105760005460005260206000f35b60001e60005500"))
         .await
         .unwrap();
     api.mine_one().await.unwrap();

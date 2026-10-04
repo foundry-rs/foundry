@@ -2,7 +2,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
 
     use super::super::tests::{
         CustomPrecompileFactory, ETH_PRAGUE_PRECOMPILE, PAYLOAD, PRECOMPILE_ADDR,
@@ -19,6 +18,7 @@ mod tests {
         inspector::NoOpInspector,
         primitives::hardfork::SpecId,
     };
+    use std::convert::Infallible;
 
     // A precompile activated in the `Isthmus` spec.
     const OP_ISTHMUS_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");

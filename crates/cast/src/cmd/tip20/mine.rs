@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn derives_master_id_and_zero_tag_address() {
         let master = address!("0x1234567890123456789012345678901234567890");
-        let salt = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let salt = B256::with_last_byte(1);
         let output = derive(master, salt);
 
         assert_eq!(

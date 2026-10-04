@@ -302,7 +302,7 @@ mod tests {
     async fn b20_transfer_with_memo_decodes_bool_output() {
         let call = super::IB20Extensions::transferWithMemoCall {
             to: Address::repeat_byte(0x11),
-            amount: U256::from(1),
+            amount: U256::ONE,
             memo: B256::repeat_byte(0x22),
         };
         let abi = super::IB20Extensions::abi::contract();

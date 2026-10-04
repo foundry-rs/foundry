@@ -692,7 +692,7 @@ impl Cheatcode for rollCall {
                 let block_hash =
                     ccx.ecx.db_mut().block_hash(block_number.saturating_to()).unwrap_or_default();
                 set_eip2935_blockhash(ccx.ecx, block_number, block_hash)?;
-                block_number += U256::from(1);
+                block_number += U256::ONE;
             }
         }
         ccx.ecx.block_mut().set_number(*newHeight);

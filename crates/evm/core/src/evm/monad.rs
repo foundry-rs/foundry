@@ -751,7 +751,7 @@ mod tests {
 
     fn transaction(caller: Address, authority: Address) -> TxEnv {
         let authorization = RecoveredAuthorization::new_unchecked(
-            Authorization { chain_id: U256::from(1), address: Address::ZERO, nonce: 0 },
+            Authorization { chain_id: U256::ONE, address: Address::ZERO, nonce: 0 },
             RecoveredAuthority::Valid(authority),
         );
         TxEnv {
@@ -949,7 +949,7 @@ mod tests {
             "snapshot calldata must be 4 bytes",
         );
         assert_invalid_system_transaction(
-            system_transaction(syscallSnapshotCall {}.abi_encode(), U256::from(1)),
+            system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ONE),
             "snapshot value must be zero",
         );
 
@@ -966,7 +966,7 @@ mod tests {
             "invalid Monad protocol system epoch calldata",
         );
         assert_invalid_system_transaction(
-            system_transaction(syscallOnEpochChangeCall { epoch: 9 }.abi_encode(), U256::from(1)),
+            system_transaction(syscallOnEpochChangeCall { epoch: 9 }.abi_encode(), U256::ONE),
             "epoch value must be zero",
         );
     }
@@ -985,7 +985,7 @@ mod tests {
 
     #[test]
     fn protocol_prestate_updates_nonce_and_balance() {
-        let caller = address!("00000000000000000000000000000000000000fe");
+        let caller = Address::with_last_byte(0xfe);
         let recipient = address!("0000000000000000000000000000000000001000");
         let mut db = InMemoryDB::default();
         db.insert_account_info(caller, AccountInfo { nonce: 7, ..Default::default() });
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn protocol_prestate_rejects_nonce_mismatch() {
-        let caller = address!("00000000000000000000000000000000000000fe");
+        let caller = Address::with_last_byte(0xfe);
         let mut db = InMemoryDB::default();
         db.insert_account_info(caller, AccountInfo { nonce: 3, ..Default::default() });
         let call = ProtocolSystemCall {
@@ -1034,7 +1034,7 @@ mod tests {
 
     #[test]
     fn protocol_prestate_rejects_nonce_overflow() {
-        let caller = address!("00000000000000000000000000000000000000fe");
+        let caller = Address::with_last_byte(0xfe);
         let mut db = InMemoryDB::default();
         db.insert_account_info(caller, AccountInfo { nonce: u64::MAX, ..Default::default() });
         let call = ProtocolSystemCall {
@@ -1055,8 +1055,8 @@ mod tests {
 
     #[test]
     fn reward_envelope_replays_mint_nonce_storage_and_log() {
-        let block_author = address!("1111111111111111111111111111111111111111");
-        let validator_auth = address!("2222222222222222222222222222222222222222");
+        let block_author = Address::repeat_byte(0x11);
+        let validator_auth = Address::repeat_byte(0x22);
         let validator_id = 7;
         let reward = U256::from(25) * MON;
         let initial_staking_balance = U256::from(3) * MON;
@@ -1138,7 +1138,7 @@ mod tests {
 
     #[test]
     fn failed_reward_envelope_does_not_commit_prestate() {
-        let unknown_author = address!("1111111111111111111111111111111111111111");
+        let unknown_author = Address::repeat_byte(0x11);
         let reward = U256::from(25) * MON;
         let initial_staking_balance = U256::from(3) * MON;
         let mut db = InMemoryDB::default();
@@ -1187,14 +1187,14 @@ mod tests {
 
     #[test]
     fn monad_context_tracks_senders_authorities_and_current_index() {
-        let grandparent_sender = Address::from([1; 20]);
-        let grandparent_authority = Address::from([2; 20]);
-        let parent_sender = Address::from([3; 20]);
-        let parent_authority = Address::from([4; 20]);
-        let current_sender = Address::from([5; 20]);
-        let current_authority = Address::from([6; 20]);
-        let next_sender = Address::from([7; 20]);
-        let next_authority = Address::from([8; 20]);
+        let grandparent_sender = Address::repeat_byte(1);
+        let grandparent_authority = Address::repeat_byte(2);
+        let parent_sender = Address::repeat_byte(3);
+        let parent_authority = Address::repeat_byte(4);
+        let current_sender = Address::repeat_byte(5);
+        let current_authority = Address::repeat_byte(6);
+        let next_sender = Address::repeat_byte(7);
+        let next_authority = Address::repeat_byte(8);
 
         let grandparent = [transaction(grandparent_sender, grandparent_authority)];
         let parent = [transaction(parent_sender, parent_authority)];
@@ -1225,12 +1225,12 @@ mod tests {
 
     #[test]
     fn child_context_advances_fork_ancestry() {
-        let parent_sender = Address::from([1; 20]);
-        let parent_authority = Address::from([2; 20]);
-        let current_sender = Address::from([3; 20]);
-        let current_authority = Address::from([4; 20]);
-        let child_sender = Address::from([5; 20]);
-        let child_authority = Address::from([6; 20]);
+        let parent_sender = Address::repeat_byte(1);
+        let parent_authority = Address::repeat_byte(2);
+        let current_sender = Address::repeat_byte(3);
+        let current_authority = Address::repeat_byte(4);
+        let child_sender = Address::repeat_byte(5);
+        let child_authority = Address::repeat_byte(6);
 
         let context = BlockContext::<MonadEvmNetwork>::new(
             Vec::new(),
@@ -1253,10 +1253,10 @@ mod tests {
 
     #[test]
     fn transaction_cursor_replaces_target_and_excludes_future_transactions() {
-        let preceding_sender = Address::from([1; 20]);
-        let target_sender = Address::from([2; 20]);
-        let future_sender = Address::from([3; 20]);
-        let synthetic_sender = Address::from([4; 20]);
+        let preceding_sender = Address::repeat_byte(1);
+        let target_sender = Address::repeat_byte(2);
+        let future_sender = Address::repeat_byte(3);
+        let synthetic_sender = Address::repeat_byte(4);
 
         let cursor = BlockContext::<MonadEvmNetwork>::new(
             Vec::new(),
@@ -1279,9 +1279,9 @@ mod tests {
 
     #[test]
     fn transaction_cursor_accumulates_same_block_transactions() {
-        let fork_sender = Address::from([1; 20]);
-        let first_sender = Address::from([2; 20]);
-        let second_sender = Address::from([3; 20]);
+        let fork_sender = Address::repeat_byte(1);
+        let first_sender = Address::repeat_byte(2);
+        let second_sender = Address::repeat_byte(3);
         let mut cursor = BlockContext::<MonadEvmNetwork>::new(
             Vec::new(),
             Vec::new(),
@@ -1299,10 +1299,10 @@ mod tests {
 
     #[test]
     fn transaction_cursor_rotates_separate_blocks() {
-        let fork_parent_sender = Address::from([1; 20]);
-        let fork_sender = Address::from([2; 20]);
-        let first_sender = Address::from([3; 20]);
-        let second_sender = Address::from([4; 20]);
+        let fork_parent_sender = Address::repeat_byte(1);
+        let fork_sender = Address::repeat_byte(2);
+        let first_sender = Address::repeat_byte(3);
+        let second_sender = Address::repeat_byte(4);
         let mut cursor = BlockContext::<MonadEvmNetwork>::new(
             Vec::new(),
             vec![transaction(fork_parent_sender, Address::ZERO)],

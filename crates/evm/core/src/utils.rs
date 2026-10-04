@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn block_normalization_sets_prevrandao_for_moonbeam() {
-        let header = AnyHeader { difficulty: U256::from(1), ..Default::default() };
+        let header = AnyHeader { difficulty: U256::ONE, ..Default::default() };
         let block = AnyRpcBlock::new(
             Block::new(
                 AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
@@ -380,11 +380,8 @@ mod tests {
             (NamedChain::ArbitrumNova, B256::repeat_byte(0xab)),
             (NamedChain::ArbitrumSepolia, B256::repeat_byte(0xab)),
         ] {
-            let header = AnyHeader {
-                difficulty: U256::from(1),
-                mix_hash: Some(mix_hash),
-                ..Default::default()
-            };
+            let header =
+                AnyHeader { difficulty: U256::ONE, mix_hash: Some(mix_hash), ..Default::default() };
             let block = AnyRpcBlock::new(
                 Block::new(
                     AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
@@ -395,7 +392,7 @@ mod tests {
             let mut evm_env = EvmEnv::new(
                 CfgEnv::<SpecId>::default(),
                 BlockEnv {
-                    difficulty: U256::from(1),
+                    difficulty: U256::ONE,
                     prevrandao: Some(mix_hash),
                     ..Default::default()
                 },
@@ -410,7 +407,7 @@ mod tests {
 
             assert_eq!(
                 evm_env.block_env.prevrandao,
-                Some(B256::from(U256::from(1))),
+                Some(B256::with_last_byte(1)),
                 "{chain:?} should expose `difficulty` as `PREVRANDAO`"
             );
         }

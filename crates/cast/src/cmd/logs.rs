@@ -547,7 +547,7 @@ mod tests {
         let event = Event::parse("event Ev(uint256 id, address owner)").unwrap();
         let owner = Address::repeat_byte(0x22);
         let log = rpc_log(
-            vec![event.selector(), B256::from(U256::from(7))],
+            vec![event.selector(), B256::with_last_byte(7)],
             DynSolValue::Address(owner).abi_encode(),
         );
 
@@ -599,8 +599,7 @@ mod tests {
     #[test]
     fn format_log_params_mismatching_log() {
         let event = Event::parse("event Ev(uint256 indexed a, uint256 b)").unwrap();
-        let log =
-            rpc_log(vec![event.selector()], DynSolValue::Uint(U256::from(1), 256).abi_encode());
+        let log = rpc_log(vec![event.selector()], DynSolValue::Uint(U256::ONE, 256).abi_encode());
         assert_eq!(format_log_params(&event, &log), None);
     }
 
@@ -703,7 +702,7 @@ mod tests {
                 &[ADDRESS, "7", ""],
                 [
                     B256::left_padding_from(addr.as_slice()).into(),
-                    B256::from(U256::from(7)).into(),
+                    B256::with_last_byte(7).into(),
                     any(),
                     any(),
                 ],
@@ -713,7 +712,7 @@ mod tests {
                 &[ADDRESS, "7", "", OTHER_ADDRESS],
                 [
                     B256::left_padding_from(addr.as_slice()).into(),
-                    B256::from(U256::from(7)).into(),
+                    B256::with_last_byte(7).into(),
                     any(),
                     B256::left_padding_from(other_addr.as_slice()).into(),
                 ],

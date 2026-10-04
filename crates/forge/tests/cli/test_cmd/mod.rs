@@ -1,7 +1,7 @@
 //! Contains various tests for `forge test`.
 
 use crate::utils::assert_debug_dump_identifies_contract;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
@@ -5396,8 +5396,7 @@ contract ForkDebugTarget {
             "--broadcast",
         ])
         .assert_success();
-    let deployed =
-        Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap().create(0);
+    let deployed = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").create(0);
     let deployed = deployed.to_string();
 
     prj.add_test(
@@ -5937,7 +5936,7 @@ fn tracing_verbosity_shows_state_changes_independently(prj: _, cmd: _) {
         config.verbosity = 0;
         config.tracing.verbosity = 5;
         config.tracing.labels.insert(
-            Address::from_str("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f").unwrap(),
+            address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f"),
             "ConfiguredCounter".to_string(),
         );
     });

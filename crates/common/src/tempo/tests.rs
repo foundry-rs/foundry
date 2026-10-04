@@ -352,7 +352,7 @@ async fn distribute_reward_does_not_infer_fee_token() -> eyre::Result<()> {
     let mut tx = TempoTransactionRequest {
         inner: TransactionRequest::default()
             .with_to(ALPHA_USD_ADDRESS)
-            .with_input(ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode()),
+            .with_input(ITIP20::distributeRewardCall { amount: U256::ONE }.abi_encode()),
         ..Default::default()
     };
 
@@ -373,10 +373,10 @@ async fn distribute_reward_does_not_infer_fee_token() -> eyre::Result<()> {
 #[tokio::test]
 async fn tip20_transfer_calls_infer_called_token() -> eyre::Result<()> {
     for input in [
-        ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }.abi_encode(),
+        ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }.abi_encode(),
         ITIP20::transferWithMemoCall {
             to: Address::repeat_byte(0x01),
-            amount: U256::from(1),
+            amount: U256::ONE,
             memo: Default::default(),
         }
         .abi_encode(),
@@ -410,7 +410,7 @@ async fn sponsored_single_tip20_call_does_not_infer_called_token() -> eyre::Resu
             .with_from(sender)
             .with_to(ALPHA_USD_ADDRESS)
             .with_input(
-                ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }
+                ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }
                     .abi_encode(),
             ),
         ..Default::default()
@@ -434,7 +434,7 @@ async fn sponsored_single_tip20_call_does_not_infer_called_token() -> eyre::Resu
 async fn non_matching_tip20_selectors_do_not_infer_fee_token() -> eyre::Result<()> {
     let mut tx = TempoTransactionRequest {
         inner: TransactionRequest::default().with_to(ALPHA_USD_ADDRESS).with_input(
-            ITIP20::approveCall { spender: Address::repeat_byte(0x01), amount: U256::from(1) }
+            ITIP20::approveCall { spender: Address::repeat_byte(0x01), amount: U256::ONE }
                 .abi_encode(),
         ),
         ..Default::default()
@@ -512,10 +512,10 @@ async fn aa_set_user_token_is_not_inferred() -> eyre::Result<()> {
 async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Result<()> {
     let sender = Address::repeat_byte(0x11);
     let transfer =
-        ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }.abi_encode();
+        ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }.abi_encode();
     let transfer_with_memo = ITIP20::transferWithMemoCall {
         to: Address::repeat_byte(0x01),
-        amount: U256::from(1),
+        amount: U256::ONE,
         memo: Default::default(),
     }
     .abi_encode();
@@ -602,8 +602,7 @@ async fn non_tip20_transfer_is_not_inferred() -> eyre::Result<()> {
     let erc20 = Address::repeat_byte(0xab);
     let mut tx = TempoTransactionRequest {
         inner: TransactionRequest::default().with_from(sender).with_to(erc20).with_input(
-            ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }
-                .abi_encode(),
+            ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }.abi_encode(),
         ),
         ..Default::default()
     };
@@ -625,10 +624,10 @@ async fn non_tip20_transfer_is_not_inferred() -> eyre::Result<()> {
 #[tokio::test]
 async fn tempo_call_inspection_matches_built_aa_call_list() -> eyre::Result<()> {
     let transfer =
-        ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }.abi_encode();
+        ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }.abi_encode();
     let transfer_with_memo = ITIP20::transferWithMemoCall {
         to: Address::repeat_byte(0x01),
-        amount: U256::from(1),
+        amount: U256::ONE,
         memo: Default::default(),
     }
     .abi_encode();
@@ -780,7 +779,7 @@ async fn stored_fee_token_overrides_inferred_fee_token() -> eyre::Result<()> {
             .with_from(fee_payer)
             .with_to(ALPHA_USD_ADDRESS)
             .with_input(
-                ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }
+                ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }
                     .abi_encode(),
             ),
         ..Default::default()
@@ -805,8 +804,7 @@ async fn stored_fee_token_overrides_inferred_fee_token() -> eyre::Result<()> {
 async fn non_tempo_chains_do_not_infer_fee_token() -> eyre::Result<()> {
     let mut tx = TempoTransactionRequest {
         inner: TransactionRequest::default().with_to(ALPHA_USD_ADDRESS).with_input(
-            ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }
-                .abi_encode(),
+            ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::ONE }.abi_encode(),
         ),
         ..Default::default()
     };

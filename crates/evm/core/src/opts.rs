@@ -2811,7 +2811,7 @@ mod tests {
         let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
         let provider = handle.http_provider();
 
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         assert!(provider.get_block_number().await.unwrap() > fork.number());
 
         let (evm_env, block) = evm_opts

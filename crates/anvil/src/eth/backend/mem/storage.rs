@@ -726,7 +726,7 @@ mod tests {
                 assert_eq!(storage.states.len(), limit);
                 assert!(storage.on_disk_states.is_empty());
                 assert!(storage.get_state(&B256::ZERO).is_none());
-                assert!(storage.get_state(&B256::from(U256::from(2))).is_some());
+                assert!(storage.get_state(&B256::with_last_byte(2)).is_some());
             }
         }
     }
@@ -767,8 +767,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
-        let one = B256::from(U256::from(1));
-        let two = B256::from(U256::from(2));
+        let one = B256::with_last_byte(1);
+        let two = B256::with_last_byte(2);
 
         let mut state = MemDb::default();
         let addr = Address::random();
@@ -792,12 +792,12 @@ mod tests {
     #[test]
     fn persistent_states_do_not_use_disk_cache() {
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
-        let one = B256::from(U256::from(1));
-        let two = B256::from(U256::from(2));
+        let one = B256::with_last_byte(1);
+        let two = B256::with_last_byte(2);
         let address = Address::random();
         let mut db = StateRootDb::default();
 
-        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
+        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
         storage.insert(one, db.current_state());
         db.set_balance(address, U256::from(2)).unwrap();
         storage.insert(two, db.current_state());
@@ -806,7 +806,7 @@ mod tests {
         assert!(storage.on_disk_states.get(&one).unwrap().is_persistent());
         assert_eq!(
             storage.get_on_disk_state(&one).unwrap().basic_ref(address).unwrap().unwrap().balance,
-            U256::from(1)
+            U256::ONE
         );
         storage.remove_block_states(&[one]);
         assert!(storage.disk_cache.temp_dir.is_none());
@@ -889,8 +889,8 @@ mod tests {
         // Use limit=1 to force states to disk
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
 
-        let hash_a = B256::from(U256::from(1));
-        let hash_b = B256::from(U256::from(2));
+        let hash_a = B256::with_last_byte(1);
+        let hash_b = B256::with_last_byte(2);
 
         storage.insert(hash_a, StateDb::new(MemDb::default()));
         storage.insert(hash_b, StateDb::new(MemDb::default()));
@@ -983,10 +983,10 @@ mod tests {
             block_hash: B256::ZERO,
             block_number,
         };
-        let first = B256::from(U256::from(1));
-        let second = B256::from(U256::from(2));
-        let third = B256::from(U256::from(3));
-        let fourth = B256::from(U256::from(4));
+        let first = B256::with_last_byte(1);
+        let second = B256::with_last_byte(2);
+        let third = B256::with_last_byte(3);
+        let fourth = B256::with_last_byte(4);
         let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
         for transaction in [
             transaction(2, 0, fourth),

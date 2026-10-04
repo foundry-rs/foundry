@@ -299,8 +299,7 @@ async fn test_fee_history_historical_next_block_fee() {
         blob_update_fraction,
     ));
 
-    let history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    let history = api.fee_history(U256::ONE, BlockNumberOrTag::Number(1), vec![]).await.unwrap();
     let historical = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
     let historical_child = provider.get_block(BlockId::number(2)).await.unwrap().unwrap();
     let historical_next_fee = historical_child.header.base_fee_per_gas.unwrap() as u128;
@@ -321,14 +320,14 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
     let provider = handle.http_provider();
 
     let old_history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
+        api.fee_history(U256::ONE, BlockNumberOrTag::Number(0), vec![]).await.unwrap();
     api.anvil_set_next_block_base_fee_per_gas(U256::from(123)).await.unwrap();
     api.anvil_reset(None).await.unwrap();
 
     let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
     let genesis_base_fee = genesis.header.base_fee_per_gas.unwrap() as u128;
     let new_history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Number(0), vec![]).await.unwrap();
+        api.fee_history(U256::ONE, BlockNumberOrTag::Number(0), vec![]).await.unwrap();
 
     assert_eq!(genesis_base_fee, 123);
     assert_ne!(old_history.base_fee_per_gas[0], genesis_base_fee);
@@ -388,7 +387,7 @@ async fn test_estimate_gas_empty_data() {
     let to = accounts[1];
 
     let tx_without_data =
-        TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
     let gas_without_data = api
         .estimate_gas(WithOtherFields::new(tx_without_data), None, Default::default())
@@ -398,7 +397,7 @@ async fn test_estimate_gas_empty_data() {
     let tx_with_empty_data = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
-        .with_value(U256::from(1))
+        .with_value(U256::ONE)
         .with_input(vec![]);
 
     let gas_with_empty_data = api
@@ -409,7 +408,7 @@ async fn test_estimate_gas_empty_data() {
     let tx_with_data = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
-        .with_value(U256::from(1))
+        .with_value(U256::ONE)
         .with_input(vec![0x12, 0x34]);
 
     let gas_with_data = api
@@ -473,7 +472,7 @@ async fn test_estimate_gas_simple_transfer_checks_funds() {
     let to = handle.dev_accounts().next().unwrap();
     let from = Address::random();
 
-    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
     let err =
         api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
 
@@ -485,7 +484,7 @@ async fn test_estimate_gas_simple_transfer_without_from_uses_transfer_fast_path(
     let (api, handle) = spawn(NodeConfig::test()).await;
     let to = handle.dev_accounts().next().unwrap();
 
-    let tx = TransactionRequest::default().with_to(to).with_value(U256::from(1));
+    let tx = TransactionRequest::default().with_to(to).with_value(U256::ONE);
     let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
 
     assert_eq!(gas, U256::from(GAS_TRANSFER));
@@ -509,7 +508,7 @@ async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let from = Address::random();
 
     let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
-        inner: TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1)),
+        inner: TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE),
         other: [(
             "feeToken".to_string(),
             serde_json::json!("0x20c0000000000000000000000000000000000001"),
@@ -543,7 +542,7 @@ async fn test_estimation_with_print_traces() {
                 .from(from)
                 .to(contract)
                 .gas_limit(200_000)
-                .input(Bytes::copy_from_slice(&U256::from(5).to_be_bytes::<32>()).into()),
+                .input(Bytes::copy_from_slice(B256::with_last_byte(5).as_slice()).into()),
         );
         let estimate = api.estimate_gas(request.clone(), None, Default::default()).await.unwrap();
         let access_list = api.create_access_list(request.clone(), None, None).await.unwrap();
@@ -557,7 +556,7 @@ async fn test_estimation_with_print_traces() {
         // The estimated limit must execute successfully, while one gas less must fail.
         request.gas = Some(estimate.to());
         let output = api.call(request.clone(), None, Default::default()).await.unwrap();
-        assert_eq!(output.as_ref(), U256::from(3).to_be_bytes::<32>());
+        assert_eq!(output.as_ref(), B256::with_last_byte(3).0);
         request.gas = Some(estimate.to::<u64>() - 1);
         assert!(api.call(request.clone(), None, Default::default()).await.is_err());
 

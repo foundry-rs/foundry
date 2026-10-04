@@ -4,11 +4,11 @@ use std::borrow::Cow;
 
 use alloy_chains::Chain;
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
-use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_primitives::{Address, Bytes, U256, hex};
 use revm::precompile::{PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult};
 
 /// ArbSys system contract address.
-pub const ARB_SYS_ADDRESS: Address = address!("0000000000000000000000000000000000000064");
+pub const ARB_SYS_ADDRESS: Address = Address::with_last_byte(0x64);
 
 /// `ArbSys.arbBlockNumber()` selector.
 pub const ARB_BLOCK_NUMBER_SELECTOR: [u8; 4] = hex!("a3b1b31d");

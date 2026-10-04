@@ -2411,6 +2411,7 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::executors::ExecutorBuilder;
     use foundry_cheatcodes::CheatsConfig;
@@ -2581,8 +2582,8 @@ mod tests {
 
     #[test]
     fn invariant_focus_seed_uses_parent_rng_when_unconfigured() {
-        let mut parent = seeded_test_runner(U256::from(1));
-        let mut matching_parent = seeded_test_runner(U256::from(1));
+        let mut parent = seeded_test_runner(U256::ONE);
+        let mut matching_parent = seeded_test_runner(U256::ONE);
         let mut different_parent = seeded_test_runner(U256::from(2));
 
         let focus_seed = invariant_focus_seed(&mut parent, None, 2).unwrap();
@@ -2993,7 +2994,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_narrows_to_one_effective_selector() {
-        let target = Address::from([0x11; 20]);
+        let target = Address::repeat_byte(0x11);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let second_selector = second.selector();
@@ -3013,7 +3014,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_seed_rotates_effective_selector() {
-        let target = Address::from([0x55; 20]);
+        let target = Address::repeat_byte(0x55);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let third = function("third(uint256)");
@@ -3034,7 +3035,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_freezes_dynamic_target_updates() {
-        let target = Address::from([0x44; 20]);
+        let target = Address::repeat_byte(0x44);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let mut contract = targeted_contract("Target", vec![first.clone(), second.clone()]);
@@ -3067,7 +3068,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_does_not_widen_target_selectors() {
-        let target = Address::from([0x22; 20]);
+        let target = Address::repeat_byte(0x22);
         let allowed = function("allowed(uint256)");
         let hidden = function("hidden(uint256)");
         let mut contract = targeted_contract("Target", vec![allowed.clone(), hidden]);
@@ -3081,7 +3082,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_skips_excluded_selectors() {
-        let target = Address::from([0x33; 20]);
+        let target = Address::repeat_byte(0x33);
         let first = function("aaa(uint256)");
         let second = function("bbb(uint256)");
         let excluded = function("ccc(uint256)");
@@ -3101,7 +3102,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_skips_excluded_targeted_selectors() {
-        let target = Address::from([0x66; 20]);
+        let target = Address::repeat_byte(0x66);
         let first = function("aaa(uint256)");
         let second = function("bbb(uint256)");
         let excluded = function("ccc(uint256)");

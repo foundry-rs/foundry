@@ -4704,7 +4704,7 @@ contract SymbolicInvariantAssertionSeed is Test {
     let calldata =
         hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     assert!(U256::from_be_slice(&calldata[4..36]) > U256::from(777));
-    assert_eq!(U256::from_be_slice(&calldata[36..]), U256::from(1));
+    assert_eq!(U256::from_be_slice(&calldata[36..]), U256::ONE);
 
     cmd.forge_fuse()
         .args([

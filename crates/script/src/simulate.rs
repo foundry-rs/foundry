@@ -244,7 +244,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
+                    let block_number = runner.executor.evm_env().block_env.number() + U256::ONE;
                     runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
 
