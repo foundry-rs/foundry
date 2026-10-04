@@ -1190,12 +1190,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(precharged_state) = precharged_state {
             state_gas_used = state_gas_used.saturating_sub(precharged_state);
         }
-        if state_gas_used == 0 {
-            let mut snapshot_gas = Gas::new(regular_limit);
-            let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
-            }
+        // Halted frames retain their existing zero snapshot behavior.
+        if state_gas_used == 0
+            && !res.result.is_halt()
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+        {
+            // The receipt gas includes the synthetic transaction's intrinsic gas, which can
+            // exceed the regular gas forwarded to the isolated frame. Cache it directly
+            // instead of recording it against that smaller frame budget.
+            cheats.gas_metering.set_isolated_snapshot_gas_used(transaction_gas.tx_gas_used());
         }
         let _ = gas.record_state_cost(state_gas_used);
         let _ = gas.record_regular_cost(transaction_gas.block_regular_gas_used());

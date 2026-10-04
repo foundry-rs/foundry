@@ -345,6 +345,16 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
         assertEq(section, vm.snapshotGasLastCall("isolated section call") + 543);
     }
 
+    function testSnapshotGasLastCallWithLowGas() public {
+        _setup();
+        (bool success,) = address(target).call{gas: 1_000}("");
+        assertTrue(success);
+
+        // The isolated transaction still consumes intrinsic gas when the forwarded gas is below
+        // the intrinsic amount. Preserve that receipt gas in the snapshot instead of recording 0.
+        assertEq(vm.snapshotGasLastCall("isolated low gas call"), 21064);
+    }
+
     function testSnapshotGasForFailedCharge() public {
         _setup();
         (bool success,) = address(target).call{gas: 100_000}(abi.encodeCall(target.failWithInvalid, ()));
