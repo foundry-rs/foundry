@@ -432,7 +432,13 @@ async fn fork_bal_parent_cache_preserves_prefix_boundaries(prj: _, cmd: _) {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
                 proxy.assert_parent_bal(&fixture);
-                assert_eq!(proxy.slot_reads(U256::ZERO), 0, "mode={mode}, index={index}");
+                // Mode 3 also reads the ordinary fork, whose compatible cache is isolated
+                // from the hash-only replay fork's BAL seed.
+                assert_eq!(
+                    proxy.slot_reads(U256::ZERO),
+                    usize::from(mode == 3),
+                    "mode={mode}, index={index}"
+                );
             }
             assert!(proxy.slot_reads(U256::from(1)) > 0, "read-only slots need RPC fallback");
         }
@@ -469,7 +475,8 @@ async fn fork_bal_keeps_local_writes_snapshots_and_persistent_accounts(prj: _, c
         } else {
             proxy.assert_parent_bal(&fixture);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
-            assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+            // Only the ordinary fork reads storage; replay forks share their own BAL seed.
+            assert_eq!(proxy.slot_reads(U256::ZERO), 1);
         }
     }
     assert_eq!(gas_used[0], gas_used[1], "BAL changed local execution gas");
@@ -673,7 +680,8 @@ async fn fork_bal_inline_config_controls_runtime_requests(prj: _, cmd: _) {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
                 proxy.assert_parent_bal(&fixture);
-                assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+                // The active ordinary fork in mode 3 has a separate compatible cache.
+                assert_eq!(proxy.slot_reads(U256::ZERO), usize::from(mode == 3));
             }
         }
     }
@@ -740,7 +748,8 @@ async fn fork_bal_setup_forks_keep_creation_policy_on_roll(prj: _, cmd: _) {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
                 proxy.assert_parent_bal(&fixture);
-                assert_eq!(proxy.slot_reads(U256::ZERO), 0);
+                // The active ordinary fork in mode 3 has a separate compatible cache.
+                assert_eq!(proxy.slot_reads(U256::ZERO), usize::from(mode == 3));
             }
         }
     }
