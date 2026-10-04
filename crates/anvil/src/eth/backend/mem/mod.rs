@@ -50,7 +50,7 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{
     Blob, BlockBody, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
-    constants::EMPTY_WITHDRAWALS,
+    constants::{EMPTY_ROOT_HASH, EMPTY_WITHDRAWALS},
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -97,7 +97,7 @@ use alloy_rpc_types::{
     },
     state::{EvmOverrides, StateOverride},
     trace::{
-        filter::TraceFilter,
+        filter::{TraceFilter, TraceFilterBlockOption},
         geth::{
             CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
             GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
@@ -4272,34 +4272,74 @@ impl<N: Network> Backend<N> {
         &self,
         filter: TraceFilter,
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+        let block_option = filter
+            .block_option()
+            .map_err(|err| BlockchainError::RpcError(RpcError::invalid_params(err.to_string())))?;
         let matcher = filter.matcher();
-        let best_number = self.best_number();
-        let start = filter.from_block.unwrap_or(best_number);
-        let end = filter.to_block.unwrap_or(best_number);
-
-        if start > end {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "invalid block range, ensure that to block is greater than from block".to_string(),
-            )));
-        }
-
-        let dist = end - start;
-        if dist > 300 {
-            return Err(BlockchainError::RpcError(RpcError::invalid_params(
-                "block range too large, currently limited to 300".to_string(),
-            )));
-        }
-
-        // Accumulate tasks for block range
-        let mut trace_tasks = vec![];
-        for num in start..=end {
-            trace_tasks.push(self.trace_block(num.into()));
-        }
-
-        // Execute tasks and filter traces
-        let traces = futures::future::try_join_all(trace_tasks).await?;
-        let filtered_traces =
-            traces.into_iter().flatten().filter(|trace| matcher.matches(&trace.trace));
+        let traces = match block_option {
+            TraceFilterBlockOption::AtBlockHash(hash) => {
+                // Resolve canonicality and collect the traces in the same chain view.
+                let traces = {
+                    let storage = self.blockchain.storage.read();
+                    if let Some(block) = storage.blocks.get(&hash) {
+                        let number = block.header.number();
+                        if number > storage.best_number
+                            || storage.hashes.get(&number) != Some(&hash)
+                        {
+                            return Err(BlockchainError::BlockNotFound);
+                        }
+                        if block.body.transactions.is_empty()
+                            && block.header.transactions_root() != EMPTY_ROOT_HASH
+                        {
+                            return Err(BlockchainError::DataUnavailable);
+                        }
+                        let mut traces = Vec::new();
+                        for tx in &block.body.transactions {
+                            let mined = storage
+                                .transactions
+                                .get(&tx.hash())
+                                .ok_or(BlockchainError::DataUnavailable)?;
+                            if mined.block_hash != hash {
+                                return Err(BlockchainError::DataUnavailable);
+                            }
+                            traces.extend(mined.parity_traces());
+                        }
+                        Some(traces)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(traces) = traces {
+                    traces
+                } else if let Some(fork) = self.get_fork() {
+                    fork.trace_block_by_hash(hash).await?
+                } else {
+                    return Err(BlockchainError::BlockNotFound);
+                }
+            }
+            TraceFilterBlockOption::Range { from_block, to_block } => {
+                let best_number = self.best_number();
+                let start = from_block.unwrap_or(best_number);
+                let end = to_block.unwrap_or(best_number);
+                if start > end {
+                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                        "invalid block range, ensure that to block is greater than from block"
+                            .to_string(),
+                    )));
+                }
+                if end - start > 300 {
+                    return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                        "block range too large, currently limited to 300".to_string(),
+                    )));
+                }
+                let mut trace_tasks = vec![];
+                for num in start..=end {
+                    trace_tasks.push(self.trace_block(num.into()));
+                }
+                futures::future::try_join_all(trace_tasks).await?.into_iter().flatten().collect()
+            }
+        };
+        let filtered_traces = traces.into_iter().filter(|trace| matcher.matches(&trace.trace));
 
         // Apply after and count
         let filtered_traces: Vec<_> = if let Some(after) = filter.after {
