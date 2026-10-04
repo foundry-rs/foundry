@@ -3,8 +3,8 @@
 use super::Backend;
 use crate::eth::{
     backend::{
-        db::Db,
-        executor::ExecutedPoolTransactions,
+        db::{AnvilCacheDB, Db},
+        executor::{BlockExecutionKind, ExecutedPoolTransactions},
         time::{PendingBlockTimestamp, TimeManager},
     },
     error::BlockchainError,
@@ -79,6 +79,47 @@ impl<N: Network> Backend<N> {
                 BaseHaltReason::FailedDeposit => HaltReason::PrecompileError,
             }),
             state: result.state,
+        })
+    }
+
+    /// Rejects a fork whose protocol contracts would reject every Denim block's system deposits.
+    ///
+    /// The deposits run through the block executor against the fork state, so startup and resets
+    /// fail with a clear error instead of producing a node that cannot mine.
+    pub(super) fn ensure_fork_accepts_system_transactions(
+        &self,
+        db: &dyn Db,
+        parent_env: &EvmEnv,
+        parent_hash: B256,
+    ) -> Result<(), DatabaseError> {
+        let mut evm_env = parent_env.clone();
+        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
+        let transactions = system_transactions(
+            db,
+            evm_env.block_env.number.saturating_to(),
+            evm_env.block_env.timestamp.saturating_to(),
+            parent_hash,
+            true,
+        )?;
+        let mut candidate_db = AnvilCacheDB::new(db, *evm_env.spec_id());
+        self.execute_with_block_executor(
+            &mut candidate_db,
+            &evm_env,
+            parent_hash,
+            self.hardfork(),
+            Some(B256::ZERO),
+            BlockExecutionKind::Complete,
+            &transactions,
+            &self.pool_tx_gas_config(&evm_env),
+            &self.inspector_tx_config(),
+            &|_, _| Ok(()),
+        )
+        .and_then(|(executed, _)| validate_system_transactions(&transactions, &executed))
+        .map_err(|err| {
+            DatabaseError::AnyRequest(Arc::new(eyre::eyre!(
+                "Denim system deposits fail on this fork; its L1Block likely predates Jovian (fork \
+                 at or after the Jovian upgrade, or use an earlier --hardfork): {err}"
+            )))
         })
     }
 }

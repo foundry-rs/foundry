@@ -4596,10 +4596,13 @@ impl<N: Network> Backend<N> {
         trace!(target: "backend", "setting genesis balances");
 
         if self.fork.read().is_some() {
+            let parent_env = self.evm_env.read().clone();
             return self
                 .apply_fork_genesis(
                     Arc::clone(&self.db),
                     self.startup_fork_cache_user.cache_lease.clone(),
+                    &parent_env,
+                    self.best_hash(),
                 )
                 .await;
         }
@@ -4746,6 +4749,8 @@ impl<N: Network> Backend<N> {
         &self,
         db: Arc<AsyncRwLock<Box<dyn Db>>>,
         cache_lease: StagedForkCacheLease,
+        parent_env: &EvmEnv,
+        parent_hash: B256,
     ) -> Result<(), DatabaseError> {
         let user = StagedForkDbUser { db: Some(db), cache_lease };
         let mut genesis_accounts = JoinSet::new();
@@ -4791,7 +4796,10 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "base")]
         if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
             ensure_base_time_predeploy(&mut **db_guard, false)?;
+            self.ensure_fork_accepts_system_transactions(&**db_guard, parent_env, parent_hash)?;
         }
+        #[cfg(not(feature = "base"))]
+        let _ = (parent_env, parent_hash);
         drop(db_guard);
         self.apply_funded_accounts(user.db()).await
     }
@@ -5044,7 +5052,13 @@ impl<N: Network> Backend<N> {
             if fork_block.header.hash != staged_client_config.block_hash {
                 return Ok(None);
             }
-            self.apply_fork_genesis(Arc::clone(&staged_db), cache_lease.clone()).await?;
+            self.apply_fork_genesis(
+                Arc::clone(&staged_db),
+                cache_lease.clone(),
+                &staged_env,
+                staged_client_config.block_hash,
+            )
+            .await?;
 
             #[cfg(feature = "monad")]
             if self.is_monad() {

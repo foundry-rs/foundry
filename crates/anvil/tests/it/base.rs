@@ -1843,3 +1843,66 @@ async fn base_denim_load_pre_denim_state_installs_base_time() {
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_fork_denim_rejects_pre_jovian_l1_block() {
+    let (source, source_handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;
+    let denim_fork = |block: u64| {
+        NodeConfig::test_base()
+            .with_hardfork(Some(BaseUpgrade::Denim.into()))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(block))
+            .with_no_storage_caching(true)
+    };
+    source.mine_one().await.unwrap();
+    let (api, _handle) = spawn(denim_fork(1)).await;
+
+    // From block 2, L1Block stands in for an implementation without the Jovian setter.
+    source
+        .anvil_set_code(Predeploys::L1_BLOCK_INFO, Bytes::from_static(&[0x5f, 0x5f, 0xfd]))
+        .await
+        .unwrap();
+    source.mine_one().await.unwrap();
+
+    let Err(error) = anvil::try_spawn(denim_fork(2)).await else {
+        panic!("a Denim fork whose L1Block rejects the L1-info deposit must not start");
+    };
+    assert_eq!(
+        format!("{error:#}"),
+        "failed to create genesis: failed to process AnyRequest: Denim system deposits fail on \
+         this fork; its L1Block likely predates Jovian (fork at or after the Jovian upgrade, or \
+         use an earlier --hardfork): Internal error: \"required Base system deposit at transaction \
+         index 0 failed\""
+    );
+
+    // Resetting a running node onto that block is rejected and leaves it mining on block 1.
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(2) }))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "failed to process AnyRequest: Denim system deposits fail on this fork; its L1Block \
+         likely predates Jovian (fork at or after the Jovian upgrade, or use an earlier \
+         --hardfork): Internal error: \"required Base system deposit at transaction index 0 \
+         failed\""
+    );
+    api.mine_one().await.unwrap();
+    assert_eq!(api.block_number().unwrap(), U256::from(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_standalone_denim_pending_receipts_include_system_transactions() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let (_api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    let block = provider.get_block(BlockId::pending()).await.unwrap().unwrap();
+    let receipts = provider.get_block_receipts(BlockId::pending()).await.unwrap().unwrap();
+    assert_eq!(receipts.len(), 2, "the pending block always contains the system deposits");
+    assert_eq!(
+        receipts.iter().map(|receipt| receipt.transaction_hash).collect::<Vec<_>>(),
+        block.transactions.hashes().collect::<Vec<_>>()
+    );
+}
