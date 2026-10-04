@@ -7,7 +7,7 @@ use crate::{
     multi_runner::{
         FuzzMinimizeConfig, FuzzMinimizeMode, FuzzMinimizeObservation, LibraryDeployment,
         TestContract, TestFunctionMatcher, TestRunnerConfig,
-        is_generated_symbolic_regression_contract,
+        is_generated_symbolic_regression_contract, load_fuzz_guidance,
     },
     progress::TestsProgress,
     result::{
@@ -1183,6 +1183,8 @@ struct FunctionRunner<'a, FEN: FoundryEvmNetwork> {
     setup: &'a TestSetup,
     /// The test result. Returned after running the test.
     result: TestResult,
+    /// Guidance resolved from the effective contract or function configuration.
+    fuzz_guidance: Arc<foundry_evm::fuzz::FuzzGuidance>,
 }
 
 /// A replayed and shrunk invariant counterexample.
@@ -1243,6 +1245,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             address: setup.address,
             setup,
             result: TestResult::new(setup),
+            fuzz_guidance: Arc::clone(&cr.mcr.fuzz_guidance),
         }
     }
 
@@ -1831,6 +1834,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let new_config = Arc::new(self.cr.inline_config(Some(func))?);
             self.tcfg.to_mut().reconfigure_with(new_config);
             self.tcfg.configure_executor(self.executor.to_mut());
+        }
+        if self.config.fuzz.guidance == self.cr.mcr.config.fuzz.guidance {
+            self.fuzz_guidance = Arc::clone(&self.cr.mcr.fuzz_guidance);
+        } else {
+            self.fuzz_guidance = load_fuzz_guidance(&self.config)?;
         }
         Ok(())
     }
@@ -5348,7 +5356,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let db = self.executor.backend().mem_db();
             EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         };
-        let guidance = &self.cr.mcr.fuzz_guidance;
+        let guidance = &self.fuzz_guidance;
         if !guidance.is_empty() {
             state.set_guidance(Arc::clone(guidance));
         }

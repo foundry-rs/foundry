@@ -1878,7 +1878,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 .targets()
                 .iter()
                 .filter_map(|(address, contract)| {
-                    let functions = contract.abi_fuzzed_functions().cloned().collect::<Vec<_>>();
+                    let functions = contract
+                        .abi_fuzzed_functions()
+                        .map(|function| {
+                            (
+                                contract.identifier_for_function(function).to_owned(),
+                                function.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
                     (!functions.is_empty()).then_some((*address, functions))
                 })
                 .collect::<Vec<_>>();
@@ -2141,7 +2149,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, contract_data)) =
+                if let Some((artifact, contract_data)) =
                     self.project_contracts.iter().find(|(artifact, _)| {
                         &artifact.name == identifier || &artifact.identifier() == identifier
                     })
@@ -2152,14 +2160,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         .entry(*addr)
                         // If the entry exists, extends its ABI with the function list.
                         .and_modify(|entry| {
-                            // Extend the ABI's function list with the new functions.
-                            entry.abi.functions.extend(abi.functions.clone());
-                            entry.rebuild_function_lookups();
+                            entry.extend_interface(
+                                artifact.identifier(),
+                                abi,
+                                contract_data.storage_layout.as_ref().map(Arc::clone),
+                            );
                         })
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
                             let mut contract =
-                                TargetedContract::new(identifier.clone(), abi.clone());
+                                TargetedContract::new(artifact.identifier(), abi.clone());
                             contract.storage_layout =
                                 contract_data.storage_layout.as_ref().map(Arc::clone);
                             contract

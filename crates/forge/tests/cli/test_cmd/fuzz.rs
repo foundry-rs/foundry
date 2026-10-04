@@ -6158,12 +6158,28 @@ contract FuzzGuidanceTest {
     function testFuzz_magic(uint256 x) public pure {
         require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
     }
+
+    /// forge-config: default.fuzz.guidance = "guidance.json"
+    function testFuzz_inline(uint256 x) public pure {
+        require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
+    }
 }
    "#,
     );
     prj.create_file("guidance.json", r#"{ "version": 1, "dictionary": ["0xdeadbeefcafe1234"] }"#);
 
-    let args = ["test", "--mc", "FuzzGuidanceTest", "--fuzz-seed", "1", "--fuzz-runs", "64", "-j1"];
+    let args = [
+        "test",
+        "--mc",
+        "FuzzGuidanceTest",
+        "--mt",
+        "testFuzz_magic",
+        "--fuzz-seed",
+        "1",
+        "--fuzz-runs",
+        "64",
+        "-j1",
+    ];
     cmd.args(args).assert_success().stdout_eq(str![[r#"
 ...
 [PASS] testFuzz_magic(uint256) (runs: 64, [AVG_GAS])
@@ -6177,6 +6193,26 @@ contract FuzzGuidanceTest {
 ...
 "#]],
     );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "FuzzGuidanceTest",
+            "--mt",
+            "testFuzz_inline",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-runs",
+            "64",
+            "-j1",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: magic value found; counterexample: calldata=[..] args=[16045690984503054900 [1.604e19]]] testFuzz_inline(uint256) (runs: 9, [AVG_GAS])
+...
+"#]]);
 });
 
 forgetest_init!(fuzz_guidance_hex_dictionary_finds_fixed_bytes, |prj, cmd| {
@@ -6220,7 +6256,15 @@ forgetest_init!(fuzz_guidance_zero_selector_weight_excludes_function, |prj, cmd|
     prj.add_test(
         "FuzzGuidanceSelectors.t.sol",
         r#"
-contract GuidedTarget {
+interface GuidedSafeInterface {
+    function safe(uint256) external;
+}
+
+interface GuidedPokeInterface {
+    function poke() external;
+}
+
+contract GuidedTarget is GuidedSafeInterface, GuidedPokeInterface {
     bool public poked;
 
     function safe(uint256) public {}
@@ -6231,10 +6275,25 @@ contract GuidedTarget {
 }
 
 contract FuzzGuidanceSelectorsTest {
+    struct FuzzInterface {
+        address addr;
+        string[] artifacts;
+    }
+
     GuidedTarget target;
 
     function setUp() public {
         target = new GuidedTarget();
+    }
+
+    function targetInterfaces() public view returns (FuzzInterface[] memory interfaces) {
+        interfaces = new FuzzInterface[](2);
+        string[] memory safe = new string[](1);
+        safe[0] = "GuidedSafeInterface";
+        interfaces[0] = FuzzInterface(address(target), safe);
+        string[] memory poke = new string[](1);
+        poke[0] = "GuidedPokeInterface";
+        interfaces[1] = FuzzInterface(address(target), poke);
     }
 
     function invariant_notPoked() public view {
@@ -6245,7 +6304,12 @@ contract FuzzGuidanceSelectorsTest {
     );
     prj.create_file(
         "guidance.json",
-        r#"{ "version": 1, "selector_weights": { "GuidedTarget.poke()": 0 } }"#,
+        r#"{
+            "version": 1,
+            "selector_weights": {
+                "test/FuzzGuidanceSelectors.t.sol:GuidedPokeInterface.poke()": 0
+            }
+        }"#,
     );
     prj.update_config(|config| {
         config.invariant.runs = 10;
@@ -6269,6 +6333,85 @@ contract FuzzGuidanceSelectorsTest {
 	[Sequence] (original: [..], shrunk: 1)
 		sender=[..] addr=[test/FuzzGuidanceSelectors.t.sol:GuidedTarget][..] calldata=poke() args=[]
  invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
+...
+"#]]);
+});
+
+forgetest_init!(fuzz_guidance_applies_to_call_overrides, |prj, cmd| {
+    prj.add_test(
+        "FuzzGuidanceCallOverride.t.sol",
+        r#"
+contract GuidedExternalCall {
+    function ping() public {}
+}
+
+contract GuidedReentrantTarget {
+    bool public entered;
+    bool public poked;
+    GuidedExternalCall externalCall;
+
+    constructor() {
+        externalCall = new GuidedExternalCall();
+    }
+
+    function enter() public {
+        entered = true;
+        externalCall.ping();
+        entered = false;
+    }
+
+    function poke() public {
+        require(entered, "not entered");
+        poked = true;
+    }
+}
+
+contract FuzzGuidanceCallOverrideTest {
+    GuidedReentrantTarget target;
+
+    function setUp() public {
+        target = new GuidedReentrantTarget();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(target);
+    }
+
+    function invariant_notPoked() public view {
+        require(!target.poked(), "poked");
+    }
+}
+   "#,
+    );
+    prj.create_file(
+        "guidance.json",
+        r#"{
+            "version": 1,
+            "selector_weights": { "GuidedReentrantTarget.poke()": 0 }
+        }"#,
+    );
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 20;
+        config.invariant.call_override = true;
+        config.invariant.show_metrics = false;
+    });
+
+    cmd.args([
+        "test",
+        "--mc",
+        "FuzzGuidanceCallOverrideTest",
+        "--fuzz-guidance",
+        "guidance.json",
+        "--fuzz-seed",
+        "1",
+        "-j1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+[PASS] invariant_notPoked() (runs: 20, calls: 400, reverts: [..])
 ...
 "#]]);
 });

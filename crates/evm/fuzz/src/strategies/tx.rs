@@ -1,6 +1,6 @@
 use super::{
-    DictionaryRead, EvmFuzzState, FuzzState, fuzz_calldata, fuzz_calldata_from_state,
-    fuzz_msg_value, fuzz_param, fuzz_param_from_state,
+    DictionaryRead, EvmFuzzState, FuzzState, WeightedIndices, fuzz_calldata,
+    fuzz_calldata_from_state, fuzz_msg_value, fuzz_param, fuzz_param_from_state,
 };
 use crate::{
     BasicTxDetails, CallDetails, FuzzFixtures, FuzzGuidance,
@@ -19,7 +19,7 @@ struct PlannedCalls {
     generation: u64,
     calls: Vec<BoxedStrategy<CallDetails>>,
     /// Cumulative guidance selector weights of `calls`, empty without selector guidance.
-    cumulative_weights: Vec<u64>,
+    weighted_indices: WeightedIndices,
 }
 
 impl PlannedCalls {
@@ -33,23 +33,22 @@ impl PlannedCalls {
     ) {
         self.calls.clear();
         self.calls.reserve(fuzzed_functions.len());
-        self.cumulative_weights.clear();
-        if guidance.has_selector_weights() {
-            self.cumulative_weights.reserve(fuzzed_functions.len());
-        }
-
-        let mut total = 0u64;
+        let mut weights =
+            guidance.has_selector_weights().then(|| Vec::with_capacity(fuzzed_functions.len()));
         for (target, function) in fuzzed_functions {
             self.calls.push(build(*target, function.clone()));
-            if guidance.has_selector_weights() {
+            if let Some(weights) = &mut weights {
                 let weight = targets
                     .get(target)
-                    .and_then(|contract| guidance.selector_weight(&contract.identifier, function))
+                    .and_then(|contract| {
+                        guidance
+                            .selector_weight(contract.identifier_for_function(function), function)
+                    })
                     .unwrap_or(1);
-                total += u64::from(weight);
-                self.cumulative_weights.push(total);
+                weights.push(weight);
             }
         }
+        self.weighted_indices = weights.map(WeightedIndices::from_weights).unwrap_or_default();
         self.generation = generation;
     }
 
@@ -57,15 +56,9 @@ impl PlannedCalls {
     fn select(&self, choice: CallChoice) -> &BoxedStrategy<CallDetails> {
         match choice {
             CallChoice::Uniform(selector) => selector.select(self.calls.iter()),
-            CallChoice::Weighted(index) => match self.cumulative_weights.last() {
-                Some(&total) if total > 0 => {
-                    let point = index.index(total as usize) as u64;
-                    let call = self.cumulative_weights.partition_point(|&weight| weight <= point);
-                    &self.calls[call]
-                }
-                // Every function has weight 0: ignore the weights rather than generating nothing.
-                _ => index.get(&self.calls),
-            },
+            CallChoice::Weighted(index) => {
+                &self.calls[self.weighted_indices.select(index, self.calls.len())]
+            }
         }
     }
 }

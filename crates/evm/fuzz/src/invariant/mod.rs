@@ -319,6 +319,7 @@ pub struct TargetedContract {
     pub event_lookup: Arc<TargetedContractEvents>,
     functions_by_selector: FunctionLookup,
     fuzzed_functions_by_selector: FunctionLookup,
+    function_identifiers: HashMap<Selector, String>,
 }
 
 impl TargetedContract {
@@ -336,6 +337,8 @@ impl TargetedContract {
         storage_layout: Option<Arc<StorageLayout>>,
         event_lookup: Arc<TargetedContractEvents>,
     ) -> Self {
+        let function_identifiers =
+            abi.functions().map(|function| (function.selector(), identifier.clone())).collect();
         let mut contract = Self {
             identifier,
             abi,
@@ -345,6 +348,7 @@ impl TargetedContract {
             event_lookup,
             functions_by_selector: FunctionLookup::default(),
             fuzzed_functions_by_selector: FunctionLookup::default(),
+            function_identifiers,
         };
         contract.rebuild_function_lookups();
         contract
@@ -398,6 +402,33 @@ impl TargetedContract {
         );
         self.functions_by_selector = functions_by_selector;
         self.fuzzed_functions_by_selector = fuzzed_functions_by_selector;
+    }
+
+    /// Extends this target with another interface while retaining each function's artifact.
+    pub fn extend_interface(
+        &mut self,
+        identifier: String,
+        abi: &JsonAbi,
+        storage_layout: Option<Arc<StorageLayout>>,
+    ) {
+        for function in abi.functions() {
+            self.function_identifiers
+                .entry(function.selector())
+                .or_insert_with(|| identifier.clone());
+        }
+        self.abi.functions.extend(abi.functions.clone());
+        if self.storage_layout.is_none() {
+            self.storage_layout = storage_layout;
+        }
+        self.rebuild_function_lookups();
+    }
+
+    /// Returns the artifact identifier that supplied `function`.
+    pub fn identifier_for_function(&self, function: &Function) -> &str {
+        self.function_identifiers
+            .get(&function.selector())
+            .map(String::as_str)
+            .unwrap_or(&self.identifier)
     }
 
     /// Returns any ABI function for the given selector.

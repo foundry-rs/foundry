@@ -149,7 +149,7 @@ pub(crate) fn fuzz_param_from_state(
         };
         // With external guidance, half of the dictionary picks use guidance words. The extra
         // random draw only happens when guidance is present, so unguided runs stay reproducible.
-        if state.with_dictionary(|dict| !dict.guidance().has_dictionary()) {
+        if state.with_dictionary(|dict| dict.guidance_values(&param).is_none()) {
             any::<(bool, prop::sample::Index)>()
                 .prop_map(move |(bias, index)| {
                     state.with_dictionary(|dict| select(dict, bias, index))
@@ -159,8 +159,7 @@ pub(crate) fn fuzz_param_from_state(
             any::<(bool, bool, prop::sample::Index)>()
                 .prop_map(move |(guided, bias, index)| {
                     state.with_dictionary(|dict| {
-                        let guidance = dict.guidance().dictionary_for(&param);
-                        if guided {
+                        if guided && let Some(guidance) = dict.guidance_values(&param) {
                             guidance[index.index(guidance.len())]
                         } else {
                             select(dict, bias, index)
@@ -872,5 +871,19 @@ mod tests {
             strategy.new_tree(&mut runner).unwrap().current() == DynSolValue::Uint(magic, 256)
         });
         assert!(found, "guidance value should be sampled from the dictionary");
+
+        let mut disabled = EvmFuzzState::new(
+            &[],
+            &CacheDB::<EmptyDB>::default(),
+            FuzzDictionaryConfig { dictionary_weight: 0, ..Default::default() },
+            None,
+        );
+        disabled.set_guidance(state.with_dictionary(|dict| Arc::clone(dict.guidance())));
+        let strategy = super::fuzz_param_from_state(&DynSolType::Uint(256), &disabled);
+        let mut runner = TestRunner::deterministic();
+        let found = (0..64).any(|_| {
+            strategy.new_tree(&mut runner).unwrap().current() == DynSolValue::Uint(magic, 256)
+        });
+        assert!(!found, "dictionary weight zero must disable guidance values");
     }
 }

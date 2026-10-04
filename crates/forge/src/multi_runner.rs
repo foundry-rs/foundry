@@ -59,6 +59,13 @@ pub struct TestContract {
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
+pub(crate) fn load_fuzz_guidance(config: &Config) -> Result<Arc<FuzzGuidance>> {
+    match &config.fuzz.guidance {
+        Some(path) => Ok(Arc::new(FuzzGuidance::load(&config.root.join(path))?)),
+        None => Ok(Arc::default()),
+    }
+}
+
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 #[derive(Clone, Debug)]
@@ -919,10 +926,7 @@ impl MultiContractRunnerBuilder {
             literals(invariant_max_literals)
         };
 
-        let fuzz_guidance = match &self.config.fuzz.guidance {
-            Some(path) => Arc::new(FuzzGuidance::load(&self.config.root.join(path))?),
-            None => Default::default(),
-        };
+        let fuzz_guidance = load_fuzz_guidance(&self.config)?;
 
         let fork_chain_id = self.fork_chain_id.or_else(|| {
             (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)

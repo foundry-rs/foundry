@@ -827,6 +827,12 @@ impl FuzzDictionary {
         &self.guidance
     }
 
+    /// Returns external dictionary values when state-based dictionary sampling is enabled.
+    pub fn guidance_values(&self, param: &DynSolType) -> Option<&B256IndexSet> {
+        (self.config.dictionary_weight > 0 && self.guidance.has_dictionary())
+            .then(|| self.guidance.dictionary_for(param))
+    }
+
     /// Revert values and addresses collected during the run by truncating to initial db len.
     pub fn revert(&mut self) {
         self.state_values.truncate(self.db_state_values);
