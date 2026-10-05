@@ -33,9 +33,12 @@ pub struct BatchMakeTxArgs {
     /// Call specifications in format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xdata>]`
     ///
     /// Examples:
-    ///   --call "0x123:0.1ether" (ETH transfer)
-    ///   --call "0x456::transfer(address,uint256):0x789,1000" (ERC20 transfer)
-    ///   --call "0xabc::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:0.1ether" (ETH transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::transfer(address,uint256):
+    /// 0x0987654321098765432109876543210987654321,1000" (ERC20 transfer)
+    ///   --call "0x1234567890123456789012345678901234567890::0x123def" (raw calldata)
+    ///   --call "0x1234567890123456789012345678901234567890:1ether:deposit()" (value + function
+    /// call)
     #[arg(long = "call", value_name = "SPEC", required = true)]
     pub calls: Vec<String>,
 

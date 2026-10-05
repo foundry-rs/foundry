@@ -102,11 +102,54 @@ fn tx_raw_tempo(cmd: _) {
 fn cast_decode_tx_ethereum(cmd: _) {
     // Ethereum mainnet 0x02d2ae7454273bcc02405276b208c03b83ea979ec06aa6f9bc48f81ca343dc1d
     let tx = "0x02f8b1018223e48374667184147d0df48301388094dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000594bd0e0c83d619e375459f0f9b85a17cb8391b400000000000000000000000000000000000000000000000000000000295d9980c080a0704a930876b48fc99cbee17597dc6660c82cd4de5d6f4ace58fe0fcf3bbcb942a07c94560ed0850c9b8e9ab5f3c50902113decea95db3a6bac7c76edd11b7138aa";
-    let output = cmd.args(["decode-tx", tx]).assert_success().get_output().stdout.clone();
-    let output: String = serde_json::from_slice(&output).unwrap();
-    let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(decoded["type"], "0x2");
-    assert_eq!(decoded["nonce"], String::from("0x23e4"));
+    cmd.args(["decode-tx", tx]).assert_success().stdout_eq(str![[r#"
+{
+  "signer": "0x6e8d7d12c3f0a9285981b8998ce7cf0cf0bce78e",
+  "type": "0x2",
+  "chainId": "0x1",
+  "nonce": "0x23e4",
+  "gas": "0x13880",
+  "maxFeePerGas": "0x147d0df4",
+  "maxPriorityFeePerGas": "0x746671",
+  "to": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+  "value": "0x0",
+  "accessList": [],
+  "input": "0xa9059cbb000000000000000000000000594bd0e0c83d619e375459f0f9b85a17cb8391b400000000000000000000000000000000000000000000000000000000295d9980",
+  "r": "0x704a930876b48fc99cbee17597dc6660c82cd4de5d6f4ace58fe0fcf3bbcb942",
+  "s": "0x7c94560ed0850c9b8e9ab5f3c50902113decea95db3a6bac7c76edd11b7138aa",
+  "yParity": "0x0",
+  "v": "0x0",
+  "hash": "0x02d2ae7454273bcc02405276b208c03b83ea979ec06aa6f9bc48f81ca343dc1d"
+}
+
+"#]]);
+
+    cmd.cast_fuse().args(["decode-tx", "--json", tx]).assert_json_stdout(str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "signer": "0x6e8d7d12c3f0a9285981b8998ce7cf0cf0bce78e",
+    "type": "0x2",
+    "chainId": "0x1",
+    "nonce": "0x23e4",
+    "gas": "0x13880",
+    "maxFeePerGas": "0x147d0df4",
+    "maxPriorityFeePerGas": "0x746671",
+    "to": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "value": "0x0",
+    "accessList": [],
+    "input": "0xa9059cbb000000000000000000000000594bd0e0c83d619e375459f0f9b85a17cb8391b400000000000000000000000000000000000000000000000000000000295d9980",
+    "r": "0x704a930876b48fc99cbee17597dc6660c82cd4de5d6f4ace58fe0fcf3bbcb942",
+    "s": "0x7c94560ed0850c9b8e9ab5f3c50902113decea95db3a6bac7c76edd11b7138aa",
+    "yParity": "0x0",
+    "v": "0x0",
+    "hash": "0x02d2ae7454273bcc02405276b208c03b83ea979ec06aa6f9bc48f81ca343dc1d"
+  },
+  "errors": [],
+  "warnings": []
+}
+"#]]);
 }
 
 // Test decode-tx with --network tempo accepts the flag and decodes correctly
@@ -120,8 +163,7 @@ fn cast_decode_tx_tempo(cmd: _) {
         .get_output()
         .stdout
         .clone();
-    let output: String = serde_json::from_slice(&output).unwrap();
-    let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let decoded: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(decoded["type"], "0x76");
     assert_eq!(decoded["feeToken"], "0x20c000000000000000000000b9537d11c60e8b50");
 }
@@ -150,8 +192,7 @@ fn cast_decode_tx_tempo_autodetect(cmd: _) {
 
     assert_eq!(auto, with_flag, "auto-detected and --network tempo output should match");
 
-    let output: String = serde_json::from_slice(&auto).unwrap();
-    let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let decoded: serde_json::Value = serde_json::from_slice(&auto).unwrap();
     assert_eq!(decoded["type"], "0x76");
 }
 

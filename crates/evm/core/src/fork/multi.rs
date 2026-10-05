@@ -826,7 +826,7 @@ async fn create_fork<
 
     // Initialise the fork environment.
     // Here we use [`AnyNetwork`] to maximize compatibility with custom chains, aligned with
-    // `EvmOpts::env` impl.
+    // `EvmOpts::env_resolved` impl.
     let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
     let (evm_env, resolved, bal_block) = if let Some(resolved) = fork.resolved.clone() {
         let (evm_env, block) = fork

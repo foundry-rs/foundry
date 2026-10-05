@@ -6,11 +6,12 @@ use crate::{
     expected_emit::{ExpectedEmit, observe_log},
 };
 use alloy_primitives::{
-    Address, Bytes, Log, LogData as RawLog, U256, keccak256,
+    Address, Bytes, Log, LogData as RawLog, U256, hex, keccak256,
     map::{HashMap, hash_map::Entry},
 };
 use alloy_sol_types::{SolCall, SolValue};
 use foundry_evm_core::evm::FoundryEvmNetwork;
+use itertools::Itertools;
 use revm::{
     context::{ContextTr, JournalTr},
     interpreter::{
@@ -815,6 +816,90 @@ fn expect_call<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+/// Counts a call against every matching expectation registered for `bytecode_address`.
+pub(crate) fn observe_call(
+    tracker: &mut ExpectedCallTracker,
+    bytecode_address: Address,
+    input: &[u8],
+    value: Option<U256>,
+    gas_limit: u64,
+    scheme: CallScheme,
+) {
+    // Grab the different calldatas expected.
+    if let Some(expected_calls_for_target) = tracker.get_mut(&bytecode_address) {
+        // Match every partial/full calldata.
+        for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target {
+            // Increment actual times seen if all of the following hold.
+            // The calldata is at most as big as this call's input.
+            if calldata.len() <= input.len() &&
+                // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector).
+                input.get(..calldata.len()) == Some(calldata.as_ref()) &&
+                // The value matches, if provided.
+                expected.value.is_none_or(|expected_value| Some(expected_value) == value) &&
+                // The gas matches, if provided.
+                expected.gas.is_none_or(|gas| gas == gas_limit) &&
+                // The minimum gas matches, if provided.
+                expected.min_gas.is_none_or(|min_gas| min_gas <= gas_limit) &&
+                // The call scheme matches, if provided.
+                expected_scheme.is_none_or(|expected_scheme| expected_scheme == scheme)
+            {
+                *actual_count += 1;
+            }
+        }
+    }
+}
+
+/// Returns the failure message for the first unmet call expectation, if any.
+///
+/// `reverted` selects the message used when the root call did not succeed.
+pub(crate) fn first_unmet_call(tracker: &ExpectedCallTracker, reverted: bool) -> Option<String> {
+    // Loop over each address, and for each address, loop over each calldata it expects.
+    for (address, calldatas) in tracker {
+        for ((calldata, scheme), (expected, actual_count)) in calldatas {
+            // Grab the values we expect to see.
+            let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
+
+            let failed = match call_type {
+                // If the cheatcode was called with a `count` argument,
+                // we must check that the EVM performed a CALL with this calldata exactly
+                // `count` times.
+                ExpectedCallType::Count => *count != *actual_count,
+                // If the cheatcode was called without a `count` argument,
+                // we must check that the EVM performed a CALL with this calldata at least
+                // `count` times. The amount of times to check was
+                // the amount of time the cheatcode was called.
+                ExpectedCallType::NonCount => *count > *actual_count,
+            };
+            if failed {
+                let expected_values = [
+                    Some(format!("data {}", hex::encode_prefixed(calldata))),
+                    value.as_ref().map(|v| format!("value {v}")),
+                    gas.map(|g| format!("gas {g}")),
+                    min_gas.map(|g| format!("minimum gas {g}")),
+                    scheme.map(|scheme| format!("call type {scheme:?}")),
+                ]
+                .into_iter()
+                .flatten()
+                .join(", ");
+                let but = if reverted {
+                    "the call reverted instead; \
+                     ensure you're testing the happy path when using `expectCall`"
+                        .to_string()
+                } else {
+                    let s = if *actual_count == 1 { "" } else { "s" };
+                    format!("was called {actual_count} time{s}")
+                };
+                let s = if *count == 1 { "" } else { "s" };
+                return Some(format!(
+                    "expected call to {address} with {expected_values} \
+                     to be called {count} time{s}, but {but}"
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn expect_emit<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     depth: usize,
@@ -918,4 +1003,231 @@ fn expect_safe_memory<FEN: FoundryEvmNetwork>(
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Default::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{address, bytes};
+
+    const TARGET: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+
+    fn expected(
+        value: Option<U256>,
+        gas: Option<u64>,
+        min_gas: Option<u64>,
+        count: u64,
+        call_type: ExpectedCallType,
+    ) -> ExpectedCallData {
+        ExpectedCallData { value, gas, min_gas, count, call_type }
+    }
+
+    fn tracker(
+        calldata: Bytes,
+        scheme: Option<CallScheme>,
+        data: ExpectedCallData,
+    ) -> ExpectedCallTracker {
+        let mut tracker = ExpectedCallTracker::default();
+        tracker.entry(TARGET).or_default().insert((calldata, scheme), (data, 0));
+        tracker
+    }
+
+    fn seen(tracker: &ExpectedCallTracker, calldata: &Bytes, scheme: Option<CallScheme>) -> u64 {
+        tracker[&TARGET][&(calldata.clone(), scheme)].1
+    }
+
+    fn observe(tracker: &mut ExpectedCallTracker, input: &[u8], value: Option<U256>, gas: u64) {
+        observe_call(tracker, TARGET, input, value, gas, CallScheme::Call);
+    }
+
+    #[test]
+    fn observe_call_matches_calldata_prefix() {
+        let selector = bytes!("771602f7");
+        let full = bytes!("771602f7aabb");
+        let mut t = tracker(
+            selector.clone(),
+            None,
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+        t.entry(TARGET).or_default().insert(
+            (full.clone(), None),
+            (expected(None, None, None, 1, ExpectedCallType::NonCount), 0),
+        );
+
+        observe(&mut t, &full, None, 0);
+        observe(&mut t, &selector, None, 0);
+        observe(&mut t, &bytes!("12345678"), None, 0);
+        observe_call(&mut t, Address::ZERO, &full, None, 0, CallScheme::Call);
+
+        assert_eq!(seen(&t, &selector, None), 2);
+        assert_eq!(seen(&t, &full, None), 1);
+    }
+
+    #[test]
+    fn observe_call_filters_value() {
+        let calldata = bytes!("c290d691");
+        let mut t = tracker(
+            calldata.clone(),
+            None,
+            expected(Some(U256::from(1)), None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe(&mut t, &calldata, Some(U256::from(2)), 0);
+        observe(&mut t, &calldata, None, 0);
+        assert_eq!(seen(&t, &calldata, None), 0);
+
+        observe(&mut t, &calldata, Some(U256::from(1)), 0);
+        assert_eq!(seen(&t, &calldata, None), 1);
+
+        // An expected zero value does not match a call without a transfer value.
+        let mut zero = tracker(
+            calldata.clone(),
+            None,
+            expected(Some(U256::ZERO), None, None, 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut zero, &calldata, None, 0);
+        assert_eq!(seen(&zero, &calldata, None), 0);
+        observe(&mut zero, &calldata, Some(U256::ZERO), 0);
+        assert_eq!(seen(&zero, &calldata, None), 1);
+
+        // No expected value matches any transfer value.
+        let mut any = tracker(
+            calldata.clone(),
+            None,
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut any, &calldata, Some(U256::from(5)), 0);
+        assert_eq!(seen(&any, &calldata, None), 1);
+    }
+
+    #[test]
+    fn observe_call_filters_gas_and_min_gas() {
+        let calldata = bytes!("771602f7");
+        let mut gas = tracker(
+            calldata.clone(),
+            None,
+            expected(None, Some(25_000), None, 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut gas, &calldata, None, 24_999);
+        observe(&mut gas, &calldata, None, 25_001);
+        assert_eq!(seen(&gas, &calldata, None), 0);
+        observe(&mut gas, &calldata, None, 25_000);
+        assert_eq!(seen(&gas, &calldata, None), 1);
+
+        let mut min_gas = tracker(
+            calldata.clone(),
+            None,
+            expected(None, None, Some(50_000), 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut min_gas, &calldata, None, 49_999);
+        assert_eq!(seen(&min_gas, &calldata, None), 0);
+        observe(&mut min_gas, &calldata, None, 50_000);
+        observe(&mut min_gas, &calldata, None, 60_000);
+        assert_eq!(seen(&min_gas, &calldata, None), 2);
+    }
+
+    #[test]
+    fn observe_call_filters_scheme() {
+        let calldata = bytes!("771602f7");
+        let mut t = tracker(
+            calldata.clone(),
+            Some(CallScheme::DelegateCall),
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe_call(&mut t, TARGET, &calldata, None, 0, CallScheme::Call);
+        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 0);
+
+        observe_call(&mut t, TARGET, &calldata, None, 0, CallScheme::DelegateCall);
+        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 1);
+    }
+
+    #[test]
+    fn first_unmet_call_compares_counts() {
+        let calldata = bytes!("771602f7");
+        let mut count =
+            tracker(calldata.clone(), None, expected(None, None, None, 2, ExpectedCallType::Count));
+        let mut non_count =
+            tracker(calldata, None, expected(None, None, None, 2, ExpectedCallType::NonCount));
+
+        for seen in [1, 3] {
+            count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = seen;
+            assert!(first_unmet_call(&count, false).is_some(), "count with {seen} calls");
+        }
+        count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 2;
+        assert_eq!(first_unmet_call(&count, false), None);
+
+        non_count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 1;
+        assert!(first_unmet_call(&non_count, false).is_some());
+        for seen in [2, 3] {
+            non_count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = seen;
+            assert_eq!(first_unmet_call(&non_count, false), None, "non-count with {seen} calls");
+        }
+    }
+
+    #[test]
+    fn first_unmet_call_reports_first_unmet_in_iteration_order() {
+        let mut t = ExpectedCallTracker::default();
+        let entries = t.entry(TARGET).or_default();
+        entries.insert(
+            (bytes!("01"), None),
+            (expected(None, None, None, 1, ExpectedCallType::NonCount), 1),
+        );
+        entries.insert(
+            (bytes!("02"), None),
+            (expected(None, None, None, 1, ExpectedCallType::NonCount), 0),
+        );
+        entries.insert(
+            (bytes!("03"), None),
+            (expected(None, None, None, 1, ExpectedCallType::NonCount), 0),
+        );
+
+        let first_unmet = t
+            .values()
+            .flatten()
+            .find(|(_, (expected, seen))| *seen < expected.count)
+            .map(|((calldata, _), _)| hex::encode_prefixed(calldata))
+            .unwrap();
+        let msg = first_unmet_call(&t, false).unwrap();
+        assert_eq!(
+            msg,
+            format!(
+                "expected call to {TARGET} with data {first_unmet} to be called 1 time, \
+                 but was called 0 times"
+            )
+        );
+    }
+
+    #[test]
+    fn first_unmet_call_message() {
+        let calldata = bytes!("771602f7");
+        let mut t = tracker(
+            calldata.clone(),
+            Some(CallScheme::DelegateCall),
+            expected(Some(U256::from(1)), Some(2), Some(3), 2, ExpectedCallType::Count),
+        );
+        t.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 1;
+
+        assert_eq!(
+            first_unmet_call(&t, false).unwrap(),
+            "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7, \
+             value 1, gas 2, minimum gas 3, call type DelegateCall to be called 2 times, \
+             but was called 1 time"
+        );
+        assert_eq!(
+            first_unmet_call(&t, true).unwrap(),
+            "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7, \
+             value 1, gas 2, minimum gas 3, call type DelegateCall to be called 2 times, \
+             but the call reverted instead; ensure you're testing the happy path when using \
+             `expectCall`"
+        );
+
+        let single =
+            tracker(calldata, None, expected(None, None, None, 1, ExpectedCallType::NonCount));
+        assert_eq!(
+            first_unmet_call(&single, false).unwrap(),
+            "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 \
+             to be called 1 time, but was called 0 times"
+        );
+    }
 }

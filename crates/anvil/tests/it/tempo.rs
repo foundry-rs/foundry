@@ -892,11 +892,16 @@ async fn test_anvil_deal_erc20_supports_tip20() {
 async fn test_anvil_deal_tip20_rejects_invalid_token() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
-    let result: std::result::Result<(), _> = provider
-        .raw_request("anvil_dealTIP20".into(), (Address::random(), Address::random(), U256::ONE))
-        .await;
+    let token = Address::random();
+    let result: std::result::Result<(), _> =
+        provider.raw_request("anvil_dealTIP20".into(), (Address::random(), token, U256::ONE)).await;
 
-    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        format!(
+            "server returned an error response: error code -32603: failed to process AnyRequest: address {token} is not a deployed TIP-20 token"
+        )
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -907,7 +912,10 @@ async fn test_anvil_deal_tip20_rejects_non_tempo_node() {
         .raw_request("anvil_dealTIP20".into(), (Address::random(), ALPHA_USD, U256::ONE))
         .await;
 
-    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "server returned an error response: error code -32603: Not implemented"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3212,14 +3220,34 @@ async fn test_tempo_rpc_rejects_malformed_extension_fields() {
     let provider = handle.http_provider();
     let from = handle.dev_accounts().next().unwrap();
     let malformed_fields = [
-        ("calls", serde_json::json!("not-an-array")),
-        ("nonceKey", serde_json::json!("not-a-quantity")),
-        ("validBefore", serde_json::json!("not-a-quantity")),
-        ("validAfter", serde_json::json!(-1)),
-        ("feePayerSignature", serde_json::json!("not-a-signature")),
+        (
+            "calls",
+            serde_json::json!("not-an-array"),
+            r#"invalid type: string "not-an-array", expected a sequence"#,
+        ),
+        (
+            "nonceKey",
+            serde_json::json!("not-a-quantity"),
+            r#"invalid value: string "not-a-quantity", expected a 32 byte hex string"#,
+        ),
+        (
+            "validBefore",
+            serde_json::json!("not-a-quantity"),
+            r#"invalid value: string "not-a-quantity", expected a 8 byte hex string"#,
+        ),
+        (
+            "validAfter",
+            serde_json::json!(-1),
+            "invalid type: integer `-1`, expected a 8 byte hex string",
+        ),
+        (
+            "feePayerSignature",
+            serde_json::json!("not-a-signature"),
+            r#"invalid type: string "not-a-signature", expected struct HumanReadableRepr"#,
+        ),
     ];
 
-    for (field, value) in malformed_fields {
+    for (field, value, expected) in malformed_fields {
         let mut request = serde_json::json!({
             "from": from,
             "type": "0x76",
@@ -3229,7 +3257,13 @@ async fn test_tempo_rpc_rejects_malformed_extension_fields() {
         request[field] = value;
         let error =
             provider.raw_request::<_, Bytes>("eth_call".into(), (request,)).await.unwrap_err();
-        assert!(!error.to_string().is_empty(), "{field} unexpectedly succeeded");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "server returned an error response: error code -32602: Invalid transaction request: {expected}"
+            ),
+            "{field}"
+        );
     }
 }
 
@@ -4549,7 +4583,13 @@ async fn test_tempo_aa_expired_valid_before() {
     envelope.encode_2718(&mut encoded);
 
     let result = provider.send_raw_transaction(&encoded).await;
-    assert!(result.is_err(), "Transaction with expired valid_before should be rejected");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        format!(
+            "server returned an error response: error code -32003: Tempo tx valid_before ({valid_before}) must be > current time + 3s ({})",
+            current_time + 3
+        )
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4884,7 +4924,38 @@ async fn test_gas_estimation_with_value_fails() {
         .value(U256::from(1_000_000_000_000_000_000u64));
 
     let result = provider.estimate_gas(tx.into()).await;
-    assert!(result.is_err(), "Gas estimation with native value should fail in Tempo mode");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "server returned an error response: error code -32603: tempo transaction error: value transfer not allowed"
+    );
+}
+
+/// An Ethereum-typed request without a nonce must be estimated at the sender's current nonce, not
+/// as a first transaction, which Tempo charges the account-creation cost for.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gas_estimation_without_nonce_uses_sender_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+
+    let calldata = IERC20::approveCall { spender: accounts[1], amount: U256::ZERO }.abi_encode();
+    let tx = TransactionRequest::default().from(sender).to(PATH_USD).with_input(calldata);
+
+    provider
+        .send_transaction(WithOtherFields::new(tx.clone().with_gas_limit(TIP20_TRANSFER_GAS)))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let without_nonce = provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap();
+    let with_nonce = provider.estimate_gas(WithOtherFields::new(tx.nonce(nonce))).await.unwrap();
+    assert_eq!(without_nonce, with_nonce);
 }
 
 // ============================================================================
@@ -6040,7 +6111,10 @@ async fn test_tempo_aa_wrong_chain_id_rejected() {
     envelope.encode_2718(&mut encoded);
 
     let result = provider.send_raw_transaction(&encoded).await;
-    assert!(result.is_err(), "Transaction with wrong chain ID should be rejected");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "server returned an error response: error code -32003: invalid chain id for signer"
+    );
 }
 
 // ============================================================================
@@ -6090,7 +6164,10 @@ async fn test_tempo_aa_gas_too_low_rejected() {
     envelope.encode_2718(&mut encoded);
 
     let result = provider.send_raw_transaction(&encoded).await;
-    assert!(result.is_err(), "Transaction with gas limit below intrinsic cost should be rejected");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "server returned an error response: error code -32000: intrinsic gas too low"
+    );
 }
 
 // ============================================================================
@@ -6140,65 +6217,10 @@ async fn test_tempo_aa_value_in_call_rejected() {
     envelope.encode_2718(&mut encoded);
 
     let result = provider.send_raw_transaction(&encoded).await;
-    if let Ok(pending) = result {
-        let receipt = pending.get_receipt().await;
-        if let Ok(r) = receipt {
-            assert!(!r.status(), "Transaction with ETH value should fail in Tempo mode");
-        }
-    }
-}
-
-// ============================================================================
-// Tempo AA: Nonce Too High Rejected
-// ============================================================================
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_tempo_aa_nonce_too_high_rejected() {
-    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
-    let provider = handle.http_provider();
-
-    let accounts: Vec<Address> = handle.dev_accounts().collect();
-    let recipient = accounts[1];
-    let signer = dev_key(0);
-
-    let token = IERC20::new(PATH_USD, &provider);
-    let chain_id = provider.get_chain_id().await.unwrap();
-    let base_fee = provider.get_gas_price().await.unwrap();
-
-    let transfer_call = token.transfer(recipient, U256::from(10_000));
-    let calldata: Bytes = transfer_call.calldata().clone();
-
-    let tempo_tx = TempoTransaction {
-        chain_id,
-        fee_token: Some(ALPHA_USD),
-        max_priority_fee_per_gas: base_fee / 10,
-        max_fee_per_gas: base_fee * 2,
-        gas_limit: TIP20_TRANSFER_GAS,
-        calls: vec![Call { to: TxKind::Call(PATH_USD), value: U256::ZERO, input: calldata }],
-        access_list: Default::default(),
-        nonce_key: U256::from(999),
-        nonce: 5,
-        fee_payer_signature: None,
-        valid_before: None,
-        valid_after: None,
-        key_authorization: None,
-        tempo_authorization_list: vec![],
-    };
-
-    let sig_hash = tempo_tx.signature_hash();
-    let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
-
-    let mut encoded = Vec::new();
-    envelope.encode_2718(&mut encoded);
-
-    // Transaction may be accepted into pool but should fail during execution
-    let result = provider.send_raw_transaction(&encoded).await;
-    if result.is_ok() {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "server returned an error response: error code -32003: native value transfer not allowed in Tempo mode"
+    );
 }
 
 // ============================================================================
@@ -6744,7 +6766,7 @@ async fn test_anvil_set_fee_token_non_tempo_fails() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     let result = api.anvil_set_fee_token(Address::random(), ALPHA_USD).await;
-    assert!(result.is_err(), "anvil_setFeeToken should fail outside of Tempo mode");
+    assert_eq!(result.unwrap_err().to_string(), "Rpc Endpoint not implemented");
 }
 
 /// `anvil_setValidatorFeeToken` sets the fee token for a validator, readable via `validatorTokens`.
@@ -6774,7 +6796,7 @@ async fn test_anvil_set_validator_fee_token_non_tempo_fails() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     let result = api.anvil_set_validator_fee_token(Address::random(), BETA_USD).await;
-    assert!(result.is_err(), "anvil_setValidatorFeeToken should fail outside of Tempo mode");
+    assert_eq!(result.unwrap_err().to_string(), "Rpc Endpoint not implemented");
 }
 
 /// `anvil_setFeeAmmLiquidity` mints AMM liquidity for a token pair,
@@ -6815,7 +6837,7 @@ async fn test_anvil_set_fee_amm_liquidity_non_tempo_fails() {
 
     let result =
         api.anvil_set_fee_amm_liquidity(PATH_USD, ALPHA_USD, U256::from(1_000_000u64)).await;
-    assert!(result.is_err(), "anvil_setFeeAmmLiquidity should fail outside of Tempo mode");
+    assert_eq!(result.unwrap_err().to_string(), "Rpc Endpoint not implemented");
 }
 
 /// Pre-T7 Tempo uses a fixed base fee, so mining empty blocks must not drift it (EIP-1559 would).

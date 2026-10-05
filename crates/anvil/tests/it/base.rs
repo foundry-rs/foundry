@@ -34,6 +34,7 @@ const ACTIVATION_REGISTRY: Address = address!("845300000000000000000000000000000
 const MAINNET_BERYL_ACTIVATION_ADMIN: Address =
     address!("ce3a3bee7e72e2a24079f3c0cb3b97740ed425a9");
 const NONCE_MANAGER: Address = address!("813000000000000000000000000000000000aa01");
+const BASE_CREATE2_DEPLOYER: Address = address!("13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
 
 fn eip8130_envelope_with(
     signer: &PrivateKeySigner,
@@ -1383,4 +1384,41 @@ async fn base_eip8130_is_rejected_by_non_base_networks() {
 
         assert!(error.to_string().contains("gated behind Zenith"), "{error}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_reset_restores_genesis_state() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let read_state = async || {
+        let mut slots = Vec::new();
+        for slot in [1u64, 3, 7] {
+            slots.push(
+                provider.get_storage_at(Predeploys::L1_BLOCK_INFO, U256::from(slot)).await.unwrap(),
+            );
+        }
+        let mut code_hashes = Vec::new();
+        for address in [BASE_CREATE2_DEPLOYER, NONCE_MANAGER, ACTIVATION_REGISTRY] {
+            code_hashes.push(keccak256(provider.get_code_at(address).await.unwrap()));
+        }
+        (slots, code_hashes)
+    };
+
+    let genesis = read_state().await;
+    assert_eq!(
+        genesis,
+        (
+            vec![U256::from(1_000_000_000u64), U256::from(1_000_000u64) << 96, U256::ONE],
+            vec![
+                b256!("0xb0550b5b431e30d38000efb7107aaa0ade03d48a7198a140edda9d27134468b2"),
+                keccak256([0xef]),
+                keccak256([0xef]),
+            ],
+        )
+    );
+
+    api.anvil_reset(None).await.unwrap();
+
+    assert_eq!(read_state().await, genesis);
 }
