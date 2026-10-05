@@ -870,10 +870,7 @@ mod tests {
         let fees = fee_manager(SpecId::BERLIN);
         let jovian = [1, 0, 0, 0, 250, 0, 0, 0, 2, 0, 0, 0, 0, 0, 76, 75, 64];
         fees.set_optimism_base_fee_rules(&jovian);
-        let header = alloy_consensus::Header {
-            extra_data: Bytes::copy_from_slice(&jovian),
-            ..Default::default()
-        };
+        let header = alloy_consensus::Header { extra_data: jovian.into(), ..Default::default() };
 
         let parent_fees = fees.get_parent_header_fees(&header);
         assert_eq!(parent_fees.base_fee, 0);

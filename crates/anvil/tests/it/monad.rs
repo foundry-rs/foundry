@@ -132,9 +132,9 @@ async fn monad_ten_applies_mip8_storage_gas() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_ten_deduplicates_access_list_storage_pages() {
-    let one = B256::from(U256::ONE.to_be_bytes::<32>());
-    let two = B256::from(B256::with_last_byte(2).0);
-    let page_one = B256::from(B256::with_last_byte(129).0);
+    let one = B256::with_last_byte(1);
+    let two = B256::with_last_byte(2);
+    let page_one = B256::with_last_byte(129);
 
     for (config, expected_same_page_keys, gas_delta) in [
         (
@@ -485,12 +485,12 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
         )
         .await
         .unwrap();
-    let slot = B256::from(B256::with_last_byte(5).0);
+    let slot = B256::with_last_byte(5);
     let state_diff = replay.state_diff.unwrap();
     let delta = &state_diff.get(&RESERVE_PROBE_ADDRESS).unwrap().storage[&slot];
     let replayed_value =
         delta.as_added().copied().or_else(|| delta.as_changed().map(|change| change.to)).unwrap();
-    assert_eq!(replayed_value, B256::from(U256::ONE.to_be_bytes::<32>()));
+    assert_eq!(replayed_value, B256::with_last_byte(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -518,21 +518,17 @@ async fn monad_reorg_replays_protocol_system_envelopes() {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         val_id_secp_key(&BLOCK_AUTHOR),
-        storage_value(left_aligned_u64(VALIDATOR_ID)),
+        left_aligned_u64(VALIDATOR_ID).into(),
     )
     .await
     .unwrap();
-    api.anvil_set_storage_at(
-        STAKING_ADDRESS,
-        consensus_view_key(VALIDATOR_ID, 0),
-        storage_value(mon(100)),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_storage_at(STAKING_ADDRESS, consensus_view_key(VALIDATOR_ID, 0), mon(100).into())
+        .await
+        .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         validator_key(VALIDATOR_ID, validator_offsets::ADDRESS_FLAGS),
-        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        address_and_flags(VALIDATOR_AUTH, 0).into(),
     )
     .await
     .unwrap();
@@ -1023,16 +1019,12 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
         .anvil_set_storage_at(
             STAKING_ADDRESS,
             val_id_secp_key(&BLOCK_AUTHOR),
-            storage_value(left_aligned_u64(VALIDATOR_ID)),
+            left_aligned_u64(VALIDATOR_ID).into(),
         )
         .await
         .unwrap();
     origin_api
-        .anvil_set_storage_at(
-            STAKING_ADDRESS,
-            consensus_view_key(VALIDATOR_ID, 0),
-            storage_value(mon(100)),
-        )
+        .anvil_set_storage_at(STAKING_ADDRESS, consensus_view_key(VALIDATOR_ID, 0), mon(100).into())
         .await
         .unwrap();
     origin_api
@@ -1043,7 +1035,7 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
         .anvil_set_storage_at(
             STAKING_ADDRESS,
             validator_key(VALIDATOR_ID, validator_offsets::ADDRESS_FLAGS),
-            storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+            address_and_flags(VALIDATOR_AUTH, 0).into(),
         )
         .await
         .unwrap();
@@ -1567,12 +1559,12 @@ async fn monad_mining_tracks_eip7702_authorities() {
         .request("trace_replayTransaction", (probe_hash, vec![TraceType::StateDiff]))
         .await
         .unwrap();
-    let slot = B256::from(B256::with_last_byte(6).0);
+    let slot = B256::with_last_byte(6);
     let state_diff = replay.state_diff.unwrap();
     let delta = &state_diff.get(&RESERVE_PROBE_ADDRESS).unwrap().storage[&slot];
     let replayed_value =
         delta.as_added().copied().or_else(|| delta.as_changed().map(|change| change.to)).unwrap();
-    assert_eq!(replayed_value, B256::from(U256::ONE.to_be_bytes::<32>()));
+    assert_eq!(replayed_value, B256::with_last_byte(1));
 
     let state = api.serialized_state(false).await.unwrap();
     let authorization_block_hash = state
@@ -2359,10 +2351,6 @@ fn address_and_flags(address: Address, flags: u64) -> U256 {
     U256::from_be_bytes(bytes)
 }
 
-fn storage_value(value: U256) -> B256 {
-    B256::from(value.to_be_bytes::<32>())
-}
-
 async fn assert_monad_reset_to_memory(
     local_timestamp: u64,
     local_hardfork: MonadHardfork,
@@ -2490,7 +2478,7 @@ fn reserve_probe_tx(from: Address, nonce: u64, slot: u64, value: U256) -> Transa
         .with_nonce(nonce)
         .with_value(value)
         .with_gas_limit(100_000)
-        .with_input(Bytes::copy_from_slice(&U256::from(slot).to_be_bytes::<32>()))
+        .with_input(Bytes::from(U256::from(slot).to_be_bytes::<32>()))
 }
 
 fn large_contract_init_code(runtime_len: usize) -> Bytes {

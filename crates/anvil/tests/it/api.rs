@@ -951,7 +951,7 @@ async fn can_send_tx_sync() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_code_by_hash_from_fork() {
     let (origin_api, origin) = spawn(NodeConfig::test()).await;
-    let code = Bytes::from(B256::random().to_vec());
+    let code = Bytes::from(B256::random());
     let code_hash = keccak256(&code);
     origin_api.anvil_set_code(Address::random(), code.clone()).await.unwrap();
     assert_eq!(origin_api.debug_code_by_hash(code_hash, None).await.unwrap(), Some(code.clone()));

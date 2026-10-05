@@ -4789,19 +4789,14 @@ impl<N: Network> Backend<N> {
             }
         }
 
-        let l1_base_fee_slot = B256::from(L1BlockInfo::L1_BASE_FEE_SLOT.to_be_bytes::<32>());
-        let l1_blob_base_fee_slot =
-            B256::from(L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT.to_be_bytes::<32>());
-        let l1_fee_scalars_slot =
-            B256::from(L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT.to_be_bytes::<32>());
         db.set_storage_at(
             Predeploys::L1_BLOCK_INFO,
-            l1_base_fee_slot,
-            B256::from(U256::from(DEFAULT_BASE_L1_BASE_FEE).to_be_bytes::<32>()),
+            L1BlockInfo::L1_BASE_FEE_SLOT.into(),
+            U256::from(DEFAULT_BASE_L1_BASE_FEE).into(),
         )?;
         db.set_storage_at(
             Predeploys::L1_BLOCK_INFO,
-            l1_blob_base_fee_slot,
+            L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT.into(),
             B256::with_last_byte(1),
         )?;
         let mut l1_fee_scalars = [0u8; 32];
@@ -4810,7 +4805,7 @@ impl<N: Network> Backend<N> {
             .copy_from_slice(&DEFAULT_BASE_L1_FEE_SCALAR.to_be_bytes());
         db.set_storage_at(
             Predeploys::L1_BLOCK_INFO,
-            l1_fee_scalars_slot,
+            L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT.into(),
             B256::from(l1_fee_scalars),
         )?;
 
@@ -7444,7 +7439,7 @@ where
             for (address, account) in &accounts {
                 keys.push(Bytes::copy_from_slice(address.as_slice()));
                 for slot in account.storage.keys() {
-                    keys.push(Bytes::copy_from_slice(&slot.to_be_bytes::<32>()));
+                    keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
                 if account.info.code_hash != KECCAK_EMPTY
                     && seen_codes.insert(account.info.code_hash)
@@ -9634,11 +9629,7 @@ impl Backend<FoundryNetwork> {
         // One consistent snapshot of the current env to build the storage context.
         let (chain_id, timestamp, block_number) = {
             let env = self.evm_env.read();
-            (
-                env.cfg_env.chain_id,
-                U256::from(env.block_env.timestamp),
-                env.block_env.number.to::<u64>(),
-            )
+            (env.cfg_env.chain_id, env.block_env.timestamp, env.block_env.number.to::<u64>())
         };
         let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
@@ -10708,7 +10699,7 @@ mod tests {
                 TransactionRequest::default()
                     .with_from(sender)
                     .with_to(arbitrum::ARB_SYS_ADDRESS)
-                    .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                    .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
             ))
             .await
             .unwrap()
@@ -10743,7 +10734,7 @@ mod tests {
                 WithOtherFields::new(
                     TransactionRequest::default()
                         .with_to(arbitrum::ARB_SYS_ADDRESS)
-                        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                        .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
                 ),
                 None,
                 EvmOverrides::default(),

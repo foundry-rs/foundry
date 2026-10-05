@@ -1289,8 +1289,8 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into()).is_err());
             hash
         };
 
@@ -1305,8 +1305,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into()).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into()).is_err());
     }
 
     #[test]
@@ -1517,10 +1517,8 @@ mod tests {
         let request = TransactionRequest::default();
         {
             let mut store = RecoveryStore::create(data, true).unwrap();
-            store
-                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
-                .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into()).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1545,7 +1543,7 @@ mod tests {
                         0,
                         0,
                         TransactionRequest::default(),
-                        SIGNED_TX.to_vec().into(),
+                        SIGNED_TX.into(),
                     )
                     .unwrap();
                 let deployment = &mut store.data_mut().sequences_mut()[0];

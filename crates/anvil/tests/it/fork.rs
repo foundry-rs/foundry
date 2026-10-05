@@ -2871,7 +2871,7 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
         let arb_request = WithOtherFields::new(
             TransactionRequest::default()
                 .with_to(arbitrum::ARB_SYS_ADDRESS)
-                .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
         );
         let snapshot = api.evm_snapshot().await.unwrap();
         api.mine_one().await.unwrap();

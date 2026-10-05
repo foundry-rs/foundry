@@ -3751,7 +3751,7 @@ async fn test_tempo_simulate_resolves_omitted_lane_nonces() {
     api.anvil_set_storage_at(
         NONCE_PRECOMPILE_ADDRESS,
         slot,
-        B256::from(U256::from(existing_nonce).to_be_bytes::<32>()),
+        B256::from(U256::from(existing_nonce)),
     )
     .await
     .unwrap();

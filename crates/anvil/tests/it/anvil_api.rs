@@ -925,7 +925,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
     let difficulty = multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
+    assert_eq!(difficulty, latest_block.header.difficulty);
 
     let gaslimit = multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));

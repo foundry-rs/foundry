@@ -3162,7 +3162,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
             .to(contract)
             .nonce(nonce as u64)
             .gas_limit(100_000)
-            .input(Bytes::copy_from_slice(&U256::from(value).to_be_bytes::<32>()).into());
+            .input(Bytes::from(U256::from(value).to_be_bytes::<32>()).into());
         hashes.push(api.send_transaction(WithOtherFields::new(tx)).await.unwrap());
     }
     api.mine_one().await.unwrap();
