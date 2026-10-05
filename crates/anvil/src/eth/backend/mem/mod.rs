@@ -1004,6 +1004,18 @@ fn parity_trace_results(
         .map_err(Into::into)
 }
 
+/// Rejects the `pending` tag for block trace methods, which only trace mined blocks.
+///
+/// Resolving it to the latest block would present mined transactions as the pending block.
+fn ensure_mined_trace_block(block: BlockNumber) -> Result<(), BlockchainError> {
+    if block.is_pending() {
+        return Err(BlockchainError::RpcError(RpcError::invalid_params(
+            "pending block traces are not supported",
+        )));
+    }
+    Ok(())
+}
+
 pub type State = foundry_evm::utils::StateChangeset;
 
 #[derive(Clone, Debug, Default)]
@@ -3939,6 +3951,7 @@ impl<N: Network> Backend<N> {
         &self,
         block: BlockNumber,
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+        ensure_mined_trace_block(block)?;
         let number = self.convert_block_number(Some(block));
         if let Some(traces) = self.mined_parity_trace_block(number) {
             return Ok(traces);
@@ -4006,6 +4019,7 @@ impl<N: Network> Backend<N> {
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
     ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
+        ensure_mined_trace_block(block)?;
         let block_number = self.convert_block_number(Some(block));
 
         // Try mined blocks first
@@ -4585,73 +4599,8 @@ impl<N: Network> Backend<N> {
         // Seed Base protocol accounts and one-time state transitions for standalone nodes.
         #[cfg(feature = "base")]
         if self.is_base() && !self.is_fork() {
-            let mut db = self.db.write().await;
-            for address in [
-                Predeploys::L1_BLOCK_INFO,
-                Predeploys::SEQUENCER_FEE_VAULT,
-                Predeploys::BASE_FEE_VAULT,
-                Predeploys::L1_FEE_VAULT,
-                Predeploys::OPERATOR_FEE_VAULT,
-                Predeploys::BASE_TIME,
-            ] {
-                if db.basic(address)?.is_none() {
-                    db.insert_account(address, AccountInfo::default());
-                }
-            }
-
-            let l1_base_fee_slot = B256::from(L1BlockInfo::L1_BASE_FEE_SLOT.to_be_bytes::<32>());
-            let l1_blob_base_fee_slot =
-                B256::from(L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT.to_be_bytes::<32>());
-            let l1_fee_scalars_slot =
-                B256::from(L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT.to_be_bytes::<32>());
-            db.set_storage_at(
-                Predeploys::L1_BLOCK_INFO,
-                l1_base_fee_slot,
-                B256::from(U256::from(DEFAULT_BASE_L1_BASE_FEE).to_be_bytes::<32>()),
-            )?;
-            db.set_storage_at(
-                Predeploys::L1_BLOCK_INFO,
-                l1_blob_base_fee_slot,
-                B256::from(U256::ONE.to_be_bytes::<32>()),
-            )?;
-            let mut l1_fee_scalars = [0u8; 32];
-            l1_fee_scalars
-                [L1BlockInfo::BASE_FEE_SCALAR_OFFSET..L1BlockInfo::BASE_FEE_SCALAR_OFFSET + 4]
-                .copy_from_slice(&DEFAULT_BASE_L1_FEE_SCALAR.to_be_bytes());
-            db.set_storage_at(
-                Predeploys::L1_BLOCK_INFO,
-                l1_fee_scalars_slot,
-                B256::from(l1_fee_scalars),
-            )?;
-
             let upgrade = self.base_upgrade();
-            let mut erased: &mut dyn Db = &mut **db;
-            if upgrade >= BaseUpgrade::Canyon {
-                let upgrades =
-                    ChainUpgrades::new([(BaseUpgrade::Canyon, ForkCondition::Timestamp(1))]);
-                ensure_create2_deployer(upgrades, 1, &mut erased)?;
-            }
-            if upgrade >= BaseUpgrade::Zenith {
-                // Zenith is genesis-only and is not stored by ChainUpgrades.
-                let mut upgrades = RollupConfig::default();
-                upgrades.set_upgrade_activation_timestamp(BaseUpgrade::Zenith, 0);
-                ensure_eip8130_system_accounts(upgrades, 1, &mut erased)?;
-            }
-
-            // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
-            // check on high-level calls to functions without return data does not revert in the
-            // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
-            for address in base_code_sentinel_addresses(upgrade) {
-                let mut account = erased.basic(address)?.unwrap_or_default();
-                if account.code.as_ref().is_none_or(|code| code.is_empty()) {
-                    let code = revm::state::Bytecode::new_legacy(Bytes::from_static(
-                        SYSTEM_PRECOMPILE_STUB,
-                    ));
-                    account.code_hash = code.hash_slow();
-                    account.code = Some(code);
-                    erased.insert_account(address, account);
-                }
-            }
+            Self::apply_base_genesis(&mut **self.db.write().await, upgrade)?;
         }
 
         // Initialize Tempo precompiles and fee tokens when in Tempo mode (not in fork mode).
@@ -4745,6 +4694,75 @@ impl<N: Network> Backend<N> {
         for (address, info) in accounts {
             db.insert_account(address, info);
         }
+        Ok(())
+    }
+
+    /// Seeds Base protocol accounts and one-time state transitions for a standalone node.
+    #[cfg(feature = "base")]
+    fn apply_base_genesis(mut db: &mut dyn Db, upgrade: BaseUpgrade) -> Result<(), DatabaseError> {
+        for address in [
+            Predeploys::L1_BLOCK_INFO,
+            Predeploys::SEQUENCER_FEE_VAULT,
+            Predeploys::BASE_FEE_VAULT,
+            Predeploys::L1_FEE_VAULT,
+            Predeploys::OPERATOR_FEE_VAULT,
+            Predeploys::BASE_TIME,
+        ] {
+            if db.basic(address)?.is_none() {
+                db.insert_account(address, AccountInfo::default());
+            }
+        }
+
+        let l1_base_fee_slot = B256::from(L1BlockInfo::L1_BASE_FEE_SLOT.to_be_bytes::<32>());
+        let l1_blob_base_fee_slot =
+            B256::from(L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT.to_be_bytes::<32>());
+        let l1_fee_scalars_slot =
+            B256::from(L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT.to_be_bytes::<32>());
+        db.set_storage_at(
+            Predeploys::L1_BLOCK_INFO,
+            l1_base_fee_slot,
+            B256::from(U256::from(DEFAULT_BASE_L1_BASE_FEE).to_be_bytes::<32>()),
+        )?;
+        db.set_storage_at(
+            Predeploys::L1_BLOCK_INFO,
+            l1_blob_base_fee_slot,
+            B256::from(U256::ONE.to_be_bytes::<32>()),
+        )?;
+        let mut l1_fee_scalars = [0u8; 32];
+        l1_fee_scalars
+            [L1BlockInfo::BASE_FEE_SCALAR_OFFSET..L1BlockInfo::BASE_FEE_SCALAR_OFFSET + 4]
+            .copy_from_slice(&DEFAULT_BASE_L1_FEE_SCALAR.to_be_bytes());
+        db.set_storage_at(
+            Predeploys::L1_BLOCK_INFO,
+            l1_fee_scalars_slot,
+            B256::from(l1_fee_scalars),
+        )?;
+
+        if upgrade >= BaseUpgrade::Canyon {
+            let upgrades = ChainUpgrades::new([(BaseUpgrade::Canyon, ForkCondition::Timestamp(1))]);
+            ensure_create2_deployer(upgrades, 1, &mut db)?;
+        }
+        if upgrade >= BaseUpgrade::Zenith {
+            // Zenith is genesis-only and is not stored by ChainUpgrades.
+            let mut upgrades = RollupConfig::default();
+            upgrades.set_upgrade_activation_timestamp(BaseUpgrade::Zenith, 0);
+            ensure_eip8130_system_accounts(upgrades, 1, &mut db)?;
+        }
+
+        // Give the installed Base precompiles a sentinel byte so Solidity's `extcodesize`
+        // check on high-level calls to functions without return data does not revert in the
+        // caller. `ensure_eip8130_system_accounts` only covers the Zenith nonce manager.
+        for address in base_code_sentinel_addresses(upgrade) {
+            let mut account = db.basic(address)?.unwrap_or_default();
+            if account.code.as_ref().is_none_or(|code| code.is_empty()) {
+                let code =
+                    revm::state::Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
+                account.code_hash = code.hash_slow();
+                account.code = Some(code);
+                db.insert_account(address, account);
+            }
+        }
+
         Ok(())
     }
 
@@ -5259,6 +5277,14 @@ impl<N: Network> Backend<N> {
             staged_storage.genesis_hash,
             install_create2_deployer,
         )?;
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            let upgrade = match local_hardfork {
+                FoundryHardfork::Base(upgrade) => upgrade,
+                _ => BaseUpgrade::Azul,
+            };
+            Self::apply_base_genesis(&mut *staged_db, upgrade)?;
+        }
 
         Ok(StagedMemoryReset {
             node_config: staged_config,
