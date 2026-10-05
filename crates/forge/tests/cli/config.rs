@@ -3109,12 +3109,13 @@ contract AnotherCounterTest is Test {
 }
 "#,
     );
+    // The fuzz test can be skipped or interrupted after any number of runs.
     cmd.args(["test", "--fail-fast"]).assert_failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/AnotherCounterTest.sol:AnotherCounterTest
-[PASS] testFuzz_SetNumber(uint256) (runs: 0, [AVG_GAS])
+Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
+...
 [FAIL: EvmError: Revert] test_Failure() ([GAS])
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 }
