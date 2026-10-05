@@ -398,6 +398,91 @@ fn flaky_storage_layout_complex_json(cmd: _) {
 }
 
 #[casttest]
+async fn storage_layout_local_proxy(prj: _, cmd: _) {
+    prj.add_source(
+        "Proxy",
+        r#"
+contract Proxy {
+    fallback() external payable {
+        assembly {
+            let implementation := sload(0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc)
+            calldatacopy(0, 0, calldatasize())
+            let success := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            if iszero(success) { revert(0, returndatasize()) }
+            return(0, returndatasize())
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Vault",
+        r#"
+contract Vault {
+    address public owner;
+    uint256 public totalDeposits;
+}
+"#,
+    );
+
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let proxy = Address::with_last_byte(0xaa);
+    let implementation = Address::with_last_byte(0xbb);
+    // An EIP-1167 clone of the implementation, which matches no local artifact.
+    let clone = Address::with_last_byte(0xcc);
+
+    for (address, name) in [(proxy, "Proxy"), (implementation, "Vault")] {
+        let code = cmd
+            .forge_fuse()
+            .args(["inspect", name, "deployedBytecode"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        api.anvil_set_code(address, Bytes::from_str(code.trim()).unwrap()).await.unwrap();
+    }
+    let clone_code = format!(
+        "0x363d3d373d3d3d363d73{}5af43d82803e903d91602b57fd5bf3",
+        hex::encode(implementation)
+    );
+    api.anvil_set_code(clone, Bytes::from_str(&clone_code).unwrap()).await.unwrap();
+    for address in [proxy, clone] {
+        api.anvil_set_storage_at(address, U256::ZERO, Address::with_last_byte(1).into_word())
+            .await
+            .unwrap();
+        api.anvil_set_storage_at(address, U256::from(1), B256::with_last_byte(42)).await.unwrap();
+    }
+
+    for address in [proxy, clone] {
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args([
+                "storage",
+                &address.to_string(),
+                "--proxy",
+                &implementation.to_string(),
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+╭---------------+---------+------+--------+-------+-------+--------------------------------------------------------------------+---------------------╮
+| Name          | Type    | Slot | Offset | Bytes | Value | Hex Value                                                          | Contract            |
++====================================================================================================================================================+
+| owner         | address | 0    | 0      | 20    | 1     | 0x0000000000000000000000000000000000000000000000000000000000000001 | src/Vault.sol:Vault |
+|---------------+---------+------+--------+-------+-------+--------------------------------------------------------------------+---------------------|
+| totalDeposits | uint256 | 1    | 0      | 32    | 42    | 0x000000000000000000000000000000000000000000000000000000000000002a | src/Vault.sol:Vault |
+╰---------------+---------+------+--------+-------+-------+--------------------------------------------------------------------+---------------------╯
+
+
+"#]]);
+    }
+}
+
+#[casttest]
 async fn storage_root_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([

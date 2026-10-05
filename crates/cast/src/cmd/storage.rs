@@ -124,11 +124,23 @@ impl StorageArgs {
             eyre::bail!("Provided address has no deployed code and thus no storage");
         }
 
-        // Check if we're in a forge project and if we can find the address' code
+        // The layout comes from `--proxy` when provided, the values always from `address`.
+        let source_address = match self.proxy {
+            Some(proxy) => proxy.resolve(&provider).await?,
+            None => address,
+        };
+        let source_code = if source_address == address {
+            address_code
+        } else {
+            provider.get_code_at(source_address).block_id(block.unwrap_or_default()).await?
+        };
+
+        // Check if we're in a forge project and if we can find the source's code.
         let project = build.project()?;
-        if project.paths.has_input_files()
+        if !source_code.is_empty()
+            && project.paths.has_input_files()
             && let Some(artifact) =
-                compile_local_storage_layout(&project, &address_code, shell::is_json())?
+                compile_local_storage_layout(&project, &source_code, shell::is_json())?
         {
             return fetch_and_print_storage(provider, address, block, &artifact).await;
         }
@@ -144,10 +156,6 @@ impl StorageArgs {
                 })?;
                 foundry_block_explorers::Client::new(chain, api_key)?
             }
-        };
-        let source_address = match self.proxy {
-            Some(proxy) => proxy.resolve(&provider).await?,
-            None => address,
         };
         let source = find_source(client, source_address).await?;
         let metadata = source.items.first().unwrap();
