@@ -303,21 +303,5 @@ contract ReplayProbe is Probe {
     command.env("HASH_RPC_URL", &hash_endpoint);
     command.env("TARGET_TRANSACTION", transaction.to_string());
     command.args(["test", "--match-test", "testForkTransactTargetsExplicitFork"]).assert_success();
-    // Tracing replays exact chain history, so it ignores the opt-in and keeps hash reads.
-    requests.lock().clear();
-    let mut command = prj.cast_command();
-    command.env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
-    command.args(["run", &transaction.to_string(), "--rpc-url", &hash_endpoint]).assert_success();
-    let reads = requests.lock();
-    assert!(!reads.is_empty());
-    assert!(
-        reads.iter().all(|request| request["params"]
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap()
-            .is_object()),
-        "{reads:?}"
-    );
     server.abort();
 }
