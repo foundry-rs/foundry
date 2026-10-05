@@ -2241,7 +2241,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             randomBoolCall::SELECTOR => {
-                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::ONE);
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             randomBytesCall::SELECTOR => {
@@ -2339,7 +2339,7 @@ impl SymbolicExecutor {
                 Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBool => {
-                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::ONE);
                 Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBytes => {

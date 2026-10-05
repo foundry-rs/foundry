@@ -60,7 +60,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
@@ -296,61 +296,57 @@ impl CallArgs {
             config.chain = Some(chain);
         }
 
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_network_and_opts::<TempoEvmNetwork>(
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                self.run_with_network_and_opts::<TempoEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            super::validate_base_transaction_options(&self.tx)?;
-            return self
-                .run_with_network_and_opts::<BaseEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                super::validate_base_transaction_options(&self.tx)?;
+                self.run_with_network_and_opts::<BaseEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_network_and_opts::<MonadEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                self.run_with_network_and_opts::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_network_and_opts::<OpEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                self.run_with_network_and_opts::<OpEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
-                .await;
+                .await
+            }
+            NetworkVariant::Ethereum => {
+                self.run_with_network_and_opts::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
         }
-
-        self.run_with_network_and_opts::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            auth_preflight,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        )
-        .await
     }
 
     /// Returns whether resolving this call can disclose an authorization before the transaction
@@ -445,7 +441,7 @@ impl CallArgs {
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
-            if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
+            if debug_trace_call { Some(evm_opts.fork_endpoint_identity().await?) } else { None };
         let sender = match auth_sender {
             Some(sender) => sender,
             None => {
@@ -597,7 +593,7 @@ impl CallArgs {
             } else {
                 Default::default()
             };
-            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+            let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
             ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
             // The remote node executed this trace, so its reported family is authoritative for

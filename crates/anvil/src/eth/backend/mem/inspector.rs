@@ -1,6 +1,7 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::eth::macros::node_info;
+use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use alloy_sol_types::SolValue;
 use foundry_evm::{
@@ -133,14 +134,27 @@ impl AnvilInspector {
     /// Finish a transaction: print traces/logs, drain the tracer, and reset for the next tx.
     ///
     /// Returns the collected call trace nodes from the finished transaction.
-    pub fn finish_transaction(&mut self, config: &InspectorTxConfig) -> Vec<CallTraceNode> {
+    pub fn finish_transaction(
+        &mut self,
+        config: &InspectorTxConfig,
+        precompiles: &PrecompilesMap,
+    ) -> Vec<CallTraceNode> {
         // Print before draining so the tracer is still populated.
         if config.print_traces {
             self.print_traces(config.call_trace_decoder.clone());
         }
         self.print_logs();
 
-        let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
+        let mut traces =
+            self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
+        // Record inclusion using the executing EVM's map, while retaining the full Geth graph.
+        for node in &mut traces {
+            if node.parent.is_some() && !node.trace.kind.is_any_create() {
+                node.trace.maybe_precompile = Some(
+                    node.trace.value.is_zero() && precompiles.get(&node.trace.address).is_some(),
+                );
+            }
+        }
 
         self.reset_transaction(config);
 
