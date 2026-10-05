@@ -27,8 +27,8 @@ fn context() -> ForkContext {
     }
 }
 
-fn resolved(context: ForkContext) -> ResolvedFork {
-    ResolvedFork::new(
+fn resolved(context: ForkContext) -> Fork {
+    Fork::test(
         "http://localhost:8545",
         None,
         None,
@@ -38,7 +38,7 @@ fn resolved(context: ForkContext) -> ResolvedFork {
     )
 }
 
-fn block(resolved: &ResolvedFork, transactions: usize) -> AnyRpcBlock {
+fn block(resolved: &Fork, transactions: usize) -> AnyRpcBlock {
     let header =
         AnyHeader { number: resolved.number(), timestamp: 1_710_338_135, ..Default::default() };
     AnyRpcBlock::new(

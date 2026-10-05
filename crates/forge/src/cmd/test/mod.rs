@@ -70,7 +70,7 @@ use foundry_evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::{ExecutorBuilder, ShowmapDomain},
-    fork::ResolvedFork,
+    fork::Fork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
     opts::EvmOpts,
     traces::{
@@ -2147,7 +2147,7 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         execution: TestExecutionOptions,
-        resolved_fork: Option<&ResolvedFork>,
+        resolved_fork: Option<&Fork>,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
         let (evm_env, tx_env, fork) = if let Some(fork) = resolved_fork {
@@ -2191,7 +2191,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
-        resolved_fork: Option<&ResolvedFork>,
+        resolved_fork: Option<&Fork>,
     ) -> Result<(Libraries, TestOutcome)> {
         let NetworkPass { config, evm_opts, multi_network } = pass;
         let execution = TestExecutionOptions { multi_network, ..execution };

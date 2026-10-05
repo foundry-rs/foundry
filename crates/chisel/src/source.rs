@@ -18,7 +18,7 @@ use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
+    fork::Fork,
     opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -46,7 +46,7 @@ static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
 #[derive(Clone, Debug)]
 pub(crate) struct CachedBackend<FEN: FoundryEvmNetwork> {
     pub(crate) backend: Backend<FEN>,
-    pub(crate) resolved_fork: Option<ResolvedFork>,
+    pub(crate) resolved_fork: Option<Fork>,
 }
 
 /// [`SessionSource`] build output.

@@ -23,7 +23,7 @@ use foundry_evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
+    fork::Fork,
     opts::EvmOpts,
 };
 use rayon::prelude::*;
@@ -78,7 +78,7 @@ pub struct MutationBatchResult {
 #[derive(Clone)]
 pub struct MutationEvmConfig {
     pub opts: EvmOpts,
-    pub resolved_fork: Option<ResolvedFork>,
+    pub resolved_fork: Option<Fork>,
     pub create2_deployer_available: bool,
 }
 
@@ -781,7 +781,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
         let (evm_env, tx_env) = evm_opts
             .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(resolved_fork)
             .await?;
-        let fork_context = resolved_fork.map(ResolvedFork::context);
+        let fork_context = resolved_fork.map(Fork::context);
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
 

@@ -88,6 +88,12 @@ Do not encode protocol behavior only as a chain-ID branch in a tool. Put executi
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.
 
+A prepared [`Fork`](../../crates/evm/core/src/fork/mod.rs) owns the selected RPC block and shares
+its configured RPC client across preflight reads, environment construction, and backend creation.
+`EvmOpts` retains the user's requested selector; preparing `latest` does not rewrite that request.
+Changing the source or rolling the fork prepares a new snapshot. Endpoint identity checks still
+detect resets, while the backend owns mutable execution state and caching policy separately.
+
 ## Adding an execution family
 
 Start by writing down which parts differ from Ethereum: RPC envelopes, transaction validation,

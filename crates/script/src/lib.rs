@@ -51,7 +51,7 @@ use foundry_evm::{
     core::{
         Breakpoints, FoundryTransaction,
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
-        fork::ResolvedFork,
+        fork::Fork,
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -1008,9 +1008,9 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub source_chain_id: Option<u64>,
     pub sender_nonce: u64,
     sender_nonce_override: Option<u64>,
-    resolved_fork: Option<ResolvedFork>,
+    resolved_fork: Option<Fork>,
     /// Backends keyed by their complete resolved fork context.
-    backends: HashMap<ResolvedFork, Backend<FEN>>,
+    backends: HashMap<Fork, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
     pub batch: bool,
     /// Tempo transaction options applied to broadcast transactions.
@@ -1021,7 +1021,7 @@ async fn resolve_script_fork(
     config: &mut Config,
     evm_opts: &mut EvmOpts,
     active_networks: Option<NetworkConfigs>,
-) -> Result<Option<ResolvedFork>> {
+) -> Result<Option<Fork>> {
     if evm_opts.fork_url.is_none() {
         return Ok(None);
     }
@@ -1096,7 +1096,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     /// Returns the resolved fork when it still matches the configured source and selector.
-    pub fn resolved_fork(&self) -> Result<Option<&ResolvedFork>> {
+    pub fn resolved_fork(&self) -> Result<Option<&Fork>> {
         match (&self.evm_opts.fork_url, &self.resolved_fork) {
             (None, None) => Ok(None),
             (None, Some(_)) => Err(eyre::eyre!("resolved fork exists without a configured fork")),
@@ -1112,7 +1112,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         self.evm_opts.set_fork_url(fork_url);
     }
 
-    async fn ensure_resolved_fork(&mut self) -> Result<Option<ResolvedFork>> {
+    async fn ensure_resolved_fork(&mut self) -> Result<Option<Fork>> {
         if self.evm_opts.fork_url.is_none() {
             if self.resolved_fork.take().is_some() {
                 self.backends.clear();
@@ -1254,11 +1254,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     /// Resolves the configured fork and execution spec without constructing a database or runner.
     async fn resolve_execution_env(
         &mut self,
-    ) -> Result<(Option<ResolvedFork>, EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
+    ) -> Result<(Option<Fork>, EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
         let resolved = self.ensure_resolved_fork().await?;
         let (mut evm_env, tx_env) =
             self.evm_opts.env_with_resolved_fork::<_, _, TxEnvFor<FEN>>(resolved.as_ref()).await?;
-        let fork_context = resolved.as_ref().map(ResolvedFork::context);
+        let fork_context = resolved.as_ref().map(Fork::context);
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
@@ -1692,7 +1692,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn script_runner_env_revalidates_resolved_fork_hash() {
+    async fn script_runner_env_preserves_prepared_fork_after_reorg() {
         let (api, handle) = spawn(NodeConfig::test()).await;
         let prevrandao = B256::with_last_byte(0x42);
         api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
@@ -1733,8 +1733,7 @@ mod tests {
         assert_ne!(replacement.header.hash, pinned.hash());
         assert_ne!(replacement.header.mix_hash, Some(prevrandao));
 
-        // The environment is hash-revalidated here. The fork database remains number-pinned;
-        // full state and ancestry exactness is tracked in #15897.
+        // Reusing the prepared environment must not adopt the replacement block header.
         config.set_fork_url(handle.http_endpoint());
         match config._get_runner(None, false, false).await {
             Ok(runner) => {
