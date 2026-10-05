@@ -299,7 +299,7 @@ impl<'a> TUIContext<'a> {
             .find_source_mapping(
                 contract_name,
                 self.current_step().pc as u32,
-                self.debug_call().kind.is_any_create(),
+                self.call_kind().is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
@@ -1091,10 +1091,7 @@ impl TUIContext<'_> {
     fn cycle_layout(&mut self) {
         let layout = self.debugger_context.layout.next();
         self.debugger_context.layout = layout;
-        self.status = Some(StatusMessage {
-            kind: StatusKind::Info,
-            text: format!("Debugger layout: {}", layout.as_str()),
-        });
+        self.set_info(format!("Debugger layout: {}", layout.as_str()));
     }
 }
 
@@ -1841,18 +1838,18 @@ mod tests {
         let mut tui = TUIContext::new(&mut context);
         tui.init();
 
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Auto);
+        assert_eq!(tui.layout(), DebuggerLayout::Auto);
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.layout(), DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Vertical);
+        assert_eq!(tui.layout(), DebuggerLayout::Vertical);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: vertical");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.layout(), DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
     }
 

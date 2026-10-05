@@ -638,7 +638,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set the cancellation state checked during EVM execution.
     #[inline]
     pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
-        self.execution_cancellation = Some(EvmExecutionCancellation::early_exit(early_exit));
+        self.set_execution_cancellation(EvmExecutionCancellation::early_exit(early_exit));
     }
 
     /// Set the complete cancellation state checked during EVM execution.

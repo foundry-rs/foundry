@@ -1092,7 +1092,7 @@ fn curl_call_accepts_named_chain_config(prj: _, cmd: _) {
 // Tests that invalid hex with uppercase 0X prefix also produces clear error
 #[casttest]
 fn cast_call_invalid_hex_uppercase_prefix(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",
@@ -1112,7 +1112,7 @@ Error: Invalid hex calldata '0X1': odd number of digits
 // Tests that invalid hex calldata (odd length) produces a clear error message
 #[casttest]
 fn cast_call_invalid_hex_calldata_error(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",
@@ -1132,7 +1132,7 @@ Error: Invalid hex calldata '0x0': odd number of digits
 // Tests that valid hex calldata works correctly
 #[casttest]
 fn cast_call_valid_hex_calldata(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",

@@ -868,11 +868,7 @@ fn minimize_int_by_search(
     let mut changed = false;
     while accepted_abs > rejected_abs + U256::ONE {
         let candidate_abs: U256 = rejected_abs + ((accepted_abs - rejected_abs) >> 1usize);
-        let candidate = if current.is_negative() {
-            I256::from_raw(candidate_abs.wrapping_neg())
-        } else {
-            I256::from_raw(candidate_abs)
-        };
+        let candidate = signed_candidate_with_abs(current, candidate_abs);
         if accept_candidate(value, DynSolValue::Int(candidate, bits), try_value) {
             accepted_abs = candidate_abs;
             changed = true;

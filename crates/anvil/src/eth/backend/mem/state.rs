@@ -540,10 +540,8 @@ mod tests {
         assert_eq!(storage_root(&storage), EMPTY_ROOT_HASH);
 
         let mut accounts = AddressMap::default();
-        accounts.insert(
-            alloy_primitives::Address::with_last_byte(1),
-            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
+        accounts
+            .insert(alloy_primitives::Address::with_last_byte(1), DbAccount::new_not_existing());
         assert_eq!(state_root(&accounts), EMPTY_ROOT_HASH);
         assert_eq!(StateRootCache::default().root(&accounts), EMPTY_ROOT_HASH);
     }
@@ -592,10 +590,7 @@ mod tests {
         check(&overlay, &full);
 
         // A deleted account must lose both its account leaf and its storage trie.
-        overlay.insert(
-            address,
-            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
+        overlay.insert(address, DbAccount::new_not_existing());
         full.remove(&address);
         check(&overlay, &full);
 

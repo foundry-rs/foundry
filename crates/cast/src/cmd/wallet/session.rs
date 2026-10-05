@@ -742,8 +742,10 @@ fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::wallet::raw_wallet;
     use alloy_primitives::address;
     use foundry_common::tempo::SessionStatus;
+    use foundry_wallets::RawWalletOpts;
     use std::{ffi::OsStr, sync::Mutex};
     use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
@@ -872,13 +874,10 @@ mod tests {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
                 let root = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-                let wallet = WalletOpts {
-                    raw: foundry_wallets::RawWalletOpts {
-                        private_key: Some(ROOT_PRIVATE_KEY.to_string()),
-                        ..Default::default()
-                    },
+                let wallet = raw_wallet(RawWalletOpts {
+                    private_key: Some(ROOT_PRIVATE_KEY.to_string()),
                     ..Default::default()
-                };
+                });
 
                 let entry = build_session_entry(
                     root,
