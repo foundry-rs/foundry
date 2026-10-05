@@ -1791,7 +1791,6 @@ fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u
 mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
-    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
     use alloy_rpc_types::TransactionReceipt;
@@ -1839,14 +1838,7 @@ mod tests {
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
             .unwrap();
-        assert_eq!(
-            provider
-                .get_transaction_count(sender)
-                .block_id(BlockId::number(block_number))
-                .await
-                .unwrap(),
-            0
-        );
+        assert_eq!(provider.get_transaction_count(sender).number(block_number).await.unwrap(), 0);
 
         match next_nonce_resolved(sender, &evm_opts, &fork).await {
             Ok(0) => panic!("the exact lookup fell back to the replacement block"),

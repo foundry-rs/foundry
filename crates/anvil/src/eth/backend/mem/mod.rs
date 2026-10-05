@@ -2157,7 +2157,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns the canonical hash for the given block number.
     pub(crate) fn block_hash_by_number(&self, number: u64) -> Option<B256> {
-        self.blockchain.hash(BlockNumber::Number(number).into(), self.slots_in_an_epoch)
+        self.blockchain.hash(BlockId::number(number), self.slots_in_an_epoch)
     }
 
     /// Returns the block and its hash for the given id
@@ -2493,17 +2493,16 @@ impl<N: Network> Backend<N> {
         block_id: Option<T>,
     ) -> Result<u64, BlockchainError> {
         let current = self.best_number();
-        let requested =
-            match block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest)) {
-                BlockId::Hash(hash) => {
-                    self.block_by_hash(hash.block_hash)
-                        .await?
-                        .ok_or(BlockchainError::BlockNotFound)?
-                        .header
-                        .number
-                }
-                BlockId::Number(num) => self.convert_block_number(Some(num)),
-            };
+        let requested = match block_id.map(Into::into).unwrap_or(BlockId::latest()) {
+            BlockId::Hash(hash) => {
+                self.block_by_hash(hash.block_hash)
+                    .await?
+                    .ok_or(BlockchainError::BlockNotFound)?
+                    .header
+                    .number
+            }
+            BlockId::Number(num) => self.convert_block_number(Some(num)),
+        };
 
         if requested > current {
             Err(BlockchainError::BlockOutOfRange(current, requested))
@@ -6680,7 +6679,7 @@ where
             Some(BlockRequest::Number(number)) => number,
             None => self.best_number(),
         };
-        let block_id = BlockId::Number(BlockNumber::Number(block_number));
+        let block_id = BlockId::number(block_number);
 
         if let Some(block) = self.get_block(block_id) {
             return self.mined_trace_call_at_tx_index(
@@ -7708,7 +7707,7 @@ where
     ) -> Result<Vec<TraceResult>, BlockchainError> {
         let number = self.convert_block_number(Some(block_number));
 
-        if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
+        if let Some(block) = self.get_block(BlockId::number(number)) {
             return Ok(self.debug_trace_mined_block(&block, opts).await);
         }
 
