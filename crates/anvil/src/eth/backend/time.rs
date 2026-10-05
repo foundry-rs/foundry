@@ -204,8 +204,8 @@ impl TimeManager {
             (current.saturating_add(state.offset) as u64, false)
         };
         // Equal timestamps are only allowed when explicitly requested (exact override or
-        // interval, e.g. `--block-time 0`). On the default path timestamps must strictly
-        // increase.
+        // interval, e.g. `anvil_setBlockTimestampInterval(0)`). On the default path timestamps must
+        // strictly increase.
         let allow_equal = exact_timestamp.is_some() || state.interval.is_some();
         let too_low = if allow_equal {
             next_timestamp < last_timestamp
