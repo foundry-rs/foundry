@@ -179,7 +179,7 @@ impl fmt::Debug for Fork {
 }
 
 fn source_id(url: &str, headers: Option<&[String]>, jwt: Option<&str>) -> B256 {
-    let encoded = Vec::from(b"foundry-resolved-fork-source-v1".as_slice());
+    let mut encoded = Vec::from(b"foundry-resolved-fork-source-v1".as_slice());
     encode_source_part(&mut encoded, url.as_bytes());
     let headers = headers.unwrap_or_default();
     encoded.extend_from_slice(
