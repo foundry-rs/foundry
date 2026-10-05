@@ -4007,12 +4007,12 @@ impl<N: Network> Backend<N> {
         }
 
         if let Some(fork) = self.get_fork()
-            && fork.predates_fork(number)
+            && fork.predates_fork_inclusive(number)
         {
             return Ok(fork.trace_block(number).await?);
         }
 
-        Ok(vec![])
+        Err(BlockchainError::BlockNotFound)
     }
 
     /// Executes a transaction call and returns requested parity trace results.
@@ -4061,12 +4061,13 @@ impl<N: Network> Backend<N> {
         .await
     }
 
-    /// Replays all transactions in a block and returns the requested traces for each transaction
+    /// Replays all transactions in a block and returns the requested traces for each transaction,
+    /// or `None` if the block is unknown.
     pub async fn trace_replay_block_transactions(
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
+    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, BlockchainError> {
         ensure_mined_trace_block(block)?;
         let block_number = self.convert_block_number(Some(block));
 
@@ -4074,25 +4075,28 @@ impl<N: Network> Backend<N> {
         if let Some(results) =
             self.mined_parity_trace_replay_block_transactions(block_number, &trace_types)?
         {
-            return Ok(results);
+            return Ok(Some(results));
         }
 
         // Fallback to fork if block predates fork
         if let Some(fork) = self.get_fork()
-            && fork.predates_fork(block_number)
+            && fork.predates_fork_inclusive(block_number)
         {
-            return Ok(fork.trace_replay_block_transactions(block_number, trace_types).await?);
+            return Ok(Some(
+                fork.trace_replay_block_transactions(block_number, trace_types).await?,
+            ));
         }
 
-        Ok(vec![])
+        Ok(None)
     }
 
-    /// Replays a mined transaction and returns the requested traces.
+    /// Replays a mined transaction and returns the requested traces, or `None` if the transaction
+    /// is unknown.
     pub async fn trace_replay_transaction(
         &self,
         hash: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResultsWithTransactionHash, BlockchainError> {
+    ) -> Result<Option<TraceResultsWithTransactionHash>, BlockchainError> {
         let mined = self.blockchain.storage.read().transactions.contains_key(&hash);
 
         // If the transaction was mined locally, replay it locally. Do not fall
@@ -4106,12 +4110,15 @@ impl<N: Network> Backend<N> {
             })??
         } else if let Some(fork) = self.get_fork() {
             // Not known locally: forward to the fork if present.
-            fork.trace_replay_transaction(hash, trace_types).await?
+            let Some(full_trace) = fork.trace_replay_transaction(hash, trace_types).await? else {
+                return Ok(None);
+            };
+            full_trace
         } else {
-            return Err(BlockchainError::TransactionNotFound);
+            return Ok(None);
         };
 
-        Ok(TraceResultsWithTransactionHash { transaction_hash: hash, full_trace })
+        Ok(Some(TraceResultsWithTransactionHash { transaction_hash: hash, full_trace }))
     }
 
     /// Traces a raw transaction without committing it to the chain state or mempool.
@@ -4340,6 +4347,9 @@ impl<N: Network> Backend<N> {
         let start = filter.from_block.unwrap_or(best_number);
         let end = filter.to_block.unwrap_or(best_number);
 
+        if start > best_number || end > best_number {
+            return Err(BlockchainError::BlockNotFound);
+        }
         if start > end {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "invalid block range, ensure that to block is greater than from block".to_string(),

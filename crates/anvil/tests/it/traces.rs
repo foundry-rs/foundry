@@ -1623,8 +1623,83 @@ async fn test_trace_replays_report_unavailable_historical_state() {
             [TraceType::Trace].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     assert!(genesis.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_unknown_block_and_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let head = provider.get_block_number().await.unwrap();
+    let next = BlockId::number(head + 1);
+
+    let error = provider.trace_block(next).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+    let replays = provider
+        .client()
+        .request::<_, Option<Vec<TraceResultsWithTransactionHash>>>(
+            "trace_replayBlockTransactions",
+            (next, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replays, None);
+
+    let replay = provider
+        .client()
+        .request::<_, Option<TraceResults>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, None);
+
+    let filter = TraceFilter::default().from_block(head).to_block(head + 1);
+    let error = provider.trace_filter(&filter).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_fork_block() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(1))
+            .from(accounts[0].address()),
+    );
+    origin_handle
+        .http_provider()
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let fork_block = provider.get_block_number().await.unwrap();
+
+    // The fork block is not stored locally, so its traces come from the fork.
+    assert_eq!(provider.trace_block(BlockId::latest()).await.unwrap().len(), 1);
+    assert_eq!(provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap().len(), 1);
+
+    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let filter = TraceFilter::default().from_block(fork_block).to_block(fork_block + 1);
+    let blocks = provider
+        .trace_filter(&filter)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|trace| trace.block_number.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(blocks, [fork_block, fork_block + 1]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2691,6 +2766,7 @@ async fn test_trace_replay_block_transactions_local() {
             vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
 
     // Verify we have traces for both transactions
@@ -2808,6 +2884,18 @@ async fn test_trace_replay_transaction_fork() {
     }
     assert_eq!(replays[0].transaction_hash, hash);
     assert_eq!(replays[0], replays[1]);
+
+    // A hash unknown upstream as well is null.
+    let unknown = handle
+        .http_provider()
+        .client()
+        .request::<_, Option<TraceResultsWithTransactionHash>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2848,6 +2936,7 @@ async fn test_trace_replay_state_diff_account_lifecycle() {
             [TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(block.len(), expected.len());
 
@@ -2907,6 +2996,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
                 trace_types.iter().copied().collect(),
             )
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(block_results.len(), hashes.len());
         for (index, hash) in hashes.iter().copied().enumerate() {
