@@ -29,7 +29,9 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::MemDb,
-    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
+    traces::{
+        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
+    },
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -641,10 +643,13 @@ pub struct MinedTransaction<N: Network> {
 }
 
 impl<N: Network> MinedTransaction<N> {
-    /// Returns the traces of the transaction for `trace_transaction`
+    /// Returns the traces of the transaction for `trace_transaction`.
+    ///
+    /// Like simulated traces, these omit nested zero-value precompile calls identified during
+    /// execution, regardless of subsequent changes to the node configuration.
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(
-            self.info.traces.clone(),
+            exclude_precompile_calls(self.info.traces.clone()),
             None,
             TracingInspectorConfig::default_parity(),
         )
@@ -683,6 +688,33 @@ impl<N: Network> MinedTransaction<N> {
             })
             .collect()
     }
+}
+
+/// Detaches precompile calls identified during execution from the call graph, as the tracing
+/// inspector does when configured to exclude precompile calls.
+///
+/// Mined transactions keep these calls for the Geth-style traces, which include them.
+fn exclude_precompile_calls(mut nodes: Vec<CallTraceNode>) -> Vec<CallTraceNode> {
+    for idx in 0..nodes.len() {
+        if nodes[idx].is_precompile()
+            && let Some(parent) = nodes[idx].parent
+            && let Some(position) = nodes[parent].children.iter().position(|&child| child == idx)
+        {
+            let parent = &mut nodes[parent];
+            parent.children.remove(position);
+            parent.ordering.retain_mut(|member| match member {
+                TraceMemberOrder::Call(child) if *child == position => false,
+                TraceMemberOrder::Call(child) => {
+                    if *child > position {
+                        *child -= 1;
+                    }
+                    true
+                }
+                _ => true,
+            });
+        }
+    }
+    nodes
 }
 
 /// Intermediary Anvil representation of a receipt

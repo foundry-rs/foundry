@@ -4,9 +4,11 @@ use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip2718::Encodable2718};
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256, bytes};
+use alloy_provider::{Provider, ext::TraceApi};
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking, trace::parity::Action,
+};
 use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use axum::{Json, Router, routing::post};
@@ -951,4 +953,42 @@ async fn inferred_optimism_fork_uses_optimism_base_fee_params() {
 
     let block = fork_provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.base_fee_per_gas, Some(INITIAL_BASE_FEE + INITIAL_BASE_FEE * 5 / 250));
+}
+
+// Mined traces omit nested calls to OP's own precompiles, such as P256VERIFY at 0x100 from Fjord,
+// which Ethereum's precompiles at the mapped spec do not include.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_omits_nested_op_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test().with_optimism()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Zero-value STATICCALL to 0x100, then a zero-value CALL to 0xbeef.
+    let caller = Address::repeat_byte(0x42);
+    let code = bytes!("60006000600060006101005afa506000600060006000600061beef5af15000");
+    api.anvil_set_code(caller, code).await.unwrap();
+
+    let tx = TransactionRequest::default().from(from).to(caller);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+    let targets = traces
+        .iter()
+        .map(|trace| match &trace.action {
+            Action::Call(call) => call.to,
+            action => panic!("expected a call, got {action:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(targets, [caller, Address::left_padding_from(&[0xbe, 0xef])]);
+
+    let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+    assert_eq!(replay.trace, traces);
 }
