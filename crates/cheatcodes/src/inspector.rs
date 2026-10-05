@@ -80,6 +80,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+mod env_overrides;
+pub use env_overrides::EnvOverrideState;
+
 mod utils;
 
 pub mod analysis;
@@ -274,77 +277,6 @@ pub struct RecordDebugStepInfo {
     pub start_node_idx: usize,
     /// The original tracer config when the recording starts.
     pub original_tracer_config: TracingInspectorConfig,
-}
-
-/// Environment overrides applied at the opcode level.
-///
-/// In isolation mode (and inside the synthetic transactions used by
-/// `--gas-report` / `--isolate`) the transaction environment is zeroed for
-/// fee-accounting purposes, so cheatcodes that mutate the env (e.g.
-/// `vm.fee`, `vm.txGasPrice`, `vm.blobhashes`) cannot rely on those
-/// mutations being visible to contracts via the `BASEFEE`, `GASPRICE` and
-/// `BLOBHASH` opcodes. These overrides are applied in `step_end` to fix
-/// the value that was just pushed onto the stack.
-///
-/// # Semantics when invoked from inside the synthetic isolation transaction
-///
-/// `vm.fee` / `vm.txGasPrice` / `vm.blobhashes` consult
-/// [`Cheatcodes::in_isolation_context`]; when set, they only update these
-/// overrides (so `tx.gas_price = 0` continues to apply to fee accounting and
-/// EIP-4844 inner-tx validation does not reject the synthetic call) and
-/// leave the real env untouched. After the inner transaction returns, the
-/// outer env is restored from the cached snapshot taken before
-/// `transact_inner`, which means:
-///
-/// - the override **does** persist for subsequent `BASEFEE`, `GASPRICE` and `BLOBHASH` reads (this
-///   hook fires in `step_end` regardless of isolation),
-/// - `vm.getBlobhashes()` also consults these overrides, so it returns the correct value.
-/// - but the real `block.basefee` / `tx.gas_price` / `tx.blob_hashes` do **not** reflect the
-///   cheatcode value, so other non-opcode env consumers will not see it.
-///
-/// Calling these cheatcodes outside isolation behaves as before (real env
-/// is also mutated and the override mirrors it).
-#[derive(Clone, Debug, Default)]
-pub struct EnvOverrides {
-    /// Override for the `BASEFEE` opcode (set via `vm.fee`).
-    pub basefee: Option<u64>,
-    /// Base fee restored from a snapshot during isolation, valid until the fork is rolled.
-    pub implicit_basefee: Option<u64>,
-    /// Override for the `GASPRICE` opcode (set via `vm.txGasPrice`).
-    pub gas_price: Option<u128>,
-    /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
-    pub blob_hashes: Option<Vec<B256>>,
-    /// `tx.gas_price` captured at snapshot time when no gas_price override was
-    /// active. `sync_tx_after_env_override_restore` uses this to restore the
-    /// real pre-override value (not hardcoded 0) on revert.
-    pub pre_override_gas_price: Option<u128>,
-    /// `tx.tx_type` captured at snapshot time when no blob_hashes override was
-    /// active. Prevents tx_type being stuck at EIP4844 after reverting from a
-    /// blobhashes-set state.
-    pub pre_override_tx_type: Option<u8>,
-    /// `tx.blob_hashes` captured at snapshot time when no blob_hashes override
-    /// was active.
-    pub pre_override_blob_hashes: Option<Vec<B256>>,
-    /// The opcode about to run (captured in `step`, consumed in `step_end`),
-    /// used to know what was just executed when `step_end` fires — at that
-    /// point `interpreter.bytecode.opcode()` already points at the *next*
-    /// instruction.
-    pending_opcode: Option<u8>,
-    /// Pending index for the `BLOBHASH` opcode, captured in `step` (where
-    /// the index is still on top of the stack) for use in `step_end` (after
-    /// the opcode has consumed it and pushed the looked-up hash).
-    pending_blobhash_index: Option<u64>,
-}
-
-impl EnvOverrides {
-    /// Whether any override is set.
-    #[inline]
-    pub const fn is_any_set(&self) -> bool {
-        self.basefee.is_some()
-            || self.implicit_basefee.is_some()
-            || self.gas_price.is_some()
-            || self.blob_hashes.is_some()
-    }
 }
 
 /// A callback registered for a storage access hook.
@@ -884,27 +816,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecFor<FEN>>,
 
-    /// Opcode-level environment overrides for `BASEFEE`, `GASPRICE` and
-    /// `BLOBHASH`. Set by `vm.fee`, `vm.txGasPrice`, `vm.blobhashes` and
-    /// applied in [`Inspector::step_end`].
-    ///
-    /// Needed because in isolation mode the synthetic inner transaction
-    /// zeroes the corresponding tx/block env fields for fee-accounting.
-    ///
-    /// Keyed by active fork ID (`None` -> local) so that multi-fork tests do not bleed overrides
-    /// across forks when `vm.selectFork` / `vm.createSelectFork` switches the active fork.
-    pub env_overrides: HashMap<Option<LocalForkId>, EnvOverrides>,
-
-    /// Per-state-snapshot copies of [`Self::env_overrides`], captured by
-    /// `vm.snapshotState` and restored by `vm.revertToState[AndDelete]`.
-    ///
-    /// `env_overrides` lives on the cheatcode inspector rather than in
-    /// `EvmEnv`, so the backend's snapshot/revert mechanism does not see
-    /// it. Without this, an override set after a snapshot would survive a
-    /// `revertToState`, and the BASEFEE/GASPRICE/BLOBHASH opcodes (which
-    /// the override layer rewrites in `step_end`) would keep returning
-    /// the post-snapshot value even though `EvmEnv` was rolled back.
-    pub env_overrides_snapshots: HashMap<U256, HashMap<Option<LocalForkId>, EnvOverrides>>,
+    /// Per-fork opcode environment overrides and their state-snapshot copies.
+    pub env_overrides: EnvOverrideState,
 
     /// Per-state-snapshot copies of [`Self::fork_block_number_override`].
     pub fork_block_number_override_snapshots: HashMap<U256, Option<u64>>,
@@ -1014,7 +927,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
             env_overrides: Default::default(),
-            env_overrides_snapshots: Default::default(),
             fork_block_number_override_snapshots: Default::default(),
             #[cfg(feature = "monad")]
             context_snapshots: Default::default(),
@@ -1247,17 +1159,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
         }
-    }
-
-    /// Returns the env overrides for the given fork (`None` = no-fork / local).
-    pub fn env_overrides_for(&self, fork_id: Option<U256>) -> Option<&EnvOverrides> {
-        self.env_overrides.get(&fork_id).filter(|o| o.is_any_set())
-    }
-
-    /// Returns a mutable reference to the env overrides for the given fork, inserting a
-    /// default entry if absent.
-    pub fn env_overrides_for_mut(&mut self, fork_id: Option<U256>) -> &mut EnvOverrides {
-        self.env_overrides.entry(fork_id).or_default()
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
@@ -2140,7 +2041,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
-        self.env_overrides.values().any(EnvOverrides::is_any_set)
+        self.env_overrides.is_any_set()
     }
 
     /// Returns struct definitions from the analysis, if available.
@@ -2296,7 +2197,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if !self.env_overrides.is_empty() {
             let fork_id = ecx.db().active_fork_id();
             if let Some(env_overrides) =
-                self.env_overrides.get_mut(&fork_id).filter(|o| o.is_any_set())
+                self.env_overrides.get_mut(fork_id).filter(|o| o.is_any_set())
             {
                 // Always clear stale pending state first so a leftover value from
                 // a prior step (e.g. when `peek` failed, or when an override
@@ -2378,7 +2279,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // a blind `pop()+push()` would corrupt the failing frame.
         if !self.env_overrides.is_empty() {
             let fork_id = ecx.db().active_fork_id();
-            if self.env_overrides.get(&fork_id).is_some_and(|o| o.is_any_set()) {
+            if self.env_overrides.get(fork_id).is_some_and(|o| o.is_any_set()) {
                 // Mirrors the pattern used by `meter_gas_record`: when `action` is
                 // `Some` with an `instruction_result`, the opcode has set a
                 // non-continue result (halt/revert/error) — i.e. it didn't push
@@ -2391,7 +2292,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     .and_then(|a| a.instruction_result())
                     .is_some();
                 if opcode_failed {
-                    if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) {
+                    if let Some(env_overrides) = self.env_overrides.get_mut(fork_id) {
                         env_overrides.pending_opcode = None;
                         env_overrides.pending_blobhash_index = None;
                     }
@@ -3326,34 +3227,22 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// `env_overrides.pending_opcode` for us.
     #[cold]
     fn apply_env_overrides(&mut self, interpreter: &mut Interpreter, fork_id: Option<U256>) {
-        let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) else { return };
+        let Some(env_overrides) = self.env_overrides.get_mut(fork_id) else { return };
         let Some(opcode) = env_overrides.pending_opcode.take() else { return };
-        match opcode {
-            op::BASEFEE => {
-                if let Some(basefee) = env_overrides.basefee.or(env_overrides.implicit_basefee) {
-                    // BASEFEE pushed one value; replace it.
-                    Self::replace_top_of_stack(interpreter, U256::from(basefee));
-                }
-            }
-            op::GASPRICE => {
-                if let Some(gas_price) = env_overrides.gas_price {
-                    // GASPRICE pushed one value; replace it.
-                    Self::replace_top_of_stack(interpreter, U256::from(gas_price));
-                }
-            }
-            op::BLOBHASH => {
-                let blob_hashes = env_overrides.blob_hashes.clone();
-                let blobhash_index = env_overrides.pending_blobhash_index.take();
-                if let Some(ref blob_hashes) = blob_hashes
-                    && let Some(index) = blobhash_index
-                {
-                    // BLOBHASH popped the index and pushed the hash; replace
-                    // the hash with our override (zero for out-of-range, per EIP-4844).
-                    let hash = blob_hashes.get(index as usize).copied().unwrap_or_default();
-                    Self::replace_top_of_stack(interpreter, hash.into());
-                }
-            }
-            _ => {}
+        // Each overridden opcode pushed one value; replace it with the override.
+        let value = match opcode {
+            op::BASEFEE => env_overrides.basefee_override().map(U256::from),
+            op::GASPRICE => env_overrides.gas_price_override().map(U256::from),
+            // BLOBHASH popped the index captured in `step` and pushed the hash.
+            op::BLOBHASH => env_overrides
+                .pending_blobhash_index
+                .take()
+                .and_then(|index| env_overrides.blob_hash_override(index))
+                .map(Into::into),
+            _ => None,
+        };
+        if let Some(value) = value {
+            Self::replace_top_of_stack(interpreter, value);
         }
     }
 
@@ -4257,6 +4146,7 @@ const fn will_exit(action: &InterpreterAction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use env_overrides::EnvOverrides;
 
     fn cheats(flag: bool, broadcast: Option<Broadcast>) -> Cheatcodes {
         let config = CheatsConfig { batch_rewrite_creates: flag, ..Default::default() };
@@ -4336,21 +4226,45 @@ mod tests {
         assert!(!cheats.has_recording_accesses_only_step_hook());
 
         cheats.gas_metering.reset = false;
-        cheats.env_overrides.insert(None, EnvOverrides { basefee: Some(1), ..Default::default() });
+        cheats.env_overrides.update(None, |o| o.basefee = Some(1));
         assert!(!cheats.has_recording_accesses_only_step_hook());
     }
 
     #[test]
-    fn inactive_env_override_entries_do_not_enable_opcode_hooks() {
+    fn env_override_hook_predicates() {
+        fn assert_hooks(cheats: &Cheatcodes, active: bool, case: &str) {
+            assert_eq!(cheats.has_step_hooks(), active, "step hooks: {case}");
+            assert_eq!(cheats.has_step_end_hooks(), active, "step_end hooks: {case}");
+        }
+
         let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
-        cheats.env_overrides.insert(None, EnvOverrides::default());
+        assert_hooks(&cheats, false, "empty map");
+        let snapshot_id = U256::from(7);
+        cheats.env_overrides.save_snapshot(snapshot_id, None, 0, 0, &[]);
 
-        assert!(!cheats.has_step_hooks());
-        assert!(!cheats.has_step_end_hooks());
+        cheats.env_overrides.update(None, |_| {});
+        assert_hooks(&cheats, false, "inactive entry");
 
-        cheats.env_overrides.get_mut(&None).unwrap().basefee = Some(1);
-        assert!(cheats.has_step_hooks());
-        assert!(cheats.has_step_end_hooks());
+        let active = [
+            EnvOverrides { basefee: Some(1), ..Default::default() },
+            EnvOverrides { implicit_basefee: Some(1), ..Default::default() },
+            EnvOverrides { gas_price: Some(1), ..Default::default() },
+            EnvOverrides { blob_hashes: Some(vec![B256::ZERO]), ..Default::default() },
+        ];
+        for overrides in active {
+            let case = format!("{overrides:?}");
+            cheats.env_overrides.update(None, |o| *o = overrides);
+            assert_hooks(&cheats, true, &case);
+        }
+
+        // Overrides on a fork that isn't active still enable the hooks.
+        cheats.env_overrides.restore_snapshot(snapshot_id, false);
+        cheats.env_overrides.update(Some(U256::from(1)), |o| o.basefee = Some(1));
+        assert_hooks(&cheats, true, "override on another fork");
+
+        // Restoring a snapshot taken without overrides turns the hooks off.
+        cheats.env_overrides.restore_snapshot(snapshot_id, false);
+        assert_hooks(&cheats, false, "after restoring an empty snapshot");
     }
 
     #[test]
