@@ -2,7 +2,10 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
+use crate::{
+    prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper},
+    source::CachedBackend,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
@@ -10,7 +13,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
     backend::Backend,
-    core::evm::FoundryEvmNetwork,
+    core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::decode_console_logs,
     inspectors::CheatsConfig,
     opts::{ExecutionSpecContext, resolve_execution_spec},
@@ -296,20 +299,38 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let backend = if let Some(backend) = &self.config.cached_backend {
-            backend.clone()
-        } else {
-            let opts = &self.config.evm_opts;
-            let backend = Backend::spawn(opts.get_fork(
-                &self.config.foundry_config,
-                opts.env.chain_id.unwrap_or_default(),
-                None,
-            ))?;
-            self.config.cached_backend = Some(backend.clone());
-            backend
+        let (mut evm_env, tx_env, backend, resolved_fork) = match self.config.cached_backend.clone()
+        {
+            Some(CachedBackend { backend, resolved_fork }) => {
+                let (evm_env, tx_env) = self
+                    .config
+                    .evm_opts
+                    .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(
+                        resolved_fork.as_ref(),
+                    )
+                    .await?;
+                (evm_env, tx_env, backend, resolved_fork)
+            }
+            None => {
+                let (evm_env, tx_env, resolved_fork) = self
+                    .config
+                    .evm_opts
+                    .env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+                    .await?;
+                let fork = self.config.evm_opts.get_fork_resolved(
+                    &self.config.foundry_config,
+                    evm_env.cfg_env.chain_id,
+                    resolved_fork.as_ref(),
+                );
+                let backend = Backend::spawn(fork)?;
+                self.config.cached_backend = Some(CachedBackend {
+                    backend: backend.clone(),
+                    resolved_fork: resolved_fork.clone(),
+                });
+                (evm_env, tx_env, backend, resolved_fork)
+            }
         };
-        let (mut evm_env, tx_env) = backend.env(&self.config.evm_opts).await?;
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
+        let fork_context = resolved_fork.as_ref().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
@@ -642,16 +663,13 @@ mod tests {
     use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
     use foundry_config::Config;
-    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
+    use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use solar::sema::Compiler;
     use std::sync::Mutex;
 
     #[cfg(feature = "monad")]
-    use foundry_evm::{
-        core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork},
-        executors::ExecutorBuilder,
-    };
+    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
 

@@ -26,10 +26,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::{
-    backend::Backend, core::evm::FoundryEvmNetwork, executors::ExecutorBuilder, fork::Fork,
-    opts::EvmOpts,
-};
+use foundry_evm::{fork::ResolvedFork, opts::EvmOpts};
 
 use crate::{
     cmd::test::{FilterArgs, RerunFailure},
@@ -132,21 +129,18 @@ pub struct MutationRunResult {
 /// - Per-file mutation handling with caching
 /// - Parallel mutation execution
 /// - Result aggregation and reporting
-pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
+pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
-    backend: Backend<FEN>,
-    executor_builder: ExecutorBuilder<FEN>,
+    resolved_fork: Option<ResolvedFork>,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let create2_deployer_available =
-        backend.can_use_create2_deployer(evm_opts.create2_deployer).await?;
-    let fork = backend.fork()?;
+        evm_opts.can_use_create2_deployer_resolved(resolved_fork.as_ref()).await?;
     let mutation_evm = MutationEvmConfig {
         opts: evm_opts.clone(),
-        backend,
-        executor_builder,
+        resolved_fork: resolved_fork.clone(),
         create2_deployer_available,
     };
     let num_workers = mutation_config.effective_workers();
@@ -182,7 +176,7 @@ pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
         &config,
         &execution_cache_output,
         &evm_opts,
-        fork.as_ref(),
+        resolved_fork.as_ref(),
         &mutation_config.filter_args,
         mutation_config.rerun_failures.as_deref(),
         num_workers,
@@ -415,7 +409,7 @@ fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&Fork>,
+    resolved_fork: Option<&ResolvedFork>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
@@ -433,7 +427,7 @@ fn mutation_execution_cache_key(
     mutation_execution_cache_key_from_parts_with_rerun_failures(
         config,
         evm_opts,
-        resolved_fork.map(Fork::fingerprint),
+        resolved_fork.map(ResolvedFork::fingerprint),
         filter_args,
         rerun_failures,
         num_workers,

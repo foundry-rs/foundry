@@ -28,10 +28,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
-use tokio::{
-    runtime::{Handle, Id},
-    sync::RwLock,
-};
+use tokio::sync::RwLock;
 use tower::Service;
 use url::Url;
 
@@ -98,7 +95,7 @@ pub enum RuntimeTransportError {
 #[derive(Clone, Debug)]
 pub struct RuntimeTransport {
     /// The inner actual transport used.
-    inner: Arc<RwLock<Option<(Id, InnerTransport)>>>,
+    inner: Arc<RwLock<Option<InnerTransport>>>,
     /// The URL to connect to.
     url: Url,
     /// The headers to use for requests.
@@ -336,25 +333,21 @@ impl RuntimeTransport {
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
         let this = self.clone();
         Box::pin(async move {
-            let runtime = Handle::current().id();
-            let inner = this.inner.read().await;
-            let transport = if let Some((id, transport)) = &*inner
-                && *id == runtime
-            {
-                transport.clone()
-            } else {
+            let mut inner = this.inner.read().await;
+            if inner.is_none() {
                 drop(inner);
-                let mut inner = this.inner.write().await;
-                // Connections may own tasks and I/O resources on their originating runtime.
-                // Reconnect when a shared client is used from another runtime.
-                if inner.as_ref().is_none_or(|(id, _)| *id != runtime) {
-                    *inner =
-                        Some((runtime, this.connect().await.map_err(TransportErrorKind::custom)?));
+                {
+                    let mut inner_mut = this.inner.write().await;
+                    if inner_mut.is_none() {
+                        *inner_mut =
+                            Some(this.connect().await.map_err(TransportErrorKind::custom)?);
+                    }
                 }
-                inner.as_ref().expect("transport is connected").1.clone()
-            };
+                inner = this.inner.read().await;
+            }
 
-            match transport {
+            // SAFETY: We just checked that the inner transport exists.
+            match inner.clone().expect("must've been initialized") {
                 InnerTransport::Http(mut http) => http
                     .call(req)
                     .await

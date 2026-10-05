@@ -88,18 +88,6 @@ Do not encode protocol behavior only as a chain-ID branch in a tool. Put executi
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.
 
-Fork creation is the boundary between a request and selected remote state. `CreateFork` contains
-only the request; `MultiFork` prepares the client, block, and identity and owns them with the remote
-backend. Scripts, tests, Chisel, and tracing create a pristine `Backend<FEN>` before preflight and
-clone it for execution. Nonce reads, CREATE2 checks, and environments use that backend's selected
-block. They do not carry a separate resolved snapshot alongside it. `EvmOpts` retains the requested
-selector, so preparing `latest` does not rewrite the request.
-
-Changing a script RPC explicitly selects another backend through the same fork manager. Exact
-identity governs remote-cache reuse; each runner retains its own mutable execution state. Mutation
-testing dispatches once for the campaign and shares the pristine typed backend across its baseline
-and workers. Endpoint checks still reject resets and execution-profile changes.
-
 ## Adding an execution family
 
 Start by writing down which parts differ from Ethereum: RPC envelopes, transaction validation,

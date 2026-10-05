@@ -1,6 +1,6 @@
 //! Validates and caches BAL post-state, and prepares transaction forks' parent-block BALs.
 
-use super::Fork;
+use super::ResolvedFork;
 use crate::opts::ForkContext;
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
@@ -25,7 +25,7 @@ use std::time::Duration;
 /// Fetches and validates a parent BAL without mutating a database or propagating BAL failures.
 pub(super) async fn prepare<P: Provider<AnyNetwork>>(
     provider: &P,
-    resolved: &Fork,
+    resolved: &ResolvedFork,
     block: &AnyRpcBlock,
 ) -> Option<BlockAccessList> {
     if !eligible_source(resolved.context())

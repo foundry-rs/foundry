@@ -28,6 +28,7 @@ use foundry_evm::{
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
+    fork::CreateFork,
     fuzz::{
         BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
@@ -86,8 +87,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     /// Variant counts for project enums, used to constrain fuzzed enum inputs.
     pub enum_bounds: EnumBounds,
 
-    /// Pristine backend cloned for every test execution.
-    pub backend: Backend<FEN>,
+    /// The fork to use at launch
+    pub fork: Option<CreateFork>,
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig<FEN>,
@@ -227,7 +228,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = self.backend.clone();
+        let db = Backend::spawn(self.fork.take())?;
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -584,6 +585,12 @@ pub struct MultiContractRunnerBuilder {
     pub sender: Option<Address>,
     /// The initial balance for each one of the deployed smart contracts
     pub initial_balance: U256,
+    /// The fork to use at launch
+    pub fork: Option<CreateFork>,
+    /// Source chain ID used to resolve the fork's hardfork schedule.
+    pub fork_chain_id: Option<ChainId>,
+    /// Exact hardfork reported by the fork endpoint.
+    pub fork_hardfork: Option<FoundryHardfork>,
     /// Project config.
     pub config: Arc<Config>,
     /// Parsed inline configuration.
@@ -617,13 +624,9 @@ pub struct MultiContractRunnerBuilder {
 }
 
 impl MultiContractRunnerBuilder {
-    fn create2_deployer_available<FEN: FoundryEvmNetwork>(
-        &self,
-        evm_opts: &EvmOpts,
-        backend: &Backend<FEN>,
-    ) -> bool {
+    fn create2_deployer_available(&self, evm_opts: &EvmOpts) -> bool {
         self.create2_deployer_available.unwrap_or_else(|| {
-            !backend.is_in_forking_mode()
+            self.fork.is_none()
                 && evm_opts.fork_url.is_none()
                 && evm_opts.create2_deployer == foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER
         })
@@ -635,6 +638,9 @@ impl MultiContractRunnerBuilder {
             inline_config,
             sender: None,
             initial_balance: U256::ZERO,
+            fork: None,
+            fork_chain_id: None,
+            fork_hardfork: None,
             line_coverage: false,
             debug: false,
             isolation: false,
@@ -694,6 +700,21 @@ impl MultiContractRunnerBuilder {
         self
     }
 
+    pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
+        self.fork = fork;
+        self
+    }
+
+    pub const fn with_fork_chain_id(mut self, chain_id: Option<ChainId>) -> Self {
+        self.fork_chain_id = chain_id;
+        self
+    }
+
+    pub const fn with_fork_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.fork_hardfork = hardfork;
+        self
+    }
+
     pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
         self
@@ -737,7 +758,6 @@ impl MultiContractRunnerBuilder {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         evm_opts: EvmOpts,
-        backend: Backend<FEN>,
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
         let root = &self.config.root;
@@ -767,7 +787,7 @@ impl MultiContractRunnerBuilder {
         let revert_decoder = RevertDecoder::new().with_abis(abis);
 
         let configured_libraries = self.config.libraries_with_remappings()?;
-        let create2 = if self.create2_deployer_available(&evm_opts, &backend) {
+        let create2 = if self.create2_deployer_available(&evm_opts) {
             match linker.link_with_create2_detailed(
                 configured_libraries.clone(),
                 evm_opts.create2_deployer,
@@ -897,14 +917,14 @@ impl MultiContractRunnerBuilder {
             literals(invariant_max_literals)
         };
 
-        let fork_context = backend.fork()?.as_ref().map(|fork| fork.context());
-        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
-        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        let fork_chain_id = self.fork_chain_id.or_else(|| {
+            (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)
+        });
         let hardfork = resolve_execution_spec(
             self.config.evm_version,
             self.config.hardfork,
             &mut evm_env,
-            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            ExecutionSpecContext::local_or_fork(fork_chain_id, self.fork_hardfork),
             None,
         );
         let spec_id = evm_env.cfg_env.spec;
@@ -930,7 +950,7 @@ impl MultiContractRunnerBuilder {
                 spec_id,
                 hardfork,
                 fork_chain_id,
-                fork_hardfork,
+                fork_hardfork: self.fork_hardfork,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
@@ -949,7 +969,7 @@ impl MultiContractRunnerBuilder {
                 config: self.config,
             },
 
-            backend,
+            fork: self.fork,
         })
     }
 }
@@ -1082,7 +1102,6 @@ pub(crate) fn is_generated_symbolic_regression_contract(abi: &JsonAbi) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::core::evm::EthEvmNetwork;
 
     fn abi_with_functions(functions: &[&str]) -> JsonAbi {
         let mut abi = JsonAbi::new();
@@ -1106,20 +1125,26 @@ mod tests {
     #[test]
     fn create2_deployer_availability_default_is_conservative() {
         let config = Arc::new(Config::default());
-        let builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
+        let mut builder = MultiContractRunnerBuilder::new(config, Arc::new(InlineConfig::new()));
         let mut evm_opts = EvmOpts::default();
-        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        assert!(builder.create2_deployer_available(&evm_opts, &backend));
+        assert!(builder.create2_deployer_available(&evm_opts));
+
+        builder.fork = Some(CreateFork {
+            enable_caching: false,
+            url: "http://localhost:8545".into(),
+            evm_opts: evm_opts.clone(),
+            resolved: None,
+        });
+        assert!(!builder.create2_deployer_available(&evm_opts));
+        builder.fork = None;
 
         evm_opts.fork_url = Some("http://localhost:8545".into());
-        assert!(!builder.create2_deployer_available(&evm_opts, &backend));
+        assert!(!builder.create2_deployer_available(&evm_opts));
         evm_opts.fork_url = None;
         evm_opts.create2_deployer = Address::ZERO;
-        assert!(!builder.create2_deployer_available(&evm_opts, &backend));
+        assert!(!builder.create2_deployer_available(&evm_opts));
         assert!(
-            builder
-                .with_create2_deployer_available(true)
-                .create2_deployer_available(&evm_opts, &backend)
+            builder.with_create2_deployer_available(true).create2_deployer_available(&evm_opts)
         );
     }
 }

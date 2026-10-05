@@ -50,6 +50,8 @@ use foundry_evm::{
     core::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
+        fork::ResolvedFork,
+        opts::EvmOpts,
     },
     traces::CallKind,
 };
@@ -1761,6 +1763,15 @@ where
     Ok(())
 }
 
+/// Returns `caller`'s nonce at an already resolved fork block.
+pub(super) async fn next_nonce_resolved(
+    caller: Address,
+    evm_opts: &EvmOpts,
+    fork: &ResolvedFork,
+) -> eyre::Result<u64> {
+    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
+}
+
 fn reject_access_key_create<N: Network>(
     tx: &N::TransactionRequest,
     uses_access_key: bool,
@@ -1793,7 +1804,6 @@ mod tests {
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
-    use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1832,10 +1842,8 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let backend =
-            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
-                .unwrap();
-        assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
+        assert_eq!(next_nonce_resolved(sender, &evm_opts, &fork).await.unwrap(), 1);
 
         provider
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
@@ -1850,7 +1858,7 @@ mod tests {
             0
         );
 
-        match backend.transaction_count(sender).await {
+        match next_nonce_resolved(sender, &evm_opts, &fork).await {
             Ok(0) => panic!("the exact lookup fell back to the replacement block"),
             Ok(1) | Err(_) => {}
             Ok(nonce) => panic!("unexpected nonce: {nonce}"),

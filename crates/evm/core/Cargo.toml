@@ -35,7 +35,6 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-provider.workspace = true
-alloy-rpc-client.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
