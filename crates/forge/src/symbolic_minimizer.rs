@@ -645,11 +645,10 @@ fn minimize_compound_value(
                 return true;
             }
             minimize_elements(&mut elements, |items| DynSolValue::Array(items.to_vec()), try_value)
-                .map(|candidate| {
+                .is_some_and(|candidate| {
                     *value = candidate;
                     true
                 })
-                .unwrap_or(false)
         }
         DynSolValue::FixedArray(mut elements) => {
             if let Some(candidate) = minimize_elements_batch(
@@ -681,11 +680,10 @@ fn minimize_compound_value(
                 |items| DynSolValue::FixedArray(items.to_vec()),
                 try_value,
             )
-            .map(|candidate| {
+            .is_some_and(|candidate| {
                 *value = candidate;
                 true
             })
-            .unwrap_or(false)
         }
         DynSolValue::Tuple(mut elements) => {
             if let Some(candidate) = minimize_elements_batch(
@@ -713,11 +711,10 @@ fn minimize_compound_value(
                 return true;
             }
             minimize_elements(&mut elements, |items| DynSolValue::Tuple(items.to_vec()), try_value)
-                .map(|candidate| {
+                .is_some_and(|candidate| {
                     *value = candidate;
                     true
                 })
-                .unwrap_or(false)
         }
         DynSolValue::CustomStruct { name, prop_names, mut tuple } => {
             if let Some(candidate) = minimize_elements_batch(
@@ -765,11 +762,10 @@ fn minimize_compound_value(
                 },
                 try_value,
             )
-            .map(|candidate| {
+            .is_some_and(|candidate| {
                 *value = candidate;
                 true
             })
-            .unwrap_or(false)
         }
         _ => false,
     }

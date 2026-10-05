@@ -454,16 +454,12 @@ impl ProjectCompiler {
                     let runtime_size = contract_size(*artifact, false).unwrap_or_default();
                     let init_size = contract_size(*artifact, true).unwrap_or_default();
 
-                    let is_dev_contract = artifact
-                        .abi
-                        .as_ref()
-                        .map(|abi| {
-                            abi.functions().any(|f| {
-                                f.test_function_kind().is_known()
-                                    || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
-                            })
+                    let is_dev_contract = artifact.abi.as_ref().is_some_and(|abi| {
+                        abi.functions().any(|f| {
+                            f.test_function_kind().is_known()
+                                || matches!(f.name.as_str(), "IS_TEST" | "IS_SCRIPT")
                         })
-                        .unwrap_or(false);
+                    });
 
                     let unique_name = if kept.len() > 1 {
                         format!(
