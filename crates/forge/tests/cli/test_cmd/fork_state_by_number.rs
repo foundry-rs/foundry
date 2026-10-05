@@ -80,6 +80,9 @@ interface Vm {
     function rpcUrl(string calldata) external view returns (string memory);
     function expectRevert(bytes calldata) external;
     function transact(bytes32) external;
+    function transact(uint256, bytes32) external;
+    function createFork(string calldata, bytes32) external returns (uint256);
+    function selectFork(uint256) external;
 }
 contract Counter {
     uint256 public n;
@@ -162,6 +165,80 @@ contract Probe {
     }
     // Also inherit the setting when the first fork is created by a cheatcode.
     prj.forge_command().args(["test", "--match-test", "testForkCheatcodes"]).assert_success();
+    // Inline config controls cheatcode-created forks in both directions.
+    let hash_endpoint = endpoint.replace("/number", "/hash");
+    for (configured, inline) in [(false, true), (true, false)] {
+        prj.update_config(|config| config.fork_state_by_number = configured);
+        prj.add_test(
+            "Inline.t.sol",
+            &format!(
+                r#"
+import {{Probe}} from "../src/Probe.sol";
+contract InlineProbe is Probe {{
+    /// forge-config: default.fork_state_by_number = {inline}
+    function testForkInlineConfig() public {{
+        vm.createSelectFork(vm.envString("HASH_RPC_URL"), 1);
+        checkState();
+    }}
+}}
+"#
+            ),
+        );
+        requests.lock().clear();
+        let mut command = prj.forge_command();
+        command.env("HASH_RPC_URL", &hash_endpoint);
+        command.args(["test", "--match-test", "testForkInlineConfig"]).assert_success();
+        let reads = requests.lock();
+        let target_reads = reads
+            .iter()
+            .filter(|request| request["params"][0] == json!(target))
+            .collect::<Vec<_>>();
+        assert!(!target_reads.is_empty());
+        for request in target_reads {
+            let block = request["params"].as_array().unwrap().last().unwrap();
+            assert_eq!(block.is_string(), inline, "configured={configured}, {request}");
+        }
+    }
+    prj.update_config(|config| config.fork_state_by_number = true);
+    // Numbered rolls must move between blocks with different state, not stay pinned or follow head.
+    // Anvil applies state overrides to the latest block, so mine first: block 2 = 9, head = 11.
+    api.mine_one().await.unwrap();
+    api.anvil_set_storage_at(target, U256::from(1), B256::from(U256::from(9))).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_storage_at(target, U256::from(1), B256::from(U256::from(11))).await.unwrap();
+    prj.add_test(
+        "Roll.t.sol",
+        r#"
+import {Probe} from "../src/Probe.sol";
+contract RollProbe is Probe {
+    function slot1() internal view returns (uint256) {
+        return uint256(vm.load(address(0x1234), bytes32(uint256(1))));
+    }
+    function testForkRollCrossesBlocks() public {
+        vm.createSelectFork(vm.rpcUrl("relay"), 1);
+        checkState();
+        require(slot1() == 0, "pinned block");
+        vm.rollFork(2);
+        checkState();
+        require(slot1() == 9, "rolled forward");
+        vm.rollFork(1);
+        require(slot1() == 0, "rolled back");
+    }
+}
+"#,
+    );
+    requests.lock().clear();
+    prj.forge_command()
+        .args(["test", "--match-test", "testForkRollCrossesBlocks"])
+        .assert_success();
+    let blocks = requests
+        .lock()
+        .iter()
+        .filter(|request| request["method"] == "eth_getStorageAt")
+        .map(|request| request["params"].as_array().unwrap().last().unwrap().clone())
+        .collect::<Vec<_>>();
+    assert!(blocks.contains(&json!("0x1")) && blocks.contains(&json!("0x2")), "{blocks:?}");
+    assert!(blocks.iter().all(|block| block == "0x1" || block == "0x2"), "{blocks:?}");
     // Transaction-targeted creation and rolling still use hashes even with the opt-in enabled.
     let transaction = api
         .send_transaction(
@@ -188,12 +265,25 @@ contract ReplayProbe is Probe {
         vm.rollFork(transaction);
         checkState();
     }
+    function testForkTransactTargetsExplicitFork() public {
+        bytes32 transaction = vm.envBytes32("TARGET_TRANSACTION");
+        uint256 hashFork = vm.createFork(vm.envString("HASH_RPC_URL"), transaction);
+        uint256 numberFork = vm.createSelectFork(vm.rpcUrl("relay"), 1);
+        // The explicit hash-addressed target is accepted while a number-addressed fork is active.
+        vm.transact(hashFork, transaction);
+        vm.selectFork(hashFork);
+        vm.expectRevert(bytes("vm.transact: transaction replay requires hash-addressed state; create a transaction-targeted fork or disable fork_state_by_number"));
+        this.replayOn(numberFork, transaction);
+    }
+    function replayOn(uint256 forkId, bytes32 transaction) external {
+        vm.transact(forkId, transaction);
+    }
 }
 "#,
     );
     requests.lock().clear();
     let mut command = prj.forge_command();
-    command.env("HASH_RPC_URL", endpoint.replace("/number", "/hash"));
+    command.env("HASH_RPC_URL", &hash_endpoint);
     command.env("TARGET_TRANSACTION", transaction.to_string());
     command.args(["test", "--match-test", "testForkTransactionTargetsUseHashes"]).assert_success();
     let reads = requests.lock();
@@ -207,6 +297,27 @@ contract ReplayProbe is Probe {
             .last()
             .unwrap()
             .is_object())
+    );
+    drop(reads);
+    let mut command = prj.forge_command();
+    command.env("HASH_RPC_URL", &hash_endpoint);
+    command.env("TARGET_TRANSACTION", transaction.to_string());
+    command.args(["test", "--match-test", "testForkTransactTargetsExplicitFork"]).assert_success();
+    // Tracing replays exact chain history, so it ignores the opt-in and keeps hash reads.
+    requests.lock().clear();
+    let mut command = prj.cast_command();
+    command.env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+    command.args(["run", &transaction.to_string(), "--rpc-url", &hash_endpoint]).assert_success();
+    let reads = requests.lock();
+    assert!(!reads.is_empty());
+    assert!(
+        reads.iter().all(|request| request["params"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .is_object()),
+        "{reads:?}"
     );
     server.abort();
 }
