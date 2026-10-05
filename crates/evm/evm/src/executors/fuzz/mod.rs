@@ -241,8 +241,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
-    /// If `should_fail` is set to `true`, then it will stop only when there's a success
-    /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case.
     #[allow(clippy::too_many_arguments)]
@@ -356,7 +354,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             address,
             call.reverter,
             self.executor_f.inspector().extra_cheatcode_addresses(),
-        ) || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
+        ) || self.executor_f.is_raw_call_mut_success(address, &mut call);
 
         let mut result = FuzzTestResult {
             success,
@@ -496,7 +494,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             address,
             call.reverter,
             state.0.inspector().extra_cheatcode_addresses(),
-        ) || state.0.is_raw_call_mut_success(address, &mut call, false);
+        ) || state.0.is_raw_call_mut_success(address, &mut call);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
