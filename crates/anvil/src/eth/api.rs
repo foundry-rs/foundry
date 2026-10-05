@@ -1185,8 +1185,7 @@ impl<N: Network> EthApi<N> {
         idx: Index,
     ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockHashAndIndex");
-        let number =
-            self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
+        let number = self.backend.ensure_block_number(Some(BlockId::hash(block_hash))).await?;
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(number)
         {
@@ -3662,13 +3661,9 @@ impl EthApi<FoundryNetwork> {
         overrides: EvmOverrides,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        self.do_estimate_gas(
-            request,
-            block_number.or_else(|| Some(BlockNumber::Pending.into())),
-            overrides,
-        )
-        .await
-        .map(U256::from)
+        self.do_estimate_gas(request, block_number.or_else(|| Some(BlockId::pending())), overrides)
+            .await
+            .map(U256::from)
     }
 
     /// Fills a transaction request with default values for missing fields.
@@ -3693,9 +3688,8 @@ impl EthApi<FoundryNetwork> {
 
         // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.gas_limit().is_none() {
-            let estimated_gas = self
-                .do_estimate_gas_typed(request.clone(), Some(BlockNumber::Pending.into()))
-                .await?;
+            let estimated_gas =
+                self.do_estimate_gas_typed(request.clone(), Some(BlockId::pending())).await?;
             request.set_gas_limit(estimated_gas as u64);
         }
 
@@ -4961,7 +4955,7 @@ impl EthApi<FoundryNetwork> {
                     continue;
                 };
 
-                let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
+                let receipts = match this.block_receipts(BlockId::hash(block.hash)).await {
                     Ok(Some(mut receipts)) => {
                         if let Some(hashes) = &hash_filter {
                             receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
@@ -5165,7 +5159,7 @@ impl EthApi<FoundryNetwork> {
         if let Some(nonce) = request.nonce {
             Ok(nonce)
         } else {
-            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await
+            self.get_transaction_count(from, Some(BlockId::pending())).await
         }
     }
 
