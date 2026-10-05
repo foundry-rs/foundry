@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, Bytes, U256,
+    Address, B256, Bytes, U256, address,
     hex::{self, FromHex},
 };
 use alloy_provider::{
@@ -261,7 +261,7 @@ async fn test_trace_raw_transaction_rejects_code_sender() {
     let tx = TransactionRequest::default()
         .from(from)
         .to(accounts[1].address())
-        .value(U256::from(1))
+        .value(U256::ONE)
         .with_gas_limit(21_000)
         .max_fee_per_gas(20_000_000_000)
         .max_priority_fee_per_gas(1_000_000_000);
@@ -535,7 +535,7 @@ async fn test_trace_call_state_diff_created_account() {
             "storage": {
                 (B256::ZERO.to_string()): {"*": {
                     "from": B256::ZERO.to_string(),
-                    "to": B256::from(U256::from(42)).to_string(),
+                    "to": B256::with_last_byte(42).to_string(),
                 }},
             },
         }))
@@ -682,7 +682,7 @@ async fn test_trace_call_state_diff_selfdestruct_hardfork() {
         let from = handle.dev_wallets().next().unwrap().address();
         api.anvil_set_code(contract, Bytes::from_hex("0x33ff").unwrap()).await.unwrap();
         api.anvil_set_balance(contract, U256::from(7)).await.unwrap();
-        api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(42))).await.unwrap();
+        api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(42)).await.unwrap();
 
         let traces =
             trace_call_state_diff(&provider, TransactionRequest::default().from(from).to(contract))
@@ -750,7 +750,7 @@ async fn test_trace_call_safe_at_fork_point() {
     assert_eq!(receipt3.block_number.unwrap(), fork_point_number + 1);
     assert_eq!(provider.get_block_number().await.unwrap(), fork_point_number);
 
-    let call_amount = U256::from(1);
+    let call_amount = U256::ONE;
     let call =
         WithOtherFields::new(TransactionRequest::default().to(to).value(call_amount).from(from));
 
@@ -980,6 +980,165 @@ async fn test_calls_reject_conflicting_fields() {
     let call = json!({ "from": from, "data": "0x602a", "input": "0x602a" });
     client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap();
     client.request::<_, Value>("trace_call", (&call, ["trace"], "latest")).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_omits_nested_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Zero-value CALL to the identity precompile, then a zero-value CALL to 0xbeef.
+    let caller = Address::repeat_byte(0x42);
+    let code =
+        Bytes::from_hex("0x6000600060006000600060045af1506000600060006000600061beef5af15000")
+            .unwrap();
+    api.anvil_set_code(caller, code).await.unwrap();
+
+    let tx = TransactionRequest::default().from(from).to(caller);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+    let hash = receipt.transaction_hash;
+
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0].subtraces, 1);
+    assert_eq!(traces[1].trace_address, vec![0]);
+    let Action::Call(call) = &traces[1].action else { panic!("expected a call") };
+    assert_eq!(call.to, Address::left_padding_from(&[0xbe, 0xef]));
+
+    let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+    assert_eq!(replay.trace, traces);
+
+    let block = provider.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    assert_eq!(block.into_iter().map(|trace| trace.trace).collect::<Vec<_>>(), traces);
+
+    // Parity filtering must leave both children in the stored Geth call graph.
+    let geth = provider
+        .debug_trace_transaction(
+            hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+    let GethTrace::CallTracer(frame) = geth else { panic!("expected a call trace") };
+    assert_eq!(
+        frame.calls.iter().map(|call| call.to.unwrap()).collect::<Vec<_>>(),
+        [Address::with_last_byte(4), Address::left_padding_from(&[0xbe, 0xef])]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let identity = Address::with_last_byte(4);
+
+    // CALL to the identity precompile forwarding 1 wei.
+    let caller = Address::repeat_byte(0x42);
+    api.anvil_set_code(caller, Bytes::from_hex("0x6000600060006000600160045af15000").unwrap())
+        .await
+        .unwrap();
+    // DELEGATECALL to the identity precompile, which inherits the frame's value.
+    let delegator = Address::repeat_byte(0x43);
+    api.anvil_set_code(delegator, Bytes::from_hex("0x600060006000600060045af45000").unwrap())
+        .await
+        .unwrap();
+
+    let tx = |to, value| TransactionRequest::default().from(from).to(to).value(U256::from(value));
+    for (tx, frames) in [
+        (tx(caller, 1), vec![caller, identity]),
+        (tx(delegator, 1), vec![delegator, identity]),
+        (tx(delegator, 0), vec![delegator]),
+        (tx(identity, 0).input(Bytes::from_static(b"echo").into()), vec![identity]),
+    ] {
+        let receipt =
+            provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+        let hash = receipt.transaction_hash;
+        let traces = provider.trace_transaction(hash).await.unwrap();
+        let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+        let targets = traces
+            .iter()
+            .map(|trace| match &trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, frames);
+
+        let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+        assert_eq!(replay.trace, traces);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_precompile_traces_survive_chain_id_changes() {
+    let p256 = Address::left_padding_from(&[1, 0]);
+    let target = Address::left_padding_from(&[0xbe, 0xef]);
+    let caller = Address::repeat_byte(0x42);
+    for (chain_id, replacement, expected_targets) in
+        [(31_337u64, 56u64, vec![caller, p256, target]), (56u64, 31_337u64, vec![caller, target])]
+    {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(1_718_863_501u64));
+        let (api, handle) = spawn(config.clone()).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_wallets().next().unwrap().address();
+
+        // STATICCALL to 0x0100, then CALL to 0xbeef. BSC installs P256 after Haber.
+        api.anvil_set_code(
+            caller,
+            Bytes::from_hex("0x60006000600060006101005afa506000600060006000600061beef5af15000")
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(from).to(caller),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let hash = receipt.transaction_hash;
+        let block = receipt.block_number.unwrap();
+        let before = provider.trace_transaction(hash).await.unwrap();
+        let targets = before
+            .iter()
+            .map(|trace| match &trace.trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, expected_targets, "chain ID {chain_id}");
+        assert_eq!(before[0].trace.subtraces, before.len() - 1);
+        for (index, trace) in before[1..].iter().enumerate() {
+            assert_eq!(trace.trace.trace_address, vec![index]);
+        }
+
+        api.anvil_set_chain_id(replacement).await.unwrap();
+        assert_eq!(provider.trace_transaction(hash).await.unwrap(), before);
+        assert_eq!(provider.trace_block(block.into()).await.unwrap(), before);
+        assert_eq!(
+            provider
+                .trace_filter(&TraceFilter::default().from_block(block).to_block(block))
+                .await
+                .unwrap(),
+            before
+        );
+
+        // The execution marker must also survive serialization into a fresh node.
+        let state = api.anvil_dump_state(None).await.unwrap();
+        let (restored_api, restored_handle) = spawn(config.with_chain_id(Some(replacement))).await;
+        assert!(restored_api.anvil_load_state(state).await.unwrap());
+        assert_eq!(restored_handle.http_provider().trace_transaction(hash).await.unwrap(), before);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1332,7 +1491,7 @@ async fn test_debug_trace_call_state_override() {
 
     let tx = TransactionRequest::default()
         .from(wallets[1].address())
-        .to("0x1234567890123456789012345678901234567890".parse().unwrap());
+        .to(address!("0x1234567890123456789012345678901234567890"));
 
     let override_json = r#"{
             "0x1234567890123456789012345678901234567890": {
@@ -1437,7 +1596,7 @@ async fn test_debug_trace_transaction_reports_transaction_gas() {
 
     let first = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)).nonce(nonce),
+            TransactionRequest::default().from(from).to(to).value(U256::ONE).nonce(nonce),
         ))
         .await
         .unwrap();
@@ -1492,7 +1651,7 @@ async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
     let transfer = TransactionRequest::default()
         .from(from)
         .to(accounts[1].address())
-        .value(U256::from(1))
+        .value(U256::ONE)
         .nonce(nonce);
     let _ = provider.send_transaction(WithOtherFields::new(transfer)).await.unwrap();
 
@@ -1580,7 +1739,7 @@ async fn test_debug_trace_transaction_replays_blob_base_fee() {
 async fn test_trace_replays_report_unavailable_historical_state() {
     let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
     let from = handle.dev_wallets().next().unwrap().address();
-    let tx = TransactionRequest::default().from(from).to(from).value(U256::from(1));
+    let tx = TransactionRequest::default().from(from).to(from).value(U256::ONE);
     let receipt = handle
         .http_provider()
         .send_transaction(WithOtherFields::new(tx))
@@ -1722,7 +1881,7 @@ async fn test_debug_trace_call_tx_index_fork_lazy_state() {
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
 
-    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1));
+    let tx = TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE);
     let _ = provider
         .send_transaction(WithOtherFields::new(tx))
         .await
@@ -1732,7 +1891,7 @@ async fn test_debug_trace_call_tx_index_fork_lazy_state() {
         .unwrap();
     let block_number = provider.get_block_number().await.unwrap();
 
-    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap();
+    let usdc = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
     let total_supply = TransactionRequest::default()
         .from(from)
         .to(usdc)
@@ -1770,8 +1929,8 @@ async fn test_trace_address_fork() {
 
     let input = hex::decode("43bcfab60000000000000000000000006b175474e89094c44da98b954eedeac495271d0f0000000000000000000000000000000000000000000000e0bd811c8769a824b00000000000000000000000000000000000000000000000e0ae9925047d8440b60000000000000000000000002e4777139254ff76db957e284b186a4507ff8c67").unwrap();
 
-    let from: Address = "0x2e4777139254ff76db957e284b186a4507ff8c67".parse().unwrap();
-    let to: Address = "0xe2f2a5c287993345a840db3b0845fbc70f5935a5".parse().unwrap();
+    let from = address!("0x2e4777139254ff76db957e284b186a4507ff8c67");
+    let to = address!("0xe2f2a5c287993345a840db3b0845fbc70f5935a5");
     let tx = TransactionRequest::default()
         .to(to)
         .from(from)
@@ -1968,8 +2127,8 @@ async fn test_trace_address_fork2() {
 
     let input = hex::decode("30000003000000000000000000000000adda1059a6c6c102b0fa562b9bb2cb9a0de5b1f4000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000a300000004fffffffffffffffffffffffffffffffffffffffffffff679dc91ecfe150fb980c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2f4d2888d29d722226fafa5d9b24f9164c092421e000bb8000000000000004319b52bf08b65295d49117e790000000000000000000000000000000000000000000000008b6d9e8818d6141f000000000000000000000000000000000000000000000000000000086a23af210000000000000000000000000000000000000000000000000000000000").unwrap();
 
-    let from: Address = "0xa009fa1ac416ec02f6f902a3a4a584b092ae6123".parse().unwrap();
-    let to: Address = "0x99999999d116ffa7d76590de2f427d8e15aeb0b8".parse().unwrap();
+    let from = address!("0xa009fa1ac416ec02f6f902a3a4a584b092ae6123");
+    let to = address!("0x99999999d116ffa7d76590de2f427d8e15aeb0b8");
     let tx = TransactionRequest::default()
         .to(to)
         .from(from)
@@ -2965,7 +3124,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
     )
     .await
     .unwrap();
-    api.anvil_set_storage_at(contract, U256::ZERO, B256::from(U256::from(3))).await.unwrap();
+    api.anvil_set_storage_at(contract, U256::ZERO, B256::with_last_byte(3)).await.unwrap();
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let values = [5u64, 0, 13, 8];

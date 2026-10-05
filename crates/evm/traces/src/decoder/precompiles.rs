@@ -663,12 +663,7 @@ mod tests {
             None,
             None
         ));
-        assert!(!is_known_precompile(
-            address!("0x0000000000000000000000000000000000000012"),
-            None,
-            None,
-            None
-        ));
+        assert!(!is_known_precompile(Address::with_last_byte(0x12), None, None, None));
     }
 
     #[cfg(feature = "base")]

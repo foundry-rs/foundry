@@ -390,17 +390,12 @@ mod tests {
     fn test_abi_decode_event_data_without_indexed() {
         let event = get_event("event Ev(uint256 a, address b)").unwrap();
         let addr = Address::random();
-        let data = DynSolValue::Tuple(vec![
-            DynSolValue::Uint(U256::from(1), 256),
-            DynSolValue::Address(addr),
-        ])
-        .abi_encode_params();
+        let data =
+            DynSolValue::Tuple(vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)])
+                .abi_encode_params();
 
         let decoded = abi_decode_event_data(&event, &data).unwrap();
-        assert_eq!(
-            decoded,
-            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Address(addr)]
-        );
+        assert_eq!(decoded, vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)]);
     }
 
     #[test]

@@ -3177,7 +3177,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
 
     fn next_id(&mut self) -> U256 {
         let id = self.next_fork_id;
-        self.next_fork_id += U256::from(1);
+        self.next_fork_id += U256::ONE;
         id
     }
 
@@ -3517,6 +3517,8 @@ mod tests {
     #[cfg(feature = "base")]
     use crate::evm::{BaseEvmNetwork, base::base_code_sentinel_addresses};
     #[cfg(feature = "base")]
+    use alloy_primitives::bytes;
+    #[cfg(feature = "base")]
     use base_common_chains::ChainConfig;
     #[cfg(feature = "base")]
     use base_common_consensus::{
@@ -3597,8 +3599,7 @@ mod tests {
             value: U256::from(value),
             ..Default::default()
         };
-        let signed =
-            Signed::new_unchecked(tx, Signature::new(U256::from(1), U256::from(1), false), hash);
+        let signed = Signed::new_unchecked(tx, Signature::new(U256::ONE, U256::ONE, false), hash);
         AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
             inner: Recovered::new_unchecked(
                 AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(signed)),
@@ -3622,9 +3623,9 @@ mod tests {
             ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl)
                 .unwrap();
         // Call ActivationRegistry.admin(), require success, and store its return value in slot 0.
-        let code = revm::bytecode::Bytecode::new_legacy(alloy_primitives::hex!(
+        let code = revm::bytecode::Bytecode::new_legacy(bytes!(
             "63f851a44060e01b60005260206000600460007384530000000000000000000000000000000000015afa60325760006000fd5b60005160005500"
-        ).into());
+        ));
         for chain_id in [8453, 31337, 84532] {
             let forks = MultiFork::<AnyNetwork, BaseSpecId, BlockEnv>::spawn();
             let mut fork = fork_with_closed_backend();
@@ -3833,11 +3834,8 @@ mod tests {
                 input: syscall_snapshot_calldata(),
                 ..Default::default()
             };
-            let signed = Signed::new_unchecked(
-                tx,
-                Signature::new(U256::from(1), U256::from(1), false),
-                hash,
-            );
+            let signed =
+                Signed::new_unchecked(tx, Signature::new(U256::ONE, U256::ONE, false), hash);
             AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
                 inner: Recovered::new_unchecked(
                     AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(signed)),
@@ -3917,7 +3915,7 @@ mod tests {
         let fork_loaded = Address::with_last_byte(2);
         let committed = Address::with_last_byte(3);
         let seeded = Address::with_last_byte(4);
-        let missing_slot = U256::from(1);
+        let missing_slot = U256::ONE;
 
         let cached_external = AccountInfo { balance: U256::from(11), ..Default::default() };
         let cached_fork = AccountInfo { balance: U256::from(12), ..Default::default() };
@@ -3927,8 +3925,8 @@ mod tests {
         fork.db.insert_account_info(seeded, cached_seeded);
 
         let mut journaled_state = JournalInner::new();
-        let external_account = Account::default()
-            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        let external_account =
+            Account::default().with_info(AccountInfo { balance: U256::ONE, ..Default::default() });
         journaled_state.state.insert(externally_loaded, external_account);
 
         let mut fork_account = Account::default()
@@ -3960,7 +3958,7 @@ mod tests {
         assert!(result.is_err());
         assert!(!fork.db.cache.accounts.contains_key(&committed));
         assert_eq!(fork.db.basic_ref(seeded).unwrap().unwrap().balance, U256::from(14));
-        assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
+        assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::ONE);
         assert_eq!(fork.journaled_state.state[&fork_loaded].info.balance, U256::from(2));
     }
 
@@ -3968,12 +3966,12 @@ mod tests {
     fn failed_fork_state_refresh_preserves_not_existing_account() {
         let mut fork = fork_with_closed_backend();
         let address = Address::with_last_byte(1);
-        let missing_slot = U256::from(1);
+        let missing_slot = U256::ONE;
         fork.db.cache.accounts.insert(address, DbAccount::new_not_existing());
 
         let mut journaled_state = JournalInner::new();
-        let mut journaled_account = Account::default()
-            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        let mut journaled_account =
+            Account::default().with_info(AccountInfo { balance: U256::ONE, ..Default::default() });
         journaled_account
             .storage
             .insert(missing_slot, EvmStorageSlot::new(U256::from(7), TransactionId::ZERO));
@@ -3994,7 +3992,7 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
-        assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
+        assert_eq!(journaled_state.state[&address].info.balance, U256::ONE);
         assert_eq!(
             journaled_state.state[&address].storage[&missing_slot].present_value(),
             U256::from(7)
@@ -4018,7 +4016,7 @@ mod tests {
 
         let mut journaled_state = JournalInner::new();
         journaled_state.load_account(&mut backend, target).unwrap();
-        journaled_state.state.get_mut(&target).unwrap().info.balance = U256::from(1);
+        journaled_state.state.get_mut(&target).unwrap().info.balance = U256::ONE;
         let fork = backend.active_fork_mut().unwrap();
         fork.journaled_state.load_account(&mut fork.db, target).unwrap();
         fork.journaled_state.state.get_mut(&target).unwrap().info.balance = U256::from(2);
@@ -4035,7 +4033,7 @@ mod tests {
         let refreshed = &journaled_state.state[&target].info;
         assert_eq!(refreshed.code_hash, expected_hash);
         assert_eq!(refreshed.code.as_ref().unwrap().original_bytes(), code);
-        assert_eq!(refreshed.balance, U256::from(1));
+        assert_eq!(refreshed.balance, U256::ONE);
         let refreshed = &backend.active_fork().unwrap().journaled_state.state[&target].info;
         assert_eq!(refreshed.code_hash, expected_hash);
         assert_eq!(refreshed.code.as_ref().unwrap().original_bytes(), code);
@@ -4265,7 +4263,7 @@ mod tests {
         let sender = provider.get_accounts().await.unwrap()[0];
         let recipient = Address::with_last_byte(0x99);
         let transfer_amount = U256::from(1_000);
-        let target_amount = U256::from(1);
+        let target_amount = U256::ONE;
         let nonce = provider.get_transaction_count(sender).await.unwrap();
         let gas_price = provider.get_gas_price().await.unwrap();
 

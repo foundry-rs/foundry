@@ -511,7 +511,7 @@ async fn can_bypass_sidecar_requirement() {
         from: Some(from),
         to: Some(alloy_primitives::TxKind::Call(to)),
         nonce: Some(0),
-        value: Some(U256::from(0)),
+        value: Some(U256::ZERO),
         max_fee_per_blob_gas: Some(gas_price + 1),
         max_fee_per_gas: Some(eip1559_est.max_fee_per_gas),
         max_priority_fee_per_gas: Some(eip1559_est.max_priority_fee_per_gas),

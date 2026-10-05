@@ -8,14 +8,12 @@ use crate::{
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
+    expected_emit::ExpectedEmitTracker,
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
-        expect::{
-            self, ExpectedCallTracker, ExpectedCreate, ExpectedEmitTracker, ExpectedRevert,
-            ExpectedRevertKind,
-        },
+        expect::{self, ExpectedCallTracker, ExpectedCreate, ExpectedRevert, ExpectedRevertKind},
         revert_handlers,
     },
     utils::IgnoredTraces,
@@ -149,8 +147,8 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
-    let fee_token = ccx.ecx.tx().fee_token();
-    let tx_origin = ccx.ecx.tx().caller();
+    let fee_token = ccx.tx_fee_token();
+    let tx_origin = ccx.tx_caller();
     let mut inputs = Some(inputs);
     let mut outcome = None;
     executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
@@ -1550,11 +1548,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // Handle expected calls
-        if self.expected_calls.contains_key(&call.bytecode_address) {
+        if let Some(expected) = self.expected_calls.get_mut(&call.bytecode_address) {
             let input = call.input.as_bytes(ecx);
             expect::observe_call(
-                &mut self.expected_calls,
-                call.bytecode_address,
+                expected,
                 &input,
                 call.transfer_value(),
                 call.gas_limit,
@@ -2773,7 +2770,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 let error_msg = mismatch_error
                     .as_ref()
                     .map(|mismatch| {
-                        mismatch.to_error_msg(self, checks, expected_log.as_ref(), anonymous)
+                        mismatch.to_error_msg(
+                            || self.signatures_identifier(),
+                            checks,
+                            expected_log.as_ref(),
+                            anonymous,
+                        )
                     })
                     .unwrap_or_else(|| "log != expected log".to_string());
                 outcome.result.output = error_msg.abi_encode().into();
@@ -2829,7 +2831,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             // Match expected calls
             if let Some(msg) =
-                expect::first_unmet_call(&self.expected_calls, !outcome.result.is_ok())
+                expect::first_unmet_call(&self.expected_calls, outcome.result.is_ok())
             {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
@@ -4360,7 +4362,7 @@ mod tests {
 
         cheats.recorded_logs = None;
         cheats.expected_emits.push_back((
-            expect::ExpectedEmit {
+            crate::expected_emit::ExpectedEmit {
                 depth: 0,
                 log: None,
                 checks: [false; 5],

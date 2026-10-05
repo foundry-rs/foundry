@@ -153,7 +153,7 @@ use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
     context_interface::{
-        JournalTr,
+        JournalTr, Transaction as _,
         block::BlobExcessGasAndPrice,
         result::{
             EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output, ResultAndState,
@@ -561,8 +561,7 @@ const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecution
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
 const SEPOLIA_DEPOSIT_CONTRACT_ADDRESS: Address =
     address!("7f02c3e3c98b133055b8b348b2ac625669ed295d");
-const HOLESKY_DEPOSIT_CONTRACT_ADDRESS: Address =
-    address!("4242424242424242424242424242424242424242");
+const HOLESKY_DEPOSIT_CONTRACT_ADDRESS: Address = Address::repeat_byte(0x42);
 
 /// Fixed transaction context for direct Tempo RPC simulations.
 const TEMPO_RPC_SIMULATION_CONTEXT: B256 = B256::new(*b"TEMPO_RPC_SIMULATION_MPP_CONTEXT");
@@ -1958,7 +1957,7 @@ impl<N: Network> Backend<N> {
     fn next_evm_env(&self) -> EvmEnv {
         let mut evm_env = self.evm_env.read().clone();
         // increase block number for this block
-        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
+        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::ONE);
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
@@ -3250,8 +3249,40 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         base_evm_env: Option<&EvmEnv>,
     ) -> Result<PreparedCall, BlockchainError> {
+        let gas_omitted = request.gas.is_none();
         let request = self.parse_transaction_request(request)?;
-        self.prepare_typed_call_env_with_base(state, request, fee_details, block_env, base_evm_env)
+        let mut prepared = self.prepare_typed_call_env_with_base(
+            state,
+            request,
+            fee_details,
+            block_env,
+            base_evm_env,
+        )?;
+        // Without a gas limit, a priced call gets at most the gas its sender can pay for, rather
+        // than failing the funds check for the default limit. Tempo pays fees in tokens instead,
+        // and OP deposits mint funds before paying for execution.
+        let cap_by_balance = match &prepared.tx_env {
+            CallTxEnv::Tempo(_) => false,
+            #[cfg(feature = "optimism")]
+            CallTxEnv::Op(tx) => tx.tx_type() != DEPOSIT_TX_TYPE_ID,
+            _ => true,
+        };
+        let tx_env = prepared.tx_env.base_mut();
+        if gas_omitted && cap_by_balance && tx_env.gas_price > 0 {
+            let balance =
+                state.basic_ref(tx_env.caller)?.map(|info| info.balance).unwrap_or_default();
+            let upfront = tx_env.value.saturating_add(tx_env.calc_max_data_fee());
+            // A sender that cannot pay for the cheapest transaction keeps the default limit, so
+            // the call fails the funds check.
+            if let Some(allowance) = balance
+                .checked_sub(upfront)
+                .map(|available| available / U256::from(tx_env.gas_price))
+                && allowance >= U256::from(MIN_TRANSACTION_GAS)
+            {
+                tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
+            }
+        }
+        Ok(prepared)
     }
 
     const fn base_call_tx_env(&self, tx_env: TxEnv) -> CallTxEnv {
@@ -4775,7 +4806,7 @@ impl<N: Network> Backend<N> {
         db.set_storage_at(
             Predeploys::L1_BLOCK_INFO,
             l1_blob_base_fee_slot,
-            B256::from(U256::ONE.to_be_bytes::<32>()),
+            B256::with_last_byte(1),
         )?;
         let mut l1_fee_scalars = [0u8; 32];
         l1_fee_scalars
@@ -5720,7 +5751,7 @@ where
 
         let best_number = self.blockchain.storage.read().best_number;
         let block_number = best_number.saturating_add(1);
-        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
+        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::ONE);
         evm_env.block_env.basefee = current_base_fee;
         evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
         evm_env.block_env.timestamp = U256::from(timestamp);
@@ -6109,7 +6140,7 @@ where
 
             // Advance the EVM number independently of the RPC header number. On Arbitrum
             // forks this preserves the L1 number read by NUMBER while the header tracks L2.
-            evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
+            evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::ONE);
 
             evm_env.block_env.basefee = current_base_fee;
             evm_env.block_env.blob_excess_gas_and_price = current_excess_blob_gas_and_price;
@@ -10777,7 +10808,7 @@ mod tests {
         ]);
         api.anvil_set_code(contract, code.into()).await.unwrap();
         api.send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)),
+            TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
         ))
         .await
         .unwrap();
@@ -10828,8 +10859,8 @@ mod tests {
         let pending_block = pending_block.await.unwrap();
         let state = state.await.unwrap();
 
-        assert_eq!(state.accounts[&recipient].balance, U256::from(1));
-        assert_eq!(state.block.unwrap().number, U256::from(1));
+        assert_eq!(state.accounts[&recipient].balance, U256::ONE);
+        assert_eq!(state.block.unwrap().number, U256::ONE);
         assert_eq!(state.best_block_number, Some(1));
 
         assert_eq!(exit, InstructionResult::Return);
@@ -10837,7 +10868,7 @@ mod tests {
         assert_eq!(output.len(), 64);
         let balance = U256::from_be_slice(&output[..32]);
         let block_number = U256::from_be_slice(&output[32..]);
-        assert_eq!((balance, block_number), (U256::from(1), U256::from(1)));
+        assert_eq!((balance, block_number), (U256::ONE, U256::ONE));
 
         assert_eq!(pending_block.block.header.number, api.backend.best_number() + 1);
         assert_eq!(pending_block.block.header.parent_hash, api.backend.best_hash());
@@ -10848,7 +10879,7 @@ mod tests {
 
     impl Drop for CacheFlushingDb {
         fn drop(&mut self) {
-            self.0.block_hashes().write().insert(U256::from(1), B256::repeat_byte(0x22));
+            self.0.block_hashes().write().insert(U256::ONE, B256::repeat_byte(0x22));
             self.0.cache().flush();
         }
     }
@@ -10977,10 +11008,7 @@ mod tests {
 
         drop(user);
 
-        assert_eq!(
-            cache_db.block_hashes().read().get(&U256::from(1)),
-            Some(&B256::repeat_byte(0x22))
-        );
+        assert_eq!(cache_db.block_hashes().read().get(&U256::ONE), Some(&B256::repeat_byte(0x22)));
         assert!(cache_path.exists());
     }
 
@@ -11103,7 +11131,7 @@ mod tests {
                 alloy_rpc_types::TransactionRequest::default()
                     .with_from(sender)
                     .with_to(accounts[1])
-                    .with_value(U256::from(1))
+                    .with_value(U256::ONE)
                     .into(),
             )
             .await
@@ -11144,7 +11172,7 @@ mod tests {
                 alloy_rpc_types::TransactionRequest::default()
                     .with_from(sender)
                     .with_to(accounts[1])
-                    .with_value(U256::from(1))
+                    .with_value(U256::ONE)
                     .into(),
             )
             .await
@@ -11157,7 +11185,7 @@ mod tests {
                 alloy_rpc_types::TransactionRequest::default()
                     .with_from(sender)
                     .with_to(accounts[1])
-                    .with_value(U256::from(1))
+                    .with_value(U256::ONE)
                     .into(),
             )
             .await
@@ -11223,7 +11251,7 @@ mod tests {
                         .with_from(accounts[0])
                         .with_to(accounts[1])
                         .with_nonce(nonce)
-                        .with_value(U256::from(1))
+                        .with_value(U256::ONE)
                         .into(),
                 )
                 .await

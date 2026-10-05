@@ -1403,14 +1403,6 @@ impl EvmOpts {
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
             }
-
-            // Provider URLs could be of the format `{CHAIN_IDENTIFIER}-mainnet`
-            // (e.g. Alchemy `opt-mainnet`, `arb-mainnet`), fallback to this method only
-            // if we're not able to retrieve chain id from `RetryProvider`.
-            if url.contains("mainnet") {
-                trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::mainnet());
-            }
         }
 
         None
@@ -2422,6 +2414,19 @@ mod tests {
         assert_eq!(probes(), (2, 2));
     }
 
+    #[tokio::test]
+    async fn fork_remote_chain_id_does_not_guess_from_url() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let evm_opts = EvmOpts {
+            fork_url: Some(format!("http://{address}/arb-mainnet")),
+            fork_retries: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(evm_opts.get_remote_chain_id().await, None);
+    }
+
     #[test]
     fn known_network_variant_does_not_guess_unknown_chain() {
         assert_eq!(NetworkVariant::from_known_chain_id(98_765_432).unwrap(), None);
@@ -2742,7 +2747,7 @@ mod tests {
         let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
         let provider = handle.http_provider();
 
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         assert!(provider.get_block_number().await.unwrap() > fork.number());
 
         let (evm_env, block) = evm_opts

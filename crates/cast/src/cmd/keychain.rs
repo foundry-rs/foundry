@@ -2999,14 +2999,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .await?;
 
     let from = root_signer.address();
-    let chain = builder.chain();
     if print_sponsor_hash {
         let Some(mut tx) =
             confirm_and_build(builder, root_signer.sender(), force, None, false).await?
         else {
             return Ok(KeychainTxOutcome::Aborted);
         };
-        let hash = sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
+        let hash = sponsor_hash(fee_provider, &mut tx, from, sponsor_fee_payer).await?;
         if shell::is_json() {
             sh_println!("{}", json!({ "sponsor_hash": format!("{hash:?}") }))?;
         } else {
@@ -3017,8 +3016,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     print_expires(expires_at)?;
 
-    let send_opts = SendOptions::new(send_tx, &config)
-        .resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
+    let send_opts =
+        SendOptions::new(send_tx, &config).resolving_fee_token(tempo_sponsor.is_none(), &config);
     let is_browser = matches!(root_signer, KeychainRootSigner::Browser(_));
     let (builder, lane) = if is_browser {
         (builder.with_browser_wallet(), None)
@@ -3029,14 +3028,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     else {
         return Ok(KeychainTxOutcome::Aborted);
     };
-    apply_fee_payment::<TempoNetwork, _>(
-        tempo_sponsor.as_ref(),
-        fee_provider,
-        chain,
-        &mut tx,
-        from,
-    )
-    .await?;
+    apply_fee_payment::<TempoNetwork, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+        .await?;
     before_submit()?;
 
     match root_signer {
@@ -3416,7 +3409,7 @@ mod tests {
     use alloy_rlp::Decodable;
 
     fn addr(byte: u8) -> Address {
-        Address::from([byte; 20])
+        Address::repeat_byte(byte)
     }
 
     fn rule(selector: [u8; 4], recipients: Vec<Address>) -> SelectorRule {
@@ -3822,9 +3815,9 @@ mod tests {
         let fee_token = addr(0xAA);
         let limit = |token, limit, period| AuthTokenLimit { token, limit, period };
         let cases = [
-            (limit(addr(0xBB), U256::from(1), 0), Some(true), "not listed"),
+            (limit(addr(0xBB), U256::ONE, 0), Some(true), "not listed"),
             (limit(fee_token, U256::ZERO, 0), Some(true), ""),
-            (limit(fee_token, U256::from(1), 60), None, "hardfork unknown"),
+            (limit(fee_token, U256::ONE, 60), None, "hardfork unknown"),
         ];
         for (limit, is_t3, detail) in cases {
             let signed = signed_authorization_with_limits(Some(vec![limit]));

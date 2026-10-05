@@ -66,9 +66,8 @@ use std::{
 #[cfg(feature = "monad")]
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 #[cfg(feature = "monad")]
-use foundry_evm_core::{
-    evm::{MonadEvmNetwork, try_transact_monad_system_replay},
-    refresh_chain_journal,
+use foundry_evm_core::evm::{
+    MonadEvmNetwork, refresh_chain_journal, try_transact_monad_system_replay,
 };
 
 mod builder;
@@ -347,7 +346,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 let slot = history_storage_slot(block_number);
                 let value = history_storage_value(block_hash);
                 let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
-                block_number += U256::from(1);
+                block_number += U256::ONE;
             }
         }
 
@@ -1964,8 +1963,8 @@ mod tests {
 
     #[test]
     fn nested_revert_is_ignored_only_when_allowed() {
-        let target = Address::from([0x11; 20]);
-        let nested = Address::from([0x22; 20]);
+        let target = Address::repeat_byte(0x11);
+        let nested = Address::repeat_byte(0x22);
 
         assert!(should_ignore_revert(false, target, Some(nested), &[]));
         assert!(!should_ignore_revert(true, target, Some(nested), &[]));
@@ -1977,7 +1976,7 @@ mod tests {
     #[cfg(feature = "monad")]
     #[test]
     fn network_cheatcode_revert_handling_is_monad_specific() {
-        let target = Address::from([0x11; 20]);
+        let target = Address::repeat_byte(0x11);
 
         assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
         assert!(!should_ignore_revert(
@@ -2205,7 +2204,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(result.result, Bytes::from(U256::from(2).to_be_bytes::<32>()));
+        assert_eq!(result.result, Bytes::from(B256::with_last_byte(2).0));
         assert_eq!(result.tx_env.nonce, 2);
         assert_eq!(executor.get_nonce(CALLER).unwrap(), 3);
         assert_eq!(executor.backend().storage_ref(address, U256::ZERO).unwrap(), U256::from(2));
@@ -2492,7 +2491,7 @@ mod tests {
                 CHEATCODE_ADDRESS,
                 mockCallRevert_1Call {
                     callee: mocked,
-                    msgValue: U256::from(1),
+                    msgValue: U256::ONE,
                     data: Bytes::new(),
                     revertData: Bytes::new(),
                 }
@@ -2502,7 +2501,7 @@ mod tests {
             )
             .unwrap();
         executor.set_code(mocked, Bytecode::default()).unwrap();
-        executor.set_balance(target, U256::from(1)).unwrap();
+        executor.set_balance(target, U256::ONE).unwrap();
 
         // PUSH0 x4; PUSH1 1; PUSH20 <mocked>; GAS; CALL; POP; STOP.
         let mut code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x60, 0x01, 0x73];

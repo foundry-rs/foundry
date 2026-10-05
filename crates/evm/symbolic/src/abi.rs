@@ -588,7 +588,7 @@ impl<'a, 'cx> SymbolicAbiBuilder<'a, 'cx> {
                 self.cx,
                 SymCmpOp::Ult,
                 word,
-                U256::from(1) << bits,
+                U256::ONE << bits,
             ));
         }
     }

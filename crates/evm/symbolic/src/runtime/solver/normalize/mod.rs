@@ -742,9 +742,9 @@ impl ConstraintContext {
             return value.clone();
         }
         if let SymExprKind::BinOp(SymBinOp::Or, left, right) = expr.kind()
-            && ((left.as_const() == Some(U256::from(1))
+            && ((left.as_const() == Some(U256::ONE)
                 && right.normalized_bool_word_condition(cx).is_some())
-                || (right.as_const() == Some(U256::from(1))
+                || (right.as_const() == Some(U256::ONE)
                     && left.normalized_bool_word_condition(cx).is_some()))
         {
             return SymExpr::one(cx);
@@ -1098,7 +1098,7 @@ impl ConstraintContext {
             SymBoolExprKind::Cmp(op, left, right) => match *op {
                 SymCmpOp::Eq => const_side_bound(left, right),
                 SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
-                    (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::from(1))),
+                    (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::ONE)),
                     _ => None,
                 },
                 SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
@@ -1106,7 +1106,7 @@ impl ConstraintContext {
                     _ => None,
                 },
                 SymCmpOp::Ugt => match (left.as_const(), right.as_const()) {
-                    (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::from(1))),
+                    (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::ONE)),
                     _ => None,
                 },
                 SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
@@ -1122,9 +1122,7 @@ impl ConstraintContext {
                         _ => None,
                     },
                     SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
-                        (_, Some(bound)) => {
-                            (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
-                        }
+                        (_, Some(bound)) => (!bound.is_zero()).then(|| (left, bound - U256::ONE)),
                         _ => None,
                     },
                     SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
@@ -1132,9 +1130,7 @@ impl ConstraintContext {
                         _ => None,
                     },
                     SymCmpOp::Ule => match (left.as_const(), right.as_const()) {
-                        (Some(bound), _) => {
-                            (!bound.is_zero()).then(|| (right, bound - U256::from(1)))
-                        }
+                        (Some(bound), _) => (!bound.is_zero()).then(|| (right, bound - U256::ONE)),
                         _ => None,
                     },
                     SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
@@ -1154,9 +1150,9 @@ impl ConstraintContext {
             SymBoolExprKind::Not(value) => match value.kind() {
                 SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
                     if right.as_const().is_some_and(|value| value.is_zero()) {
-                        Some((left, U256::from(1)))
+                        Some((left, U256::ONE))
                     } else if left.as_const().is_some_and(|value| value.is_zero()) {
-                        Some((right, U256::from(1)))
+                        Some((right, U256::ONE))
                     } else {
                         None
                     }
@@ -1446,7 +1442,7 @@ fn normalize_ite_expr_for_solver(
         // `ite(c, a, a) => a`.
         return left;
     }
-    if left.as_const() == Some(U256::from(1))
+    if left.as_const() == Some(U256::ONE)
         && right.normalized_bool_word_condition(cx).as_ref() == Some(&cond)
     {
         // `ite(c, 1, bool_word(c)) => bool_word(c)`.
@@ -1496,7 +1492,7 @@ impl SymBoolExpr {
                 })
             }
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right)
-                if right.as_const() == Some(U256::from(1)) =>
+                if right.as_const() == Some(U256::ONE) =>
             {
                 // `bool_word(c) == 1 => c`.
                 left.normalized_bool_word_condition(cx)
@@ -1630,14 +1626,14 @@ impl SymBoolExpr {
                     .normalize_ne_zero_for_solver(cx)
                     .or_else(|| Some(Self::eq_zero(cx, left).not(cx))),
                 // `1 > a => a == 0`.
-                (Some(value), _) if value == U256::from(1) => right
+                (Some(value), _) if value == U256::ONE => right
                     .normalize_eq_zero_for_solver(cx)
                     .or_else(|| Some(Self::eq_zero(cx, right))),
                 _ => None,
             },
             SymCmpOp::Uge => match (left.as_const(), right.as_const()) {
                 // `a >= 1 => a != 0`.
-                (_, Some(value)) if value == U256::from(1) => left
+                (_, Some(value)) if value == U256::ONE => left
                     .normalize_ne_zero_for_solver(cx)
                     .or_else(|| Some(Self::eq_zero(cx, left).not(cx))),
                 // `0 >= a => a == 0`.
@@ -1652,14 +1648,14 @@ impl SymBoolExpr {
                     left.normalize_eq_zero_for_solver(cx).or_else(|| Some(Self::eq_zero(cx, left)))
                 }
                 // `1 <= a => a != 0`.
-                (Some(value), _) if value == U256::from(1) => right
+                (Some(value), _) if value == U256::ONE => right
                     .normalize_ne_zero_for_solver(cx)
                     .or_else(|| Some(Self::eq_zero(cx, right).not(cx))),
                 _ => None,
             },
             SymCmpOp::Ult => match (left.as_const(), right.as_const()) {
                 // `a < 1 => a == 0`.
-                (_, Some(value)) if value == U256::from(1) => {
+                (_, Some(value)) if value == U256::ONE => {
                     left.normalize_eq_zero_for_solver(cx).or_else(|| Some(Self::eq_zero(cx, left)))
                 }
                 // `0 < a => a != 0`.
