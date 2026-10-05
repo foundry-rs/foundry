@@ -71,7 +71,7 @@ impl Spinner {
     }
 
     pub fn tick(&mut self) {
-        if self.no_progress {
+        if self.no_progress || self.indicator.is_empty() {
             return;
         }
 
@@ -80,7 +80,7 @@ impl Spinner {
         // Progress is a diagnostic, not data: write to stderr so stdout stays clean
         // for machine-readable output.
         let _ = sh_eprint!("\r\x1B[2K\r{indicator} {}", self.message);
-        io::stderr().flush().unwrap();
+        let _ = io::stderr().flush();
 
         self.idx = self.idx.wrapping_add(1);
     }
@@ -260,6 +260,20 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
             s.tick();
         }
+    }
+
+    #[test]
+    fn empty_indicator_does_not_panic() {
+        let mut spinner = Spinner {
+            indicator: &[],
+            no_progress: false,
+            message: String::new(),
+            idx: 0,
+        };
+
+        spinner.tick();
+
+        assert_eq!(spinner.idx, 0);
     }
 
     #[test]
