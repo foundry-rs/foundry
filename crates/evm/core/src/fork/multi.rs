@@ -131,9 +131,27 @@ impl<
 {
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
     pub fn spawn() -> Self {
-        trace!(target: "fork::multi", "spawning multifork");
+        Self::spawn_with_forks(HashMap::default(), None)
+    }
 
-        let (fork, mut handler) = Self::new();
+    /// Starts an independent registry sharing the existing remote caches.
+    pub(crate) fn scoped(&self) -> eyre::Result<Self> {
+        let (sender, rx) = oneshot_channel();
+        self.handler
+            .clone()
+            .try_send(Request::CloneForks(sender))
+            .map_err(|e| eyre::eyre!("{e:?}"))?;
+        Ok(Self::spawn_with_forks(rx.recv()?, Some(self._shutdown.clone())))
+    }
+
+    fn spawn_with_forks(
+        forks: HashMap<ForkId, CreatedFork<N, SPEC, BLOCK>>,
+        parent: Option<Arc<ShutDownMultiFork<N, SPEC, BLOCK>>>,
+    ) -> Self {
+        trace!(target: "fork::multi", "spawning multifork");
+        let (mut fork, mut handler) = Self::new();
+        handler.forks = forks;
+        Arc::get_mut(&mut fork._shutdown).unwrap()._parent = parent;
 
         // Spawn a light-weight thread just for sending and receiving data from the remote
         // client(s).
@@ -172,7 +190,8 @@ impl<
     #[doc(hidden)]
     pub fn new() -> (Self, MultiForkHandler<N, SPEC, BLOCK>) {
         let (handler, handler_rx) = channel(1);
-        let _shutdown = Arc::new(ShutDownMultiFork { handler: Some(handler.clone()) });
+        let _shutdown =
+            Arc::new(ShutDownMultiFork { handler: Some(handler.clone()), _parent: None });
         (Self { handler, _shutdown }, MultiForkHandler::new(handler_rx))
     }
 
@@ -291,6 +310,7 @@ type GetEvmEnvSender<SPEC, BLOCK> = OneshotSender<Option<EvmEnv<SPEC, BLOCK>>>;
 /// Request that's send to the handler.
 #[derive(Debug)]
 enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+    CloneForks(OneshotSender<HashMap<ForkId, CreatedFork<N, SPEC, BLOCK>>>),
     /// Creates a new ForkBackend.
     CreateFork(Box<CreateFork>, CreateSender<N, SPEC, BLOCK>),
     /// Returns the Fork backend for the `ForkId` if it exists.
@@ -472,6 +492,9 @@ impl<
 
     fn on_request(&mut self, req: Request<N, SPEC, BLOCK>) {
         match req {
+            Request::CloneForks(sender) => {
+                let _ = sender.send(self.forks.clone());
+            }
             Request::CreateFork(fork, sender) => self.create_fork(*fork, sender),
             Request::GetFork(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.backend.clone());
@@ -722,6 +745,8 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> CreatedFork<N, SPEC, BLOCK> {
 #[derive(Debug)]
 struct ShutDownMultiFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     handler: Option<Sender<Request<N, SPEC, BLOCK>>>,
+    // Keep shared backend handlers alive until this registry has shut down.
+    _parent: Option<Arc<Self>>,
 }
 
 impl<N: Network, SPEC, BLOCK: ForkBlockEnv> Drop for ShutDownMultiFork<N, SPEC, BLOCK> {

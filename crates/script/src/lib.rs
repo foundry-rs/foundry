@@ -60,7 +60,7 @@ use foundry_evm::{
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -451,84 +451,84 @@ impl ScriptArgs {
 
         // Box each branch's future to keep its large async state off `run_script`'s future;
         // otherwise `run_command` trips `clippy::large_stack_frames` by a small margin.
-        if is_tempo {
-            let batch = self.batch;
-            return Box::pin(async move {
-                let bundled = match self
-                    .prepare_bundled::<TempoEvmNetwork>(
-                        config,
-                        evm_opts,
-                        ExecutorBuilder::<TempoEvmNetwork>::new(),
-                    )
-                    .await?
-                {
-                    Some(bundled) => bundled,
-                    None => return Ok(()),
-                };
-                // batch mode owns its own pending recovery inside broadcast_batch(); running the
-                // generic wait_for_pending() first would race with that and could double-process
-                // an already-confirmed batch hash.
-                let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
-                let broadcasted = if batch {
-                    bundled.broadcast_batch().await?
-                } else {
-                    bundled.broadcast().await?
-                };
-                if broadcasted.args.verify {
-                    broadcasted.verify().await?;
-                }
-                Ok(())
-            })
-            .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(
-                config,
-                evm_opts,
-                ExecutorBuilder::<BaseEvmNetwork>::new(),
-            ))
-            .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return Box::pin(async move {
-                let Some(prepared) = self
-                    .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
-                    .await?
-                else {
-                    return Ok(());
-                };
-                let bundled = match prepared {
-                    PreparedScript::Resume(bundled) => *bundled,
-                    PreparedScript::Simulate(state) => {
-                        state.fill_monad_metadata().await?.bundle().await?
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                let batch = self.batch;
+                Box::pin(async move {
+                    let bundled = match self
+                        .prepare_bundled::<TempoEvmNetwork>(
+                            config,
+                            evm_opts,
+                            ExecutorBuilder::<TempoEvmNetwork>::new(),
+                        )
+                        .await?
+                    {
+                        Some(bundled) => bundled,
+                        None => return Ok(()),
+                    };
+                    // batch mode owns its own pending recovery inside broadcast_batch(); running
+                    // the generic wait_for_pending() first would race with that and could
+                    // double-process an already-confirmed batch hash.
+                    let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
+                    let broadcasted = if batch {
+                        bundled.broadcast_batch().await?
+                    } else {
+                        bundled.broadcast().await?
+                    };
+                    if broadcasted.args.verify {
+                        broadcasted.verify().await?;
                     }
-                };
-                let Some(bundled) = Self::finish_bundle(bundled).await? else { return Ok(()) };
-                Self::broadcast_bundle(bundled).await
-            })
-            .await;
+                    Ok(())
+                })
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                Box::pin(self.run_generic_script::<BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
+                ))
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                Box::pin(async move {
+                    let Some(prepared) = self
+                        .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
+                        .await?
+                    else {
+                        return Ok(());
+                    };
+                    let bundled = match prepared {
+                        PreparedScript::Resume(bundled) => *bundled,
+                        PreparedScript::Simulate(state) => {
+                            state.fill_monad_metadata().await?.bundle().await?
+                        }
+                    };
+                    let Some(bundled) = Self::finish_bundle(bundled).await? else { return Ok(()) };
+                    Self::broadcast_bundle(bundled).await
+                })
+                .await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                Box::pin(self.run_generic_script::<OpEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
+                ))
+                .await
+            }
+            NetworkVariant::Ethereum => {
+                Box::pin(self.run_generic_script::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                ))
+                .await
+            }
         }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return Box::pin(self.run_generic_script::<OpEvmNetwork>(
-                config,
-                evm_opts,
-                ExecutorBuilder::<OpEvmNetwork>::new(),
-            ))
-            .await;
-        }
-
-        Box::pin(self.run_generic_script::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        ))
-        .await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it

@@ -698,6 +698,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Self::new(MultiFork::<AnyNetwork, SpecFor<FEN>, BlockEnvFor<FEN>>::spawn(), fork)
     }
 
+    /// Clones execution state with an independent registry for newly created forks.
+    ///
+    /// Remote caches remain shared, but forks created by this execution are released with it.
+    pub fn clone_with_fork_scope(&self) -> eyre::Result<Self> {
+        let mut backend = self.clone();
+        backend.forks = self.forks.scoped()?;
+        Ok(backend)
+    }
+
     /// Returns the remote fork owned by the active backend, if execution is forked.
     pub fn fork(&self) -> eyre::Result<Option<RemoteFork>> {
         let Some(id) = self.active_fork_id() else { return Ok(None) };
@@ -2137,12 +2146,18 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         // Preserve roll/warp locally so clones sharing remote data cannot change each other's env.
         if let Some(active_fork_id) = self.active_fork_id() {
             let fork_id = self.ensure_fork_id(active_fork_id).cloned()?;
-            let initial = self
-                .forks
-                .get_evm_env(fork_id)?
-                .ok_or_else(|| eyre::eyre!("Requested fork `{active_fork_id}` does not exist"))?;
             let active = self.inner.get_fork_by_id_mut(active_fork_id)?;
-            let block = active.block_env.get_or_insert(initial.block_env);
+            if active.block_env.is_none() {
+                active.block_env = Some(
+                    self.forks
+                        .get_evm_env(fork_id)?
+                        .ok_or_else(|| {
+                            eyre::eyre!("Requested fork `{active_fork_id}` does not exist")
+                        })?
+                        .block_env,
+                );
+            }
+            let block = active.block_env.as_mut().unwrap();
             block.set_number(evm_env.block_env.number());
             block.set_timestamp(evm_env.block_env.timestamp());
         }

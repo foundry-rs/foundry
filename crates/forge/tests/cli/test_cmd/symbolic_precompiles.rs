@@ -1,8 +1,6 @@
-use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
-
-use super::symbolic_helpers::z3_available;
 
 #[forgetest_init]
 fn symbolic_precompiles_execute_concrete_inputs(prj: _, cmd: _) {
@@ -106,54 +104,26 @@ contract SymbolicPrecompiles is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrecompiles"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkHashPrecompiles(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkIdentityPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkModexpPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBn254Precompiles(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBlake2fPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkKzgPointEvaluationPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkEcrecoverPrecompile(uint256)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrecompiles",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicPrecompiles.t.sol:SymbolicPrecompiles
+[PASS] checkBlake2fPrecompile(uint256) ([METRICS])
+[PASS] checkBn254Precompiles(uint256) ([METRICS])
+[PASS] checkEcrecoverPrecompile(uint256) ([METRICS])
+[PASS] checkHashPrecompiles(uint256) ([METRICS])
+[PASS] checkIdentityPrecompile(uint256) ([METRICS])
+[PASS] checkKzgPointEvaluationPrecompile(uint256) ([METRICS])
+[PASS] checkModexpPrecompile(uint256) ([METRICS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -195,24 +165,24 @@ contract SymbolicPrecompileInput {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrecompileInput"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrecompileInput",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicPrecompileInput.t.sol:SymbolicPrecompileInput
+[PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32) ([METRICS])
+[PASS] checkSymbolicHashDeterminism(bytes) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicHashDeterminism(bytes)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
 }
 
@@ -308,18 +278,23 @@ contract SymbolicIdentityPrecompileInput is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicIdentity"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicIdentity",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicIdentityPrecompileInput.t.sol:SymbolicIdentityPrecompileInput
+[PASS] checkSymbolicIdentity(bytes) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicIdentity(bytes)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
 }
 
@@ -374,24 +349,24 @@ contract SymbolicAdvancedPrecompileInput is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicAdvancedPrecompileInput"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicAdvancedPrecompileInput",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+[PASS] checkSymbolicBlake2f(bytes1) ([METRICS])
+[PASS] checkSymbolicModexp(bytes1) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicModexp(bytes1)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicBlake2f(bytes1)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
     assert!(!stdout.contains("symbolic precompile length header"), "{stdout}");
 }
@@ -464,24 +439,24 @@ contract SymbolicPrecompileInputSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrecompileInputSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrecompileInputSize",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicPrecompileInputSize.t.sol:SymbolicPrecompileInputSize
+[PASS] checkSymbolicIdentityInputSize(uint256) ([METRICS])
+[PASS] checkSymbolicShaInputSize(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicIdentityInputSize(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicShaInputSize(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile CALL input size"), "{stdout}");
 }
 
@@ -627,25 +602,29 @@ contract SymbolicKzgPrecompileInput is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgPrecompileInput"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicKzgPrecompileInput",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicKzgPrecompileInput.t.sol:SymbolicKzgPrecompileInput
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgCommitmentMismatchReturnsCounterexample(bytes32,bytes16) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32) ([METRICS])
+[PASS] checkSymbolicKzgKnownVersionMismatchFails(bytes32) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(bytes32,bytes16) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgSuccessWitnessReturnsCounterexample(bytes32,bytes32,bytes32,bytes32,bytes16,bytes32,bytes16) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): symbolic depth limit exceeded (10000)] checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicKzgKnownVersionMismatchFails(bytes32)
-[FAIL: panic: assertion failed (0x01); counterexample:
-checkSymbolicKzgCommitmentMismatchReturnsCounterexample(bytes32,bytes16)
-checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32)
-checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(bytes32,bytes16)
-checkSymbolicKzgSuccessWitnessReturnsCounterexample(bytes32,bytes32,bytes32,bytes32,bytes16,bytes32,bytes16)
-checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31)
-checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
 }
 
@@ -682,19 +661,20 @@ contract SymbolicKzgInvalidLength {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgInvalidLength"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: panic: assertion failed (0x01); counterexample:
-checkKzgInvalidLengthIsNotDropped(uint8)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicKzgInvalidLength",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicKzgInvalidLength.t.sol:SymbolicKzgInvalidLength
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkKzgInvalidLengthIsNotDropped(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -731,25 +711,22 @@ contract SymbolicPreCancunKzg {
 "#,
     );
 
-    let stdout = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--evm-version",
-            "shanghai",
-            "--match-contract",
-            "SymbolicPreCancunKzg",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "shanghai",
+        "--match-contract",
+        "SymbolicPreCancunKzg",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPreCancunKzg.t.sol:SymbolicPreCancunKzg
+[PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]

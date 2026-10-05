@@ -1,7 +1,10 @@
+use crate::skip_unless_z3;
 use alloy_primitives::{U256, hex, keccak256};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{
-    forgetest_init, str,
+    forgetest_init,
+    snapbox::IntoData,
+    str,
     util::{OutputExt, SOLC_VERSION},
 };
 use serde_json::Value;
@@ -11,7 +14,7 @@ use std::{
 };
 
 use super::symbolic_helpers::{
-    assert_relevant_lines, assert_symbolic, json_test_result, read_artifact_ref,
+    assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref,
 };
 
 fn z3_available() -> bool {
@@ -133,18 +136,11 @@ contract SymbolicIgnored {
 "#,
     );
 
-    let stderr = cmd
-        .args(["test", "--match-test", "checkWouldFail"])
-        .assert_success()
-        .get_output()
-        .stderr_lossy();
-
-    assert_relevant_lines(
-        &stderr,
-        foundry_test_utils::str![[r#"
-No tests found
-"#]],
-    );
+    cmd.args(["test", "--match-test", "checkWouldFail"]).assert_success().stderr_eq(str![[r#"
+...
+Warning: No tests found in project! Forge looks for functions that start with `test`
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -171,24 +167,15 @@ contract SymbolicContractInlineConfig {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--match-test", "checkEnabledByContractConfig"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkEnabledByContractConfig(uint256)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--match-test", "checkEnabledByContractConfig"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicContractInlineConfig.t.sol:SymbolicContractInlineConfig
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEnabledByContractConfig(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -534,12 +521,11 @@ contract SymbolicRegressionJson {
     assert!(std::path::Path::new(path).exists());
 }
 
+// Basic path handling: no-op tests pass, plain reverts and `vm.assume` prune paths, and implicit
+// STOP succeeds.
 #[forgetest_init]
-fn symbolic_passes_scalar_test(prj: _, cmd: _) {
-    if !z3_available() {
-        let _ = sh_eprintln!("skipping symbolic_passes_scalar_test because z3 is not available");
-        return;
-    }
+fn symbolic_basic_path_outcomes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_basic_path_outcomes");
 
     prj.add_test(
         "SymbolicPass.t.sol",
@@ -550,23 +536,75 @@ contract SymbolicPass {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkNoop"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkNoop(uint256)
-"#]],
+    prj.add_test(
+        "SymbolicRequire.t.sol",
+        r#"
+contract SymbolicRequire {
+    function checkRequire(uint256 x) public pure {
+        require(x != 42, "hit");
+    }
+}
+"#,
     );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-(paths:
-"#]],
+
+    prj.add_test(
+        "SymbolicAssume.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAssume is Test {
+    function checkAssume(uint256 x) public {
+        vm.assume(x != 42);
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicImplicitStop.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicImplicitStop is Test {
+    function setUp() public {
+        // A single JUMPDEST falls off the end of the code without an explicit STOP.
+        vm.etch(address(this), hex"5b");
+    }
+
+    function checkImplicitStop() public {}
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkNoop|checkRequire|checkAssume|checkImplicitStop)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicRequire.t.sol:SymbolicRequire
+[PASS] checkRequire(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicPass.t.sol:SymbolicPass
+[PASS] checkNoop(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicAssume.t.sol:SymbolicAssume
+[PASS] checkAssume(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicImplicitStop.t.sol:SymbolicImplicitStop
+[PASS] checkImplicitStop() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
     );
 }
 
@@ -1305,18 +1343,19 @@ contract SymbolicLoopBound {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkLoopBound"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkLoopBound"]))
+            .success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+[PASS] checkLoopBound(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkLoopBound(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
 }
 
@@ -1340,38 +1379,19 @@ contract SymbolicAssert {
 "#,
     );
 
-    let output = cmd
-        .args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"])
-        .assert_failure()
-        .get_output()
-        .clone();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stderr =
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"]))
+            .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicAssert.t.sol:SymbolicAssert
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stderr_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-panic: assertion failed
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkRejectsFortyTwo(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[42]
-"#]],
-    );
     assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
     assert!(stderr.contains("cache/symbolic/"), "{stderr}");
 }
@@ -1451,24 +1471,21 @@ contract SymbolicJsonCounterexample {
     assert_eq!(artifact["calls"][0]["raw_args"], "42");
     assert!(symbolic["solver"]["stats"]["model_queries"].as_u64().unwrap() >= 1);
 
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args(["test", "--replay-symbolic-artifact", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-args=[42]
-"#]],
-    );
+    let replay_stdout = assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        &artifact_path,
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicJsonCounterexample.t.sol:SymbolicJsonCounterexample
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
     assert!(
         !replay_stdout.contains("SymbolicJsonCounterexampleDuplicate.t.sol"),
         "{replay_stdout}"
@@ -1557,22 +1574,19 @@ contract SymbolicMinimizeCounterexample {
     assert_ne!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
     assert_eq!(minimized["calls"][0]["args"], "42, 0x0042");
 
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--replay-symbolic-artifact",
-            symbolic["artifact"]["path"].as_str().unwrap(),
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-args=[42, 0x0042]
-"#]],
-    );
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        symbolic["artifact"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeCounterexample.t.sol:SymbolicMinimizeCounterexample
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x29e50d14000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000020042000000000000000000000000000000000000000000000000000000000000 args=[42, 0x0042]] checkMinimize(uint256,bytes) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1617,22 +1631,19 @@ contract SymbolicMinimizeFailureFlag is Test {
     assert_eq!(artifact["replay"]["status"], "confirmed");
     assert_eq!(artifact["calls"][0]["raw_args"], "42");
 
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--replay-symbolic-artifact",
-            symbolic["artifact"]["path"].as_str().unwrap(),
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-args=[42]
-"#]],
-    );
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        symbolic["artifact"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeFailureFlag.t.sol:SymbolicMinimizeFailureFlag
+[FAIL: <empty revert data>; counterexample: 		[SENDER] [SENDER] calldata=0x04f6a46a000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkFailureFlag(uint256) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1692,22 +1703,19 @@ contract SymbolicMinimizeAddressArrayDuplicate {
         "[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]"
     );
 
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--replay-symbolic-artifact",
-            symbolic["artifact"]["path"].as_str().unwrap(),
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-args=[[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]]
-"#]],
-    );
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        symbolic["artifact"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeAddressArrayDuplicate.t.sol:SymbolicMinimizeAddressArrayDuplicate
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x788be8fd0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]]] checkNoDuplicate(address[]) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -1837,113 +1845,20 @@ contract SymbolicRiddle {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "check_riddle"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check_riddle"]))
+            .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicRiddle.t.sol:SymbolicRiddle
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_riddle(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-panic: assertion failed
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-check_riddle(uint256)
-"#]],
-    );
     assert!(!stdout.contains("unsupported symbolic execution feature"), "{stdout}");
-}
-
-#[forgetest_init]
-fn symbolic_ignores_plain_require_revert(prj: _, cmd: _) {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_ignores_plain_require_revert because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicRequire.t.sol",
-        r#"
-contract SymbolicRequire {
-    function checkRequire(uint256 x) public pure {
-        require(x != 42, "hit");
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkRequire"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkRequire(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-(paths:
-"#]],
-    );
-}
-
-#[forgetest_init]
-fn symbolic_vm_assume_prunes_paths(prj: _, cmd: _) {
-    if !z3_available() {
-        let _ =
-            sh_eprintln!("skipping symbolic_vm_assume_prunes_paths because z3 is not available");
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicAssume.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicAssume is Test {
-    function checkAssume(uint256 x) public {
-        vm.assume(x != 42);
-        assert(x != 42);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkAssume"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkAssume(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-(paths:
-"#]],
-    );
 }
 
 #[forgetest_init]
@@ -1997,36 +1912,6 @@ Ran 5 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
 }
 
 #[forgetest_init]
-fn symbolic_implicit_stop_is_successful(prj: _, cmd: _) {
-    crate::skip_unless_z3!("symbolic_implicit_stop_is_successful");
-
-    prj.add_test(
-        "SymbolicImplicitStop.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicImplicitStop is Test {
-    function setUp() public {
-        // A single JUMPDEST falls off the end of the code without an explicit STOP.
-        vm.etch(address(this), hex"5b");
-    }
-
-    function checkImplicitStop() public {}
-}
-"#,
-    );
-
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkImplicitStop"]))
-        .success()
-        .stdout_eq(str![[r#"
-...
-Ran 1 test for test/SymbolicImplicitStop.t.sol:SymbolicImplicitStop
-[PASS] checkImplicitStop() ([METRICS])
-...
-"#]]);
-}
-
-#[forgetest_init]
 fn symbolic_finds_bytes_counterexample_with_native_inline_config(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -2049,24 +1934,15 @@ contract SymbolicBytes {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBytes"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkBytes(bytes)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkBytes"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicBytes.t.sol:SymbolicBytes
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBytes(bytes) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2093,24 +1969,15 @@ contract SymbolicString {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkString"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkString(string)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkString"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicString.t.sol:SymbolicString
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkString(string) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2133,18 +2000,15 @@ contract SymbolicNativeArrayLengths {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkArray"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkArray(uint256[])
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkArray"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicNativeArrayLengths.t.sol:SymbolicNativeArrayLengths
+[PASS] checkArray(uint256[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2246,53 +2110,62 @@ contract SymbolicArrayAssertions is Test {
         "--symbolic-timeout",
         "1",
     ];
-    let stdout = cmd
-        .args(args)
-        .args(["--symbolic-array-lengths", "1"])
-        .args(["--match-test", "^checkArrayCopy\\("])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(&stdout, str![["[PASS] checkArrayCopy(uint256[])"]]);
+    assert_symbolic(
+        cmd.args(args)
+            .args(["--symbolic-array-lengths", "1"])
+            .args(["--match-test", "^checkArrayCopy\\("]),
+    )
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[PASS] checkArrayCopy(uint256[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(args)
-        .args(["--symbolic-array-lengths", "1"])
-        .args(["--match-test", "^checkCorruptedArrayCopy\\("])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        str![[r#"
-[FAIL: assertion failed: [0] != [1]; counterexample:
-args=[[0]]] checkCorruptedArrayCopy(uint256[])
-"#]],
-    );
+    assert_symbolic(
+        cmd.forge_fuse()
+            .args(args)
+            .args(["--symbolic-array-lengths", "1"])
+            .args(["--match-test", "^checkCorruptedArrayCopy\\("]),
+    )
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[FAIL: assertion failed: [0] != [1]; counterexample: 		[SENDER] [SENDER] calldata=0x0ec64af5000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000 args=[[0]]] checkCorruptedArrayCopy(uint256[]) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(args)
-        .args(["--match-test", "^checkConcretePointerWithSymbolicSize\\("])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(&stdout, str![["[PASS] checkConcretePointerWithSymbolicSize(bool)"]]);
+    assert_symbolic(
+        cmd.forge_fuse()
+            .args(args)
+            .args(["--match-test", "^checkConcretePointerWithSymbolicSize\\("]),
+    )
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[PASS] checkConcretePointerWithSymbolicSize(bool) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
-    let stdout = cmd
-        .forge_fuse()
-        .args(args)
-        .args(["--match-test", "^checkArrayCallResultTracksInputSize\\("])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        str![[
-            "[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic array assertion CALL input size] checkArrayCallResultTracksInputSize(bool,uint256)"
-        ]],
-    );
+    assert_symbolic(
+        cmd.forge_fuse()
+            .args(args)
+            .args(["--match-test", "^checkArrayCallResultTracksInputSize\\("]),
+    )
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic array assertion CALL input size] checkArrayCallResultTracksInputSize(bool,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     let output = cmd
         .forge_fuse()
@@ -2338,28 +2211,21 @@ contract SymbolicHalmosLengths {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkArray"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkArray(uint256[])
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkArray"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicHalmosLengths.t.sol:SymbolicHalmosLengths
+[PASS] checkArray(uint256[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
+// Dynamic calldata shapes: nested structs and shorter variants with positional inner lengths.
 #[forgetest_init]
-fn symbolic_handles_nested_struct_dynamic_input(prj: _, cmd: _) {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_handles_nested_struct_dynamic_input because z3 is not available"
-        );
-        return;
-    }
+fn symbolic_dynamic_input_shapes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_dynamic_input_shapes");
 
     prj.add_test(
         "SymbolicNestedStruct.t.sol",
@@ -2379,29 +2245,6 @@ contract SymbolicNestedStruct {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkStruct"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkStruct((uint256[],bytes))
-"#]],
-    );
-}
-
-#[forgetest_init]
-fn symbolic_allows_shorter_variants_with_positional_inner_lengths(prj: _, cmd: _) {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_allows_shorter_variants_with_positional_inner_lengths because z3 is not available"
-        );
-        return;
-    }
-
     prj.add_test(
         "SymbolicMixedLengthSets.t.sol",
         r#"
@@ -2418,14 +2261,27 @@ contract SymbolicMixedLengthSets {
 "#,
     );
 
-    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBatch"]))
-        .success()
-        .stdout_eq(str![[r#"
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkStruct|checkBatch)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
 ...
 Ran 1 test for test/SymbolicMixedLengthSets.t.sol:SymbolicMixedLengthSets
 [PASS] checkBatch(bytes[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicNestedStruct.t.sol:SymbolicNestedStruct
+[PASS] checkStruct((uint256[],bytes)) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
-"#]]);
+"#]]
+        .unordered(),
+    );
 }
 
 #[forgetest_init]
@@ -2476,23 +2332,11 @@ contract SymbolicMalformedHalmos {
 "#,
     );
 
-    let output = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBytes"])
-        .assert_failure()
-        .get_output()
-        .clone();
-    let stderr = output.stderr_lossy();
-
-    assert_relevant_lines(
-        &stderr,
-        foundry_test_utils::str![[r#"
-invalid @custom:halmos annotation
-"#]],
-    );
-    assert_relevant_lines(
-        &stderr,
-        foundry_test_utils::str![[r#"
-invalid length `nope`
+    cmd.args(["test", "--symbolic", "--match-test", "checkBytes"]).assert_failure().stderr_eq(
+        str![[r#"
+...
+Error: Inline config error at test/SymbolicMalformedHalmos.t.sol:5:5: invalid @custom:halmos annotation: invalid length `nope` in --array-lengths `nope`
+...
 "#]],
     );
 }
@@ -2523,18 +2367,23 @@ contract SymbolicSelfdestructCancun is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSelfdestructCancun"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelfdestructCancun",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
+[PASS] checkSelfdestructCancun(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSelfdestructCancun(uint256)
-"#]],
-    );
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 }
 #[forgetest_init]
@@ -2576,38 +2425,28 @@ contract SymbolicInvariantSingle is Test {
 "#,
     );
 
-    let output = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_counterNeverEleven"])
-        .assert_failure()
-        .get_output()
-        .clone();
+    let output = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_counterNeverEleven",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSingle.t.sol:SymbolicInvariantSingle
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=set(uint256) args=[7]
+ invariant_counterNeverEleven() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .clone();
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-invariant_counterNeverEleven()
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-set(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[7]
-"#]],
-    );
     assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
     assert!(stderr.contains("cache/symbolic/"), "{stderr}");
     assert!(!stdout.contains("No contracts to fuzz"), "{stdout}");
@@ -2688,30 +2527,18 @@ contract SymbolicInvariantSequenceArtifact is Test {
     assert_eq!(artifact["calls"][0]["function_name"], "set");
     assert_eq!(artifact["calls"][0]["args"], "7");
 
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args(["test", "--replay-symbolic-artifact", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-invariant_counterNeverEleven()
-"#]],
-    );
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-args=[7]
-"#]],
-    );
+    assert_symbolic(cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSequenceArtifact.t.sol:SymbolicInvariantSequenceArtifact
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=set(uint256) args=[7]
+ invariant_counterNeverEleven() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -3536,28 +3363,23 @@ contract SymbolicInvariantSequenceMinimize is Test {
     assert_eq!(prime["args"], "41");
     assert_eq!(fire["args"], "101");
 
-    let replay_stdout = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--replay-symbolic-artifact",
-            minimization["minimized"]["path"].as_str().unwrap(),
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &replay_stdout,
-        foundry_test_utils::str![[r#"
-invariant_targetNeverBroken()
-"#]],
-    );
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        minimization["minimized"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSequenceMinimize.t.sol:SymbolicInvariantSequenceMinimize
+[FAIL: assertion failed: true != false]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=prime(uint256) [ARGS]
+		[SENDER] [SENDER] calldata=fire(uint256) [ARGS]
+ invariant_targetNeverBroken() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -6954,42 +6776,19 @@ contract SymbolicInvariantDepth is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_valueBelowTwo"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-arm(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-trip(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[1]
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-args=[2]
-"#]],
-    );
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_valueBelowTwo"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantDepth.t.sol:SymbolicInvariantDepth
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=arm(uint256) args=[1]
+		[SENDER] [SENDER] calldata=trip(uint256) args=[2]
+ invariant_valueBelowTwo() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -7033,24 +6832,26 @@ contract SymbolicInvariantSender is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_senderIsNotBob"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_senderIsNotBob",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSender.t.sol:SymbolicInvariantSender
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=touch(uint256) [ARGS]
+ invariant_senderIsNotBob() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-touch(uint256)
-"#]],
-    );
     assert!(
         stdout.to_lowercase().contains("sender=0x0000000000000000000000000000000000000b0b"),
         "{stdout}"
@@ -7116,36 +6917,24 @@ contract SymbolicSoundnessHardening is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicSoundnessHardening"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic randomUint bits
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic svm.create integer bits
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic prank delegatecall
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicSoundnessHardening",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicSoundnessHardening.t.sol:SymbolicSoundnessHardening
+[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.create integer bits] checkCreateIntRejectsOversizedBits() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.create integer bits] checkCreateUintRejectsOversizedBits() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic prank delegatecall] checkPrankDelegatecallReportsUnsupported() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic randomUint bits] checkRandomUintRejectsOversizedBits() ([METRICS])
+Suite result: FAILED. 1 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -7209,21 +6998,24 @@ contract SymbolicInvalidJump is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicInvalidJump"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkInvalidJumpRevertsFrame(uint256)
-[PASS] checkSymbolicInvalidJumpiBranches(uint256)
-[PASS] checkTakenInvalidJumpiRevertsFrame(uint256)
-[PASS] checkUntakenInvalidJumpiFallsThrough(uint256)
-[PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicInvalidJump",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicInvalidJump.t.sol:SymbolicInvalidJump
+[PASS] checkInvalidJumpRevertsFrame(uint256) ([METRICS])
+[PASS] checkSymbolicInvalidJumpiBranches(uint256) ([METRICS])
+[PASS] checkTakenInvalidJumpiRevertsFrame(uint256) ([METRICS])
+[PASS] checkUntakenInvalidJumpiFallsThrough(uint256) ([METRICS])
+[PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256) ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]

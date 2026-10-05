@@ -715,7 +715,7 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
                 evm_env,
                 tx_env,
                 evm_opts.clone(),
-                evm.backend.clone(),
+                evm.backend.clone_with_fork_scope()?,
                 evm.executor_builder.clone(),
             )?;
 

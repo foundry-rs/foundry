@@ -512,7 +512,7 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResults, TransportError> {
+    ) -> Result<Option<TraceResults>, TransportError> {
         self.provider().raw_request("trace_replayTransaction".into(), (hash, trace_types)).await
     }
 
