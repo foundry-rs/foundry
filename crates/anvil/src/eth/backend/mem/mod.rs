@@ -79,7 +79,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxKind, U256, address, hex, keccak256,
-    map::{AddressHashSet, AddressMap, B256Set, HashMap, HashSet},
+    map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
@@ -161,13 +161,13 @@ use revm::{
         transaction::TransactionType,
     },
     database::{
-        AccountState, CacheDB, DbAccount, EmptyDBTyped, WrapDatabaseRef,
+        AccountState, CacheDB, DbAccount, WrapDatabaseRef,
         bal::{BalDatabase, BalState},
     },
     handler::{
         EthFrame, EvmTr, EvmTrError, FrameResult, FrameTr, Handler as EvmHandler, validation,
     },
-    inspector::{InspectorEvmTr, InspectorHandler, NoOpInspector},
+    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
@@ -250,6 +250,8 @@ use foundry_evm::{
     core::{constants::SYSTEM_PRECOMPILE_STUB, evm::base_code_sentinel_addresses},
     hardfork::BaseUpgrade,
 };
+#[cfg(feature = "base")]
+use revm::inspector::NoOpInspector;
 
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
@@ -2187,14 +2189,7 @@ impl<N: Network> Backend<N> {
         &self,
         hash: B256,
     ) -> Option<Vec<LocalizedTransactionTrace>> {
-        let block_hash = self.blockchain.storage.read().transactions.get(&hash)?.block_hash;
-        let precompiles = self.mined_block_precompiles(&self.get_block(block_hash)?);
-        self.blockchain
-            .storage
-            .read()
-            .transactions
-            .get(&hash)
-            .map(|tx| tx.parity_traces(&precompiles))
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
     /// Returns the traces for the given block
@@ -2203,58 +2198,14 @@ impl<N: Network> Backend<N> {
         block: u64,
     ) -> Option<Vec<LocalizedTransactionTrace>> {
         let block = self.get_block(block)?;
-        if block.body.transactions.is_empty() {
-            return Some(vec![]);
-        }
-        let precompiles = self.mined_block_precompiles(&block);
         let mut traces = vec![];
         let storage = self.blockchain.storage.read();
         for tx in block.body.transactions {
             if let Some(mined_tx) = storage.transactions.get(&tx.hash()) {
-                traces.extend(mined_tx.parity_traces(&precompiles));
+                traces.extend(mined_tx.parity_traces());
             }
         }
         Some(traces)
-    }
-
-    /// Returns the precompile addresses that were active while executing the given mined block,
-    /// taken from the network EVM that executed it.
-    fn mined_block_precompiles(&self, block: &Block) -> AddressHashSet {
-        fn addresses(precompiles: &PrecompilesMap) -> AddressHashSet {
-            precompiles.addresses().copied().collect()
-        }
-
-        #[cfg_attr(not(feature = "monad"), allow(unused_variables))]
-        let (evm_env, hardfork) = self.tx_replay_evm_env(block);
-        let db = EmptyDBTyped::<DatabaseError>::default();
-        #[cfg(feature = "base")]
-        if self.is_base() {
-            let upgrade =
-                self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
-            return addresses(
-                self.create_base_evm(&db, &evm_env, NoOpInspector, upgrade).precompiles(),
-            );
-        }
-        if self.is_tempo() {
-            return addresses(self.create_tempo_evm(&db, &evm_env, NoOpInspector).precompiles());
-        }
-        #[cfg(feature = "optimism")]
-        if self.is_optimism() {
-            let spec = self.hardfork().into();
-            return addresses(self.create_op_evm(&db, &evm_env, NoOpInspector, spec).precompiles());
-        }
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let hardfork = monad_revm::MonadHardfork::from(hardfork);
-            return addresses(
-                self.create_monad_evm(&db, &evm_env, NoOpInspector, hardfork).precompiles(),
-            );
-        }
-        let mut precompiles = PrecompilesMap::from_static(Precompiles::new(
-            PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
-        ));
-        self.inject_precompiles(&mut precompiles, &evm_env);
-        addresses(&precompiles)
     }
 
     /// Returns the mined transaction for the given hash
@@ -2965,22 +2916,6 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = self.create_tempo_evm(db, evm_env, inspector);
-        Ok(evm.transact(tx_env)?)
-    }
-
-    /// Creates a Tempo EVM with the active precompiles.
-    fn create_tempo_evm<'db, I, DB>(
-        &self,
-        db: &'db DB,
-        evm_env: &EvmEnv,
-        inspector: I,
-    ) -> tempo_evm::evm::TempoEvm<WrapDatabaseRef<&'db DB>, I>
-    where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-    {
         let tempo_env = Self::build_tempo_evm_env(evm_env, self.tempo_hardfork());
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
@@ -2988,7 +2923,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_tempo_precompiles(&mut evm, evm_env);
-        evm
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and

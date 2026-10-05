@@ -34,30 +34,6 @@ impl<N: Network> Backend<N> {
         I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = self.create_op_evm(db, evm_env, inspector, spec);
-        let result = evm.transact(OpTx(tx_env))?;
-        Ok(ResultAndState {
-            result: result.result.map_haltreason(|h| match h {
-                OpHaltReason::Base(eth) => eth,
-                OpHaltReason::FailedDeposit => HaltReason::PrecompileError,
-            }),
-            state: result.state,
-        })
-    }
-
-    /// Creates an OP EVM with the active precompiles.
-    pub(super) fn create_op_evm<'db, I, DB>(
-        &self,
-        db: &'db DB,
-        evm_env: &EvmEnv,
-        inspector: I,
-        spec: OpSpecId,
-    ) -> <OpEvmFactory as EvmFactory>::Evm<WrapDatabaseRef<&'db DB>, I>
-    where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-    {
         let op_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(spec),
             evm_env.block_env.clone(),
@@ -68,6 +44,13 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
-        evm
+        let result = evm.transact(OpTx(tx_env))?;
+        Ok(ResultAndState {
+            result: result.result.map_haltreason(|h| match h {
+                OpHaltReason::Base(eth) => eth,
+                OpHaltReason::FailedDeposit => HaltReason::PrecompileError,
+            }),
+            state: result.state,
+        })
     }
 }

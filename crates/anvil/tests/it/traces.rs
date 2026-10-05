@@ -893,6 +893,21 @@ async fn test_trace_transaction_omits_nested_precompile_calls() {
 
     let block = provider.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
     assert_eq!(block.into_iter().map(|trace| trace.trace).collect::<Vec<_>>(), traces);
+
+    // Parity filtering must leave both children in the stored Geth call graph.
+    let geth = provider
+        .debug_trace_transaction(
+            hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+    let GethTrace::CallTracer(frame) = geth else { panic!("expected a call trace") };
+    assert_eq!(
+        frame.calls.iter().map(|call| call.to.unwrap()).collect::<Vec<_>>(),
+        [Address::with_last_byte(4), Address::left_padding_from(&[0xbe, 0xef])]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -936,6 +951,74 @@ async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
 
         let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
         assert_eq!(replay.trace, traces);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mined_precompile_traces_survive_chain_id_changes() {
+    let p256 = Address::left_padding_from(&[1, 0]);
+    let target = Address::left_padding_from(&[0xbe, 0xef]);
+    let caller = Address::repeat_byte(0x42);
+    for (chain_id, replacement, expected_targets) in
+        [(31_337u64, 56u64, vec![caller, p256, target]), (56u64, 31_337u64, vec![caller, target])]
+    {
+        let config = NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_chain_id(Some(chain_id))
+            .with_genesis_timestamp(Some(1_718_863_501u64));
+        let (api, handle) = spawn(config.clone()).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_wallets().next().unwrap().address();
+
+        // STATICCALL to 0x0100, then CALL to 0xbeef. BSC installs P256 after Haber.
+        api.anvil_set_code(
+            caller,
+            Bytes::from_hex("0x60006000600060006101005afa506000600060006000600061beef5af15000")
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default().from(from).to(caller),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let hash = receipt.transaction_hash;
+        let block = receipt.block_number.unwrap();
+        let before = provider.trace_transaction(hash).await.unwrap();
+        let targets = before
+            .iter()
+            .map(|trace| match &trace.trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, expected_targets, "chain ID {chain_id}");
+        assert_eq!(before[0].trace.subtraces, before.len() - 1);
+        for (index, trace) in before[1..].iter().enumerate() {
+            assert_eq!(trace.trace.trace_address, vec![index]);
+        }
+
+        api.anvil_set_chain_id(replacement).await.unwrap();
+        assert_eq!(provider.trace_transaction(hash).await.unwrap(), before);
+        assert_eq!(provider.trace_block(block.into()).await.unwrap(), before);
+        assert_eq!(
+            provider
+                .trace_filter(&TraceFilter::default().from_block(block).to_block(block))
+                .await
+                .unwrap(),
+            before
+        );
+
+        // The execution marker must also survive serialization into a fresh node.
+        let state = api.anvil_dump_state(None).await.unwrap();
+        let (restored_api, restored_handle) = spawn(config.with_chain_id(Some(replacement))).await;
+        assert!(restored_api.anvil_load_state(state).await.unwrap());
+        assert_eq!(restored_handle.http_provider().trace_transaction(hash).await.unwrap(), before);
     }
 }
 

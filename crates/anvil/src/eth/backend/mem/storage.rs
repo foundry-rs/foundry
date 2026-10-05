@@ -14,7 +14,7 @@ use alloy_eips::eip7928::BlockAccessList;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
-    map::{AddressHashSet, B256HashMap, HashMap},
+    map::{B256HashMap, HashMap},
 };
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
@@ -645,11 +645,11 @@ pub struct MinedTransaction<N: Network> {
 impl<N: Network> MinedTransaction<N> {
     /// Returns the traces of the transaction for `trace_transaction`.
     ///
-    /// Like simulated traces, these omit nested zero-value calls to `precompiles`, the precompiles
-    /// active in the transaction's block.
-    pub fn parity_traces(&self, precompiles: &AddressHashSet) -> Vec<LocalizedTransactionTrace> {
+    /// Like simulated traces, these omit nested zero-value precompile calls identified during
+    /// execution, regardless of subsequent changes to the node configuration.
+    pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(
-            exclude_precompile_calls(self.info.traces.clone(), precompiles),
+            exclude_precompile_calls(self.info.traces.clone()),
             None,
             TracingInspectorConfig::default_parity(),
         )
@@ -690,23 +690,16 @@ impl<N: Network> MinedTransaction<N> {
     }
 }
 
-/// Detaches nested zero-value calls to `precompiles` from the call graph, as the tracing inspector
-/// does when configured to exclude precompile calls.
+/// Detaches precompile calls identified during execution from the call graph, as the tracing
+/// inspector does when configured to exclude precompile calls.
 ///
 /// Mined transactions keep these calls for the Geth-style traces, which include them.
-fn exclude_precompile_calls(
-    mut nodes: Vec<CallTraceNode>,
-    precompiles: &AddressHashSet,
-) -> Vec<CallTraceNode> {
+fn exclude_precompile_calls(mut nodes: Vec<CallTraceNode>) -> Vec<CallTraceNode> {
     for idx in 0..nodes.len() {
-        let trace = &nodes[idx].trace;
-        if let Some(parent) = nodes[idx].parent
-            && !trace.kind.is_any_create()
-            && trace.value.is_zero()
-            && precompiles.contains(&trace.address)
+        if nodes[idx].is_precompile()
+            && let Some(parent) = nodes[idx].parent
             && let Some(position) = nodes[parent].children.iter().position(|&child| child == idx)
         {
-            nodes[idx].trace.maybe_precompile = Some(true);
             let parent = &mut nodes[parent];
             parent.children.remove(position);
             parent.ordering.retain_mut(|member| match member {

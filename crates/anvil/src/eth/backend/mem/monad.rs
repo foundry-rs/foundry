@@ -902,8 +902,11 @@ impl<N: Network> Backend<N> {
         I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = self.create_monad_evm(db, evm_env, inspector, execution.hardfork);
+        let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
+        let factory = MonadEvmFactory::default();
+        let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
         evm.ctx_mut().chain = execution.context;
+        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
             EnvelopeExecutionKind::Replay => {
@@ -914,26 +917,6 @@ impl<N: Network> Backend<N> {
                 }
             }
         }
-    }
-
-    /// Creates a Monad EVM for `hardfork` with the active precompiles.
-    pub(super) fn create_monad_evm<'db, I, DB>(
-        &self,
-        db: &'db DB,
-        evm_env: &EvmEnv,
-        inspector: I,
-        hardfork: MonadHardfork,
-    ) -> <MonadEvmFactory as EvmFactory>::Evm<WrapDatabaseRef<&'db DB>, I>
-    where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-    {
-        let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
-        let factory = MonadEvmFactory::default();
-        let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
-        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
-        evm
     }
 }
 
