@@ -122,22 +122,6 @@ pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     pub(crate) is_static: bool,
 }
 
-impl<'a, 'db, FEN: FoundryEvmNetwork> std::ops::Deref for CheatsCtxt<'a, 'db, FEN> {
-    type Target = FoundryContextFor<'db, FEN>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        self.ecx
-    }
-}
-
-impl<'db, FEN: FoundryEvmNetwork> std::ops::DerefMut for CheatsCtxt<'_, 'db, FEN> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.ecx
-    }
-}
-
 impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
     pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
