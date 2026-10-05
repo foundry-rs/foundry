@@ -31,7 +31,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ========================================================================
-brace-expansion 5.0.9 (MIT)
+brace-expansion 5.0.12 (MIT)
 
 LICENSE:
 

@@ -1,8 +1,7 @@
-use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
-use super::symbolic_helpers::z3_available;
+use super::symbolic_helpers::{assert_symbolic_witness, z3_available};
 use crate::skip_unless_z3;
 
 #[forgetest_init]
@@ -47,24 +46,20 @@ contract SymbolicByteSignextend {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolic"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkSymbolic"]))
+            .success()
+            .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicByteSignextend.t.sol:SymbolicByteSignextend
+[PASS] checkSymbolicByteIndex(uint8) ([METRICS])
+[PASS] checkSymbolicSignextendIndex(uint8) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicByteIndex(uint8)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicSignextendIndex(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic BYTE index"), "{stdout}");
     assert!(!stdout.contains("symbolic SIGNEXTEND index"), "{stdout}");
 }
@@ -109,18 +104,23 @@ contract SymbolicShift {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicShiftAmount"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicShiftAmount",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicShift.t.sol:SymbolicShift
+[PASS] checkSymbolicShiftAmount(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicShiftAmount(uint16)
-"#]],
-    );
     assert!(!stdout.contains("symbolic shift amount"), "{stdout}");
 }
 
@@ -147,18 +147,23 @@ contract SymbolicExp {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicExpBase"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpBase",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExp.t.sol:SymbolicExp
+[PASS] checkSymbolicExpBase(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExpBase(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic EXP base"), "{stdout}");
 }
 
@@ -186,18 +191,23 @@ contract SymbolicExpExponent {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicExpExponent"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpExponent",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpExponent.t.sol:SymbolicExpExponent
+[PASS] checkSymbolicExpExponent(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExpExponent(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 }
 
@@ -225,18 +235,23 @@ contract SymbolicExpWideExponent {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicExpWideExponent"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpWideExponent",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpWideExponent.t.sol:SymbolicExpWideExponent
+[PASS] checkSymbolicExpWideExponent(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicExpWideExponent(uint8)
-"#]],
-    );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 }
 
@@ -258,18 +273,20 @@ contract SymbolicGasLeftBound {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasLeftIsBounded"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkGasLeftIsBounded",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGasLeftBound.t.sol:SymbolicGasLeftBound
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasLeftIsBounded() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -313,18 +330,23 @@ contract SymbolicGasCallOperand {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasOnlyFeedsCall"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkGasOnlyFeedsCall",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGasCallOperand.t.sol:SymbolicGasCallOperand
+[PASS] checkGasOnlyFeedsCall(uint128) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkGasOnlyFeedsCall(uint128)
-"#]],
-    );
     assert!(!stdout.contains("GAS/gasleft() not modeled"), "{stdout}");
 }
 
@@ -391,24 +413,21 @@ contract SymbolicExplicitCallGas {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "check"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallCodeGasComputed(uint256)
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasOne()
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasThirtyTwo()
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasZero()
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkDelegateCallGasSymbolic(uint256)
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkStaticCallGasLarge()
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkTransferGasCap()
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicExplicitCallGas.t.sol:SymbolicExplicitCallGas
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallCodeGasComputed(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasOne() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasThirtyTwo() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkCallGasZero() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkDelegateCallGasSymbolic(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkStaticCallGasLarge() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkTransferGasCap() ([METRICS])
+Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -446,18 +465,20 @@ contract SymbolicDerivedGasCallOperand {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkDerivedGasCallOperand"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDerivedGasCallOperand",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicDerivedGasCallOperand.t.sol:SymbolicDerivedGasCallOperand
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkDerivedGasCallOperand() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Only the bytes that actually reach the callee matter: the 31 high bytes of a word whose
@@ -506,19 +527,21 @@ contract SymbolicGasExcludedCallData {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicGasExcludedCallData"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkGasExcludedFromCallData()
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasIncludedInCallData()
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicGasExcludedCallData",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicGasExcludedCallData.t.sol:SymbolicGasExcludedCallData
+[PASS] checkGasExcludedFromCallData() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasIncludedInCallData() ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -553,18 +576,15 @@ contract SymbolicGasCallData {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasInCallData"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkGasInCallData"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGasCallData.t.sol:SymbolicGasCallData
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasInCallData() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -586,18 +606,20 @@ contract SymbolicGasCallTarget {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasAsCallTarget"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkGasAsCallTarget",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGasCallTarget.t.sol:SymbolicGasCallTarget
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasAsCallTarget() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -630,18 +652,20 @@ contract SymbolicGasCallInputBounds {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasAsCallInputOffset"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkGasAsCallInputOffset",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGasCallInputBounds.t.sol:SymbolicGasCallInputBounds
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasAsCallInputOffset() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Plan-compliant target behavior for the `GAS` / `gasleft()` opcode: any
@@ -680,18 +704,20 @@ contract SymbolicGasLeftIncomplete {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkGasGuardedBranch"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkGasGuardedBranch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicGasLeftIncomplete.t.sol:SymbolicGasLeftIncomplete
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasGuardedBranch(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Plan-compliant target behavior for the symbolic Keccak heuristic: any
@@ -719,18 +745,22 @@ contract SymbolicKeccakHeuristic {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkKeccakNeverZero"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic
-"#]],
-    );
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkKeccakNeverZero",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicKeccakHeuristic.t.sol:SymbolicKeccakHeuristic
+[FAIL: incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic] checkKeccakNeverZero(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
     // Require explicit Keccak/SHA3 vocabulary in the result line; a bare
     // "incomplete" for unrelated reasons (e.g. solver-error) does not

@@ -2423,7 +2423,7 @@ mod tests {
         }));
         let mut store = step(42);
         store.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: Some(U256::from(7)),
             reason: StorageChangeReason::SSTORE,
@@ -2487,7 +2487,7 @@ mod tests {
         let address = Address::repeat_byte(1);
         let mut store = step(42);
         store.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: None,
             reason: StorageChangeReason::SSTORE,
@@ -2623,7 +2623,7 @@ mod tests {
         let address = Address::repeat_byte(1);
         let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
         store.storage_change = Some(Box::new(StorageChange {
-            key: U256::from(1),
+            key: U256::ONE,
             value: U256::from(42),
             had_value: Some(U256::ZERO),
             reason: StorageChangeReason::SSTORE,

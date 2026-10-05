@@ -1,6 +1,7 @@
 //! CLI tests for run trace commands.
 
 use super::*;
+use alloy_primitives::bytes;
 
 // <https://github.com/foundry-rs/foundry/issues/3473>
 #[casttest]
@@ -419,20 +420,15 @@ async fn cast_run_debug_trace_transaction_renders_nested_call_and_revert(cmd: _)
 
     // Parent runtime: LOG0(0,0); CALL(gas, 0x..bb, 0,0,0,0,0); POP; STOP.
     api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000aa"),
-        "0x60006000a0600060006000600060007300000000000000000000000000000000000000bb5af15000"
-            .parse()
-            .unwrap(),
+        Address::with_last_byte(0xaa),
+        bytes!(
+            "0x60006000a0600060006000600060007300000000000000000000000000000000000000bb5af15000"
+        ),
     )
     .await
     .unwrap();
     // Child runtime: PUSH1 0 PUSH1 0 REVERT.
-    api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000bb"),
-        "0x60006000fd".parse().unwrap(),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_code(Address::with_last_byte(0xbb), bytes!("0x60006000fd")).await.unwrap();
 
     cmd.cast_fuse()
         .args([

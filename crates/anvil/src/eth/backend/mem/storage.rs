@@ -29,7 +29,9 @@ use anvil_core::eth::{
 };
 use foundry_evm::{
     backend::MemDb,
-    traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
+    traces::{
+        CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
+    },
 };
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
@@ -641,10 +643,13 @@ pub struct MinedTransaction<N: Network> {
 }
 
 impl<N: Network> MinedTransaction<N> {
-    /// Returns the traces of the transaction for `trace_transaction`
+    /// Returns the traces of the transaction for `trace_transaction`.
+    ///
+    /// Like simulated traces, these omit nested zero-value precompile calls identified during
+    /// execution, regardless of subsequent changes to the node configuration.
     pub fn parity_traces(&self) -> Vec<LocalizedTransactionTrace> {
         ParityTraceBuilder::new(
-            self.info.traces.clone(),
+            exclude_precompile_calls(self.info.traces.clone()),
             None,
             TracingInspectorConfig::default_parity(),
         )
@@ -683,6 +688,33 @@ impl<N: Network> MinedTransaction<N> {
             })
             .collect()
     }
+}
+
+/// Detaches precompile calls identified during execution from the call graph, as the tracing
+/// inspector does when configured to exclude precompile calls.
+///
+/// Mined transactions keep these calls for the Geth-style traces, which include them.
+fn exclude_precompile_calls(mut nodes: Vec<CallTraceNode>) -> Vec<CallTraceNode> {
+    for idx in 0..nodes.len() {
+        if nodes[idx].is_precompile()
+            && let Some(parent) = nodes[idx].parent
+            && let Some(position) = nodes[parent].children.iter().position(|&child| child == idx)
+        {
+            let parent = &mut nodes[parent];
+            parent.children.remove(position);
+            parent.ordering.retain_mut(|member| match member {
+                TraceMemberOrder::Call(child) if *child == position => false,
+                TraceMemberOrder::Call(child) => {
+                    if *child > position {
+                        *child -= 1;
+                    }
+                    true
+                }
+                _ => true,
+            });
+        }
+    }
+    nodes
 }
 
 /// Intermediary Anvil representation of a receipt
@@ -726,7 +758,7 @@ mod tests {
                 assert_eq!(storage.states.len(), limit);
                 assert!(storage.on_disk_states.is_empty());
                 assert!(storage.get_state(&B256::ZERO).is_none());
-                assert!(storage.get_state(&B256::from(U256::from(2))).is_some());
+                assert!(storage.get_state(&B256::with_last_byte(2)).is_some());
             }
         }
     }
@@ -767,8 +799,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cached_state() {
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
-        let one = B256::from(U256::from(1));
-        let two = B256::from(U256::from(2));
+        let one = B256::with_last_byte(1);
+        let two = B256::with_last_byte(2);
 
         let mut state = MemDb::default();
         let addr = Address::random();
@@ -792,12 +824,12 @@ mod tests {
     #[test]
     fn persistent_states_do_not_use_disk_cache() {
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
-        let one = B256::from(U256::from(1));
-        let two = B256::from(U256::from(2));
+        let one = B256::with_last_byte(1);
+        let two = B256::with_last_byte(2);
         let address = Address::random();
         let mut db = StateRootDb::default();
 
-        db.insert_account(address, AccountInfo::from_balance(U256::from(1)));
+        db.insert_account(address, AccountInfo::from_balance(U256::ONE));
         storage.insert(one, db.current_state());
         db.set_balance(address, U256::from(2)).unwrap();
         storage.insert(two, db.current_state());
@@ -806,7 +838,7 @@ mod tests {
         assert!(storage.on_disk_states.get(&one).unwrap().is_persistent());
         assert_eq!(
             storage.get_on_disk_state(&one).unwrap().basic_ref(address).unwrap().unwrap().balance,
-            U256::from(1)
+            U256::ONE
         );
         storage.remove_block_states(&[one]);
         assert!(storage.disk_cache.temp_dir.is_none());
@@ -889,8 +921,8 @@ mod tests {
         // Use limit=1 to force states to disk
         let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
 
-        let hash_a = B256::from(U256::from(1));
-        let hash_b = B256::from(U256::from(2));
+        let hash_a = B256::with_last_byte(1);
+        let hash_b = B256::with_last_byte(2);
 
         storage.insert(hash_a, StateDb::new(MemDb::default()));
         storage.insert(hash_b, StateDb::new(MemDb::default()));
@@ -983,10 +1015,10 @@ mod tests {
             block_hash: B256::ZERO,
             block_number,
         };
-        let first = B256::from(U256::from(1));
-        let second = B256::from(U256::from(2));
-        let third = B256::from(U256::from(3));
-        let fourth = B256::from(U256::from(4));
+        let first = B256::with_last_byte(1);
+        let second = B256::with_last_byte(2);
+        let third = B256::with_last_byte(3);
+        let fourth = B256::with_last_byte(4);
         let mut storage = BlockchainStorage::<FoundryNetwork>::empty();
         for transaction in [
             transaction(2, 0, fourth),

@@ -110,7 +110,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv},
+    context::BlockEnv,
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{HaltReason, Output},
@@ -1090,7 +1090,7 @@ impl<N: Network> EthApi<N> {
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
             BlockTransactions::Hashes(txs) => U256::from(txs.len()),
-            BlockTransactions::Uncle => U256::from(0),
+            BlockTransactions::Uncle => U256::ZERO,
         });
         Ok(txs)
     }
@@ -1577,7 +1577,7 @@ impl<N: Network> EthApi<N> {
         self.backend.trace_filter(filter).await
     }
 
-    /// Returns a transaction trace at a given index.
+    /// Returns the transaction trace at the given trace address.
     ///
     /// Handler for RPC call: `trace_get`.
     pub async fn trace_get(
@@ -1596,7 +1596,7 @@ impl<N: Network> EthApi<N> {
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
+    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
     }
@@ -1608,7 +1608,7 @@ impl<N: Network> EthApi<N> {
         &self,
         transaction: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResults> {
+    ) -> Result<Option<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
     }
@@ -1918,14 +1918,11 @@ impl EthApi<FoundryNetwork> {
             }
             if gas_price > 0 {
                 // Blob gas is paid on top of execution gas, so reserve its maximum cost first. Like
-                // the call itself, fall back to the block's blob gas price when no cap is given.
+                // the call itself, pay no blob fee when no cap is given.
                 if inner.minimal_tx_type() == TxType::Eip4844
                     && let Some(hashes) = &inner.blob_versioned_hashes
                 {
-                    let max_fee_per_blob_gas = fees
-                        .max_fee_per_blob_gas
-                        .or_else(|| block_env.blob_gasprice())
-                        .unwrap_or_default();
+                    let max_fee_per_blob_gas = fees.max_fee_per_blob_gas.unwrap_or_default();
                     let blob_gas = U256::from(hashes.len() as u64 * DATA_GAS_PER_BLOB);
                     let blob_cost = blob_gas.saturating_mul(U256::from(max_fee_per_blob_gas));
                     if blob_cost >= available_funds {
@@ -2930,7 +2927,7 @@ impl EthApi<FoundryNetwork> {
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
             BlockTransactions::Hashes(txs) => U256::from(txs.len()),
-            BlockTransactions::Uncle => U256::from(0),
+            BlockTransactions::Uncle => U256::ZERO,
         });
         Ok(txs)
     }
@@ -4199,7 +4196,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.saturating_to::<u64>());
-        let blocks = num_blocks.unwrap_or(U256::from(1));
+        let blocks = num_blocks.unwrap_or(U256::ONE);
         if blocks.is_zero() {
             return Ok(());
         }
@@ -5858,7 +5855,7 @@ mod tests {
 
         for percentiles in [vec![-0.5], vec![100.5], vec![50.0, 25.0], vec![50.0, 50.0]] {
             let err =
-                api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap_err();
+                api.fee_history(U256::ONE, BlockNumber::Latest, percentiles).await.unwrap_err();
             assert!(matches!(
                 err,
                 BlockchainError::FeeHistory(FeeHistoryError::InvalidRewardPercentiles)
@@ -5866,7 +5863,7 @@ mod tests {
         }
 
         for percentiles in [vec![], vec![0.0, 100.0]] {
-            api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap();
+            api.fee_history(U256::ONE, BlockNumber::Latest, percentiles).await.unwrap();
         }
     }
 

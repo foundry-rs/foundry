@@ -8,7 +8,8 @@ use alloy_network::{
     TransactionResponse, eip2718::Decodable2718,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
+    Address, B256, Bytes, FixedBytes, TxHash, U64, U256, address, b256, bytes, hex,
+    map::B256HashSet,
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, WsConnect};
 use alloy_rlp::Decodable;
@@ -26,10 +27,7 @@ use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
-use std::{
-    str::FromStr,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -82,7 +80,7 @@ async fn can_get_pending_transactions() {
     let recipient = accounts[2].address();
 
     let sender_tx =
-        TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)).nonce(0);
+        TransactionRequest::default().from(sender).to(recipient).value(U256::ONE).nonce(0);
     let sender_tx = provider.send_transaction(WithOtherFields::new(sender_tx)).await.unwrap();
 
     let queued_tx =
@@ -639,7 +637,7 @@ async fn get_blocktimestamp_works() {
 
     let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
 
-    assert!(timestamp > U256::from(1));
+    assert!(timestamp > U256::ONE);
 
     let latest_block =
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -923,7 +921,7 @@ async fn can_get_raw_receipts() {
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let first = TransactionRequest::default()
         .from(accounts[0].address())
-        .value(U256::from(1))
+        .value(U256::ONE)
         .to(Address::random());
     let second = TransactionRequest::default()
         .from(accounts[1].address())
@@ -994,7 +992,7 @@ async fn can_get_raw_transactions() {
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
     let first = TransactionRequest::default()
         .from(accounts[0].address())
-        .value(U256::from(1))
+        .value(U256::ONE)
         .to(Address::random());
     let second = TransactionRequest::default()
         .from(accounts[1].address())
@@ -1042,7 +1040,7 @@ async fn can_get_raw_header() {
     let provider = handle.http_provider();
 
     let from = handle.dev_wallets().next().unwrap().address();
-    let tx = TransactionRequest::default().from(from).value(U256::from(1)).to(Address::random());
+    let tx = TransactionRequest::default().from(from).value(U256::ONE).to(Address::random());
     provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
@@ -1068,7 +1066,7 @@ async fn can_get_raw_block() {
     let provider = handle.http_provider();
 
     let from = handle.dev_wallets().next().unwrap().address();
-    let tx = TransactionRequest::default().from(from).value(U256::from(1)).to(Address::random());
+    let tx = TransactionRequest::default().from(from).value(U256::ONE).to(Address::random());
     provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
 
     let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
@@ -1399,10 +1397,7 @@ async fn test_tx_access_list() {
             storage_keys: vec![
                 FixedBytes::ZERO,
                 FixedBytes::with_last_byte(1),
-                FixedBytes::from_str(
-                    "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6",
-                )
-                .unwrap(),
+                b256!("0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"),
             ],
         }]),
     );
@@ -1444,10 +1439,7 @@ async fn test_tx_access_list() {
             storage_keys: vec![
                 FixedBytes::ZERO,
                 FixedBytes::with_last_byte(1),
-                FixedBytes::from_str(
-                    "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6",
-                )
-                .unwrap(),
+                b256!("0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"),
             ],
         }]),
     );
@@ -1464,8 +1456,7 @@ async fn test_tx_access_list() {
     //   60 00      PUSH1 0x00       ; revert data offset
     //   60 00      PUSH1 0x00       ; revert data length
     //   fd         REVERT           ; fail after the storage read
-    let reverter_initcode =
-        Bytes::from(hex!("6009600c60003960096000f36000355460006000fd").to_vec());
+    let reverter_initcode = bytes!("6009600c60003960096000f36000355460006000fd");
     let funded_sender = handle.dev_accounts().next().unwrap();
     let deploy_reverter_tx =
         TransactionRequest::default().from(funded_sender).with_deploy_code(reverter_initcode);
@@ -1478,9 +1469,7 @@ async fn test_tx_access_list() {
         .unwrap();
     let reverter = reverter_receipt.contract_address.unwrap();
 
-    let slot =
-        FixedBytes::from_str("0x00000000000000000000000000000000000000000000000000000000000042ff")
-            .unwrap();
+    let slot = b256!("0x00000000000000000000000000000000000000000000000000000000000042ff");
     let reverter_call_tx = TransactionRequest::default()
         .from(funded_sender)
         .to(reverter)
@@ -1507,7 +1496,7 @@ async fn can_create_access_list_with_state_override() {
     let tx = WithOtherFields::new(tx);
 
     // PUSH1 0; SLOAD; STOP.
-    let code = Bytes::from(hex!("60005400").to_vec());
+    let code = bytes!("60005400");
     let state_override = StateOverridesBuilder::default()
         .append(target, AccountOverride::default().with_code(code.to_vec()))
         .build();
@@ -1600,10 +1589,8 @@ async fn test_block_override() {
     let sender = wallet.address();
     let recipient = Address::random();
 
-    let tx = TransactionRequest::default()
-        .from(sender)
-        .to(recipient)
-        .input(Bytes::from(hex!("42cbb15c").to_vec()).into());
+    let tx =
+        TransactionRequest::default().from(sender).to(recipient).input(bytes!("42cbb15c").into());
 
     //     function getBlockNumber() external view returns (uint256) {
     //         return block.number;
@@ -1714,7 +1701,7 @@ async fn can_mine_multiple_in_block() {
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let tx = TransactionRequest {
-        from: Some("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap()),
+        from: Some(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")),
         ..Default::default()
     };
 
@@ -1722,7 +1709,7 @@ async fn can_mine_multiple_in_block() {
     let first = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
     let second = api.send_transaction(WithOtherFields::new(tx.clone())).await.unwrap();
 
-    api.anvil_mine(Some(U256::from(1)), Some(U256::ZERO)).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), Some(U256::ZERO)).await.unwrap();
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
@@ -1873,7 +1860,7 @@ async fn can_get_tx_by_sender_and_nonce() {
     let different_sender = accounts[2].address();
     let result: Option<alloy_network::AnyRpcTransaction> = provider
         .client()
-        .request("eth_getTransactionBySenderAndNonce", (different_sender, U256::from(0)))
+        .request("eth_getTransactionBySenderAndNonce", (different_sender, U256::ZERO))
         .await
         .unwrap();
     assert!(result.is_none());
@@ -2071,7 +2058,7 @@ async fn instant_mine_retries_txs_skipped_by_block_gas_limit() {
         let tx = TransactionRequest::default()
             .from(from)
             .to(to)
-            .value(U256::from(1))
+            .value(U256::ONE)
             .nonce(nonce)
             .gas_limit(21_000);
         pending.push(provider.send_transaction(WithOtherFields::new(tx)).await.unwrap());
@@ -2100,7 +2087,7 @@ fn transfer(
     let tx = TransactionRequest::default()
         .from(from)
         .to(to)
-        .value(U256::from(1))
+        .value(U256::ONE)
         .nonce(nonce)
         .gas_limit(gas_limit);
     WithOtherFields::new(tx)

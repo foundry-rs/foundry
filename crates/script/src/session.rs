@@ -84,8 +84,9 @@ pub(crate) fn insert_session_access_key_for_remaining_transactions(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::B256;
     use alloy_signer::Signer;
     use foundry_common::tempo::{KeyType, SessionEntry, SessionKeyMaterial, SessionStatus};
 
@@ -96,8 +97,8 @@ mod tests {
 
     #[test]
     fn session_sender_requires_single_root_account() {
-        let one = address!("0x1111111111111111111111111111111111111111");
-        let two = address!("0x2222222222222222222222222222222222222222");
+        let one = Address::repeat_byte(0x11);
+        let two = Address::repeat_byte(0x22);
         let single_sender = [one].into_iter().collect();
         let multiple_senders = [one, two].into_iter().collect();
 

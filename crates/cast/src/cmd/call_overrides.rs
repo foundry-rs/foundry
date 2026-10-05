@@ -151,8 +151,8 @@ fn address_slot_value_overrides(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{address, b256};
     use clap::Parser;
 
     #[derive(Debug, Parser)]
@@ -177,27 +177,19 @@ mod tests {
             "0x0000000000000000000000000000000000000001:7:8",
         ]);
         let overrides = args.overrides.get_state_overrides().unwrap().unwrap();
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let account = overrides.get(&address).unwrap();
 
         assert_eq!(account.balance, Some(U256::from(2)));
         assert_eq!(account.nonce, Some(3));
         assert_eq!(account.code, Some(Bytes::from([0x04])));
         assert_eq!(
-            account
-                .state
-                .as_ref()
-                .unwrap()
-                .get(&b256!("0x0000000000000000000000000000000000000000000000000000000000000005")),
-            Some(&b256!("0x0000000000000000000000000000000000000000000000000000000000000006"))
+            account.state.as_ref().unwrap().get(&B256::with_last_byte(5)),
+            Some(&B256::with_last_byte(6))
         );
         assert_eq!(
-            account
-                .state_diff
-                .as_ref()
-                .unwrap()
-                .get(&b256!("0x0000000000000000000000000000000000000000000000000000000000000007")),
-            Some(&b256!("0x0000000000000000000000000000000000000000000000000000000000000008"))
+            account.state_diff.as_ref().unwrap().get(&B256::with_last_byte(7)),
+            Some(&B256::with_last_byte(8))
         );
     }
 
@@ -226,7 +218,7 @@ mod tests {
         let args =
             TestArgs::parse_from(["foundry-cli", "--block.number", "1", "--block.time", "2"]);
         let overrides = args.overrides.get_block_overrides().unwrap().unwrap();
-        assert_eq!(overrides.number, Some(U256::from(1)));
+        assert_eq!(overrides.number, Some(U256::ONE));
         assert_eq!(overrides.time, Some(2));
 
         let args = TestArgs::parse_from([""]);

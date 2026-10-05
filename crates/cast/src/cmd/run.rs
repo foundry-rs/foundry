@@ -58,7 +58,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use futures::{StreamExt, TryFutureExt};
 use revm::{
     DatabaseRef,
@@ -272,42 +272,36 @@ impl RunArgs {
 
     /// Replays the transaction locally with the EVM of its network.
     async fn replay(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new())
-                .await;
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new()).await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<BaseEvmNetwork>::new()).await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                let target = self.fetch_target(&config).await?;
+                let mut run = self
+                    .prepare::<MonadEvmNetwork>(
+                        config,
+                        evm_opts,
+                        target,
+                        ExecutorBuilder::<MonadEvmNetwork>::new(),
+                    )
+                    .await?;
+                let result = run.execute_monad().await?;
+                run.finish(result).await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<OpEvmNetwork>::new()).await
+            }
+            NetworkVariant::Ethereum => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<EthEvmNetwork>::new()).await
+            }
         }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            return self
-                .run_with_evm(config, evm_opts, ExecutorBuilder::<BaseEvmNetwork>::new())
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            let target = self.fetch_target(&config).await?;
-            let mut run = self
-                .prepare::<MonadEvmNetwork>(
-                    config,
-                    evm_opts,
-                    target,
-                    ExecutorBuilder::<MonadEvmNetwork>::new(),
-                )
-                .await?;
-            let result = run.execute_monad().await?;
-            return run.finish(result).await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_evm(config, evm_opts, ExecutorBuilder::<OpEvmNetwork>::new())
-                .await;
-        }
-
-        self.run_with_evm(config, evm_opts, ExecutorBuilder::<EthEvmNetwork>::new()).await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(
@@ -373,7 +367,7 @@ impl RunArgs {
         let tracing = self.configure_tracing(&mut config, &evm_opts);
         let with_local_artifacts = self.with_local_artifacts;
 
-        let endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let endpoint_identity = evm_opts.fork_endpoint_identity().await?;
         let tx_inclusion = tx
             .block_hash_num()
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
@@ -450,7 +444,7 @@ impl RunArgs {
             &endpoint_identity,
             Some(transaction_block.header().timestamp()),
         );
-        let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
         ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
         let current_tx = provider.get_transaction_by_hash(tx_hash).await?;
@@ -1194,12 +1188,31 @@ impl figment::Provider for RunArgs {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::address;
+
+    #[test]
+    fn http_wrapped_method_not_found_has_trace_guidance() {
+        let error = alloy_transport::TransportErrorKind::http_error(
+            403,
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method disabled"}}"#.into(),
+        );
+        let error = call_tracer_frame(
+            Err(error),
+            "debug_traceTransaction",
+            "replay locally",
+            "this transaction",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the RPC endpoint does not support `debug_traceTransaction` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or replay locally"
+        );
+    }
 
     #[test]
     fn parses_legacy_short_label_alias() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let label = format!("{address}:alice");
         let args = RunArgs::parse_from(["cast run", "0x00", "-l", &label]);
 

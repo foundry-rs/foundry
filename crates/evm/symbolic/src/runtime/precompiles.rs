@@ -167,7 +167,7 @@ pub(crate) fn execute_symbolic_precompile(
             }
             let flag = input.byte(cx, 212);
             match flag.as_const() {
-                Some(flag) if flag.is_zero() || flag == U256::from(1) => {}
+                Some(flag) if flag.is_zero() || flag == U256::ONE => {}
                 Some(_) => return Ok(None),
                 None => {
                     return Err(SymbolicError::Unsupported(

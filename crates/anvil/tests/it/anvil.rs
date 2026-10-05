@@ -152,7 +152,7 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         .await
         .unwrap();
     assert!(receipt.status());
-    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::from(1));
+    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::ONE);
 }
 
 #[tokio::test(flavor = "multi_thread")]

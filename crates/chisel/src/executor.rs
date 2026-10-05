@@ -702,7 +702,7 @@ mod tests {
         let to = Address::with_last_byte(2);
         let amount = U256::from(4);
         runner.executor.set_balance(from, U256::from(10)).unwrap();
-        runner.executor.set_balance(to, U256::from(1)).unwrap();
+        runner.executor.set_balance(to, U256::ONE).unwrap();
 
         let mut input = vec![0u8; 96];
         input[12..32].copy_from_slice(from.as_slice());
