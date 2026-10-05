@@ -1548,11 +1548,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // Handle expected calls
-        if self.expected_calls.contains_key(&call.bytecode_address) {
+        if let Some(expected) = self.expected_calls.get_mut(&call.bytecode_address) {
             let input = call.input.as_bytes(ecx);
             expect::observe_call(
-                &mut self.expected_calls,
-                call.bytecode_address,
+                expected,
                 &input,
                 call.transfer_value(),
                 call.gas_limit,
@@ -2832,7 +2831,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             // Match expected calls
             if let Some(msg) =
-                expect::first_unmet_call(&self.expected_calls, !outcome.result.is_ok())
+                expect::first_unmet_call(&self.expected_calls, outcome.result.is_ok())
             {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
