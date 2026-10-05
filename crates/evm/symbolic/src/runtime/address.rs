@@ -108,7 +108,7 @@ impl SymExpr {
     }
 
     fn is_address_mask(&self) -> bool {
-        self.as_const() == Some((U256::from(1) << 160) - U256::from(1))
+        self.as_const() == Some((U256::ONE << 160) - U256::ONE)
     }
 
     fn is_shift_96(&self) -> bool {
@@ -120,7 +120,7 @@ pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
     if bits >= 256 {
         value
     } else {
-        let mask = (U256::from(1) << bits) - U256::from(1);
+        let mask = (U256::ONE << bits) - U256::ONE;
         value & mask
     }
 }

@@ -6047,7 +6047,7 @@ mod tests {
         let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
             target: Address::with_last_byte(target),
             selector: Selector::from([0, 0, 0, 1]),
-            fingerprint: B256::from([fingerprint; 32]),
+            fingerprint: B256::repeat_byte(fingerprint),
         };
         let expected = outcome(site(1, 1));
 

@@ -1,7 +1,7 @@
 //! CLI tests for shared Tempo transaction options.
 
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256, address, b256, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -970,7 +970,7 @@ async fn send_with_presigned_sponsor_signature_rejects_stale_digest(cmd: _) {
     let bump_tx = TransactionRequest::default()
         .from(sender)
         .to(PATH_USD_ADDRESS)
-        .with_input(tip20.transfer(recipient, U256::from(1u64)).calldata().clone())
+        .with_input(tip20.transfer(recipient, U256::ONE).calldata().clone())
         .with_gas_limit(10_000_000);
     let bump_receipt = provider
         .send_transaction(WithOtherFields::new(bump_tx))
@@ -1148,7 +1148,7 @@ async fn channel_id_defaults(cmd: _) {
 
     let payer = address!("0000000000000000000000000000000000000101");
     let payee = address!("0000000000000000000000000000000000000202");
-    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let salt = B256::with_last_byte(0x42);
     let expected = keccak256(
         (
             payer,

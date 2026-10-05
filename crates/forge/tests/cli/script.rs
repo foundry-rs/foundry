@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, Bytes, U256, address, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
@@ -151,7 +151,7 @@ async fn monad_simulation_advances_transaction_context(prj: _, cmd: _) {
     // Payable runtime calls `dippedIntoReserve()` and reverts when it returns true.
     api.anvil_set_code(
         address!("0x000000000000000000000000000000000000bEEF"),
-        hex!("633a61584e5f5260205f6004601c5f6110015af1505f5115601e575f5ffd5b00").into(),
+        bytes!("633a61584e5f5260205f6004601c5f6110015af1505f5115601e575f5ffd5b00"),
     )
     .await
     .unwrap();
@@ -1130,7 +1130,7 @@ async fn can_deploy_unlocked(prj: _, cmd: _) {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .sender(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .unlocked()
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::OkSimulation)
@@ -1182,7 +1182,7 @@ async fn delegated_transport_error_is_not_retried(prj: _, cmd: _) {
 
     let mut tester = ScriptTester::new_broadcast(cmd, &endpoint, prj.root());
     tester
-        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .sender(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .unlocked()
         .add_sig("BroadcastTest", "deployOther()")
         .arg("--broadcast");
@@ -1203,7 +1203,7 @@ Error: submission outcome for delegated operation 0 is unknown; refusing to risk
 
     tester.clear();
     tester
-        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .sender(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .unlocked()
         .add_sig("BroadcastTest", "deployOther()")
         .arg("--resume");
@@ -1500,7 +1500,7 @@ async fn can_deploy_with_custom_create2_notmatched_bytecode(prj: _, cmd: _) {
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
         create2,
-        Bytes::from_static(&hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef")),
+        bytes!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef"),
     )
     .await
     .unwrap();
@@ -5143,7 +5143,7 @@ contract SaltedDeployCodeScript is Script {
         for deployed in [first, second] {
             assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
         }
-        assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
+        assert_eq!(api.balance(first, None).await.unwrap(), U256::ONE);
     }
 }
 
@@ -6421,7 +6421,7 @@ contract DeployTempoBatch is Script {
     assert_eq!(transactions[3]["transaction"]["to"], deployed[0].to_string().to_lowercase());
     assert_eq!(
         handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
-        U256::from(1)
+        U256::ONE
     );
 }
 
@@ -6945,10 +6945,7 @@ contract SetCodeViaRpc {
         .assert_success();
 
     let target = address!("0x0000000000000000000000000000000000001331");
-    assert_eq!(
-        api.get_code(target, None).await.unwrap(),
-        Bytes::from(hex!("602a60005260206000f3"))
-    );
+    assert_eq!(api.get_code(target, None).await.unwrap(), bytes!("602a60005260206000f3"));
 }
 
 // An out-of-band storage mutation must replace the same locally modified slot.

@@ -1,6 +1,7 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
@@ -125,7 +126,7 @@ async fn cast_run_uses_chain_rpc_endpoint(prj: _, cmd: _) {
             TransactionRequest::default()
                 .from(sender)
                 .to(address!("000000000000000000000000000000000000dEaD"))
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .into(),
         )
         .await
@@ -283,12 +284,9 @@ async fn flaky_cast_run_impersonated_tx(cmd: _) {
     let tx = TransactionRequest::default()
         .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
         .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
+        .with_input(bytes!(
+            "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c"
+        ));
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -544,18 +542,13 @@ async fn cast_run_warns_on_receipt_mismatch(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     // MCOPY(0, 0, 0) STOP
-    api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000aa"),
-        hex!("0x6000600060005e00").into(),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060005e00")).await.unwrap();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
     let mut tx_hashes = Vec::new();
     for (to, input) in [
-        (address!("0x00000000000000000000000000000000000000aa"), Bytes::new()),
-        (address!("0x00000000000000000000000000000000000000cc"), vec![1u8; 1000].into()),
+        (Address::with_last_byte(0xaa), Bytes::new()),
+        (Address::with_last_byte(0xcc), vec![1u8; 1000].into()),
     ] {
         let receipt = provider
             .send_transaction(

@@ -1365,7 +1365,7 @@ mod tests {
             calls: vec![
                 Call {
                     to: TxKind::Call(Address::repeat_byte(0x22)),
-                    value: U256::from(1),
+                    value: U256::ONE,
                     input: Bytes::from_static(&[0x12]),
                 },
                 Call {

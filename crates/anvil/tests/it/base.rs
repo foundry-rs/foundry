@@ -386,7 +386,7 @@ async fn base_standalone_mines_deposit_transaction() {
     let mint = 1_000;
     let value = U256::from(600);
     let envelope = FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit {
-        source_hash: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+        source_hash: B256::with_last_byte(1),
         from,
         to: TxKind::Call(to),
         mint,
@@ -410,11 +410,11 @@ async fn base_standalone_includes_failed_deposit_transaction() {
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
-    let target = address!("cccccccccccccccccccccccccccccccccccccccc");
+    let target = Address::repeat_byte(0xcc);
     api.anvil_set_code(target, Bytes::from_static(&[0xfe])).await.unwrap();
     let sender_before = provider.get_balance(from).await.unwrap();
     let envelope = FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit {
-        source_hash: b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        source_hash: B256::with_last_byte(2),
         from,
         to: TxKind::Call(target),
         mint: 1_000,
@@ -599,7 +599,7 @@ async fn base_eip8130_estimate_surfaces_phase_revert() {
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
-    let target = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    let target = Address::repeat_byte(0xee);
     api.anvil_set_code(target, Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xfd])).await.unwrap();
     let request = eip8130_simulation_request_with_call(sender, target);
 
@@ -684,7 +684,7 @@ async fn base_eip8130_nonce_key_rpc_reads_channel_state() {
     api.anvil_set_storage_at(
         NonceManagerStorage::ADDRESS,
         slot,
-        B256::from(U256::from(42).to_be_bytes::<32>()),
+        B256::from(B256::with_last_byte(42).0),
     )
     .await
     .unwrap();
@@ -716,7 +716,7 @@ async fn base_eip8130_txpool_keeps_independent_nonce_channels() {
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
     let sender = signer.address();
-    let first_key = U256::from(1);
+    let first_key = U256::ONE;
     let second_key = U256::from(2);
 
     let first = provider
@@ -1073,7 +1073,7 @@ async fn base_eip8130_state_cheat_clears_pending_transactions() {
         .unwrap();
     assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
 
-    api.anvil_set_balance(signer.address(), U256::from(1)).await.unwrap();
+    api.anvil_set_balance(signer.address(), U256::ONE).await.unwrap();
 
     let status = provider.txpool_status().await.unwrap();
     assert_eq!(status.pending, 0);
@@ -1166,7 +1166,7 @@ async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
     let sender = signer.address();
-    let target = address!("dddddddddddddddddddddddddddddddddddddddd");
+    let target = Address::repeat_byte(0xdd);
     api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
     let envelope = eip8130_envelope_with(
         &signer,

@@ -1270,14 +1270,14 @@ mod tests {
         let mut tx_env = TempoTxEnv {
             inner: TxEnv {
                 kind: old_to,
-                value: U256::from(1),
+                value: U256::ONE,
                 data: Bytes::from_static(b"original bytecode"),
                 ..Default::default()
             },
             tempo_tx_env: Some(Box::new(tempo_revm::TempoBatchCallEnv {
                 aa_calls: vec![Call {
                     to: old_to,
-                    value: U256::from(1),
+                    value: U256::ONE,
                     input: Bytes::from_static(b"original bytecode"),
                 }],
                 ..Default::default()
@@ -1602,7 +1602,7 @@ mod tests {
         assert_eq!(call.to, TxKind::Call(address!("0x5ad0000000000000000000000000000000000003")));
         assert_eq!(call.value, U256::ZERO);
         assert_eq!(call.input.len(), 868);
-        assert_eq!(aa.nonce_key, U256::from(1));
+        assert_eq!(aa.nonce_key, U256::ONE);
         assert_eq!(aa.valid_after, None);
         assert_eq!(aa.valid_before, None);
     }

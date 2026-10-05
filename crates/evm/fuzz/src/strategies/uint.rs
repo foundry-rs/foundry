@@ -60,7 +60,7 @@ impl ValueTree for UintValueTree {
             return false;
         }
 
-        self.lo = self.curr + U256::from(1);
+        self.lo = self.curr + U256::ONE;
         self.reposition()
     }
 }
@@ -163,7 +163,7 @@ impl UintStrategy {
     }
 
     fn type_max(&self) -> U256 {
-        if self.bits < 256 { (U256::from(1) << self.bits) - U256::from(1) } else { U256::MAX }
+        if self.bits < 256 { (U256::ONE << self.bits) - U256::ONE } else { U256::MAX }
     }
 }
 

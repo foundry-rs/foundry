@@ -228,8 +228,9 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{B256, address, bytes};
+    use alloy_primitives::{B256, bytes};
 
     /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
     /// the refund target and `value` as the transferred balance (the inverse of
@@ -238,8 +239,8 @@ mod tests {
     /// `is_selfdestruct()` holds and the status renders as `[SelfDestruct]`.
     #[test]
     fn converts_selfdestruct_frame() {
-        let destructed = address!("1111111111111111111111111111111111111111");
-        let beneficiary = address!("2222222222222222222222222222222222222222");
+        let destructed = Address::repeat_byte(0x11);
+        let beneficiary = Address::repeat_byte(0x22);
         let frame = CallFrame {
             from: destructed,
             to: Some(beneficiary),
@@ -262,7 +263,7 @@ mod tests {
 
     #[test]
     fn fills_missing_root_create_address() {
-        let created = address!("3333333333333333333333333333333333333333");
+        let created = Address::repeat_byte(0x33);
         let frame = CallFrame { typ: "CREATE".to_string(), ..Default::default() };
 
         let arena = call_frame_to_arena(&frame, Some(created));
@@ -277,8 +278,8 @@ mod tests {
     #[test]
     fn converts_nested_call_frame() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             gas: U256::from(100_000u64),
             gas_used: U256::from(21_000u64),
             input: bytes!("dead"),
@@ -286,15 +287,15 @@ mod tests {
             value: Some(U256::from(7u64)),
             typ: "CALL".to_string(),
             logs: vec![CallLogFrame {
-                address: Some(address!("2222222222222222222222222222222222222222")),
+                address: Some(Address::repeat_byte(0x22)),
                 topics: Some(vec![]),
                 data: Some(bytes!("00")),
                 position: Some(1),
                 index: Some(0),
             }],
             calls: vec![CallFrame {
-                from: address!("2222222222222222222222222222222222222222"),
-                to: Some(address!("3333333333333333333333333333333333333333")),
+                from: Address::repeat_byte(0x22),
+                to: Some(Address::repeat_byte(0x33)),
                 gas: U256::from(50_000u64),
                 gas_used: U256::from(5_000u64),
                 input: bytes!("cafe"),
@@ -364,8 +365,8 @@ mod tests {
     #[test]
     fn surfaces_error_string_in_output() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             typ: "CALL".to_string(),
             error: Some("invalid opcode: opcode 0xfe not defined".to_string()),
             ..Default::default()
@@ -386,8 +387,8 @@ mod tests {
     #[test]
     fn clamps_out_of_range_log_position() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             typ: "CALL".to_string(),
             logs: vec![
                 CallLogFrame { position: Some(0), index: Some(0), ..Default::default() },
@@ -414,8 +415,8 @@ mod tests {
     #[test]
     fn orders_log_between_two_children() {
         let frame = CallFrame {
-            from: address!("1111111111111111111111111111111111111111"),
-            to: Some(address!("2222222222222222222222222222222222222222")),
+            from: Address::repeat_byte(0x11),
+            to: Some(Address::repeat_byte(0x22)),
             typ: "CALL".to_string(),
             // position 1 -> one child emitted before the log, so it lands between the two children.
             logs: vec![CallLogFrame { position: Some(1), index: Some(0), ..Default::default() }],

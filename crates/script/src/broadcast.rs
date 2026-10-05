@@ -1819,11 +1819,7 @@ mod tests {
 
         let receipt = provider
             .send_transaction(
-                TransactionRequest::default()
-                    .from(sender)
-                    .to(recipient)
-                    .value(U256::from(1))
-                    .into(),
+                TransactionRequest::default().from(sender).to(recipient).value(U256::ONE).into(),
             )
             .await
             .unwrap()
@@ -1934,7 +1930,7 @@ mod tests {
     #[test]
     fn recovered_batch_attempt_does_not_require_a_signer() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = address!("0x2222222222222222222222222222222222222222");
+        let sender = Address::repeat_byte(0x22);
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [script_tx(sender)].into(),
@@ -1974,7 +1970,7 @@ mod tests {
     #[test]
     fn recovered_sender_still_requires_sequential_ordering() {
         let dir = tempfile::tempdir().unwrap();
-        let unsigned = address!("0x2222222222222222222222222222222222222222");
+        let unsigned = Address::repeat_byte(0x22);
         let mut sequence = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [planned_tx(SIGNED_TX), script_tx(unsigned)].into(),
@@ -2046,7 +2042,7 @@ mod tests {
     #[test]
     fn externally_signed_completion_uses_the_persisted_hash() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = address!("0x1111111111111111111111111111111111111111");
+        let sender = Address::repeat_byte(0x11);
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [script_tx(sender), script_tx(sender)].into(),
@@ -2097,7 +2093,7 @@ mod tests {
 
     #[tokio::test]
     async fn access_key_sets_key_id_before_estimation() {
-        let root_address = address!("0x1111111111111111111111111111111111111111");
+        let root_address = Address::repeat_byte(0x11);
         let access_key =
             foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let access_key_address = access_key.address();
@@ -2146,8 +2142,8 @@ mod tests {
         let sender = signer.address();
         let wallet = EthereumWallet::new(signer);
         let calls = vec![Call {
-            to: TxKind::Call(address!("0x1111111111111111111111111111111111111111")),
-            value: U256::from(1),
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            value: U256::ONE,
             input: Bytes::new(),
         }];
         let request = TempoTransactionRequest {
@@ -2166,10 +2162,8 @@ mod tests {
         let payload = request.clone().build(&wallet).await.unwrap().encoded_2718();
 
         assert!(validate_tempo_batch_payload(&request, &payload, sender, 4217, &calls).is_ok());
-        let other_calls = vec![Call {
-            to: TxKind::Call(address!("0x2222222222222222222222222222222222222222")),
-            ..calls[0].clone()
-        }];
+        let other_calls =
+            vec![Call { to: TxKind::Call(Address::repeat_byte(0x22)), ..calls[0].clone() }];
         assert!(
             validate_tempo_batch_payload(&request, &payload, sender, 4217, &other_calls).is_err()
         );
