@@ -443,7 +443,15 @@ contract DecodeExternalStorageTest is Test {
         "--etherscan-api-key",
         &etherscan_api_key,
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DecodeExternalStorage.t.sol:DecodeExternalStorageTest
+[PASS] test_externalStorageDecoding() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Test that `--decode-external-storage` correctly resolves proxy contracts
@@ -498,7 +506,15 @@ contract DecodeExternalStorageProxyTest is Test {
         "--etherscan-api-key",
         &etherscan_api_key,
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DecodeExternalStorageProxy.t.sol:DecodeExternalStorageProxyTest
+[PASS] test_externalStorageDecodingProxy() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // A local proxy artifact must not override the layout of the bytecode that executed a delegated
@@ -584,7 +600,14 @@ contract DecodeDelegatecallStorageTest is Test {
         "--extra-output",
         "storageLayout",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DecodeDelegatecallStorage.t.sol:DecodeDelegatecallStorageTest
+[PASS] test_usesRecordedImplementationLayout() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // tests that a warning is displayed if there are tests but none match a non-empty filter
@@ -1767,7 +1790,15 @@ contract NonAnvilForkTest {
 "#,
     );
 
-    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"]).assert_success();
+    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/NonAnvilFork.t.sol:NonAnvilForkTest
+[PASS] testFork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
@@ -1832,7 +1863,14 @@ contract ForkAliasAuthTest {
     );
 
     cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testForkAliasAuth"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ForkAliasAuth.t.sol:ForkAliasAuthTest
+[PASS] testForkAliasAuth() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7574>
@@ -2536,7 +2574,14 @@ contract SetupSelfdestructTest is Test {
     );
 
     cmd.args(["test", "--match-path", "test/SetupSelfdestruct.t.sol", "--evm-version", "cancun"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SetupSelfdestruct.t.sol:SetupSelfdestructTest
+[PASS] testMorphingContract() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2574,7 +2619,14 @@ contract SetupThenTestSelfdestructTest is Test {
         "--evm-version",
         "cancun",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SetupThenTestSelfdestruct.t.sol:SetupThenTestSelfdestructTest
+[PASS] testCodePersistsAcrossSetupBoundary() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // `waste()` spends more gas than the forked block's gas limit, so it only succeeds with
@@ -2659,7 +2711,13 @@ contract Dummy {
     );
 
     cmd.args(["test", "--match-path", "src/dummy.sol"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/dummy.sol:Dummy
+[PASS] testDummy() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -5868,7 +5926,26 @@ async fn flaky_can_get_broadcast_txs(prj: _, cmd: _) {
     // Check if the broadcast folder exists
     assert!(broadcast_path.exists() && broadcast_path.is_dir());
 
-    cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 5 tests for test/GetBroadcast.sol:GetBroadcastTest
+[PASS] test_getAllBroadcasts() ([GAS])
+[PASS] test_getBroadcasts() ([GAS])
+[PASS] test_getDeployments() ([GAS])
+[PASS] test_getLatestBroadcast() ([GAS])
+Logs:
+  latest create
+  1
+  latest create2
+  4
+  latest call
+
+[PASS] test_getLatestDeployment() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
 }
 
 // Test that failed fork errors still surface the provider hostname.
