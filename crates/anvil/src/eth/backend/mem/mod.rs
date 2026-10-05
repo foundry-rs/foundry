@@ -1004,6 +1004,18 @@ fn parity_trace_results(
         .map_err(Into::into)
 }
 
+/// Rejects the `pending` tag for block trace methods, which only trace mined blocks.
+///
+/// Resolving it to the latest block would present mined transactions as the pending block.
+fn ensure_mined_trace_block(block: BlockNumber) -> Result<(), BlockchainError> {
+    if block.is_pending() {
+        return Err(BlockchainError::RpcError(RpcError::invalid_params(
+            "pending block traces are not supported",
+        )));
+    }
+    Ok(())
+}
+
 pub type State = foundry_evm::utils::StateChangeset;
 
 #[derive(Clone, Debug, Default)]
@@ -3939,6 +3951,7 @@ impl<N: Network> Backend<N> {
         &self,
         block: BlockNumber,
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
+        ensure_mined_trace_block(block)?;
         let number = self.convert_block_number(Some(block));
         if let Some(traces) = self.mined_parity_trace_block(number) {
             return Ok(traces);
@@ -4005,6 +4018,7 @@ impl<N: Network> Backend<N> {
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
     ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
+        ensure_mined_trace_block(block)?;
         let block_number = self.convert_block_number(Some(block));
 
         // Try mined blocks first
