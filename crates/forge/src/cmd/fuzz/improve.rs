@@ -481,6 +481,20 @@ impl FuzzImproveArgs {
                 }
             }
         }
+        // `copy_project` omits project-local sources outside the configured source, test, and
+        // script directories, such as a `scripts/` directory imported by tests. Candidate
+        // mutation runs compile the whole project, so copy every imported project file too.
+        let graph = Graph::<MultiCompilerParser>::resolve(
+            &config.project_paths::<MultiCompilerLanguage>(),
+        )?;
+        for source in graph.files().keys() {
+            let Ok(relative) = source.strip_prefix(&config.root) else { continue };
+            let target = candidate_workspace.path().join(relative);
+            if workspace::is_safe_relative_path(relative) && !target.exists() {
+                fs::create_dir_all(target.parent().expect("project file has a parent"))?;
+                fs::copy(source, target)?;
+            }
+        }
         for file in &candidate.files {
             let path = candidate_workspace.path().join(&file.path);
             ensure!(!path.exists(), "candidate would overwrite {}", file.path.display());
