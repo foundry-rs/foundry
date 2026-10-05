@@ -50,7 +50,7 @@ use foundry_evm::{
     core::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
-        fork::ResolvedFork,
+        fork::Fork,
         opts::EvmOpts,
     },
     traces::CallKind,
@@ -1767,7 +1767,7 @@ where
 pub(super) async fn next_nonce_resolved(
     caller: Address,
     evm_opts: &EvmOpts,
-    fork: &ResolvedFork,
+    fork: &Fork,
 ) -> eyre::Result<u64> {
     evm_opts.transaction_count_at_resolved_fork(caller, fork).await
 }

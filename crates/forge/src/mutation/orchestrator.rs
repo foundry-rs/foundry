@@ -26,7 +26,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::{fork::ResolvedFork, opts::EvmOpts};
+use foundry_evm::{fork::Fork, opts::EvmOpts};
 
 use crate::{
     cmd::test::{FilterArgs, RerunFailure},
@@ -133,7 +133,7 @@ pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
-    resolved_fork: Option<ResolvedFork>,
+    resolved_fork: Option<Fork>,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let create2_deployer_available =
@@ -409,7 +409,7 @@ fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<&ResolvedFork>,
+    resolved_fork: Option<&Fork>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
@@ -427,7 +427,7 @@ fn mutation_execution_cache_key(
     mutation_execution_cache_key_from_parts_with_rerun_failures(
         config,
         evm_opts,
-        resolved_fork.map(ResolvedFork::fingerprint),
+        resolved_fork.map(Fork::fingerprint),
         filter_args,
         rerun_failures,
         num_workers,
