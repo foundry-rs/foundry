@@ -1062,15 +1062,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 }
             }
 
-            let (total_gas, total_gas_price, total_paid) =
-                sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
-                    let gas_used = receipt.gas_used();
-                    let gas_price = receipt.effective_gas_price() as u64;
-                    (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
-                });
+            let (total_gas, avg_gas_price, total_paid) = fee_totals(
+                sequence.receipts.iter().map(|r| (r.gas_used(), r.effective_gas_price())),
+            );
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = total_gas_price
-                .checked_div(sequence.receipts.len() as u64)
+            let avg_gas_price = avg_gas_price
                 .and_then(|avg| format_units(avg, 9).ok())
                 .unwrap_or_else(|| "N/A".to_string());
 
@@ -1662,8 +1658,8 @@ impl BundledState<TempoEvmNetwork> {
         sequences.save(true, false)?;
 
         let total_gas = receipt.gas_used();
-        let gas_price = receipt.effective_gas_price() as u64;
-        let total_paid = total_gas * gas_price;
+        let gas_price = receipt.effective_gas_price();
+        let total_paid = u128::from(total_gas).saturating_mul(gas_price);
         let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let gas_price_gwei = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".to_string());
 
@@ -1792,6 +1788,21 @@ where
     if tx.is_tempo_aa() {
         tx.convert_create_to_call();
     }
+}
+
+/// Returns the total gas used, the average gas price and the total fee paid in wei for the given
+/// `(gas_used, effective_gas_price)` receipt pairs.
+fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u128>, u128) {
+    let (count, total_gas, total_gas_price, total_paid) =
+        receipts.into_iter().fold((0u128, 0u64, 0u128, 0u128), |acc, (gas_used, gas_price)| {
+            (
+                acc.0 + 1,
+                acc.1 + gas_used,
+                acc.2.saturating_add(gas_price),
+                acc.3.saturating_add(u128::from(gas_used).saturating_mul(gas_price)),
+            )
+        });
+    (total_gas, total_gas_price.checked_div(count), total_paid)
 }
 
 #[cfg(test)]
@@ -2212,6 +2223,17 @@ mod tests {
         let error = reject_access_key_create::<TempoNetwork>(&tx, true).unwrap_err();
 
         assert!(error.to_string().contains("Tempo access-key transactions cannot use CREATE"));
+    }
+
+    #[test]
+    fn fee_totals_do_not_overflow_u64() {
+        let gwei = 1_000_000_000;
+        let receipts = [(30_000_000, 1_000 * gwei), (30_000_000, 2_000 * gwei)];
+
+        assert_eq!(
+            fee_totals(receipts),
+            (60_000_000, Some(1_500 * gwei), 90_000_000_000_000_000_000)
+        );
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {

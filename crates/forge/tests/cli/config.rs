@@ -2902,6 +2902,70 @@ contract GasSnapshotEmitTest is DSTest {
     assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
 }
 
+// Snapshot groups shared by several test contracts must be checked against the file on disk
+// before any suite rewrites it.
+#[forgetest]
+fn test_gas_snapshot_check_shared_group(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let test_contract = |name: &str, value: u32| {
+        format!(
+            r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract {name} is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {{
+        vm.snapshotValue("Shared", "{name}", {value});
+    }}
+}}
+"#
+        )
+    };
+
+    prj.add_source("AlphaTest.sol", &test_contract("AlphaTest", 1));
+    prj.add_source("BetaTest.sol", &test_contract("BetaTest", 1));
+    cmd.args(["test", "-j1"]).assert_success();
+
+    let snapshot_path = prj.root().join("snapshots/Shared.json");
+    let previous_snapshot = fs::read(&snapshot_path).unwrap();
+
+    // With a single thread `AlphaTest` finishes first, so the changed value is only seen after
+    // another suite already contributed to the same group.
+    prj.add_source("BetaTest.sol", &test_contract("BetaTest", 2));
+    cmd.forge_fuse()
+        .args(["test", "-j1", "--gas-snapshot-check=true"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/AlphaTest.sol:AlphaTest
+[PASS] testSnapshotValue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/BetaTest.sol:BetaTest
+[PASS] testSnapshotValue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+
+[Shared] Failed to match snapshots:
+- [BetaTest] 1 → 2
+
+Error: Snapshots differ from previous run
+
+"#]]);
+    assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+}
+
 // Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
 #[forgetest_init]
 fn test_additional_compiler_profiles(prj: _, cmd: _) {
