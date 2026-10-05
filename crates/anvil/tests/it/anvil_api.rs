@@ -2035,7 +2035,7 @@ async fn can_get_default_base_fee_tempo_t0() {
 
     api.mine_one().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(
         block.header.base_fee_per_gas,
         Some(10_000_000_000),

@@ -587,7 +587,7 @@ async fn can_call_greeter_historic() {
 
     // returns previous state
     let greeting =
-        greeter_contract.greet().block(BlockId::Number(block_number.into())).call().await.unwrap();
+        greeter_contract.greet().block(BlockId::number(block_number)).call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 }
 
@@ -693,12 +693,11 @@ async fn call_past_state() {
     assert_eq!(value, "hi");
 
     // assert previous value
-    let value =
-        contract.getValue().block(BlockId::Number(deployed_block.into())).call().await.unwrap();
+    let value = contract.getValue().block(BlockId::number(deployed_block)).call().await.unwrap();
     assert_eq!(value, "initial value");
 
-    let hash = provider.get_block(BlockId::Number(1.into())).await.unwrap().unwrap().header.hash;
-    let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
+    let hash = provider.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
+    let value = contract.getValue().block(BlockId::hash(hash)).call().await.unwrap();
     assert_eq!(value, "initial value");
 }
 
@@ -1180,14 +1179,13 @@ async fn can_get_historic_info() {
     let tx = provider.send_transaction(tx).await.unwrap();
     let _ = tx.get_receipt().await.unwrap();
 
-    let nonce_pre =
-        provider.get_transaction_count(from).block_id(BlockId::number(0)).await.unwrap();
+    let nonce_pre = provider.get_transaction_count(from).number(0).await.unwrap();
 
     let nonce_post = provider.get_transaction_count(from).await.unwrap();
 
     assert!(nonce_pre < nonce_post);
 
-    let balance_pre = provider.get_balance(from).block_id(BlockId::number(0)).await.unwrap();
+    let balance_pre = provider.get_balance(from).number(0).await.unwrap();
 
     let balance_post = provider.get_balance(from).await.unwrap();
 
