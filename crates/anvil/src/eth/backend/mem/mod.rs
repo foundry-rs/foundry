@@ -3328,6 +3328,16 @@ impl<N: Network> Backend<N> {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<FoundryTransactionRequest, BlockchainError> {
+        request
+            .input
+            .unique_input()
+            .map_err(|err| BlockchainError::RpcError(RpcError::invalid_params(err.to_string())))?;
+        // No transaction carries both fee styles, so reject the request rather than pick one.
+        if request.gas_price.is_some()
+            && (request.max_fee_per_gas.is_some() || request.max_priority_fee_per_gas.is_some())
+        {
+            return Err(BlockchainError::ConflictingFeeFields);
+        }
         let transaction_type = request.transaction_type;
         #[cfg(feature = "base")]
         if self.is_base() {
