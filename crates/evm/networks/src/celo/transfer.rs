@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{Address, U256};
 use revm::precompile::{
     PrecompileError, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult,
 };
@@ -23,7 +23,7 @@ use revm::precompile::{
 pub const CELO_TRANSFER_LABEL: &str = "CELO_TRANSFER_PRECOMPILE";
 
 /// Address of the Celo transfer precompile.
-pub const CELO_TRANSFER_ADDRESS: Address = address!("0x00000000000000000000000000000000000000fd");
+pub const CELO_TRANSFER_ADDRESS: Address = Address::with_last_byte(0xfd);
 
 /// ID for the [Celo transfer precompile](CELO_TRANSFER_ADDRESS).
 pub static PRECOMPILE_ID_CELO_TRANSFER: PrecompileId =

@@ -1,7 +1,7 @@
 //! CLI tests for shared Tempo transaction options.
 
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, U256, address, b256, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -842,6 +842,8 @@ async fn send_with_presigned_sponsor_signature_keeps_digest_stable(cmd: _) {
         "--rpc-url",
         &rpc,
         "--tempo.print-sponsor-hash",
+        "--tempo.sponsor",
+        &sponsor_arg,
     ];
     mktx_args.extend(pinned);
     let hash = cmd
@@ -968,7 +970,7 @@ async fn send_with_presigned_sponsor_signature_rejects_stale_digest(cmd: _) {
     let bump_tx = TransactionRequest::default()
         .from(sender)
         .to(PATH_USD_ADDRESS)
-        .with_input(tip20.transfer(recipient, U256::from(1u64)).calldata().clone())
+        .with_input(tip20.transfer(recipient, U256::ONE).calldata().clone())
         .with_gas_limit(10_000_000);
     let bump_receipt = provider
         .send_transaction(WithOtherFields::new(bump_tx))
@@ -1146,7 +1148,7 @@ async fn channel_id_defaults(cmd: _) {
 
     let payer = address!("0000000000000000000000000000000000000101");
     let payee = address!("0000000000000000000000000000000000000202");
-    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let salt = B256::with_last_byte(0x42);
     let expected = keccak256(
         (
             payer,
@@ -1258,6 +1260,56 @@ async fn tempo_mktx_selects_network_without_tempo_options(prj: _, cmd: _) {
             ])
             .assert_success()
             .stdout_eq(expected);
+    }
+}
+
+// A local Tempo node runs on chain 31337; once Tempo is selected, fee tokens must resolve as they
+// do on a canonical Tempo chain ID.
+#[casttest]
+async fn tempo_selected_network_ignores_local_chain_id(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkVariant::Tempo.into();
+    });
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sponsor_key =
+        "private-key://0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
+    for chain_id in [Some(4217u64), None] {
+        let (_, handle) = anvil::spawn(NodeConfig::test_tempo().with_chain_id(chain_id)).await;
+        let rpc = handle.http_endpoint();
+        let mktx = ["mktx", "0x0000000000000000000000000000000000000001", "--private-key"];
+
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args(mktx)
+            .args([private_key, "--rpc-url", &rpc])
+            .assert_success()
+            .stdout_eq(str![[r#"
+0x76[..]
+
+"#]])
+            .stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+
+        cmd.cast_fuse()
+            .current_dir(prj.root())
+            .args(mktx)
+            .args([private_key, "--rpc-url", &rpc])
+            .args(["--tempo.sponsor", "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"])
+            .args(["--tempo.sponsor-signer", sponsor_key])
+            .assert_success()
+            .stdout_eq(str![[r#"
+0x76[..]
+
+"#]])
+            .stderr_eq(str![[r#"
+Tempo sponsor: 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+Tempo fee token: 0x20C0000000000000000000000000000000000000
+Tempo validity: after none, before none
+Tempo sponsor digest: 0x[..]
+
+"#]]);
     }
 }
 

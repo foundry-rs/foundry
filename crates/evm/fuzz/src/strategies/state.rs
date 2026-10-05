@@ -709,7 +709,7 @@ impl FuzzDictionary {
 
     fn insert_value_u256(&mut self, value: U256) -> bool {
         // Also add the value below and above the push value to the dictionary.
-        let one = U256::from(1);
+        let one = U256::ONE;
         let mut inserted = self.insert_value(value.into());
         if !self.values_full() {
             inserted |= self.insert_value((value.wrapping_sub(one)).into());
@@ -722,7 +722,7 @@ impl FuzzDictionary {
 
     fn insert_push_value_u256(&mut self, value: U256, seen: &mut HashSet<B256>) -> bool {
         // Also add the value below and above the push value to the dictionary.
-        let one = U256::from(1);
+        let one = U256::ONE;
         let mut inserted = false;
         for value in [value, value.wrapping_sub(one), value.wrapping_add(one)] {
             if self.values_full() {
@@ -893,10 +893,10 @@ mod tests {
         dictionary.collect_push_bytes(&[0x60, 0x01, 0x60, 0x03]);
 
         assert_eq!(dictionary.state_values.len(), 3);
-        assert!(dictionary.state_values.contains(&B256::from(U256::ZERO)));
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
-        assert!(!dictionary.state_values.contains(&B256::from(U256::from(3))));
+        assert!(dictionary.state_values.contains(&B256::ZERO));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(2)));
+        assert!(!dictionary.state_values.contains(&B256::with_last_byte(3)));
     }
 
     #[test]
@@ -908,7 +908,7 @@ mod tests {
 
         assert_eq!(dictionary.config.max_fuzz_dictionary_values, 1);
         assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
-        assert!(!dictionary.insert_value(B256::from(U256::from(1))));
+        assert!(!dictionary.insert_value(B256::with_last_byte(1)));
         assert_eq!(dictionary.state_values.as_slice(), &[B256::ZERO]);
     }
 
@@ -918,9 +918,9 @@ mod tests {
 
         dictionary.collect_push_bytes(&[0x60, 0x01, 0x60, 0x01]);
 
-        assert!(dictionary.state_values.contains(&B256::from(U256::ZERO)));
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
+        assert!(dictionary.state_values.contains(&B256::ZERO));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(2)));
         assert_eq!(dictionary.hits, 1);
     }
 
@@ -949,8 +949,8 @@ mod tests {
 
         assert_eq!(dictionary.addresses.len(), 1);
         assert_eq!(dictionary.push_bytecode_hashes.len(), 2);
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(4))));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(4)));
     }
 
     #[test]
@@ -968,7 +968,7 @@ mod tests {
 
         assert!(dictionary.addresses.contains(&address));
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(4))));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(4)));
     }
 
     #[test]
@@ -987,7 +987,7 @@ mod tests {
 
         dictionary.insert_push_bytes_values(&Address::repeat_byte(0x22), &account);
         assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
-        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
+        assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
     }
 
     #[test]
@@ -1052,7 +1052,7 @@ mod tests {
         state.with_dictionary(|dict| {
             assert!(!dict.values().contains(&HISTORY_STORAGE_ADDRESS.into_word()));
             assert!(!dict.values().contains(&B256::from(U256::from(0x123))));
-            assert!(!dict.values().contains(&B256::from(U256::from(7))));
+            assert!(!dict.values().contains(&B256::with_last_byte(7)));
             assert!(!dict.values().contains(&B256::from(U256::from(0xdead_u64))));
         });
     }

@@ -1,5 +1,5 @@
 use crate::{Error, Result};
-use alloy_primitives::{Address, Bytes, address, hex};
+use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
@@ -20,7 +20,7 @@ use super::{
 static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-const DUMMY_CREATE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
+const DUMMY_CREATE_ADDRESS: Address = Address::with_last_byte(1);
 
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {

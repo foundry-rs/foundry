@@ -601,7 +601,7 @@ impl<'gcx> Analyzer<'gcx> {
                         continue;
                     };
                     let proves_low = match op {
-                        BinOpKind::Lt => bound <= SECP256K1_HALF_ORDER + U256::from(1),
+                        BinOpKind::Lt => bound <= SECP256K1_HALF_ORDER + U256::ONE,
                         BinOpKind::Le | BinOpKind::Eq => bound <= SECP256K1_HALF_ORDER,
                         _ => false,
                     };

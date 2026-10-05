@@ -138,6 +138,7 @@ fn deploy_code(runtime: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_primitives::TxKind;
     use revm::{

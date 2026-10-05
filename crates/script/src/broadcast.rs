@@ -125,9 +125,8 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
     ) -> Result<()> {
-        let tempo_browser = matches!(self, Self::Browser(..)) && chain.is_some_and(Chain::is_tempo);
+        let browser = matches!(self, Self::Browser(..));
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
@@ -172,10 +171,10 @@ where
         }
 
         let fee_token = if let Some(sponsor) = tempo_sponsor {
-            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            sponsor.resolve_and_set_fee_token(Some(provider), tx).await?;
             None
         } else {
-            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+            resolve_and_set_fee_token(Some(provider), tx, tx.from()).await?
         };
 
         // A fee token, sponsor, validity window, or other Tempo field selects
@@ -186,7 +185,7 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -257,7 +256,6 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
     ) -> Result<Self> {
         self.prepare(
             provider,
@@ -266,7 +264,6 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
-            chain,
         )
         .await?;
         if let Self::Unlocked(tx) = &mut self {
@@ -879,7 +876,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
@@ -900,7 +896,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     estimate_via_rpc,
                                     self.args.gas_estimate_multiplier,
                                     tempo_sponsor.as_deref(),
-                                    Some(sequence_chain.into()),
                                 )
                                 .await?;
                             if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
@@ -1062,15 +1057,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 }
             }
 
-            let (total_gas, total_gas_price, total_paid) =
-                sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
-                    let gas_used = receipt.gas_used();
-                    let gas_price = receipt.effective_gas_price() as u64;
-                    (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
-                });
+            let (total_gas, avg_gas_price, total_paid) = fee_totals(
+                sequence.receipts.iter().map(|r| (r.gas_used(), r.effective_gas_price())),
+            );
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = total_gas_price
-                .checked_div(sequence.receipts.len() as u64)
+            let avg_gas_price = avg_gas_price
                 .and_then(|avg| format_units(avg, 9).ok())
                 .unwrap_or_else(|| "N/A".to_string());
 
@@ -1482,22 +1473,10 @@ impl BundledState<TempoEvmNetwork> {
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
         let fee_token = if let Some(sponsor) = &tempo_sponsor {
-            sponsor
-                .resolve_and_set_fee_token(
-                    Some(provider.as_ref()),
-                    Some(Chain::from_named(NamedChain::Tempo)),
-                    &mut batch_tx,
-                )
-                .await?;
+            sponsor.resolve_and_set_fee_token(Some(provider.as_ref()), &mut batch_tx).await?;
             None
         } else {
-            resolve_and_set_fee_token(
-                Some(provider.as_ref()),
-                Some(Chain::from_named(NamedChain::Tempo)),
-                &mut batch_tx,
-                Some(sender),
-            )
-            .await?
+            resolve_and_set_fee_token(Some(provider.as_ref()), &mut batch_tx, Some(sender)).await?
         };
 
         if let BatchSigner::TempoKeychain(wallet) = &mut batch_signer {
@@ -1659,8 +1638,8 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         let total_gas = receipt.gas_used();
-        let gas_price = receipt.effective_gas_price() as u64;
-        let total_paid = total_gas * gas_price;
+        let gas_price = receipt.effective_gas_price();
+        let total_paid = u128::from(total_gas).saturating_mul(gas_price);
         let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
         let gas_price_gwei = format_units(gas_price, 9).unwrap_or_else(|_| "N/A".to_string());
 
@@ -1741,7 +1720,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
-    tempo_browser: bool,
+    browser: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -1750,8 +1729,7 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
-    let request =
-        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     tx.set_gas_limit(
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
@@ -1791,6 +1769,21 @@ where
     }
 }
 
+/// Returns the total gas used, the average gas price and the total fee paid in wei for the given
+/// `(gas_used, effective_gas_price)` receipt pairs.
+fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u128>, u128) {
+    let (count, total_gas, total_gas_price, total_paid) =
+        receipts.into_iter().fold((0u128, 0u64, 0u128, 0u128), |acc, (gas_used, gas_price)| {
+            (
+                acc.0 + 1,
+                acc.1 + gas_used,
+                acc.2.saturating_add(gas_price),
+                acc.3.saturating_add(u128::from(gas_used).saturating_mul(gas_price)),
+            )
+        });
+    (total_gas, total_gas_price.checked_div(count), total_paid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1801,6 +1794,7 @@ mod tests {
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
+    use foundry_common::tempo::PATH_USD_ADDRESS;
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1822,11 +1816,7 @@ mod tests {
 
         let receipt = provider
             .send_transaction(
-                TransactionRequest::default()
-                    .from(sender)
-                    .to(recipient)
-                    .value(U256::from(1))
-                    .into(),
+                TransactionRequest::default().from(sender).to(recipient).value(U256::ONE).into(),
             )
             .await
             .unwrap()
@@ -1937,7 +1927,7 @@ mod tests {
     #[test]
     fn recovered_batch_attempt_does_not_require_a_signer() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = address!("0x2222222222222222222222222222222222222222");
+        let sender = Address::repeat_byte(0x22);
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [script_tx(sender)].into(),
@@ -1977,7 +1967,7 @@ mod tests {
     #[test]
     fn recovered_sender_still_requires_sequential_ordering() {
         let dir = tempfile::tempdir().unwrap();
-        let unsigned = address!("0x2222222222222222222222222222222222222222");
+        let unsigned = Address::repeat_byte(0x22);
         let mut sequence = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [planned_tx(SIGNED_TX), script_tx(unsigned)].into(),
@@ -2049,7 +2039,7 @@ mod tests {
     #[test]
     fn externally_signed_completion_uses_the_persisted_hash() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = address!("0x1111111111111111111111111111111111111111");
+        let sender = Address::repeat_byte(0x11);
         let mut deployment = ScriptSequence::<Ethereum> {
             chain: 1,
             transactions: [script_tx(sender), script_tx(sender)].into(),
@@ -2100,15 +2090,17 @@ mod tests {
 
     #[tokio::test]
     async fn access_key_sets_key_id_before_estimation() {
-        let root_address = address!("0x1111111111111111111111111111111111111111");
+        let root_address = Address::repeat_byte(0x11);
         let access_key =
             foundry_wallets::utils::create_local_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
         let access_key_address = access_key.address();
         let access_key_wallet =
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217);
+        // An explicit fee token keeps preparation from querying the unreachable endpoint.
         let mut sender = SendTransactionKind::<TempoNetwork>::AccessKey(
             TempoTransactionRequest {
                 inner: TransactionRequest { from: Some(root_address), ..Default::default() },
+                fee_token: Some(PATH_USD_ADDRESS),
                 ..Default::default()
             },
             Box::new(access_key_wallet),
@@ -2116,18 +2108,7 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender
-            .prepare(
-                &provider,
-                false,
-                true,
-                false,
-                100,
-                None,
-                Some(Chain::from_named(NamedChain::Mainnet)),
-            )
-            .await
-            .unwrap();
+        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _) => {
@@ -2158,8 +2139,8 @@ mod tests {
         let sender = signer.address();
         let wallet = EthereumWallet::new(signer);
         let calls = vec![Call {
-            to: TxKind::Call(address!("0x1111111111111111111111111111111111111111")),
-            value: U256::from(1),
+            to: TxKind::Call(Address::repeat_byte(0x11)),
+            value: U256::ONE,
             input: Bytes::new(),
         }];
         let request = TempoTransactionRequest {
@@ -2178,10 +2159,8 @@ mod tests {
         let payload = request.clone().build(&wallet).await.unwrap().encoded_2718();
 
         assert!(validate_tempo_batch_payload(&request, &payload, sender, 4217, &calls).is_ok());
-        let other_calls = vec![Call {
-            to: TxKind::Call(address!("0x2222222222222222222222222222222222222222")),
-            ..calls[0].clone()
-        }];
+        let other_calls =
+            vec![Call { to: TxKind::Call(Address::repeat_byte(0x22)), ..calls[0].clone() }];
         assert!(
             validate_tempo_batch_payload(&request, &payload, sender, 4217, &other_calls).is_err()
         );
@@ -2209,6 +2188,17 @@ mod tests {
         let error = reject_access_key_create::<TempoNetwork>(&tx, true).unwrap_err();
 
         assert!(error.to_string().contains("Tempo access-key transactions cannot use CREATE"));
+    }
+
+    #[test]
+    fn fee_totals_do_not_overflow_u64() {
+        let gwei = 1_000_000_000;
+        let receipts = [(30_000_000, 1_000 * gwei), (30_000_000, 2_000 * gwei)];
+
+        assert_eq!(
+            fee_totals(receipts),
+            (60_000_000, Some(1_500 * gwei), 90_000_000_000_000_000_000)
+        );
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {

@@ -4,9 +4,11 @@ use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip2718::Encodable2718};
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256};
-use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
+use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256, bytes};
+use alloy_provider::{Provider, ext::TraceApi};
+use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking, trace::parity::Action,
+};
 use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 use axum::{Json, Router, routing::post};
@@ -120,9 +122,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
         .with_gas_limit(21000);
 
     let op_fields = OpTransactionFields {
-        source_hash: Some(b256!(
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        )),
+        source_hash: Some(B256::ZERO),
         mint: Some(0),
         is_system_tx: Some(true),
         deposit_receipt_version: None,
@@ -154,9 +154,7 @@ async fn test_send_value_deposit_transaction() {
     let before_balance_to = provider.get_balance(to).await.unwrap();
 
     let op_fields = OpTransactionFields {
-        source_hash: Some(b256!(
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        )),
+        source_hash: Some(B256::ZERO),
         mint: Some(0),
         is_system_tx: Some(true),
         deposit_receipt_version: None,
@@ -193,9 +191,7 @@ async fn test_tempo_fields_do_not_override_op_deposit_classification() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
 
     let op_fields = OpTransactionFields {
-        source_hash: Some(b256!(
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        )),
+        source_hash: Some(B256::ZERO),
         mint: Some(0),
         is_system_tx: Some(true),
         deposit_receipt_version: None,
@@ -295,9 +291,7 @@ async fn test_simulated_op_deposit_receipt_root_includes_canyon_fields() {
                         "from": accounts[0].address(),
                         "to": accounts[1].address(),
                         "gas": "0x5208",
-                        "sourceHash": b256!(
-                            "0x0000000000000000000000000000000000000000000000000000000000000000"
-                        ),
+                        "sourceHash": B256::ZERO,
                         "mint": "0x0",
                         "isSystemTx": false,
                         "calls": [],
@@ -341,8 +335,7 @@ async fn mine_deposit_receipt_after_two_transfers(config: NodeConfig) -> Value {
 
     // Move the sender past nonce zero so pre- and post-execution nonces differ.
     for _ in 0..2 {
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
         provider
             .send_transaction(WithOtherFields::new(tx))
             .await
@@ -358,7 +351,7 @@ async fn mine_deposit_receipt_after_two_transfers(config: NodeConfig) -> Value {
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
-        .with_value(U256::from(1))
+        .with_value(U256::ONE)
         .with_gas_limit(21000);
     let pending = provider
         .send_transaction(WithOtherFields { inner: tx, other })
@@ -429,9 +422,7 @@ async fn test_send_value_raw_deposit_transaction() {
         .with_max_priority_fee_per_gas(1_000_000_000);
 
     let op_fields = OpTransactionFields {
-        source_hash: Some(b256!(
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        )),
+        source_hash: Some(B256::ZERO),
         mint: Some(0),
         is_system_tx: Some(true),
         deposit_receipt_version: None,
@@ -468,9 +459,8 @@ async fn test_deposit_transaction_hash_matches_sepolia() {
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let signer: EthereumWallet = accounts[0].clone().into();
     // https://sepolia-optimism.etherscan.io/tx/0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
-    let tx_hash: TxHash = "0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7"
-        .parse::<TxHash>()
-        .unwrap();
+    let tx_hash: TxHash =
+        b256!("0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7");
 
     // https://sepolia-optimism.etherscan.io/getRawTx?tx=0xbf8b5f08c43e4b860715cd64fc0849bbce0d0ea20a76b269e7bc8886d112fca7
     let raw_deposit_tx = alloy_primitives::hex::decode(
@@ -504,13 +494,13 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
     let send_value = 1_000_000_000_u128;
 
     let sender_prev_balance = provider.get_balance(sender).await.unwrap();
-    assert_eq!(sender_prev_balance, U256::from(0));
+    assert_eq!(sender_prev_balance, U256::ZERO);
 
     let recipient_prev_balance = provider.get_balance(recipient).await.unwrap();
-    assert_eq!(recipient_prev_balance, U256::from(0));
+    assert_eq!(recipient_prev_balance, U256::ZERO);
 
     let deposit_tx = TxDeposit {
-        source_hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+        source_hash: B256::ZERO,
         from: sender,
         to: TxKind::Call(recipient),
         mint: send_value,
@@ -527,7 +517,7 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
 
     let sender_new_balance = provider.get_balance(sender).await.unwrap();
     // sender should've sent the entire deposited value to recipient
-    assert_eq!(sender_new_balance, U256::from(0));
+    assert_eq!(sender_new_balance, U256::ZERO);
 
     let recipient_new_balance = provider.get_balance(recipient).await.unwrap();
     // recipient should've received the entire deposited value
@@ -920,7 +910,7 @@ async fn inferred_optimism_fork_uses_optimism_base_fee_params() {
     let origin_wallet = origin_handle.dev_wallets().next().unwrap();
     let origin_provider =
         http_provider_with_signer(&origin_handle.http_endpoint(), origin_wallet.into());
-    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1));
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::ONE);
     origin_provider
         .send_transaction(WithOtherFields::new(tx))
         .await
@@ -940,7 +930,7 @@ async fn inferred_optimism_fork_uses_optimism_base_fee_params() {
 
     let fork_wallet = fork_handle.dev_wallets().next().unwrap();
     let fork_provider = http_provider_with_signer(&fork_handle.http_endpoint(), fork_wallet.into());
-    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1));
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::ONE);
     fork_provider
         .send_transaction(WithOtherFields::new(tx))
         .await
@@ -951,4 +941,42 @@ async fn inferred_optimism_fork_uses_optimism_base_fee_params() {
 
     let block = fork_provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.base_fee_per_gas, Some(INITIAL_BASE_FEE + INITIAL_BASE_FEE * 5 / 250));
+}
+
+// Mined traces omit nested calls to OP's own precompiles, such as P256VERIFY at 0x100 from Fjord,
+// which Ethereum's precompiles at the mapped spec do not include.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_transaction_omits_nested_op_precompile_calls() {
+    let (api, handle) = spawn(NodeConfig::test().with_optimism()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Zero-value STATICCALL to 0x100, then a zero-value CALL to 0xbeef.
+    let caller = Address::repeat_byte(0x42);
+    let code = bytes!("60006000600060006101005afa506000600060006000600061beef5af15000");
+    api.anvil_set_code(caller, code).await.unwrap();
+
+    let tx = TransactionRequest::default().from(from).to(caller);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+    let targets = traces
+        .iter()
+        .map(|trace| match &trace.action {
+            Action::Call(call) => call.to,
+            action => panic!("expected a call, got {action:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(targets, [caller, Address::left_padding_from(&[0xbe, 0xef])]);
+
+    let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+    assert_eq!(replay.trace, traces);
 }

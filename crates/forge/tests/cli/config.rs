@@ -1,6 +1,6 @@
 //! Contains various tests for checking forge commands related to config values
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, address};
 use foundry_cli::utils as forge_utils;
 use foundry_compilers::{
     artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
@@ -425,8 +425,8 @@ fn can_extract_config_values(prj: _, cmd: _) {
         always_use_create_2_factory: false,
         eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
-        sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
-        tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
+        sender: address!("00a329c0648769A73afAc7F9381D08FB43dBEA72"),
+        tx_origin: address!("00a329c0648769A73afAc7F9F81E08FB43dBEA72"),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
         block_number: U256::from(10),
         fork_block_number: Some(200),
@@ -2046,7 +2046,13 @@ contract ReadLinkTest is Test {
 }
 "#,
     );
-    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success();
+    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ReadLink.t.sol:ReadLinkTest
+[PASS] testReadLink() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // tests if evm version is normalized for config output
@@ -2899,6 +2905,70 @@ contract GasSnapshotEmitTest is DSTest {
     assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
 }
 
+// Snapshot groups shared by several test contracts must be checked against the file on disk
+// before any suite rewrites it.
+#[forgetest]
+fn test_gas_snapshot_check_shared_group(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let test_contract = |name: &str, value: u32| {
+        format!(
+            r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract {name} is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {{
+        vm.snapshotValue("Shared", "{name}", {value});
+    }}
+}}
+"#
+        )
+    };
+
+    prj.add_source("AlphaTest.sol", &test_contract("AlphaTest", 1));
+    prj.add_source("BetaTest.sol", &test_contract("BetaTest", 1));
+    cmd.args(["test", "-j1"]).assert_success();
+
+    let snapshot_path = prj.root().join("snapshots/Shared.json");
+    let previous_snapshot = fs::read(&snapshot_path).unwrap();
+
+    // With a single thread `AlphaTest` finishes first, so the changed value is only seen after
+    // another suite already contributed to the same group.
+    prj.add_source("BetaTest.sol", &test_contract("BetaTest", 2));
+    cmd.forge_fuse()
+        .args(["test", "-j1", "--gas-snapshot-check=true"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/AlphaTest.sol:AlphaTest
+[PASS] testSnapshotValue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/BetaTest.sol:BetaTest
+[PASS] testSnapshotValue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+
+[Shared] Failed to match snapshots:
+- [BetaTest] 1 → 2
+
+Error: Snapshots differ from previous run
+
+"#]]);
+    assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+}
+
 // Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
 #[forgetest_init]
 fn test_additional_compiler_profiles(prj: _, cmd: _) {
@@ -3103,7 +3173,15 @@ contract AnotherCounterTest is Test {
 }
 "#,
     );
-    cmd.args(["test", "--fail-fast"]).assert_failure();
+    // The fuzz test can be skipped or interrupted after any number of runs.
+    cmd.args(["test", "--fail-fast"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
+...
+[FAIL: EvmError: Revert] test_Failure() ([GAS])
+Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]

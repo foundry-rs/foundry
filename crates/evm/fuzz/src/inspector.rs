@@ -344,10 +344,10 @@ mod tests {
         fuzzer.call_depth = 2;
 
         fuzzer.record_observed_call(
-            Address::from([0xaa; 20]),
-            Address::from([0x11; 20]),
+            Address::repeat_byte(0xaa),
+            Address::repeat_byte(0x11),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
-            Some(U256::from(1)),
+            Some(U256::ONE),
             CallScheme::Call,
         );
 
@@ -360,8 +360,8 @@ mod tests {
         fuzzer.call_depth = 1;
 
         fuzzer.record_observed_call(
-            Address::from([0xaa; 20]),
-            Address::from([0x11; 20]),
+            Address::repeat_byte(0xaa),
+            Address::repeat_byte(0x11),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             None,
             CallScheme::Call,
@@ -373,8 +373,8 @@ mod tests {
     #[test]
     fn observed_calls_record_subcall_depth_target_calldata_and_value() {
         let mut fuzzer = fuzzer(true);
-        let caller = Address::from([0x11; 20]);
-        let target = Address::from([0x22; 20]);
+        let caller = Address::repeat_byte(0x11);
+        let target = Address::repeat_byte(0x22);
         let calldata = Bytes::from_static(&[0xca, 0xfe, 0xba, 0xbe]);
         let value = Some(U256::from(7));
         fuzzer.call_depth = 3;
@@ -393,8 +393,8 @@ mod tests {
         fuzzer.call_depth = 2;
 
         fuzzer.record_observed_call(
-            Address::from([0x11; 20]),
-            Address::from([0x22; 20]),
+            Address::repeat_byte(0x11),
+            Address::repeat_byte(0x22),
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
             None,
             CallScheme::DelegateCall,
@@ -408,8 +408,8 @@ mod tests {
         let mut fuzzer = fuzzer(true);
         fuzzer.call_depth = 2;
         fuzzer.record_observed_call(
-            Address::from([0xaa; 20]),
-            Address::from([0x33; 20]),
+            Address::repeat_byte(0xaa),
+            Address::repeat_byte(0x33),
             Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
             None,
             CallScheme::Call,

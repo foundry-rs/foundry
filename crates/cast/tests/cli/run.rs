@@ -1,6 +1,7 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
@@ -125,7 +126,7 @@ async fn cast_run_uses_chain_rpc_endpoint(prj: _, cmd: _) {
             TransactionRequest::default()
                 .from(sender)
                 .to(address!("000000000000000000000000000000000000dEaD"))
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .into(),
         )
         .await
@@ -283,12 +284,9 @@ async fn flaky_cast_run_impersonated_tx(cmd: _) {
     let tx = TransactionRequest::default()
         .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
         .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
+        .with_input(bytes!(
+            "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c"
+        ));
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -303,7 +301,6 @@ async fn flaky_cast_run_impersonated_tx(cmd: _) {
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
 #[casttest]
-#[ignore = "public Base RPC endpoint used in CI does not reliably serve this transaction"]
 fn flaky_osaka_can_run_p256_precompile(cmd: _) {
     cmd.args([
     "run",
@@ -384,7 +381,6 @@ Transaction successfully executed.
 
 // Test cast run Celo transfer with precompiles.
 #[casttest]
-#[ignore = "requires debug_traceTransaction, which most free Celo RPC endpoints no longer support"]
 fn flaky_run_celo_with_precompiles(cmd: _) {
     let rpc = next_rpc_endpoint(NamedChain::Celo);
     cmd.args([
@@ -401,9 +397,9 @@ Traces:
     ├─ [12370] 0xFeA1B35f1D5f2A58532a70e7A32e6F2D3Bc4F7B1::transfer(0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, 138000000000000000 [1.38e17]) [delegatecall]
     │   ├─ [9000] CELO_TRANSFER_PRECOMPILE::00000000(00000000000000008106680ba7095cfd8f4351a8b7041da3060afb83000000000000000000000000d2eb2d37d238caeff39cfa36a013299c6dbac56a00000000000000000000000000000000000000000000000001ea4644d3010000)
     │   │   └─ ← [Return]
-    │   ├─ emit Transfer(param0: 0x8106680Ba7095CfD8F4351a8B7041da3060Afb83, param1: 0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, param2: 138000000000000000 [1.38e17])
-    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
-    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    │   ├─ emit Transfer(from: 0x8106680Ba7095CfD8F4351a8B7041da3060Afb83, to: 0xD2eB2d37d238Caeff39CFA36A013299C6DbAC56A, amount: 138000000000000000 [1.38e17])
+    │   └─ ← [Return] true
+    └─ ← [Return] true
 
 
 Transaction successfully executed.
@@ -502,6 +498,42 @@ Error: zksync executes EraVM bytecode, which cannot be replayed locally; `--debu
 "#]]);
 }
 
+// Without Anvil metadata the endpoint identity is discovered once and reused for the environment,
+// the fork, and the executor.
+#[casttest]
+async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let endpoint = spawn_rpc_proxy_method_not_found_before(
+        handle.http_endpoint(),
+        "anvil_nodeInfo",
+        usize::MAX,
+    )
+    .await;
+    let (endpoint, chain_ids) = spawn_rpc_proxy_recording_method(endpoint, "eth_chainId").await;
+    let (endpoint, node_infos) = spawn_rpc_proxy_recording_method(endpoint, "anvil_nodeInfo").await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        chain_ids.lock().unwrap().clear();
+        node_infos.lock().unwrap().clear();
+
+        cmd.cast_fuse().args(["run", &tx_hash, "--rpc-url", &endpoint]).args(args).assert_success();
+
+        assert_eq!(chain_ids.lock().unwrap().len(), 1, "{args:?}");
+        assert_eq!(node_infos.lock().unwrap().len(), 1, "{args:?}");
+    }
+}
+
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
 // transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
@@ -510,18 +542,13 @@ async fn cast_run_warns_on_receipt_mismatch(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     // MCOPY(0, 0, 0) STOP
-    api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000aa"),
-        hex!("0x6000600060005e00").into(),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060005e00")).await.unwrap();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
     let mut tx_hashes = Vec::new();
     for (to, input) in [
-        (address!("0x00000000000000000000000000000000000000aa"), Bytes::new()),
-        (address!("0x00000000000000000000000000000000000000cc"), vec![1u8; 1000].into()),
+        (Address::with_last_byte(0xaa), Bytes::new()),
+        (Address::with_last_byte(0xcc), vec![1u8; 1000].into()),
     ] {
         let receipt = provider
             .send_transaction(

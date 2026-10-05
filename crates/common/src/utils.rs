@@ -46,7 +46,7 @@ pub fn block_on_handle<F: std::future::Future>(
 /// );
 /// ```
 pub fn erc7201(id: &str) -> B256 {
-    let x = U256::from_be_bytes(keccak256(id).0) - U256::from(1);
+    let x = U256::from_be_bytes(keccak256(id).0) - U256::ONE;
     keccak256(x.to_be_bytes::<32>()) & B256::from(!U256::from(0xff))
 }
 

@@ -1283,12 +1283,12 @@ fn fmt_timestamp(timestamp: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, address, bytes};
     use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
-    use std::str::FromStr;
 
     #[cfg(feature = "base")]
     use base_common_consensus::{Call as BaseCall, TxEip8130};
@@ -1769,19 +1769,12 @@ yParity              0"
     fn uifmt_option_bytes() {
         assert_eq!(None::<Bytes>.pretty(), "");
         assert_eq!(
-            Bytes::from_str("0x0000000000000000000000000000000000000000000000000000000000000064")
-                .unwrap()
-                .pretty(),
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000064").pretty(),
             "0x0000000000000000000000000000000000000000000000000000000000000064",
         );
         assert_eq!(
-            Some(
-                Bytes::from_str(
-                    "0x0000000000000000000000000000000000000000000000000000000000000064"
-                )
-                .unwrap()
-            )
-            .pretty(),
+            Some(bytes!("0x0000000000000000000000000000000000000000000000000000000000000064"))
+                .pretty(),
             "0x0000000000000000000000000000000000000000000000000000000000000064",
         );
     }
@@ -1999,8 +1992,8 @@ l1GasUsed            1600
     #[test]
     fn test_uifmt_for_signed_authorization() {
         let inner = Authorization {
-            chain_id: U256::from(1),
-            address: "0x000000000000000000000000000000000000dead".parse::<Address>().unwrap(),
+            chain_id: U256::ONE,
+            address: address!("0x000000000000000000000000000000000000dead"),
             nonce: 42,
         };
         let signed_authorization =

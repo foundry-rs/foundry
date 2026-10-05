@@ -1,7 +1,7 @@
 //! Contains various tests for `forge test`.
 
 use crate::utils::assert_debug_dump_identifies_contract;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
@@ -25,6 +25,7 @@ mod core;
 mod exact_fork;
 mod fork_bal;
 mod fuzz;
+mod halts;
 mod invariant;
 mod logs;
 mod mutation;
@@ -442,7 +443,15 @@ contract DecodeExternalStorageTest is Test {
         "--etherscan-api-key",
         &etherscan_api_key,
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DecodeExternalStorage.t.sol:DecodeExternalStorageTest
+[PASS] test_externalStorageDecoding() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Test that `--decode-external-storage` correctly resolves proxy contracts
@@ -497,7 +506,15 @@ contract DecodeExternalStorageProxyTest is Test {
         "--etherscan-api-key",
         &etherscan_api_key,
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DecodeExternalStorageProxy.t.sol:DecodeExternalStorageProxyTest
+[PASS] test_externalStorageDecodingProxy() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // A local proxy artifact must not override the layout of the bytecode that executed a delegated
@@ -583,7 +600,14 @@ contract DecodeDelegatecallStorageTest is Test {
         "--extra-output",
         "storageLayout",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DecodeDelegatecallStorage.t.sol:DecodeDelegatecallStorageTest
+[PASS] test_usesRecordedImplementationLayout() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // tests that a warning is displayed if there are tests but none match a non-empty filter
@@ -894,6 +918,31 @@ fn can_run_test_with_json_output_non_verbose(prj: _, cmd: _) {
     cmd.args(["test", "--json"])
         .assert_success()
         .stdout_eq(file!["../../fixtures/SimpleContractTestNonVerbose.json": Json]);
+}
+
+#[forgetest]
+fn json_and_junit_emit_empty_documents_without_matches(prj: _, cmd: _) {
+    prj.insert_ds_test();
+    prj.insert_console();
+    prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
+
+    // A filter that matches nothing must still produce a parseable document on stdout.
+    cmd.args(["test", "--json", "--match-test", "testNoSuch"]).assert_success().stdout_eq(str![[
+        r#"
+{}
+
+"#
+    ]]);
+
+    cmd.forge_fuse().args(["test", "--junit", "--match-test", "testNoSuch"]).assert_success().stdout_eq(str![[
+        r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="0" skipped="0" failures="0" errors="0" timestamp="[..]" time="0.000">
+</testsuites>
+
+
+"#
+    ]]);
 }
 
 #[forgetest]
@@ -1741,7 +1790,87 @@ contract NonAnvilForkTest {
 "#,
     );
 
-    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"]).assert_success();
+    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/NonAnvilFork.t.sol:NonAnvilForkTest
+[PASS] testFork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// A cheatcode fork whose alias auth differs from the `--fork-url` credentials must not reuse the
+// endpoint identity discovered for the same URL, since the credentials may reach another backend.
+#[forgetest]
+async fn fork_alias_auth_rediscovers_same_url_endpoint(prj: _, cmd: _) {
+    let (_, anonymous) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let anonymous =
+        rpc::spawn_rpc_proxy_rejecting_method_after(anonymous.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+    let (_, authenticated) = spawn(NodeConfig::test().with_chain_id(Some(31337u64))).await;
+    let authenticated = authenticated.http_endpoint();
+    let client = reqwest::Client::new();
+    let router = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap,
+                  axum::Json(request): axum::Json<serde_json::Value>| {
+                let target = if headers.contains_key("authorization") {
+                    authenticated.clone()
+                } else {
+                    anonymous.clone()
+                };
+                let client = client.clone();
+                async move {
+                    let response = client.post(target).json(&request).send().await.unwrap();
+                    axum::Json(response.json::<serde_json::Value>().await.unwrap())
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    std::fs::write(
+        prj.config(),
+        format!(
+            r#"[rpc_endpoints]
+authenticated = {{ endpoint = "{endpoint}", auth = "Bearer secret" }}
+"#
+        ),
+    )
+    .unwrap();
+
+    prj.add_test(
+        "ForkAliasAuth.t.sol",
+        r#"
+interface Vm {
+    function createSelectFork(string calldata urlOrAlias) external returns (uint256 forkId);
+}
+
+contract ForkAliasAuthTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testForkAliasAuth() external {
+        require(block.chainid == 1, "wrong base chain");
+        vm.createSelectFork("authenticated");
+        require(block.chainid == 31337, "wrong alias chain");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testForkAliasAuth"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/ForkAliasAuth.t.sol:ForkAliasAuthTest
+[PASS] testForkAliasAuth() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/7574>
@@ -2445,7 +2574,14 @@ contract SetupSelfdestructTest is Test {
     );
 
     cmd.args(["test", "--match-path", "test/SetupSelfdestruct.t.sol", "--evm-version", "cancun"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SetupSelfdestruct.t.sol:SetupSelfdestructTest
+[PASS] testMorphingContract() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2483,13 +2619,21 @@ contract SetupThenTestSelfdestructTest is Test {
         "--evm-version",
         "cancun",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SetupThenTestSelfdestruct.t.sol:SetupThenTestSelfdestructTest
+[PASS] testCodePersistsAcrossSetupBoundary() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
+// `waste()` spends more gas than the forked block's gas limit, so it only succeeds with
+// `--disable-block-gas-limit`.
 #[forgetest_init]
-#[ignore = "Too slow"]
-fn can_disable_block_gas_limit(prj: _, cmd: _) {
-    let endpoint = rpc::next_http_archive_rpc_url();
+async fn can_disable_block_gas_limit_on_fork(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(30_000_000))).await;
 
     prj.add_test(
         "Contract.t.sol",
@@ -2515,10 +2659,44 @@ contract GasLimitTest is Test {
     }
 }
    "#
-        .replace("<rpc>", &endpoint),
+        .replace("<rpc>", &handle.http_endpoint()),
     );
 
-    cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+    cmd.args(["test", "--isolate"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:GasLimitTest
+[FAIL: EvmError: Revert] test() (block: 0) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Contract.t.sol:GasLimitTest
+[FAIL: EvmError: Revert] test() (block: 0) ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--isolate", "--disable-block-gas-limit"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Contract.t.sol:GasLimitTest
+[PASS] test() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 }
 
 #[forgetest]
@@ -2533,7 +2711,13 @@ contract Dummy {
     );
 
     cmd.args(["test", "--match-path", "src/dummy.sol"]);
-    cmd.assert_success();
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/dummy.sol:Dummy
+[PASS] testDummy() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -5271,8 +5455,7 @@ contract ForkDebugTarget {
             "--broadcast",
         ])
         .assert_success();
-    let deployed =
-        Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap().create(0);
+    let deployed = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").create(0);
     let deployed = deployed.to_string();
 
     prj.add_test(
@@ -5742,31 +5925,26 @@ async fn flaky_can_get_broadcast_txs(prj: _, cmd: _) {
     // Check if the broadcast folder exists
     assert!(broadcast_path.exists() && broadcast_path.is_dir());
 
-    cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
-}
+    cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 5 tests for test/GetBroadcast.sol:GetBroadcastTest
+[PASS] test_getAllBroadcasts() ([GAS])
+[PASS] test_getBroadcasts() ([GAS])
+[PASS] test_getDeployments() ([GAS])
+[PASS] test_getLatestBroadcast() ([GAS])
+Logs:
+  latest create
+  1
+  latest create2
+  4
+  latest call
 
-// See <https://github.com/foundry-rs/foundry/issues/9297>
-#[forgetest_init]
-#[ignore = "RPC Service Unavailable"]
-fn test_roll_scroll_fork_with_cancun(prj: _, cmd: _) {
-    prj.add_test(
-        "ScrollForkTest.t.sol",
-        r#"
-
-import {Test} from "forge-std/Test.sol";
-
-contract ScrollForkTest is Test {
-    function test_roll_scroll_fork_to_tx() public {
-        vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
-        bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
-        vm.rollFork(targetTxHash);
-    }
-}
-   "#,
+[PASS] test_getLatestDeployment() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
     );
-
-    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
-        .assert_success();
 }
 
 // Test that failed fork errors still surface the provider hostname.
@@ -5836,7 +6014,7 @@ fn tracing_verbosity_shows_state_changes_independently(prj: _, cmd: _) {
         config.verbosity = 0;
         config.tracing.verbosity = 5;
         config.tracing.labels.insert(
-            Address::from_str("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f").unwrap(),
+            address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f"),
             "ConfiguredCounter".to_string(),
         );
     });

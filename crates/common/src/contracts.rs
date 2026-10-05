@@ -773,7 +773,7 @@ mod tests {
             .abi
             .constructor()
             .unwrap()
-            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .abi_encode_input(&[DynSolValue::Uint(U256::ONE, 256)])
             .unwrap();
         let creation = [bytecode.as_ref(), &arguments].concat();
 

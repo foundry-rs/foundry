@@ -1,6 +1,6 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, hex, keccak256};
+use alloy_primitives::{U256, bytes, hex, keccak256};
 use foundry_config::fs_permissions::PathPermission;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
@@ -193,7 +193,13 @@ contract FuzzerDictTest is Test {
     // Test that storage address is used as fuzzed input, causing test to fail.
     cmd.forge_fuse()
         .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner"])
-        .assert_failure();
+        .assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzerDictTest.t.sol:FuzzerDictTest
+[FAIL: assertion failed; counterexample: calldata=0x5f9789a200000000000000000000000000000000000000000000000000000000000000c8 args=[0x00000000000000000000000000000000000000C8]] testStorageOwner(address) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -335,7 +341,7 @@ fn overloaded_fuzz_tests_use_distinct_paths(prj: _, cmd: _) {
     let corpus_root = prj.root().join("overloaded-corpus");
     prj.update_config(|config| {
         config.fuzz.runs = 1;
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
     });
     prj.add_test(
@@ -651,7 +657,7 @@ contract ForgeExplicitFuzzReplayTest {
 
     let short = prj.root().join("short-fuzz-failure.json");
     let mut short_failure = persisted;
-    short_failure.calldata = hex!("12").into();
+    short_failure.calldata = bytes!("12");
     std::fs::write(&short, serde_json::to_vec(&short_failure).unwrap()).unwrap();
     let output = cmd
         .forge_fuse()
@@ -989,7 +995,7 @@ fn stateless_fuzz_does_not_persist_skips(prj: _, cmd: _) {
     let corpus_root = prj.root().join("fuzz_corpus");
     prj.update_config(|config| {
         config.fuzz.runs = 1;
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
     });
     prj.add_test(
@@ -1016,7 +1022,7 @@ fn stateless_fuzz_does_not_persist_assume_rejects(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.runs = 1;
         config.fuzz.max_test_rejects = 1;
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
     });
     prj.add_test(
@@ -3007,7 +3013,7 @@ contract ForgeFuzzTminExactEdgesTargetTest {
         &abi,
         "testFuzz_exactEdges",
     );
-    assert_eq!(args, vec![DynSolValue::Uint(U256::from(1), 256)]);
+    assert_eq!(args, vec![DynSolValue::Uint(U256::ONE, 256)]);
 }
 
 #[forgetest_init]
@@ -4046,7 +4052,7 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
 #[forgetest_init]
 fn forge_fuzz_replay_invariant_sequence_checks(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(1u32));
+        config.fuzz.seed = Some(U256::ONE);
         config.invariant.runs = 1;
         config.invariant.depth = 1;
         config.invariant.check_interval = 0;
@@ -5272,7 +5278,7 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 fn test_fuzz_stale_success_does_not_consume_run(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.fuzz.runs = 1;
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.fuzz.dictionary.dictionary_weight = 0;
     });
     prj.add_test(
@@ -5307,7 +5313,7 @@ contract StaleFailureTest {
     let failure: BaseCounterExample =
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
     assert_eq!(failure.calldata, generated_calldata);
-    assert_eq!(failure.fuzz.seed, Some(U256::from(1)));
+    assert_eq!(failure.fuzz.seed, Some(U256::ONE));
     assert_eq!(failure.fuzz.run, Some(1));
     assert_eq!(failure.fuzz.worker, Some(0));
 
@@ -5386,86 +5392,6 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-}
-
-// Test that showcases PUSH collection on normal fuzzing.
-// Ignored until we collect them in a smarter way.
-#[forgetest_init]
-#[ignore]
-fn fuzz_collection(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.invariant.depth = 100;
-        config.invariant.runs = 1000;
-        config.fuzz.runs = 1000;
-        config.fuzz.seed = Some(U256::from(6u32));
-    });
-    prj.add_test(
-        "FuzzCollection.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SampleContract {
-    uint256 public counter;
-    uint256 public counterX2;
-    address public owner = address(0xBEEF);
-    bool public found_needle;
-
-    event Incremented(uint256 counter);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "ONLY_OWNER");
-        _;
-    }
-
-    function compare(uint256 val) public {
-        if (val == 0x4446) {
-            found_needle = true;
-        }
-    }
-
-    function incrementBy(uint256 numToIncrement) public onlyOwner {
-        counter += numToIncrement;
-        counterX2 += numToIncrement * 2;
-
-        emit Incremented(counter);
-    }
-
-    function breakTheInvariant(uint256 x) public {
-        if (x == 0x5556) {
-            counterX2 = 0;
-        }
-    }
-}
-
-contract SampleContractTest is Test {
-    event Incremented(uint256 counter);
-
-    SampleContract public sample;
-
-    function setUp() public {
-        sample = new SampleContract();
-    }
-
-    function testIncrement(address caller) public {
-        vm.startPrank(address(caller));
-
-        vm.expectRevert("ONLY_OWNER");
-        sample.incrementBy(1);
-    }
-
-    function testNeedle(uint256 needle) public {
-        sample.compare(needle);
-        require(!sample.found_needle(), "needle found.");
-    }
-
-    function invariantCounter() public {
-        require(sample.counter() * 2 == sample.counterX2(), "broken counter.");
-    }
-}
-   "#,
-    );
-
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#""#]]);
 }
 
 #[forgetest_init]
@@ -5939,7 +5865,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
     let persisted_failure: BaseCounterExample =
         serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
-    assert_eq!(persisted_failure.fuzz.seed, Some(U256::from(1)));
+    assert_eq!(persisted_failure.fuzz.seed, Some(U256::ONE));
     assert_eq!(persisted_failure.fuzz.worker, Some(0));
     let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
 
@@ -5998,7 +5924,14 @@ contract FuzzReplayTest is Test {
             "testFuzz_replayAfterReject",
             "-j1",
         ])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzReplayTest.t.sol:FuzzReplayTest
+[PASS] testFuzz_replayAfterReject(uint256) (runs: 1, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse()
         .args([
@@ -6011,7 +5944,13 @@ contract FuzzReplayTest is Test {
             "testFuzz_replayAfterReject",
             "-j1",
         ])
-        .assert_failure();
+        .assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzReplayTest.t.sol:FuzzReplayTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0xffdf48cd0000000000000000000000000000000000000000000000000000000000000001 args=[1]] testFuzz_replayAfterReject(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -6164,7 +6103,7 @@ fn fuzz_mutations_preserve_enum_bounds(prj: _, cmd: _) {
     let corpus_dir = prj.root().join("enum-corpus");
     prj.update_config(|config| {
         config.fuzz.runs = 256;
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.fuzz.corpus.corpus_dir = Some(corpus_dir.clone());
         config.fuzz.corpus.corpus_random_sequence_weight = 0;
         let weights = &mut config.fuzz.corpus.mutation_weights;
