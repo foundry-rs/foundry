@@ -98,7 +98,8 @@ selector, so preparing `latest` does not rewrite the request.
 Changing a script RPC explicitly selects another backend through the same fork manager. Exact
 identity governs remote-cache reuse; each runner retains its own mutable execution state. Mutation
 testing dispatches once for the campaign and shares the pristine typed backend across its baseline
-and workers. Endpoint checks still reject resets and execution-profile changes.
+and workers. Each mutation run scopes its fork registry so cheatcode-created forks are released
+when the run finishes. Endpoint checks still reject resets and execution-profile changes.
 
 ## Adding an execution family
 

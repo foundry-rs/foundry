@@ -1186,7 +1186,7 @@ impl EvmOpts {
     /// `fork_block_number` is the actual block number to pin the fork to. This must be the
     /// real chain block number, not a remapped value. On some L2s (e.g., Arbitrum)
     /// `block_env.number` is remapped to the L1 block number, so callers must pass the
-    /// original block number of the fork returned by [`EvmOpts::env_resolved`] instead.
+    /// block number in the context returned by [`EvmOpts::env_with_fork_context`] instead.
     pub fn get_fork(
         &self,
         config: &Config,
@@ -1996,10 +1996,10 @@ mod tests {
         evm_opts.networks = NetworkConfigs::with_monad();
 
         let (mut evm_env, tx_env, fork) = evm_opts
-            .env_resolved::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
+            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
             .await
             .unwrap();
-        let fork_context = fork.unwrap().context();
+        let fork_context = fork.unwrap();
 
         assert_eq!(fork_context.source_chain_id, NamedChain::Monad as u64);
         assert_eq!(fork_context.network, NetworkVariant::Ethereum);
@@ -2317,7 +2317,7 @@ mod tests {
         let evm_opts =
             EvmOpts { fork_url: Some("http://127.0.0.1:1".to_string()), ..Default::default() };
 
-        let err = evm_opts.can_use_create2_deployer_resolved(None).await.unwrap_err();
+        let err = evm_opts.can_use_create2_deployer_at(None).await.unwrap_err();
         assert!(err.to_string().contains("fork must be resolved"));
     }
 
@@ -2472,10 +2472,10 @@ mod tests {
 
         evm_opts.infer_network_from_fork().await.unwrap();
         let (mut evm_env, _, fork) = evm_opts
-            .env_resolved::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
+            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
             .await
             .unwrap();
-        let context = fork.unwrap().context();
+        let context = fork.unwrap();
 
         assert_eq!(
             context.hardfork,
@@ -2529,10 +2529,10 @@ mod tests {
         );
 
         let (_, _, first) = evm_opts
-            .env_resolved::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
+            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
             .await
             .unwrap();
-        assert_eq!(first.unwrap().context().source_chain_id, NamedChain::MonadTestnet as u64);
+        assert_eq!(first.unwrap().source_chain_id, NamedChain::MonadTestnet as u64);
 
         fork_api
             .anvil_reset(Some(alloy_rpc_types::anvil::Forking {
@@ -2543,10 +2543,10 @@ mod tests {
             .unwrap();
 
         let (_, _, second) = evm_opts
-            .env_resolved::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
+            .env_with_fork_context::<foundry_evm_hardforks::MonadHardfork, BlockEnv, TxEnv>()
             .await
             .unwrap();
-        let second = second.unwrap().context();
+        let second = second.unwrap();
         assert_eq!(second.source_chain_id, NamedChain::Monad as u64);
         assert_eq!(
             second.hardfork,
@@ -2567,7 +2567,7 @@ mod tests {
         api.anvil_reset(None).await.unwrap();
 
         assert_ne!(api.instance_id(), original_instance.unwrap());
-        let error = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap_err();
+        let error = evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap_err();
         assert!(
             error.to_string().contains("changed after its execution context was selected"),
             "{error}"
@@ -2765,8 +2765,9 @@ mod tests {
         assert!(evm_opts.fork_block_number.is_none());
 
         // Fetch the environment (this resolves "latest" to an actual block number)
-        let (evm_env, _, fork) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
-        let fork_block = fork.as_ref().map(ResolvedFork::number);
+        let (evm_env, _, fork) =
+            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let fork_block = fork.as_ref().map(|context| context.block_number);
         assert!(fork_block.is_some(), "should have resolved a fork block number");
         let resolved_block = fork_block.unwrap();
         assert!(resolved_block > 0, "should have resolved to a real block number");
@@ -2806,7 +2807,7 @@ mod tests {
     // Regression test for https://github.com/foundry-rs/foundry/issues/13576
     // On Arbitrum, `block_env.number` is remapped to the L1 block number by
     // `apply_chain_and_block_specific_env_changes`. The fork block number returned
-    // by `env_resolved()` must be the actual L2 block number, not the remapped L1 value.
+    // by `env_with_fork_context()` must be the actual L2 block number, not the remapped L1 value.
     #[tokio::test(flavor = "multi_thread")]
     async fn flaky_get_fork_uses_l2_block_number_on_arbitrum() {
         let endpoint =
@@ -2817,10 +2818,11 @@ mod tests {
         evm_opts.fork_url = Some(endpoint.clone());
         assert!(evm_opts.fork_block_number.is_none());
 
-        let (evm_env, _, fork) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let (evm_env, _, fork) =
+            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
         let fork_block = fork
             .as_ref()
-            .map(ResolvedFork::number)
+            .map(|context| context.block_number)
             .expect("should have resolved a fork block number");
 
         // On Arbitrum, block_env.number is the L1 block number (much smaller).
@@ -2853,8 +2855,9 @@ mod tests {
         // Set an explicit block number
         evm_opts.fork_block_number = Some(12345678);
 
-        let (evm_env, _, fork) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
-        let fork_block = fork.as_ref().map(ResolvedFork::number);
+        let (evm_env, _, fork) =
+            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let fork_block = fork.as_ref().map(|context| context.block_number);
 
         let fork =
             evm_opts.get_fork(&Config::default(), evm_env.cfg_env.chain_id, fork_block).unwrap();

@@ -3568,6 +3568,8 @@ mod tests {
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
     };
 
+    use std::sync::Arc;
+
     #[cfg(feature = "base")]
     use crate::evm::{BaseEvmNetwork, base::base_code_sentinel_addresses};
     #[cfg(feature = "base")]
@@ -4504,6 +4506,51 @@ mod tests {
             temporary.fork_block_number_override = Some(expected + 1);
             assert_eq!(temporary.active_fork_block_number(), Some(expected + 1));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_execution_scopes_release_their_registry() {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let request = CreateFork {
+            url: handle.http_endpoint(),
+            enable_caching: false,
+            evm_opts: EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() },
+        };
+        let seed = Backend::<EthEvmNetwork>::spawn(Some(request.clone())).unwrap();
+        let initial = seed.ensure_fork_id(seed.active_fork_id().unwrap()).unwrap().clone();
+        let shared = seed.forks.get_fork(initial.clone()).unwrap().unwrap();
+        let mut execution = seed.clone_with_fork_scope().unwrap();
+        let inherited = execution.forks.get_fork(initial.clone()).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&shared.data(), &inherited.data()));
+
+        let local = execution.create_fork(request).unwrap();
+        let local = execution.ensure_fork_id(local).unwrap().clone();
+        assert!(execution.forks.get_fork(local.clone()).unwrap().is_some());
+        assert!(seed.forks.get_fork(local.clone()).unwrap().is_none());
+        let next = seed.clone_with_fork_scope().unwrap();
+        assert!(next.forks.get_fork(local).unwrap().is_none());
+        let (_other_api, other) = spawn(NodeConfig::test()).await;
+        let unique = execution
+            .create_fork(CreateFork {
+                url: other.http_endpoint(),
+                enable_caching: false,
+                evm_opts: EvmOpts { fork_url: Some(other.http_endpoint()), ..Default::default() },
+            })
+            .unwrap();
+        let unique = execution.ensure_fork_id(unique).unwrap().clone();
+        let unique = execution.forks.get_fork(unique).unwrap().unwrap();
+        let cache = Arc::downgrade(&unique.data());
+        drop(unique);
+        drop(execution);
+        assert!(cache.upgrade().is_none(), "execution-owned remote cache must be released");
+        drop(seed);
+
+        // The child retains the original handler even after its owner is gone.
+        assert!(next.forks.get_fork(initial).unwrap().is_some());
+        assert!(
+            next.basic_ref(handle.dev_accounts().next().unwrap()).unwrap().unwrap().balance
+                > U256::ZERO
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

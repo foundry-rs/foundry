@@ -248,8 +248,6 @@ macro_rules! dispatch_network {
     };
 }
 
-pub(crate) use dispatch_network;
-
 /// Output format for EVM execution profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum EvmProfileFormat {

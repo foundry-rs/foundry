@@ -674,7 +674,13 @@ impl<
             && !this.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
-            let forks = this.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();
+            // Only the registry owning a handler flushes its cache, once per backend.
+            let forks = this
+                .handlers
+                .iter()
+                .filter_map(|(id, _)| this.forks.get(id))
+                .map(|fork| fork.backend.clone())
+                .collect::<Vec<_>>();
             // Flush this on new thread to not block here.
             std::thread::Builder::new()
                 .name("flusher".into())
