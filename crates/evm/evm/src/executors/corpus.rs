@@ -1920,6 +1920,7 @@ fn unique_corpus_entries<'a>(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::{
         executors::ExecutorBuilder,
@@ -2464,7 +2465,7 @@ mod tests {
                         let mut late = CorpusEntry::new(vec![tx_for_function(
                             target_address,
                             &function,
-                            &[DynSolValue::Uint(U256::from(1), 256)],
+                            &[DynSolValue::Uint(U256::ONE, 256)],
                         )]);
                         late.timestamp = 0;
                         worker.push_corpus_entry(late);
@@ -2900,7 +2901,7 @@ mod tests {
     #[test]
     fn clone_for_worker_can_strip_cmp_sequences() {
         let cmp = CmpOperands {
-            op1: U256::from(1),
+            op1: U256::ONE,
             op2: U256::from(2),
             pc: 3,
             address: Address::ZERO,
@@ -2926,7 +2927,7 @@ mod tests {
 
     #[test]
     fn retain_replayable_removes_off_target_corpus_entries() {
-        let target = Address::from([0x11; 20]);
+        let target = Address::repeat_byte(0x11);
         let foo = Function::parse("foo()").unwrap();
         let bar = Function::parse("bar()").unwrap();
         let foo_selector = foo.selector();
@@ -2967,10 +2968,10 @@ mod tests {
 
     #[test]
     fn hoist_observed_calls_bundles_replayable_subcalls_into_one_corpus_entry() {
-        let target = Address::from([0x42; 20]);
-        let other = Address::from([0x43; 20]);
-        let sender = Address::from([0xaa; 20]);
-        let observed_caller = Address::from([0xbb; 20]);
+        let target = Address::repeat_byte(0x42);
+        let other = Address::repeat_byte(0x43);
+        let sender = Address::repeat_byte(0xaa);
+        let observed_caller = Address::repeat_byte(0xbb);
         let foo = Function::parse("foo(uint256)").unwrap();
         let bar = Function::parse("bar()").unwrap();
         let foo_selector = foo.selector();
@@ -2986,7 +2987,7 @@ mod tests {
         let bar_calldata = bar_selector.to_vec();
         let mut unknown_selector = vec![0u8; 36];
         unknown_selector[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-        let value = U256::from(1);
+        let value = U256::ONE;
 
         let observed = vec![
             ObservedCall {
@@ -3030,7 +3031,7 @@ mod tests {
             roll: Some(U256::from(456)),
             sender,
             call_details: CallDetails {
-                target: Address::from([0x99; 20]),
+                target: Address::repeat_byte(0x99),
                 calldata: Bytes::new(),
                 value: None,
             },
@@ -3069,13 +3070,13 @@ mod tests {
 
     #[test]
     fn hoist_observed_calls_persists_immediately() {
-        let target = Address::from([0x42; 20]);
+        let target = Address::repeat_byte(0x42);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
         let targeted_contracts = targeted_contracts_with_selective_functions(target, vec![foo], []);
         let observed = vec![ObservedCall {
             depth: 1,
-            caller: Address::from([0xaa; 20]),
+            caller: Address::repeat_byte(0xaa),
             target,
             calldata: Bytes::from(selector.to_vec()),
             value: None,
@@ -3098,13 +3099,13 @@ mod tests {
 
     #[test]
     fn hoist_observed_calls_skips_empty_or_non_coverage_guided_inputs() {
-        let target = Address::from([0x42; 20]);
+        let target = Address::repeat_byte(0x42);
         let foo = Function::parse("foo()").unwrap();
         let selector = foo.selector();
         let targeted_contracts = targeted_contracts_with_selective_functions(target, vec![foo], []);
         let observed = vec![ObservedCall {
             depth: 1,
-            caller: Address::from([0xaa; 20]),
+            caller: Address::repeat_byte(0xaa),
             target,
             calldata: Bytes::from(selector.to_vec()),
             value: None,
@@ -3139,8 +3140,8 @@ mod tests {
 
     #[test]
     fn sequence_from_test_trace_preserves_forward_environment_and_rejects_restores() {
-        let target = Address::from([0x42; 20]);
-        let sender = Address::from([0xaa; 20]);
+        let target = Address::repeat_byte(0x42);
+        let sender = Address::repeat_byte(0xaa);
         let foo = Function::parse("foo()").unwrap();
         let foo_selector = foo.selector();
         let targeted_contracts =
@@ -3236,10 +3237,10 @@ mod tests {
         );
 
         for calldata in [
-            revertToCall { snapshotId: U256::from(1) }.abi_encode(),
-            revertToStateCall { snapshotId: U256::from(1) }.abi_encode(),
-            revertToAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
-            revertToStateAndDeleteCall { snapshotId: U256::from(1) }.abi_encode(),
+            revertToCall { snapshotId: U256::ONE }.abi_encode(),
+            revertToStateCall { snapshotId: U256::ONE }.abi_encode(),
+            revertToAndDeleteCall { snapshotId: U256::ONE }.abi_encode(),
+            revertToStateAndDeleteCall { snapshotId: U256::ONE }.abi_encode(),
             setEvmVersionCall { evm: "prague".to_string() }.abi_encode(),
         ] {
             let restored = [
@@ -3418,9 +3419,9 @@ mod tests {
     #[test]
     fn invariant_load_drops_entries_outside_current_targets_or_senders() {
         let corpus_root = temp_corpus_dir();
-        let target = Address::from([0x11; 20]);
-        let allowed = Address::from([0xaa; 20]);
-        let excluded = Address::from([0xbb; 20]);
+        let target = Address::repeat_byte(0x11);
+        let allowed = Address::repeat_byte(0xaa);
+        let excluded = Address::repeat_byte(0xbb);
         let foo = Function::parse("foo()").unwrap();
         let bar = Function::parse("bar()").unwrap();
         let foo_selector = foo.selector();
@@ -3476,9 +3477,9 @@ mod tests {
 
     #[test]
     fn observed_sequences_skip_disallowed_senders() {
-        let target = Address::from([0x42; 20]);
-        let allowed = Address::from([0xaa; 20]);
-        let handler = Address::from([0xbb; 20]);
+        let target = Address::repeat_byte(0x42);
+        let allowed = Address::repeat_byte(0xaa);
+        let handler = Address::repeat_byte(0xbb);
         let foo = Function::parse("foo()").unwrap();
         let foo_selector = foo.selector();
         let targeted_contracts =

@@ -40,7 +40,7 @@ async fn test_account_proof() {
     )
     .await
     .unwrap();
-    api.anvil_set_balance(address!("0x33f0fc440b8477fcfbe9d0bf8649e7dea9baedb2"), U256::from(1))
+    api.anvil_set_balance(address!("0x33f0fc440b8477fcfbe9d0bf8649e7dea9baedb2"), U256::ONE)
         .await
         .unwrap();
     api.anvil_set_balance(

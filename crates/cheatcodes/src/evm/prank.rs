@@ -1,7 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
 use foundry_evm_core::evm::FoundryEvmNetwork;
-use revm::context::{ContextTr, JournalTr, Transaction};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -113,7 +112,7 @@ impl Cheatcode for startPrank_3Call {
 impl Cheatcode for stopPrankCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        ccx.state.pranks.remove(&ccx.ecx.journal().depth());
+        ccx.state.pranks.remove(&ccx.depth());
         Ok(Default::default())
     }
 }
@@ -138,7 +137,7 @@ fn prank<FEN: FoundryEvmNetwork>(
         );
     }
 
-    let depth = ccx.ecx.journal().depth();
+    let depth = ccx.depth();
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.
@@ -152,7 +151,7 @@ fn prank<FEN: FoundryEvmNetwork>(
 
     let prank = Prank::new(
         ccx.caller,
-        ccx.ecx.tx().caller(),
+        ccx.tx_caller(),
         *new_caller,
         new_origin.copied(),
         depth,

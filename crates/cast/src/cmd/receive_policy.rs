@@ -596,21 +596,22 @@ const fn inbound_kind(kind: IReceivePolicyGuard::InboundKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{B256, address};
     use tempo_primitives::{MasterId, UserTag};
 
     fn sample_receipt() -> Bytes {
         IReceivePolicyGuard::ClaimReceiptV1::new(
-            address!("0000000000000000000000000000000000000010"),
-            address!("0000000000000000000000000000000000000020"),
-            address!("0000000000000000000000000000000000000030"),
-            address!("0000000000000000000000000000000000000040"),
+            Address::with_last_byte(0x10),
+            Address::with_last_byte(0x20),
+            Address::with_last_byte(0x30),
+            Address::with_last_byte(0x40),
             1_780_000_000,
             7,
             ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8,
             IReceivePolicyGuard::InboundKind::TRANSFER,
-            b256!("0000000000000000000000000000000000000000000000000000000000000042"),
+            B256::with_last_byte(0x42),
         )
         .abi_encode()
         .into()
@@ -621,10 +622,10 @@ mod tests {
         let receipt = sample_receipt();
         let decoded = decode_claim_receipt(&receipt).unwrap();
         assert_eq!(decoded.version, 1);
-        assert_eq!(decoded.token, address!("0000000000000000000000000000000000000010"));
-        assert_eq!(decoded.recoveryAuthority, address!("0000000000000000000000000000000000000020"));
-        assert_eq!(decoded.originator, address!("0000000000000000000000000000000000000030"));
-        assert_eq!(decoded.recipient, address!("0000000000000000000000000000000000000040"));
+        assert_eq!(decoded.token, Address::with_last_byte(0x10));
+        assert_eq!(decoded.recoveryAuthority, Address::with_last_byte(0x20));
+        assert_eq!(decoded.originator, Address::with_last_byte(0x30));
+        assert_eq!(decoded.recipient, Address::with_last_byte(0x40));
         assert_eq!(decoded.blockedNonce, 7);
         assert_eq!(decoded.kind, IReceivePolicyGuard::InboundKind::TRANSFER);
     }
@@ -667,11 +668,11 @@ mod tests {
             MasterId::from([0x12, 0x34, 0x56, 0x78]),
             UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
         );
-        let effective_receiver = address!("0000000000000000000000000000000000000040");
+        let effective_receiver = Address::with_last_byte(0x40);
 
         let payload = validate_payload(
-            address!("0000000000000000000000000000000000000010"),
-            address!("0000000000000000000000000000000000000030"),
+            Address::with_last_byte(0x10),
+            Address::with_last_byte(0x30),
             receiver,
             effective_receiver,
             false,
@@ -695,7 +696,7 @@ mod tests {
         let unknown = receipt_payload(&receipt, &decoded, None);
         assert_eq!(unknown["delivery_state"], "unknown");
 
-        let held = receipt_payload(&receipt, &decoded, Some(U256::from(1)));
+        let held = receipt_payload(&receipt, &decoded, Some(U256::ONE));
         assert_eq!(held["delivery_state"], "held");
         assert_eq!(held["blocked_reason"], "receive_policy");
         assert_eq!(held["kind"], "transfer");
@@ -755,12 +756,7 @@ mod tests {
     fn rejects_unclaimable_recovery_authorities() {
         // Originator recovery and a plain EOA authority are valid.
         assert_eq!(invalid_recovery_authority_message(Address::ZERO), None);
-        assert_eq!(
-            invalid_recovery_authority_message(address!(
-                "1111111111111111111111111111111111111111"
-            )),
-            None
-        );
+        assert_eq!(invalid_recovery_authority_message(Address::repeat_byte(0x11)), None);
 
         // Every fixed Tempo system precompile is unclaimable.
         for authority in TEMPO_PRECOMPILE_ADDRESSES {

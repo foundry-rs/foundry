@@ -438,8 +438,9 @@ pub fn console_table_format(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::{address, b256, bytes};
     use foundry_macros::ConsoleFmt;
     use std::str::FromStr;
 
@@ -512,9 +513,7 @@ mod tests {
         assert_eq!("NaN", fmt_1("%x", &true));
         assert_eq!("'true'", fmt_1("%o", &true));
 
-        let b32 =
-            B256::from_str("0xdeadbeef00000000000000000000000000000000000000000000000000000000")
-                .unwrap();
+        let b32 = b256!("0xdeadbeef00000000000000000000000000000000000000000000000000000000");
         assert_eq!(
             "0xdeadbeef00000000000000000000000000000000000000000000000000000000",
             fmt_1("%s", &b32)
@@ -539,7 +538,7 @@ mod tests {
         assert_eq!("0xdEADBEeF00000000000000000000000000000000", fmt_1("%x", &addr));
         assert_eq!("'0xdEADBEeF00000000000000000000000000000000'", fmt_1("%o", &addr));
 
-        let bytes = Bytes::from_str("0xdeadbeef").unwrap();
+        let bytes = bytes!("0xdeadbeef");
         assert_eq!("0xdeadbeef", fmt_1("%s", &bytes));
         assert_eq!("NaN", fmt_1("%d", &bytes));
         assert_eq!("NaN", fmt_1("%i", &bytes));
@@ -599,7 +598,7 @@ mod tests {
         let fmt_1 = |spec: &str, arg: &dyn ConsoleFmt| console_format(spec, &[arg]);
 
         // 10^256 wraps to zero with unchecked exponentiation.
-        assert_eq!(format!("0.{}1", "0".repeat(255)), fmt_1("%256e", &U256::from(1)));
+        assert_eq!(format!("0.{}1", "0".repeat(255)), fmt_1("%256e", &U256::ONE));
 
         // 10^78 overflows U256; 10^77 still fits.
         let ten_pow_77 = U256::from(10).pow(U256::from(77u64));
@@ -612,16 +611,16 @@ mod tests {
         assert_eq!(format!("-0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(-1).unwrap()));
 
         // Preserve the value at the maximum accepted precision.
-        assert_eq!(format!("0.{}1", "0".repeat(1023)), fmt_1("%1024e", &U256::from(1)));
+        assert_eq!(format!("0.{}1", "0".repeat(1023)), fmt_1("%1024e", &U256::ONE));
 
         // Invalid precisions remain literal and do not consume the value.
-        assert_eq!("%1025e 1", fmt_1("%1025e", &U256::from(1)));
-        assert_eq!("%99999999999999999999e 1", fmt_1("%99999999999999999999e", &U256::from(1)));
+        assert_eq!("%1025e 1", fmt_1("%1025e", &U256::ONE));
+        assert_eq!("%99999999999999999999e 1", fmt_1("%99999999999999999999e", &U256::ONE));
 
         assert_eq!("1", fmt_1("%18e", &U256::from(1_000_000_000_000_000_000u64)));
 
-        assert_eq!("0", fmt_1("%0e", &U256::from(0)));
-        assert_eq!("0", fmt_1("%256e", &U256::from(0)));
+        assert_eq!("0", fmt_1("%0e", &U256::ZERO));
+        assert_eq!("0", fmt_1("%256e", &U256::ZERO));
 
         // Check signed and unsigned extrema at their overflow boundaries.
         let expect_fallback = |digits: String, precision: usize, sign: &str| {
@@ -707,7 +706,7 @@ mod tests {
         let keys: &[&dyn ConsoleFmt] =
             &[&String::from("alice"), &String::from("bob"), &String::from("charlie123")];
         let values: &[&dyn ConsoleFmt] = &[
-            &U256::from(1),
+            &U256::ONE,
             &U256::from_str("20000000000000000").unwrap(),
             &U256::from_str("30000000000").unwrap(),
         ];
@@ -734,7 +733,7 @@ mod tests {
         // more keys than values
         let keys: &[&dyn ConsoleFmt] =
             &[&String::from("alice"), &String::from("bob"), &String::from("charlie")];
-        let values: &[&dyn ConsoleFmt] = &[&U256::from(1), &U256::from(2)];
+        let values: &[&dyn ConsoleFmt] = &[&U256::ONE, &U256::from(2)];
         assert_eq!(
             console_table_format(Some(keys), values),
             "┌─────────┬────────┐\n\
@@ -749,7 +748,7 @@ mod tests {
         // more values than keys
         let keys: &[&dyn ConsoleFmt] = &[&String::from("alice"), &String::from("bob")];
         let values: &[&dyn ConsoleFmt] =
-            &[&U256::from(1), &U256::from(2), &U256::from(3), &U256::from(4)];
+            &[&U256::ONE, &U256::from(2), &U256::from(3), &U256::from(4)];
         assert_eq!(
             console_table_format(Some(keys), values),
             "┌─────────┬────────┐\n\

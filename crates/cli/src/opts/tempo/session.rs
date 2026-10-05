@@ -249,7 +249,7 @@ mod tests {
     }
 
     fn session_id(byte: u8) -> B256 {
-        B256::from([byte; 32])
+        B256::repeat_byte(byte)
     }
 
     fn active_session_entry(session_id: B256) -> SessionEntry {
@@ -452,7 +452,7 @@ mod tests {
             let wallets = MultiWalletOpts::default();
 
             let err = opts
-                .session_signer_for_multi_wallet(&wallets, Some(Address::from([0x22; 20])), 4217)
+                .session_signer_for_multi_wallet(&wallets, Some(Address::repeat_byte(0x22)), 4217)
                 .unwrap_err();
 
             assert!(err.to_string().contains("does not match Tempo session root account"), "{err}");

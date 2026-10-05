@@ -3066,7 +3066,7 @@ impl Default for Config {
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
             initial_balance: U256::from((1u128 << 96) - 1),
-            block_number: U256::from(1),
+            block_number: U256::ONE,
             fork_block_number: None,
             chain: None,
             gas_limit: (1u64 << 30).into(), // ~1B
@@ -3074,7 +3074,7 @@ impl Default for Config {
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::ZERO,
-            block_timestamp: U256::from(1),
+            block_timestamp: U256::ONE,
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
@@ -5202,6 +5202,39 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_libraries_with_whitespace() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "FOUNDRY_LIBRARIES",
+                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+            );
+            let config = Config::load().unwrap();
+
+            similar_asserts::assert_eq!(
+                config.parsed_libraries().unwrap().libs,
+                BTreeMap::from([
+                    (
+                        PathBuf::from("src/A.sol"),
+                        BTreeMap::from([(
+                            "A".to_string(),
+                            "0x1111111111111111111111111111111111111111".to_string(),
+                        )]),
+                    ),
+                    (
+                        PathBuf::from("src/B.sol"),
+                        BTreeMap::from([(
+                            "B".to_string(),
+                            "0x2222222222222222222222222222222222222222".to_string(),
+                        )]),
+                    ),
+                ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_parse_many_libraries() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -6519,10 +6552,8 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            let labels = AddressHashMap::from_iter(vec![(
-                address!("0x0000000000000000000000000000000000000001"),
-                "Alice".to_string(),
-            )]);
+            let labels =
+                AddressHashMap::from_iter(vec![(Address::with_last_byte(1), "Alice".to_string())]);
             assert_eq!(config.labels, labels);
             assert_eq!(config.tracing.labels, labels);
             assert_eq!(
@@ -6552,17 +6583,11 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(
                 config.labels,
-                AddressHashMap::from_iter([(
-                    address!("0x0000000000000000000000000000000000000001"),
-                    "Alice".to_string(),
-                )])
+                AddressHashMap::from_iter([(Address::with_last_byte(1), "Alice".to_string(),)])
             );
             assert_eq!(
                 config.tracing.labels,
-                AddressHashMap::from_iter([(
-                    address!("0x0000000000000000000000000000000000000001"),
-                    "Bob".to_string(),
-                )])
+                AddressHashMap::from_iter([(Address::with_last_byte(1), "Bob".to_string(),)])
             );
 
             Ok(())
@@ -6595,7 +6620,7 @@ mod tests {
 
     #[test]
     fn test_tracing_serialization_keeps_global_verbosity() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
         let config = Config {
             tracing: TracingConfig { verbosity: 4, labels: labels.clone(), ..Default::default() },
@@ -6620,7 +6645,7 @@ mod tests {
 
     #[test]
     fn test_legacy_programmatic_labels_survive_serialization() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let labels = AddressHashMap::from_iter([(address, "Alice".to_string())]);
         let config = Config { labels: labels.clone(), ..Default::default() };
 
@@ -6669,10 +6694,8 @@ mod tests {
             assert!(config.tracing.decode_internal);
             assert!(config.tracing.compact_labels);
             assert_eq!(config.tracing.external_identification_timeout, 9);
-            let labels = AddressHashMap::from_iter(vec![(
-                address!("0x0000000000000000000000000000000000000002"),
-                "Bob".to_string(),
-            )]);
+            let labels =
+                AddressHashMap::from_iter(vec![(Address::with_last_byte(2), "Bob".to_string())]);
             assert!(config.labels.is_empty());
             assert_eq!(config.tracing.labels, labels);
             assert!(config.warnings.is_empty());
@@ -6729,7 +6752,7 @@ mod tests {
 
     #[test]
     fn test_label_aliases_preserve_provider_precedence() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let labels = |label: &str| AddressHashMap::from_iter([(address, label.to_string())]);
         let provider = |global: &str, local: &str| {
             let figment = Config::merge_toml_provider(
@@ -7173,7 +7196,7 @@ mod tests {
     #[test]
     fn inherited_label_aliases_preserve_source_precedence() {
         figment::Jail::expect_with(|jail| {
-            let address = address!("0x0000000000000000000000000000000000000001");
+            let address = Address::with_last_byte(1);
 
             jail.create_file(
                 "base.toml",
@@ -7555,12 +7578,7 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.optimizer_runs, Some(999));
             assert_eq!(config.verbosity, 4);
-            assert_eq!(
-                config.sender,
-                "0x0000000000000000000000000000000000000001"
-                    .parse::<alloy_primitives::Address>()
-                    .unwrap()
-            );
+            assert_eq!(config.sender, Address::with_last_byte(1));
 
             Ok(())
         });
@@ -7792,28 +7810,13 @@ mod tests {
             let config = Config::load().unwrap();
 
             // Labels should be merged
+            assert_eq!(config.labels.get(&Address::with_last_byte(1)), Some(&"Alice".to_string()));
             assert_eq!(
-                config.labels.get(
-                    &"0x0000000000000000000000000000000000000001"
-                        .parse::<alloy_primitives::Address>()
-                        .unwrap()
-                ),
-                Some(&"Alice".to_string())
-            );
-            assert_eq!(
-                config.labels.get(
-                    &"0x0000000000000000000000000000000000000002"
-                        .parse::<alloy_primitives::Address>()
-                        .unwrap()
-                ),
+                config.labels.get(&Address::with_last_byte(2)),
                 Some(&"Bob Updated".to_string())
             );
             assert_eq!(
-                config.labels.get(
-                    &"0x0000000000000000000000000000000000000003"
-                        .parse::<alloy_primitives::Address>()
-                        .unwrap()
-                ),
+                config.labels.get(&Address::with_last_byte(3)),
                 Some(&"Charlie".to_string())
             );
 
@@ -8058,12 +8061,7 @@ mod tests {
             assert_eq!(config.optimizer, Some(true));
             assert_eq!(config.optimizer_runs, Some(333));
             assert_eq!(config.gas_limit, 555555.into());
-            assert_eq!(
-                config.sender,
-                "0x0000000000000000000000000000000000000001"
-                    .parse::<alloy_primitives::Address>()
-                    .unwrap()
-            );
+            assert_eq!(config.sender, Address::with_last_byte(1));
 
             // Test that prod profile correctly inherits even without a default profile
             jail.set_env("FOUNDRY_PROFILE", "prod");
@@ -8071,12 +8069,7 @@ mod tests {
             assert_eq!(config.optimizer, Some(true));
             assert_eq!(config.optimizer_runs, Some(20000));
             assert_eq!(config.gas_limit, 50000000.into());
-            assert_eq!(
-                config.sender,
-                "0x0000000000000000000000000000000000000002"
-                    .parse::<alloy_primitives::Address>()
-                    .unwrap()
-            );
+            assert_eq!(config.sender, Address::with_last_byte(2));
 
             Ok(())
         });
