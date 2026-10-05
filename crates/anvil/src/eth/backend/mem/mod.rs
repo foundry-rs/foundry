@@ -3235,10 +3235,16 @@ impl<N: Network> Backend<N> {
             base_evm_env,
         )?;
         // Without a gas limit, a priced call gets at most the gas its sender can pay for, rather
-        // than failing the funds check for the default limit. Tempo pays fees in tokens instead.
-        let tempo = matches!(prepared.tx_env, CallTxEnv::Tempo(_));
+        // than failing the funds check for the default limit. Tempo pays fees in tokens instead,
+        // and OP deposits mint funds before paying for execution.
+        let cap_by_balance = match &prepared.tx_env {
+            CallTxEnv::Tempo(_) => false,
+            #[cfg(feature = "optimism")]
+            CallTxEnv::Op(tx) => tx.tx_type() != DEPOSIT_TX_TYPE_ID,
+            _ => true,
+        };
         let tx_env = prepared.tx_env.base_mut();
-        if gas_omitted && !tempo && tx_env.gas_price > 0 {
+        if gas_omitted && cap_by_balance && tx_env.gas_price > 0 {
             let balance =
                 state.basic_ref(tx_env.caller)?.map(|info| info.balance).unwrap_or_default();
             let upfront = tx_env.value.saturating_add(tx_env.calc_max_data_fee());

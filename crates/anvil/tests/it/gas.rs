@@ -249,6 +249,41 @@ async fn priced_calls_without_gas_limit_are_capped_by_allowance_on(config: NodeC
     }
 }
 
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn priced_deposit_calls_without_gas_limit_keep_default_budget() {
+    let (api, handle) = spawn(NodeConfig::test().with_optimism()).await;
+    let provider = handle.http_provider();
+    let from = Address::repeat_byte(0x11);
+    let gas_price = 10_000_000_000_000u128;
+    api.anvil_set_balance(from, U256::from(gas_price * 100_000)).await.unwrap();
+
+    let contract = Address::repeat_byte(0x5a);
+    api.anvil_set_code(contract, bytes!("5a5f5260205ff3")).await.unwrap();
+    let gas_limit = api.gas_limit();
+    // Deposits mint funds before paying for execution, so the pre-mint balance must not
+    // lower their default gas budget.
+    let request = WithOtherFields {
+        inner: TransactionRequest::default()
+            .from(from)
+            .to(contract)
+            .gas_price(gas_price)
+            .transaction_type(0x7e),
+        other: serde_json::json!({
+            "sourceHash": B256::repeat_byte(0x01),
+            "mint": gas_limit * U256::from(gas_price),
+            "isSystemTx": false,
+        })
+        .try_into()
+        .unwrap(),
+    };
+    let output = provider.call(request.clone()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&output), gas_limit - U256::from(21_002));
+    let traced =
+        api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
+    assert_eq!(traced.output, output);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_zero_block_fee_history_is_empty() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
