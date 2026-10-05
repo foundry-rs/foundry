@@ -3,6 +3,9 @@ use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 #[cfg(feature = "monad")]
+use alloy_primitives::Address;
+
+#[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
     reqwest::Client::new()
         .post(endpoint)
@@ -1834,12 +1837,9 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
         alloy_primitives::address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
     const STAKING_ADDRESS: alloy_primitives::Address =
         alloy_primitives::address!("0x0000000000000000000000000000000000001000");
-    const BLOCK_AUTHOR: alloy_primitives::Address =
-        alloy_primitives::address!("0x1111111111111111111111111111111111111111");
-    const VALIDATOR_AUTH: alloy_primitives::Address =
-        alloy_primitives::address!("0x2222222222222222222222222222222222222222");
-    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address =
-        alloy_primitives::address!("0x3333333333333333333333333333333333333333");
+    const BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x11);
+    const VALIDATOR_AUTH: alloy_primitives::Address = Address::repeat_byte(0x22);
+    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x33);
     const VALIDATOR_ID: u64 = 7;
 
     let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;

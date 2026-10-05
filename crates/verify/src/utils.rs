@@ -606,7 +606,7 @@ mod tests {
             .unwrap()
             .constructor()
             .unwrap()
-            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .abi_encode_input(&[DynSolValue::Uint(U256::ONE, 256)])
             .unwrap();
 
         assert_eq!(validate_encoded_constructor_args(&artifact, args.clone()).unwrap(), args);

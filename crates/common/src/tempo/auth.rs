@@ -344,6 +344,7 @@ pub(crate) fn is_known_tempo_endpoint(url: &url::Url) -> bool {
 mod tests {
     use super::*;
     use crate::tempo::{TEMPO_HOME_ENV, read_tempo_accounts_store, test_env_mutex};
+    use alloy_primitives::address;
     use axum::{Json, Router, extract::State, routing::post};
     use std::sync::{Arc, Mutex};
 
@@ -404,7 +405,7 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("chainId must be string, got {chain_id}: {body}"));
         assert!(chain_str.starts_with("0x"), "chainId must be 0x-hex, got {chain_str}");
-        let wallet: Address = "0x0000000000000000000000000000000000000042".parse().unwrap();
+        let wallet = Address::with_last_byte(0x42);
         *state.wallet.lock().unwrap() = Some(wallet);
         *state.key_id.lock().unwrap() = Some(address_from_sec1_hex(pub_key));
         Json(serde_json::json!({ "code": "ABCDEFGH" }))
@@ -530,8 +531,7 @@ mod tests {
         let (service_url, server) = spawn_mock_wallet(4217).await;
         let outcome = ensure_access_key(test_cfg(service_url)).await.unwrap();
 
-        let expected_wallet: Address =
-            "0x0000000000000000000000000000000000000042".parse().unwrap();
+        let expected_wallet = Address::with_last_byte(0x42);
         assert_eq!(outcome.chain_id, 4217);
         assert_eq!(outcome.wallet_address, expected_wallet);
 
@@ -579,7 +579,7 @@ mod tests {
 
         // Bind the admin auth to the mock wallet account (0x..42) so it is rejected purely for
         // being an admin key, not for an account mismatch.
-        let account: Address = "0x0000000000000000000000000000000000000042".parse().unwrap();
+        let account = Address::with_last_byte(0x42);
         let shape = MockAuthShape { admin: true, account: Some(account) };
         let (service_url, server) = spawn_mock_wallet_with(4217, shape).await;
 
@@ -606,7 +606,7 @@ mod tests {
         unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
 
         // The mock authorizes account 0x..42 but binds the authorization to 0x..dead.
-        let other: Address = "0x000000000000000000000000000000000000dead".parse().unwrap();
+        let other = address!("0x000000000000000000000000000000000000dead");
         let shape = MockAuthShape { admin: false, account: Some(other) };
         let (service_url, server) = spawn_mock_wallet_with(4217, shape).await;
 

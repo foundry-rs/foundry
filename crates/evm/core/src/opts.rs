@@ -53,6 +53,10 @@ pub struct EvmOpts {
     /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,
 
+    /// Fetch fork state by block number for RPCs that cannot serve it by hash.
+    #[serde(default)]
+    pub fork_state_by_number: bool,
+
     /// The number of retries.
     pub fork_retries: Option<u32>,
 
@@ -309,6 +313,7 @@ impl Default for EvmOpts {
             env: Env::default(),
             fork_url: None,
             fork_block_number: None,
+            fork_state_by_number: false,
             fork_retries: None,
             fork_retry_backoff: None,
             fork_headers: None,
@@ -467,14 +472,16 @@ impl EvmOpts {
 
     #[cfg(test)]
     fn test_fork(&self, fork_url: &str, block: BlockNumHash, context: ForkContext) -> Fork {
-        Fork::test(
+        let mut fork = Fork::test(
             fork_url,
             self.fork_source_headers(),
             self.rpc_jwt.as_deref(),
             self.fork_block_number,
             block,
             context,
-        )
+        );
+        fork.state_by_number = self.fork_state_by_number;
+        fork
     }
 
     /// Converts an implicit `latest` selector into a block-number selector in place.
@@ -530,7 +537,7 @@ impl EvmOpts {
         self.check_fork_endpoint(&provider, fork).await?;
         let available = !provider
             .get_code_at(self.create2_deployer)
-            .block_id(fork.exact_block_id())
+            .block_id(fork.state_block_id())
             .await?
             .is_empty();
         self.check_fork_endpoint(&provider, fork).await?;
@@ -588,7 +595,7 @@ impl EvmOpts {
     ) -> eyre::Result<u64> {
         let provider = self.provider_for_fork::<AnyNetwork>(fork)?;
         self.check_fork_endpoint(&provider, fork).await?;
-        let nonce = provider.get_transaction_count(account).block_id(fork.exact_block_id()).await?;
+        let nonce = provider.get_transaction_count(account).block_id(fork.state_block_id()).await?;
         self.check_fork_endpoint(&provider, fork).await?;
         Ok(nonce)
     }
@@ -1236,14 +1243,6 @@ impl EvmOpts {
 
             if let Ok(id) = provider.get_chain_id().await {
                 return Some(Chain::from(id));
-            }
-
-            // Provider URLs could be of the format `{CHAIN_IDENTIFIER}-mainnet`
-            // (e.g. Alchemy `opt-mainnet`, `arb-mainnet`), fallback to this method only
-            // if we're not able to retrieve chain id from `RetryProvider`.
-            if url.contains("mainnet") {
-                trace!(?url, "auto detected mainnet chain");
-                return Some(Chain::mainnet());
             }
         }
 
@@ -2261,6 +2260,19 @@ mod tests {
         assert_eq!(probes(), (2, 2));
     }
 
+    #[tokio::test]
+    async fn fork_remote_chain_id_does_not_guess_from_url() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let evm_opts = EvmOpts {
+            fork_url: Some(format!("http://{address}/arb-mainnet")),
+            fork_retries: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(evm_opts.get_remote_chain_id().await, None);
+    }
+
     #[test]
     fn known_network_variant_does_not_guess_unknown_chain() {
         assert_eq!(NetworkVariant::from_known_chain_id(98_765_432).unwrap(), None);
@@ -2613,7 +2625,7 @@ mod tests {
         let fork = evm_opts.prepare_fork().await.unwrap().unwrap();
         let provider = handle.http_provider();
 
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         assert!(provider.get_block_number().await.unwrap() > fork.number());
 
         let (evm_env, _) =

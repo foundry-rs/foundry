@@ -14,9 +14,7 @@ use alloy_eips::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{
-    Address, B256, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
-};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U64, U256, address, b256, bytes, hex, uint};
 use alloy_provider::{
     Provider,
     ext::{DebugApi, TxPoolApi},
@@ -430,7 +428,7 @@ async fn test_fork_transaction_hash_replay_skips_unsupported_prefix() {
             TransactionRequest::default()
                 .from(senders[0])
                 .to(Address::random())
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .nonce(0),
         ))
         .await
@@ -499,7 +497,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
             TransactionRequest::default()
                 .from(sender)
                 .to(Address::random())
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .nonce(0),
         ))
         .await
@@ -544,7 +542,7 @@ async fn test_fork_transaction_hash_replays_before_startup() {
     .await;
     let fork_provider = fork_handle.http_provider();
 
-    assert_eq!(fork_api.block_number().unwrap(), U256::from(1));
+    assert_eq!(fork_api.block_number().unwrap(), U256::ONE);
     let replayed =
         fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
     let replayed_hashes = replayed
@@ -647,7 +645,7 @@ async fn test_fork_transaction_hash_replay_preserves_cancun_header_inputs() {
             TransactionRequest::default()
                 .from(sender)
                 .to(Address::random())
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .nonce(0),
         ))
         .await
@@ -717,7 +715,7 @@ async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
 
     let target = origin_provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap();
@@ -773,7 +771,7 @@ async fn test_ethereum_fork_transaction_hash_replay_preserves_optimism_source_ha
     let sender = origin.dev_wallets().next().unwrap().address();
     let target = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap();
@@ -921,7 +919,7 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
 
     let target = origin_provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap();
@@ -966,7 +964,7 @@ async fn test_fork_transaction_hash_replay_error_fails_startup() {
     let sender = origin_handle.dev_wallets().next().unwrap().address();
     let pending = origin_provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap();
@@ -1382,7 +1380,7 @@ async fn test_fork_debug_trace_cache_includes_options() {
     let from = origin_handle.dev_wallets().next().unwrap().address();
     let receipt = origin_provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -1537,7 +1535,7 @@ async fn test_fork_set_storage_visible_to_call() {
 
     let target = Address::random();
     let slot = uint!(0x9f19e10bccde41c24f53ff4dbf7bb5ee2063896e54351d7230ecd1f7e361cb74_U256);
-    let value = b256!("0000000000000000000000000000000000000000000000000000000000000001");
+    let value = B256::with_last_byte(1);
 
     // Return the value at `slot`, matching the storage read performed by ENS.resolver(bytes32).
     origin_api
@@ -1627,11 +1625,11 @@ async fn test_fork_eth_get_code() {
     }
 
     let addresses: Vec<Address> = vec![
-        "0x6b175474e89094c44da98b954eedeac495271d0f".parse().unwrap(),
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".parse().unwrap(),
-        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse().unwrap(),
-        "0x1F98431c8aD98523631AE4a59f267346ea31F984".parse().unwrap(),
-        "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45".parse().unwrap(),
+        address!("0x6b175474e89094c44da98b954eedeac495271d0f"),
+        address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+        address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        address!("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+        address!("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
     ];
     for address in addresses {
         let prev_code = api
@@ -1666,12 +1664,8 @@ async fn test_fork_eth_get_nonce() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_optimism_with_transaction_hash() {
-    use std::str::FromStr;
-
     // Fork to a block with a specific transaction
-    let fork_tx_hash =
-        TxHash::from_str("fcb864b5a50f0f0b111dbbf9e9167b2cb6179dfd6270e1ad53aac6049c0ec038")
-            .unwrap();
+    let fork_tx_hash = b256!("fcb864b5a50f0f0b111dbbf9e9167b2cb6179dfd6270e1ad53aac6049c0ec038");
     let (api, handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(rpc::next_rpc_endpoint(NamedChain::Optimism)))
@@ -1804,7 +1798,7 @@ async fn test_fork_reset_setup() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let dead_addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+    let dead_addr = address!("000000000000000000000000000000000000dEaD");
 
     let block_number = provider.get_block_number().await.unwrap();
     assert_eq!(block_number, 0);
@@ -1967,7 +1961,7 @@ async fn test_separate_states() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(14723772u64))).await;
     let provider = handle.http_provider();
 
-    let addr: Address = "000000000000000000000000000000000000dEaD".parse().unwrap();
+    let addr = address!("000000000000000000000000000000000000dEaD");
 
     let remote_balance = provider.get_balance(addr).await.unwrap();
     assert_eq!(remote_balance, U256::from(12556104082473169733500u128));
@@ -2155,7 +2149,7 @@ async fn test_fork_timestamp() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_set_empty_code() {
     let (api, _handle) = spawn(fork_config()).await;
-    let addr = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984".parse().unwrap();
+    let addr = address!("0x1f9840a85d5af5bf1d1762f925bdaddc4201f984");
     let code = api.get_code(addr, None).await.unwrap();
     assert!(!code.as_ref().is_empty());
     api.anvil_set_code(addr, Vec::new().into()).await.unwrap();
@@ -2208,9 +2202,9 @@ async fn test_fork_nft_set_approve_all() {
     let provider = handle.http_provider();
 
     // pick a random nft <https://opensea.io/assets/ethereum/0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03/154>
-    let nouns_addr: Address = "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03".parse().unwrap();
+    let nouns_addr = address!("0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03");
 
-    let owner: Address = "0x052564eb0fd8b340803df55def89c25c432f43f4".parse().unwrap();
+    let owner = address!("0x052564eb0fd8b340803df55def89c25c432f43f4");
     let token_id: U256 = U256::from(154u64);
 
     let nouns = ERC721::new(nouns_addr, provider.clone());
@@ -2282,15 +2276,17 @@ async fn test_fork_can_send_opensea_tx() {
     )
     .await;
 
-    let sender: Address = "0x8fdbae54b6d9f3fc2c649e3dd4602961967fd42f".parse().unwrap();
+    let sender = address!("0x8fdbae54b6d9f3fc2c649e3dd4602961967fd42f");
 
     // transfer: impersonate real sender
     api.anvil_impersonate_account(sender).await.unwrap();
 
     let provider = handle.http_provider();
 
-    let input: Bytes = "0xfb0f3ee1000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003ff2e795f5000000000000000000000000000023f28ae3e9756ba982a6290f9081b6a84900b758000000000000000000000000004c00500000ad104d7dbd00e3ae0a5c00560c0000000000000000000000000003235b597a78eabcb08ffcb4d97411073211dbcb0000000000000000000000000000000000000000000000000000000000000e72000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000062ad47c20000000000000000000000000000000000000000000000000000000062d43104000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000df44e65d2a2cf40000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f00000000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f00000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000002e000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000001c6bf526340000000000000000000000000008de9c5a032463c561423387a9648c5c7bcc5bc900000000000000000000000000000000000000000000000000005543df729c0000000000000000000000000006eb234847a9e3a546539aac57a071c01dc3f398600000000000000000000000000000000000000000000000000000000000000416d39b5352353a22cf2d44faa696c2089b03137a13b5acfee0366306f2678fede043bc8c7e422f6f13a3453295a4a063dac7ee6216ab7bade299690afc77397a51c00000000000000000000000000000000000000000000000000000000000000".parse().unwrap();
-    let to: Address = "0x00000000006c3852cbef3e08e8df289169ede581".parse().unwrap();
+    let input = bytes!(
+        "0xfb0f3ee1000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003ff2e795f5000000000000000000000000000023f28ae3e9756ba982a6290f9081b6a84900b758000000000000000000000000004c00500000ad104d7dbd00e3ae0a5c00560c0000000000000000000000000003235b597a78eabcb08ffcb4d97411073211dbcb0000000000000000000000000000000000000000000000000000000000000e72000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000062ad47c20000000000000000000000000000000000000000000000000000000062d43104000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000df44e65d2a2cf40000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f00000000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f00000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000002e000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000001c6bf526340000000000000000000000000008de9c5a032463c561423387a9648c5c7bcc5bc900000000000000000000000000000000000000000000000000005543df729c0000000000000000000000000006eb234847a9e3a546539aac57a071c01dc3f398600000000000000000000000000000000000000000000000000000000000000416d39b5352353a22cf2d44faa696c2089b03137a13b5acfee0366306f2678fede043bc8c7e422f6f13a3453295a4a063dac7ee6216ab7bade299690afc77397a51c00000000000000000000000000000000000000000000000000000000000000"
+    );
+    let to = address!("0x00000000006c3852cbef3e08e8df289169ede581");
     let tx = TransactionRequest::default()
         .from(sender)
         .to(to)
@@ -2382,7 +2378,7 @@ async fn test_fork_init_blob_base_fee_with_explicit_base_fee() {
     let default_blob_base_fee = default_api.blob_base_fee().unwrap();
     let explicit_blob_base_fee = explicit_api.blob_base_fee().unwrap();
 
-    assert!(default_blob_base_fee > U256::from(1));
+    assert!(default_blob_base_fee > U256::ONE);
     assert_eq!(explicit_blob_base_fee, default_blob_base_fee);
 }
 
@@ -2421,8 +2417,8 @@ async fn flaky_test_reset_fork_on_new_blocks() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_call() {
-    let input: Bytes = "0x77c7b8fc".parse().unwrap();
-    let to: Address = "0x99d1Fa417f94dcD62BfE781a1213c092a47041Bc".parse().unwrap();
+    let input = bytes!("0x77c7b8fc");
+    let to = address!("0x99d1Fa417f94dcD62BfE781a1213c092a47041Bc");
     let block_number = 14746300u64;
 
     let provider = http_provider(rpc::next_http_archive_rpc_url().as_str());
@@ -2453,7 +2449,7 @@ async fn test_fork_block_timestamp() {
     let (api, _) = spawn(fork_config()).await;
 
     let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
-    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     assert!(initial_block.header.timestamp <= latest_block.header.timestamp);
@@ -2464,11 +2460,11 @@ async fn test_fork_snapshot_block_timestamp() {
     let (api, _) = spawn(fork_config()).await;
 
     let snapshot_id = api.evm_snapshot().await.unwrap();
-    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
     let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     api.evm_revert(snapshot_id).await.unwrap();
     api.evm_set_next_block_timestamp(initial_block.header.timestamp).unwrap();
-    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
     let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
     assert_eq!(initial_block.header.timestamp, latest_block.header.timestamp);
@@ -2557,9 +2553,9 @@ async fn test_fork_block_transaction_count() {
         .unwrap();
     assert_eq!(count_txs.to::<u64>(), 3);
     let count_txs = api
-        .block_transaction_count_by_hash(
-            "0xb3b0e3e0c64e23fb7f1ccfd29245ae423d2f6f1b269b63b70ff882a983ce317c".parse().unwrap(),
-        )
+        .block_transaction_count_by_hash(b256!(
+            "0xb3b0e3e0c64e23fb7f1ccfd29245ae423d2f6f1b269b63b70ff882a983ce317c"
+        ))
         .await
         .unwrap()
         .unwrap();
@@ -2572,7 +2568,7 @@ async fn can_impersonate_in_fork() {
     let (api, handle) = spawn(fork_config().with_fork_block_number(Some(15347924u64))).await;
     let provider = handle.http_provider();
 
-    let token_holder: Address = "0x2f0b23f53734252bda2277357e97e1517d6b042a".parse().unwrap();
+    let token_holder = address!("0x2f0b23f53734252bda2277357e97e1517d6b042a");
     let to = Address::random();
     let val = U256::from(1337u64);
 
@@ -2606,18 +2602,18 @@ async fn test_transaction_receipt() {
 
     // A transaction from the forked block (14608400)
     let receipt = api
-        .transaction_receipt(
-            "0xce495d665e9091613fd962351a5cbca27a992b919d6a87d542af97e2723ec1e4".parse().unwrap(),
-        )
+        .transaction_receipt(b256!(
+            "0xce495d665e9091613fd962351a5cbca27a992b919d6a87d542af97e2723ec1e4"
+        ))
         .await
         .unwrap();
     assert!(receipt.is_some());
 
     // A transaction from a block in the future (14608401)
     let receipt = api
-        .transaction_receipt(
-            "0x1a15472088a4a97f29f2f9159511dbf89954b58d9816e58a32b8dc17171dc0e8".parse().unwrap(),
-        )
+        .transaction_receipt(b256!(
+            "0x1a15472088a4a97f29f2f9159511dbf89954b58d9816e58a32b8dc17171dc0e8"
+        ))
         .await
         .unwrap();
     assert!(receipt.is_none());
@@ -2649,7 +2645,7 @@ async fn test_pending_block_receipts_do_not_return_fork_head_receipts() {
     let sender = origin_handle.dev_wallets().next().unwrap().address();
     origin_api
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap();
@@ -3212,7 +3208,7 @@ async fn test_fork_query_at_fork_block() {
 
     let balance = provider.get_balance(address).await.unwrap();
     api.evm_mine(None).await.unwrap();
-    api.anvil_set_balance(address, balance + U256::from(1)).await.unwrap();
+    api.anvil_set_balance(address, balance + U256::ONE).await.unwrap();
 
     let balance_before =
         provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
@@ -3797,7 +3793,7 @@ async fn test_fork_reset_to_new_url_updates_source_chain_id() {
     let from = handle.dev_accounts().next().unwrap();
     let send = || {
         provider.send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE),
         ))
     };
     assert!(send().await.unwrap().get_receipt().await.unwrap().status());
@@ -4458,16 +4454,16 @@ async fn test_config_with_cancun_hardfork() {
 
     // <= Cancun precompiles
     let expected_precompiles = [
-        address!("0000000000000000000000000000000000000001"),
-        address!("0000000000000000000000000000000000000002"),
-        address!("0000000000000000000000000000000000000003"),
-        address!("0000000000000000000000000000000000000004"),
-        address!("0000000000000000000000000000000000000005"),
-        address!("0000000000000000000000000000000000000006"),
-        address!("0000000000000000000000000000000000000007"),
-        address!("0000000000000000000000000000000000000008"),
-        address!("0000000000000000000000000000000000000009"),
-        address!("000000000000000000000000000000000000000a"),
+        Address::with_last_byte(1),
+        Address::with_last_byte(2),
+        Address::with_last_byte(3),
+        Address::with_last_byte(4),
+        Address::with_last_byte(5),
+        Address::with_last_byte(6),
+        Address::with_last_byte(7),
+        Address::with_last_byte(8),
+        Address::with_last_byte(9),
+        Address::with_last_byte(0x0a),
     ];
 
     let expected_system_contracts = BTreeMap::from([(
@@ -4505,24 +4501,24 @@ async fn test_config_with_prague_hardfork_with_celo() {
 
     // <= Prague + Celo precompiles
     let expected_precompiles = [
-        address!("0000000000000000000000000000000000000001"),
-        address!("0000000000000000000000000000000000000002"),
-        address!("0000000000000000000000000000000000000003"),
-        address!("0000000000000000000000000000000000000004"),
-        address!("0000000000000000000000000000000000000005"),
-        address!("0000000000000000000000000000000000000006"),
-        address!("0000000000000000000000000000000000000007"),
-        address!("0000000000000000000000000000000000000008"),
-        address!("0000000000000000000000000000000000000009"),
-        address!("000000000000000000000000000000000000000a"),
-        address!("000000000000000000000000000000000000000b"),
-        address!("000000000000000000000000000000000000000c"),
-        address!("000000000000000000000000000000000000000d"),
-        address!("000000000000000000000000000000000000000e"),
-        address!("000000000000000000000000000000000000000f"),
-        address!("0000000000000000000000000000000000000010"),
-        address!("0000000000000000000000000000000000000011"),
-        address!("00000000000000000000000000000000000000fd"), // `celo transfer`
+        Address::with_last_byte(1),
+        Address::with_last_byte(2),
+        Address::with_last_byte(3),
+        Address::with_last_byte(4),
+        Address::with_last_byte(5),
+        Address::with_last_byte(6),
+        Address::with_last_byte(7),
+        Address::with_last_byte(8),
+        Address::with_last_byte(9),
+        Address::with_last_byte(0x0a),
+        Address::with_last_byte(0x0b),
+        Address::with_last_byte(0x0c),
+        Address::with_last_byte(0x0d),
+        Address::with_last_byte(0x0e),
+        Address::with_last_byte(0x0f),
+        Address::with_last_byte(0x10),
+        Address::with_last_byte(0x11),
+        Address::with_last_byte(0xfd), // `celo transfer`
     ];
 
     let expected_system_contracts = BTreeMap::from([
@@ -4565,23 +4561,23 @@ async fn test_config_with_osaka_hardfork() {
 
     // <= Osaka precompiles
     let expected_precompiles = [
-        address!("0000000000000000000000000000000000000001"),
-        address!("0000000000000000000000000000000000000002"),
-        address!("0000000000000000000000000000000000000003"),
-        address!("0000000000000000000000000000000000000004"),
-        address!("0000000000000000000000000000000000000005"),
-        address!("0000000000000000000000000000000000000006"),
-        address!("0000000000000000000000000000000000000007"),
-        address!("0000000000000000000000000000000000000008"),
-        address!("0000000000000000000000000000000000000009"),
-        address!("000000000000000000000000000000000000000a"),
-        address!("000000000000000000000000000000000000000b"),
-        address!("000000000000000000000000000000000000000c"),
-        address!("000000000000000000000000000000000000000d"),
-        address!("000000000000000000000000000000000000000e"),
-        address!("000000000000000000000000000000000000000f"),
-        address!("0000000000000000000000000000000000000010"),
-        address!("0000000000000000000000000000000000000011"),
+        Address::with_last_byte(1),
+        Address::with_last_byte(2),
+        Address::with_last_byte(3),
+        Address::with_last_byte(4),
+        Address::with_last_byte(5),
+        Address::with_last_byte(6),
+        Address::with_last_byte(7),
+        Address::with_last_byte(8),
+        Address::with_last_byte(9),
+        Address::with_last_byte(0x0a),
+        Address::with_last_byte(0x0b),
+        Address::with_last_byte(0x0c),
+        Address::with_last_byte(0x0d),
+        Address::with_last_byte(0x0e),
+        Address::with_last_byte(0x0f),
+        Address::with_last_byte(0x10),
+        Address::with_last_byte(0x11),
         address!("0000000000000000000000000000000000000100"),
     ];
 
@@ -4615,7 +4611,7 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
     impl PrecompileFactory for CustomPrecompileFactory {
         fn precompiles(&self) -> Vec<(Address, alloy_evm::precompiles::DynPrecompile)> {
             vec![(
-                address!("0x0000000000000000000000000000000000000071"),
+                Address::with_last_byte(0x71),
                 alloy_evm::precompiles::DynPrecompile::from(
                     |input: alloy_evm::precompiles::PrecompileInput<'_>| {
                         Ok(revm::precompile::PrecompileOutput {
@@ -4653,24 +4649,24 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
 
     // <= Osaka precompiles + custom precompile
     let expected_precompiles = [
-        address!("0000000000000000000000000000000000000001"),
-        address!("0000000000000000000000000000000000000002"),
-        address!("0000000000000000000000000000000000000003"),
-        address!("0000000000000000000000000000000000000004"),
-        address!("0000000000000000000000000000000000000005"),
-        address!("0000000000000000000000000000000000000006"),
-        address!("0000000000000000000000000000000000000007"),
-        address!("0000000000000000000000000000000000000008"),
-        address!("0000000000000000000000000000000000000009"),
-        address!("000000000000000000000000000000000000000a"),
-        address!("000000000000000000000000000000000000000b"),
-        address!("000000000000000000000000000000000000000c"),
-        address!("000000000000000000000000000000000000000d"),
-        address!("000000000000000000000000000000000000000e"),
-        address!("000000000000000000000000000000000000000f"),
-        address!("0000000000000000000000000000000000000010"),
-        address!("0000000000000000000000000000000000000011"),
-        address!("0000000000000000000000000000000000000071"), // `custom_echo`
+        Address::with_last_byte(1),
+        Address::with_last_byte(2),
+        Address::with_last_byte(3),
+        Address::with_last_byte(4),
+        Address::with_last_byte(5),
+        Address::with_last_byte(6),
+        Address::with_last_byte(7),
+        Address::with_last_byte(8),
+        Address::with_last_byte(9),
+        Address::with_last_byte(0x0a),
+        Address::with_last_byte(0x0b),
+        Address::with_last_byte(0x0c),
+        Address::with_last_byte(0x0d),
+        Address::with_last_byte(0x0e),
+        Address::with_last_byte(0x0f),
+        Address::with_last_byte(0x10),
+        Address::with_last_byte(0x11),
+        Address::with_last_byte(0x71), // `custom_echo`
         address!("0000000000000000000000000000000000000100"),
     ];
     let expected_system_contracts = BTreeMap::from([
@@ -4871,7 +4867,7 @@ async fn test_anvil_set_rpc_url_rejects_mismatched_pinned_block_atomically() {
     let fork = api.backend.get_fork().unwrap();
     let config_before = fork.config.read().clone();
     let (target_api, target_handle) = spawn(NodeConfig::test()).await;
-    target_api.anvil_set_balance(Address::random(), U256::from(1)).await.unwrap();
+    target_api.anvil_set_balance(Address::random(), U256::ONE).await.unwrap();
     target_api.mine_one().await.unwrap();
 
     api.anvil_set_rpc_url(target_handle.http_endpoint()).await.unwrap_err();

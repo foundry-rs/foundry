@@ -34,7 +34,9 @@ pub struct CreateFork {
 /// A prepared remote fork. The RPC client and block are shared by preflight and execution.
 ///
 /// The configured selector remains separate from the observed block. Clones share the provider
-/// and header; changing the requested source or rolling a fork prepares a new snapshot.
+/// and header; changing the requested source or rolling a fork prepares a new snapshot. The
+/// optional number-based state mode retains this anchor, but state reads may follow a replacement
+/// block after a reorganization.
 #[derive(Clone)]
 pub struct Fork {
     source_id: B256,
@@ -42,6 +44,8 @@ pub struct Fork {
     selector: Option<BlockNumber>,
     pub(crate) block: Arc<AnyRpcBlock>,
     context: ForkContext,
+    /// Whether state reads use the RPC block number instead of the exact hash.
+    pub(crate) state_by_number: bool,
 }
 
 impl Fork {
@@ -63,6 +67,7 @@ impl Fork {
             selector: opts.fork_block_number,
             block: Arc::new(block),
             context,
+            state_by_number: opts.fork_state_by_number,
         }
     }
 
@@ -70,6 +75,7 @@ impl Fork {
     pub fn matches_request(&self, opts: &EvmOpts) -> bool {
         opts.fork_url.as_deref().is_some_and(|url| {
             self.selector == opts.fork_block_number
+                && self.state_by_number == opts.fork_state_by_number
                 && self.matches_source(
                     url,
                     opts.fork_headers.as_deref().or(opts.rpc_headers.as_deref()),
@@ -107,6 +113,11 @@ impl Fork {
         BlockId::from((self.hash(), Some(false)))
     }
 
+    /// Returns the state selector, honoring the RPC compatibility opt-in.
+    pub(crate) fn state_block_id(&self) -> BlockId {
+        if self.state_by_number { BlockId::number(self.number()) } else { self.exact_block_id() }
+    }
+
     pub(crate) fn block(&self) -> BlockNumHash {
         BlockNumHash::new(self.number(), self.hash())
     }
@@ -129,6 +140,7 @@ impl Fork {
         let mut fork = self.clone();
         fork.selector = Some(block.number);
         fork.block = Arc::new(response);
+        fork.state_by_number = false;
         fork.context.block_number = block.number;
         Ok(fork)
     }
@@ -139,21 +151,31 @@ impl Fork {
 
     /// Returns the stable, redacted identity used by persisted execution caches.
     pub fn fingerprint(&self) -> B256 {
-        let encoded = serde_json::to_vec(&(
+        let mut encoded = serde_json::to_vec(&(
             "foundry-resolved-fork-v1",
             self.source_id,
             self.block(),
             self.context,
         ))
         .expect("fork identity is serializable");
+        // Distinguish execution policies without invalidating existing hash-based disk caches.
+        if self.state_by_number {
+            encoded.extend_from_slice(b"state-by-number");
+        }
         keccak256(encoded)
     }
 }
 
 impl PartialEq for Fork {
     fn eq(&self, other: &Self) -> bool {
-        (self.source_id, self.selector, self.block(), self.context)
-            == (other.source_id, other.selector, other.block(), other.context)
+        (self.source_id, self.selector, self.block(), self.context, self.state_by_number)
+            == (
+                other.source_id,
+                other.selector,
+                other.block(),
+                other.context,
+                other.state_by_number,
+            )
     }
 }
 
@@ -161,7 +183,8 @@ impl Eq for Fork {}
 
 impl Hash for Fork {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (self.source_id, self.selector, self.block(), self.context).hash(state);
+        (self.source_id, self.selector, self.block(), self.context, self.state_by_number)
+            .hash(state);
     }
 }
 
@@ -271,6 +294,20 @@ mod tests {
                 "requireCanonical": false,
             })
         );
+    }
+
+    #[test]
+    fn fork_state_by_number_preserves_anchor_and_separates_identity() {
+        let block = BlockNumHash::new(42, B256::with_last_byte(1));
+        let exact = Fork::test("http://localhost:8545", None, None, None, block, context(42));
+        let mut numbered = exact.clone();
+        numbered.state_by_number = true;
+        assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
+        assert_eq!(exact.state_block_id(), exact.exact_block_id());
+        assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
+        assert_ne!(numbered, exact);
+        assert_eq!(numbered.source_id(), exact.source_id());
+        assert_ne!(numbered.fingerprint(), exact.fingerprint());
     }
 
     #[test]

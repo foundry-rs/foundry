@@ -89,7 +89,7 @@ contract InitCodeHash {
 "#,
     );
 
-    let owner = address!("0x0000000000000000000000000000000000000001");
+    let owner = Address::with_last_byte(1);
     let bytecode = cmd
         .forge_fuse()
         .args(["inspect", "InitCodeHash", "bytecode"])

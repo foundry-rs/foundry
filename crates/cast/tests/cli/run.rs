@@ -1,6 +1,7 @@
 //! CLI tests for run commands.
 
 use super::*;
+use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
@@ -125,7 +126,7 @@ async fn cast_run_uses_chain_rpc_endpoint(prj: _, cmd: _) {
             TransactionRequest::default()
                 .from(sender)
                 .to(address!("000000000000000000000000000000000000dEaD"))
-                .value(U256::from(1))
+                .value(U256::ONE)
                 .into(),
         )
         .await
@@ -283,12 +284,9 @@ async fn flaky_cast_run_impersonated_tx(cmd: _) {
     let tx = TransactionRequest::default()
         .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
         .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
+        .with_input(bytes!(
+            "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c"
+        ));
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
@@ -536,6 +534,47 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
     }
 }
 
+// Tracing replays exact chain history, so it ignores the number-based state opt-in.
+#[casttest]
+async fn cast_run_keeps_hash_addressed_state(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let mut endpoint = handle.http_endpoint();
+    for method in ["anvil_nodeInfo", "anvil_metadata"] {
+        endpoint = spawn_rpc_proxy_method_not_found_before(endpoint, method, usize::MAX).await;
+    }
+    let mut recorded = Vec::new();
+    for method in ["eth_getBalance", "eth_getTransactionCount", "eth_getCode", "eth_getStorageAt"] {
+        let (next_endpoint, requests) = spawn_rpc_proxy_recording_method(endpoint, method).await;
+        endpoint = next_endpoint;
+        recorded.push(requests);
+    }
+
+    cmd.env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint]).assert_success();
+
+    let mut reads = 0;
+    for requests in recorded {
+        let requests = requests.lock().unwrap();
+        reads += requests.len();
+        assert!(
+            requests.iter().all(|params| params.as_array().unwrap().last().unwrap().is_object()),
+            "{requests:?}"
+        );
+    }
+    assert!(reads > 0);
+}
+
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
 // transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
@@ -544,18 +583,13 @@ async fn cast_run_warns_on_receipt_mismatch(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     // MCOPY(0, 0, 0) STOP
-    api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000aa"),
-        hex!("0x6000600060005e00").into(),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_code(Address::with_last_byte(0xaa), bytes!("0x6000600060005e00")).await.unwrap();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
     let mut tx_hashes = Vec::new();
     for (to, input) in [
-        (address!("0x00000000000000000000000000000000000000aa"), Bytes::new()),
-        (address!("0x00000000000000000000000000000000000000cc"), vec![1u8; 1000].into()),
+        (Address::with_last_byte(0xaa), Bytes::new()),
+        (Address::with_last_byte(0xcc), vec![1u8; 1000].into()),
     ] {
         let receipt = provider
             .send_transaction(
