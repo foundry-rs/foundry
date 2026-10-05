@@ -192,6 +192,10 @@ struct Evaluation {
     candidate: Vec<MutationResultSummary>,
     resolved_survivors: usize,
     newly_resolved_survivors: usize,
+    /// Whether a candidate test failed on every seed against the unmodified implementation. Such a
+    /// property is either incorrect or exposes a bug, so it is reported for review.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    fails_current_implementation: bool,
 }
 
 impl Evaluation {
@@ -210,6 +214,7 @@ impl Evaluation {
             candidate: vec![],
             resolved_survivors: 0,
             newly_resolved_survivors: 0,
+            fails_current_implementation: false,
         }
     }
 
@@ -423,6 +428,16 @@ impl FuzzImproveArgs {
         }
 
         fs::write(cache_root.join("rounds.json"), serde_json::to_vec_pretty(&evaluations)?)?;
+        for evaluation in
+            evaluations.iter().filter(|evaluation| evaluation.fails_current_implementation)
+        {
+            let path = cache_root.join(&evaluation.candidate_digest);
+            let path = path.strip_prefix(&config.root).unwrap_or(&path);
+            sh_println!(
+                "candidate fails on every seed against the current implementation; review it as a potential bug: {}",
+                path.display(),
+            )?;
+        }
         if let Some(path) = accepted {
             let path = path.strip_prefix(&config.root).unwrap_or(&path);
             sh_println!(
@@ -488,8 +503,9 @@ impl FuzzImproveArgs {
             fs::write(path, &file.content)?;
         }
         let mut reasons = Vec::new();
+        let mut failing_seeds = vec![0; candidate.tests.len()];
         for seed in &self.seed {
-            for test in &candidate.tests {
+            for (test, failing_seeds) in candidate.tests.iter().zip(&mut failing_seeds) {
                 let output =
                     self.run_candidate_test(forge, candidate_workspace.path(), config, seed, test)?;
                 if !output.status.success() && output.stdout.is_empty() {
@@ -509,12 +525,15 @@ impl FuzzImproveArgs {
                         test.name,
                         stderr(&output)
                     )),
-                    Ok((TestStatus::Failure, reason)) => reasons.push(format!(
-                        "{}::{} failed on seed {seed}: {}",
-                        test.contract,
-                        test.name,
-                        reason.unwrap_or_else(|| stderr(&output))
-                    )),
+                    Ok((TestStatus::Failure, reason)) => {
+                        *failing_seeds += 1;
+                        reasons.push(format!(
+                            "{}::{} failed on seed {seed}: {}",
+                            test.contract,
+                            test.name,
+                            reason.unwrap_or_else(|| stderr(&output))
+                        ));
+                    }
                     Ok((TestStatus::Skipped, reason)) => reasons.push(format!(
                         "{}::{} was skipped on seed {seed}: {}",
                         test.contract,
@@ -609,6 +628,7 @@ impl FuzzImproveArgs {
                 resolved_survivors: resolved_survivor_identities(baseline, &candidate_results)
                     .len(),
                 newly_resolved_survivors: newly_resolved.len(),
+                fails_current_implementation: failing_seeds.contains(&self.seed.len()),
             },
             candidate_results,
             newly_resolved,
