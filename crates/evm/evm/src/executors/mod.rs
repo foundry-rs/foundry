@@ -66,9 +66,8 @@ use std::{
 #[cfg(feature = "monad")]
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 #[cfg(feature = "monad")]
-use foundry_evm_core::{
-    evm::{MonadEvmNetwork, try_transact_monad_system_replay},
-    refresh_chain_journal,
+use foundry_evm_core::evm::{
+    MonadEvmNetwork, refresh_chain_journal, try_transact_monad_system_replay,
 };
 
 mod builder;
