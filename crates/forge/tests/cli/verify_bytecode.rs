@@ -551,32 +551,6 @@ async fn flaky_can_verify_bytecode_fails_on_source_mismatch(prj: _, cmd: _) {
     assert!(output.contains("Error: Runtime code did not match".to_string().as_str()));
 }
 
-// Test predeploy contracts
-// TODO: Add test utils for base such as basescan keys and alchemy keys.
-// WETH9 Predeploy
-// #[forgetest]
-// async fn can_verify_predeploys(prj: _, cmd: _) {
-//     test_verify_bytecode_with_ignore(
-//         prj,
-//         cmd,
-//         "0x4200000000000000000000000000000000000006",
-//         "WETH9",
-//         Config {
-//             evm_version: EvmVersion::default(),
-//             optimizer: Some(true),
-//             optimizer_runs: 10000,
-//             cbor_metadata: true,
-//             bytecode_hash: BytecodeHash::Bzzr1,
-//             ..Default::default()
-//         },
-//         "etherscan",
-//         "https://api.basescan.org/api",
-//         ("ignored", "partial"),
-//         "creation",
-//         Chain::base_mainnet(),
-//     ).await;
-// }
-
 // Tests that `verify-bytecode` works without any external block explorer, relying only on the
 // local project and an RPC endpoint.
 // <https://github.com/foundry-rs/foundry/issues/13479>

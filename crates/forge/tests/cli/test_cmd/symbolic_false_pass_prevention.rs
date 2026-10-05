@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::assert_symbolic_witness;
 use crate::skip_unless_z3;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
 #[forgetest_init]
 fn symbolic_false_pass_prevention(prj: _, cmd: _) {
@@ -138,33 +138,39 @@ contract SymbolicFalsePassPrevention is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicFalsePassPrevention"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicFalsePassPrevention",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 18 tests for test/SymbolicFalsePassPrevention.t.sol:SymbolicFalsePassPrevention
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic blake2f precompile final flag not modeled] checkBlake2fFinalFlagFailsClosed(uint8) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled] checkBn254AddPrecompileFailsClosed(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled] checkBn254MulPrecompileFailsClosed(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled] checkBn254PairingPrecompileFailsClosed(uint256) ([METRICS])
+[PASS] checkConcreteAddmodMulmodUseUnboundedIntermediate() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectSafeMemoryCall not modeled] checkExpectSafeMemoryCallFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.expectSafeMemory not modeled] checkExpectSafeMemoryFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.getEvmVersion not modeled] checkGetEvmVersionFailsClosed() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkKzgPrecompileInvalidWitnessCounterexample(bytes32) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.lastCallGas not modeled] checkLastCallGasFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.lastFrameGas not modeled] checkLastFrameGasFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.setEvmVersion not modeled] checkSetEvmVersionFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.snapshotGasLastCall not modeled] checkSnapshotGasLastCallFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.snapshotGasLastFrame not modeled] checkSnapshotGasLastFrameFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.stopExpectSafeMemory not modeled] checkStopExpectSafeMemoryFailsClosed() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.stopSnapshotGas not modeled] checkStopSnapshotGasFailsClosed() ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicAddmodFailsClosed(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicMulmodFailsClosed(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 17 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkConcreteAddmodMulmodUseUnboundedIntermediate()
-[FAIL: panic: assertion failed (0x01); counterexample:
-checkSymbolicAddmodFailsClosed(uint256)
-checkSymbolicMulmodFailsClosed(uint256)
-checkKzgPrecompileInvalidWitnessCounterexample(bytes32)
-unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled
-unsupported symbolic execution feature: symbolic blake2f precompile final flag not modeled
-unsupported symbolic execution feature: symbolic vm.setEvmVersion not modeled
-unsupported symbolic execution feature: symbolic vm.getEvmVersion not modeled
-unsupported symbolic execution feature: symbolic vm.expectSafeMemory not modeled
-unsupported symbolic execution feature: symbolic vm.expectSafeMemoryCall not modeled
-unsupported symbolic execution feature: symbolic vm.stopExpectSafeMemory not modeled
-unsupported symbolic execution feature: symbolic vm.lastCallGas not modeled
-unsupported symbolic execution feature: symbolic vm.lastFrameGas not modeled
-unsupported symbolic execution feature: symbolic vm.snapshotGasLastCall not modeled
-unsupported symbolic execution feature: symbolic vm.snapshotGasLastFrame not modeled
-unsupported symbolic execution feature: symbolic vm.stopSnapshotGas not modeled
-"#]],
-    );
     assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
 }

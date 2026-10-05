@@ -12,11 +12,10 @@ use alloy_primitives::{
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use foundry_evm_traces::debug::SourceData;
+use foundry_evm_traces::{CallKind, CallTraceStep, debug::SourceData};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
-use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1729,9 +1728,11 @@ mod tests {
     use foundry_common::slot_identifier::{ENCODING_BYTES, SlotIdentifier};
     use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType, sourcemap::Parser};
     use foundry_evm_core::{Breakpoints, ic::PcIcMap};
-    use foundry_evm_traces::debug::{ArtifactData, ContractSources};
+    use foundry_evm_traces::{
+        StorageChange, StorageChangeReason,
+        debug::{ArtifactData, ContractSources},
+    };
     use revm::interpreter::InstructionResult;
-    use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
     use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {

@@ -1141,7 +1141,7 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
         .trace_replay_transaction(tx_hash, [TraceType::Trace].into_iter().collect())
         .await
         .unwrap();
-    assert!(!trace.trace.is_empty());
+    assert!(!trace.full_trace.trace.is_empty());
 
     let mut tx = TxEip1559 {
         chain_id: api.chain_id(),

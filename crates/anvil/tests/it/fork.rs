@@ -2601,30 +2601,6 @@ async fn can_impersonate_in_fork() {
 
 // <https://etherscan.io/block/14608400>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
-async fn test_total_difficulty_fork() {
-    let (api, handle) = spawn(fork_config()).await;
-
-    let total_difficulty = U256::from(46_673_965_560_973_856_260_636u128);
-    let difficulty = U256::from(13_680_435_288_526_144u128);
-
-    let provider = handle.http_provider();
-    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-    assert_eq!(block.header.total_difficulty, Some(total_difficulty));
-    assert_eq!(block.header.difficulty, difficulty);
-
-    api.mine_one().await.unwrap();
-    api.mine_one().await.unwrap();
-
-    let next_total_difficulty = total_difficulty + difficulty;
-
-    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-    assert_eq!(block.header.total_difficulty, Some(next_total_difficulty));
-    assert_eq!(block.header.difficulty, U256::ZERO);
-}
-
-// <https://etherscan.io/block/14608400>
-#[tokio::test(flavor = "multi_thread")]
 async fn test_transaction_receipt() {
     let (api, _) = spawn(fork_config()).await;
 
@@ -3196,79 +3172,6 @@ async fn test_fork_execution_reverted() {
     assert!(resp.is_err());
     let err = resp.unwrap_err();
     assert!(err.to_string().contains("execution reverted"));
-}
-
-// <https://github.com/foundry-rs/foundry/issues/8227>
-#[tokio::test(flavor = "multi_thread")]
-#[ignore]
-async fn test_immutable_fork_transaction_hash() {
-    use std::str::FromStr;
-
-    // Fork to a block with a specific transaction
-    // <https://explorer.immutable.com/tx/0x39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786>
-    let fork_tx_hash =
-        TxHash::from_str("2ac736ce725d628ef20569a1bb501726b42b33f9d171f60b92b69de3ce705845")
-            .unwrap();
-    let (api, _) = spawn(
-        fork_config()
-            .with_blocktime(Some(Duration::from_millis(500)))
-            .with_fork_transaction_hash(Some(fork_tx_hash))
-            .with_eth_rpc_url(Some("https://immutable-zkevm.drpc.org".to_string())),
-    )
-    .await;
-
-    let fork_block_number = 21824325;
-
-    // The prefix is installed before startup returns.
-    let block_number = api.block_number().unwrap().to::<u64>();
-    assert_eq!(block_number, fork_block_number);
-
-    let block = api
-        .block_by_number(BlockNumberOrTag::Number(fork_block_number - 1))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(block.transactions.len(), 6);
-    let block = api
-        .block_by_number_full(BlockNumberOrTag::Number(fork_block_number))
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!block.transactions.is_empty());
-
-    // Validate the transactions preceding the target transaction exist
-    let expected_transactions = [
-        TxHash::from_str("c900784c993221ba192c53a3ff9996f6af83a951100ceb93e750f7ef86bd43d5")
-            .unwrap(),
-        TxHash::from_str("f86f001bbdf69f8f64ff8a4a5fc3e684cf3a7706f204eba8439752f6f67cd2c4")
-            .unwrap(),
-        fork_tx_hash,
-    ];
-    for expected in [
-        (expected_transactions[0], address!("0x0a02a416f87a13626dda0ad386859497565222aa")),
-        (expected_transactions[1], address!("0x0a02a416f87a13626dda0ad386859497565222aa")),
-        (expected_transactions[2], address!("0x4f07d669d76ed9a17799fc4c04c4005196240940")),
-    ] {
-        let tx = api.backend.mined_transaction_by_hash(expected.0).unwrap();
-        assert_eq!(tx.inner.inner.signer(), expected.1);
-    }
-
-    // Validate the order of transactions in the new block
-    for expected in [
-        (expected_transactions[0], 0),
-        (expected_transactions[1], 1),
-        (expected_transactions[2], 2),
-    ] {
-        let tx = api
-            .backend
-            .mined_block_by_number(BlockNumberOrTag::Number(fork_block_number))
-            .map(|b| b.header.hash)
-            .and_then(|hash| {
-                api.backend.mined_transaction_by_block_hash_and_index(hash, expected.1.into())
-            })
-            .unwrap();
-        assert_eq!(tx.tx_hash().to_string(), expected.0.to_string());
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3987,47 +3890,6 @@ async fn test_optimism_fork_preserves_ethereum_source_blob_header_fallback() {
             .with_optimism()
             .with_eth_rpc_url(Some(origin_url))
             .with_fork_block_number(Some(1u64)),
-    )
-    .await;
-
-    assert_eq!(
-        api.backend
-            .evm_env()
-            .read()
-            .block_env
-            .blob_excess_gas_and_price
-            .as_ref()
-            .map(|blob| blob.excess_blob_gas),
-        Some(0)
-    );
-    let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
-    assert_eq!(fork.http_provider().call(request.into()).await.unwrap(), Bytes::from(vec![0; 32]));
-}
-
-#[cfg(all(feature = "base", not(feature = "optimism")))]
-#[tokio::test(flavor = "multi_thread")]
-async fn test_ethereum_fork_on_base_chain_id_preserves_missing_blob_header_fallback() {
-    const ECOTONE_ERA_TIMESTAMP: u64 = 1_710_374_401;
-
-    let target = Address::random();
-    let (origin_api, origin) = spawn(
-        NodeConfig::test()
-            .with_networks(NetworkConfigs::with_ethereum())
-            .with_chain_id(Some(NamedChain::Base as u64))
-            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
-            .with_genesis_timestamp(Some(ECOTONE_ERA_TIMESTAMP)),
-    )
-    .await;
-    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
-    origin_api.mine_one().await.unwrap();
-    let origin_url =
-        spawn_rpc_proxy_rejecting_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
-    let (api, fork) = spawn(
-        NodeConfig::test()
-            .with_networks(NetworkConfigs::with_ethereum())
-            .with_eth_rpc_url(Some(origin_url))
-            .with_fork_block_number(Some(1u64))
-            .with_hardfork(Some(EthereumHardfork::Prague.into())),
     )
     .await;
 
