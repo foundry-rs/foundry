@@ -2401,19 +2401,21 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     ) -> eyre::Result<()> {
         trace!("execute signed transaction");
 
-        self.commit(journaled_state.state.clone());
-
+        // Stage the outer journal on a clone so a failed transaction leaves the backend untouched.
+        let base_state = journaled_state.state.clone();
         let res = {
             let mut db = self.clone();
+            db.commit(base_state.clone());
             let depth = journaled_state.depth + 1;
             let factory = FEN::EvmFactory::default();
-            let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
+            let chain_context = db.chain_context_for_synthetic_transaction(&tx_env)?;
             let mut evm = factory.create_nested_evm_with_inspector(&mut db, evm_env, inspector);
             *evm.chain_mut() = chain_context;
             evm.journal_inner_mut().depth = depth;
             evm.transact_raw(tx_env)?
         };
 
+        self.commit(base_state);
         self.commit(res.state);
         update_state(&mut journaled_state.state, self, None)?;
 

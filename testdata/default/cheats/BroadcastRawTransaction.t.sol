@@ -201,6 +201,32 @@ contract BroadcastRawTransactionTest is Test {
         assertEq(token.balanceOf(bob), 5);
         assertEq(token.balanceOf(charlie), 15);
     }
+
+    // Deployed outside the test transaction so only the reverted frame touches it.
+    MyERC20 revertedMintToken = new MyERC20();
+
+    function mintThenFailSignedTxThenRevert() external {
+        revertedMintToken.mint(1, address(this));
+        // Fails with "invalid chain ID" on the default chain id.
+        bytes memory signedTx =
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856";
+        try vm.broadcastRawTransaction(signedTx) {} catch {}
+        revert();
+    }
+
+    function test_failed_signed_tx_does_not_leak_reverted_state() public {
+        try this.mintThenFailSignedTxThenRevert() {} catch {}
+
+        // A successful signed tx reloads every journaled account from the backend.
+        vm.fee(1);
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        assertEq(revertedMintToken.balanceOf(address(this)), 0);
+    }
 }
 
 contract MyERC20 {
