@@ -619,19 +619,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.deploy_with_env(evm_env, tx_env, rd)
     }
 
-    /// Deploys a contract with explicit network-specific context.
-    pub fn deploy_with_context(
-        &mut self,
-        from: Address,
-        code: Bytes,
-        value: U256,
-        chain_context: ChainFor<FEN>,
-        rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Create, code, value);
-        self.deploy_with_env_and_context(evm_env, tx_env, chain_context, rd)
-    }
-
     /// Deploys a contract using the given `env` and commits the new state to the underlying
     /// database.
     ///
@@ -710,8 +697,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         // and also the chainid, which can be set manually
         self.evm_env_mut().cfg_env.chain_id = res.evm_env.cfg_env.chain_id;
 
-        let success =
-            self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
+        let success = self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res);
         if !success {
             return Err(res.into_execution_error("execution error".to_string()).into());
         }
@@ -802,19 +788,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(evm_env, tx_env)
-    }
-
-    /// Performs a raw call with explicit network-specific context.
-    pub fn transact_raw_with_context(
-        &mut self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-        chain_context: ChainFor<FEN>,
-    ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
-        self.transact_with_env_and_context(evm_env, tx_env, chain_context)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -1087,13 +1060,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         address: Address,
         call_result: &mut RawCallResult<FEN>,
-        should_fail: bool,
     ) -> bool {
         self.is_raw_call_success(
             address,
             Cow::Owned(std::mem::take(&mut call_result.state_changeset)),
             call_result,
-            should_fail,
         )
     }
 
@@ -1105,13 +1076,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         state_changeset: Cow<'_, StateChangeset>,
         call_result: &RawCallResult<FEN>,
-        should_fail: bool,
     ) -> bool {
         if call_result.has_state_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return should_fail;
+            return false;
         }
-        self.is_success(address, call_result.reverted, state_changeset, should_fail)
+        self.is_success(address, call_result.reverted, state_changeset)
     }
 
     /// Like [`Self::is_raw_call_mut_success`] but uses [`Self::is_success_handler_gate`] under
@@ -1155,10 +1125,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
-        should_fail: bool,
     ) -> bool {
-        let success = self.is_success_raw(address, reverted, state_changeset, false);
-        should_fail ^ success
+        self.is_success_raw(address, reverted, state_changeset, false)
     }
 
     /// Like [`Self::is_success`] but ignores the *committed* `GLOBAL_FAIL_SLOT` and only treats

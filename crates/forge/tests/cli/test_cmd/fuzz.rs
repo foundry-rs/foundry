@@ -193,7 +193,13 @@ contract FuzzerDictTest is Test {
     // Test that storage address is used as fuzzed input, causing test to fail.
     cmd.forge_fuse()
         .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner"])
-        .assert_failure();
+        .assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzerDictTest.t.sol:FuzzerDictTest
+[FAIL: assertion failed; counterexample: calldata=0x5f9789a200000000000000000000000000000000000000000000000000000000000000c8 args=[0x00000000000000000000000000000000000000C8]] testStorageOwner(address) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -5918,7 +5924,14 @@ contract FuzzReplayTest is Test {
             "testFuzz_replayAfterReject",
             "-j1",
         ])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzReplayTest.t.sol:FuzzReplayTest
+[PASS] testFuzz_replayAfterReject(uint256) (runs: 1, [AVG_GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 
     cmd.forge_fuse()
         .args([
@@ -5931,7 +5944,13 @@ contract FuzzReplayTest is Test {
             "testFuzz_replayAfterReject",
             "-j1",
         ])
-        .assert_failure();
+        .assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/FuzzReplayTest.t.sol:FuzzReplayTest
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0xffdf48cd0000000000000000000000000000000000000000000000000000000000000001 args=[1]] testFuzz_replayAfterReject(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]

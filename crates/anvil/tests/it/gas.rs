@@ -232,6 +232,87 @@ async fn test_tip_above_fee_cap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn priced_calls_without_gas_limit_are_capped_by_allowance() {
+    for config in [NodeConfig::test(), NodeConfig::test().with_optimism()] {
+        priced_calls_without_gas_limit_are_capped_by_allowance_on(config).await;
+    }
+}
+
+async fn priced_calls_without_gas_limit_are_capped_by_allowance_on(config: NodeConfig) {
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+
+    // The sender can pay for 100_000 gas, far below the block gas limit.
+    let from = Address::repeat_byte(0x11);
+    let gas_price = 10_000_000_000_000u128;
+    api.anvil_set_balance(from, U256::from(gas_price * 100_000)).await.unwrap();
+
+    // Returns GAS, the gas left after the transaction's 21_000 and the opcode's 2.
+    let contract = Address::repeat_byte(0x5a);
+    api.anvil_set_code(contract, bytes!("5a5f5260205ff3")).await.unwrap();
+    let request = TransactionRequest::default().from(from).to(contract).gas_price(gas_price);
+
+    // Sending half of the balance as value halves the gas the sender can pay for.
+    let half = request.clone().value(U256::from(gas_price * 50_000));
+    for (request, allowance) in [(request.clone(), 100_000), (half, 50_000)] {
+        let request = WithOtherFields::new(request);
+        let output = provider.call(request.clone()).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), U256::from(allowance - 21_002));
+
+        let traced =
+            api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
+        assert_eq!(traced.output, output);
+    }
+
+    // An explicit gas limit is not lowered to what the sender can pay for, and a sender that
+    // cannot pay for any transaction still fails the funds check.
+    let unfunded = request.clone().from(Address::repeat_byte(0x12));
+    for request in [request.gas_limit(200_000), unfunded] {
+        let error = provider.call(WithOtherFields::new(request)).await.unwrap_err();
+        let error = error.as_error_resp().unwrap();
+        assert_eq!(
+            (error.code, error.message.as_ref()),
+            (-32003, "Insufficient funds for gas * price + value")
+        );
+    }
+}
+
+#[cfg(feature = "optimism")]
+#[tokio::test(flavor = "multi_thread")]
+async fn priced_deposit_calls_without_gas_limit_keep_default_budget() {
+    let (api, handle) = spawn(NodeConfig::test().with_optimism()).await;
+    let provider = handle.http_provider();
+    let from = Address::repeat_byte(0x11);
+    let gas_price = 10_000_000_000_000u128;
+    api.anvil_set_balance(from, U256::from(gas_price * 100_000)).await.unwrap();
+
+    let contract = Address::repeat_byte(0x5a);
+    api.anvil_set_code(contract, bytes!("5a5f5260205ff3")).await.unwrap();
+    let gas_limit = api.gas_limit();
+    // Deposits mint funds before paying for execution, so the pre-mint balance must not
+    // lower their default gas budget.
+    let request = WithOtherFields {
+        inner: TransactionRequest::default()
+            .from(from)
+            .to(contract)
+            .gas_price(gas_price)
+            .transaction_type(0x7e),
+        other: serde_json::json!({
+            "sourceHash": B256::repeat_byte(0x01),
+            "mint": gas_limit * U256::from(gas_price),
+            "isSystemTx": false,
+        })
+        .try_into()
+        .unwrap(),
+    };
+    let output = provider.call(request.clone()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&output), gas_limit - U256::from(21_002));
+    let traced =
+        api.trace_call(request, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
+    assert_eq!(traced.output, output);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_zero_block_fee_history_is_empty() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
@@ -593,4 +674,48 @@ async fn test_estimation_with_print_traces() {
         results.push((estimate, access_list, reverted, data));
     }
     assert_eq!(results[0], results[1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn zero_fee_calls_observe_zero_base_fee() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Returns BASEFEE.
+    let contract = Address::repeat_byte(0x48);
+    api.anvil_set_code(contract, bytes!("485f5260205ff3")).await.unwrap();
+    let base_fee = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let base_fee = U256::from(base_fee.header.base_fee_per_gas.unwrap());
+
+    let free = WithOtherFields::new(TransactionRequest::default().from(from).to(contract));
+    let typed_free =
+        WithOtherFields::new(free.inner.clone().max_fee_per_gas(0).max_priority_fee_per_gas(0));
+    let priced = WithOtherFields::new(free.inner.clone().gas_price(base_fee.to()));
+    let trace = || [TraceType::Trace].into_iter().collect();
+    for (request, expected) in
+        [(free.clone(), U256::ZERO), (typed_free, U256::ZERO), (priced.clone(), base_fee)]
+    {
+        let output = provider.call(request.clone()).block(BlockId::latest()).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), expected);
+
+        let traced = api.trace_call(request, trace(), Some(BlockId::latest())).await.unwrap();
+        assert_eq!(U256::from_be_slice(&traced.output), expected);
+    }
+
+    // Like geth, access lists are built at the block's base fee. The contract loads slot BASEFEE.
+    let sload_base_fee = Address::repeat_byte(0x54);
+    api.anvil_set_code(sload_base_fee, bytes!("485400")).await.unwrap();
+    for request in [free.clone(), priced.clone()] {
+        let request = WithOtherFields::new(request.inner.to(sload_base_fee));
+        let result = api.create_access_list(request, None, None).await.unwrap();
+        assert_eq!(result.access_list.0[0].storage_keys, [B256::from(base_fee)]);
+    }
+
+    // Each call in a batch gets its own fee environment.
+    let batch = [free.clone(), priced, free].map(|request| (request, trace()));
+    let traced = api.trace_call_many(batch.to_vec(), Some(BlockId::latest())).await.unwrap();
+    let outputs =
+        traced.iter().map(|result| U256::from_be_slice(&result.output)).collect::<Vec<_>>();
+    assert_eq!(outputs, [U256::ZERO, base_fee, U256::ZERO]);
 }

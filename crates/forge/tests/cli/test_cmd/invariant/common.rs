@@ -2864,8 +2864,36 @@ contract Target {
 "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_zeroTimeDelay"]).assert_success();
-    cmd.forge_fuse().args(["test", "--mt", "invariant_zeroBlockDelay"]).assert_success();
+    cmd.args(["test", "--mt", "invariant_zeroTimeDelay"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantZeroDelay.t.sol:InvariantZeroDelay
+[PASS] invariant_zeroTimeDelay() (runs: 1, calls: 1, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Target   | touch    | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    cmd.forge_fuse().args(["test", "--mt", "invariant_zeroBlockDelay"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/InvariantZeroDelay.t.sol:InvariantZeroDelay
+[PASS] invariant_zeroBlockDelay() (runs: 1, calls: 1, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Target   | touch    | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
 }
 
 // Test optimization mode with time-dependent logic using warp and fixed seed for reproducibility.

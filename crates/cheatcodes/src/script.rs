@@ -12,7 +12,7 @@ use foundry_wallets::{WalletSigner, wallet_multi::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
-    context::{Cfg, ContextTr, JournalTr, Transaction},
+    context::{ContextTr, JournalTr},
     context_interface::transaction::SignedAuthorization,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
@@ -104,7 +104,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
     let SignedDelegation { v, r, s, nonce, implementation } = delegation;
     // Set chain id to 0 if universal deployment is preferred.
     // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#protection-from-malleability-cross-chain
-    let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.ecx.cfg().chain_id()) };
+    let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.chain_id()) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
     let signed_auth = SignedAuthorization::new_unchecked(
@@ -144,7 +144,7 @@ fn sign_delegation<FEN: FoundryEvmNetwork>(
             account_nonce,
         )
     };
-    let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.ecx.cfg().chain_id()) };
+    let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.chain_id()) };
 
     let auth = Authorization { address: implementation, nonce, chain_id };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
@@ -233,12 +233,12 @@ impl Cheatcode for attachBlobCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { blob } = self;
         ensure!(
-            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
+            ccx.spec().into() >= SpecId::CANCUN,
             "`attachBlob` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
         let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
-        let sidecar_variant = if ccx.ecx.cfg().spec().into() < SpecId::OSAKA {
+        let sidecar_variant = if ccx.spec().into() < SpecId::OSAKA {
             sidecar.build_4844().map_err(|e| format!("{e}"))?.into()
         } else {
             sidecar.build_7594().map_err(|e| format!("{e}"))?.into()
@@ -367,7 +367,7 @@ fn broadcast<FEN: FoundryEvmNetwork>(
     new_origin: Option<&Address>,
     single_call: bool,
 ) -> Result {
-    let depth = ccx.ecx.journal().depth();
+    let depth = ccx.depth();
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
@@ -388,14 +388,14 @@ fn broadcast<FEN: FoundryEvmNetwork>(
             }
         }
     }
-    let new_origin = new_origin.unwrap_or(ccx.ecx.tx().caller());
+    let new_origin = new_origin.unwrap_or(ccx.tx_caller());
     // Ensure new origin is loaded and touched.
     let _ = journaled_account(ccx.ecx, new_origin)?;
 
     let broadcast = Broadcast {
         new_origin,
         original_caller: ccx.caller,
-        original_origin: ccx.ecx.tx().caller(),
+        original_origin: ccx.tx_caller(),
         depth,
         single_call,
         deploy_from_code: false,

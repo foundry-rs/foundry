@@ -29,7 +29,9 @@ use foundry_evm_core::{
     },
 };
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
+use foundry_evm_networks::{
+    NetworkConfigs, NetworkVariant, TEMPO_PRECOMPILES, celo::transfer::CELO_TRANSFER_LABEL,
+};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
@@ -40,10 +42,7 @@ use tempo_contracts::precompiles::{
     ITIP20Factory, ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    STORAGE_CREDITS_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
-    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
+    PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS, nonce::INonce,
     tip20::ITIP20,
 };
 
@@ -220,7 +219,6 @@ impl CallTraceDecoderBuilder {
     pub fn build(mut self) -> CallTraceDecoder {
         self.decoder.base_labels = self.decoder.labels.clone();
         self.decoder.register_celo_metadata();
-        self.decoder.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.decoder.register_monad_metadata();
         #[cfg(feature = "base")]
@@ -308,23 +306,6 @@ impl CallTraceDecoder {
             self.hardfork,
         ) {
             self.labels.entry(CELO_TRANSFER).or_insert_with(|| CELO_TRANSFER_LABEL.to_string());
-        }
-    }
-
-    fn register_tempo_metadata(&mut self) {
-        if self.networks.is_some_and(|networks| !networks.is_tempo()) {
-            return;
-        }
-        let hardfork = self.hardfork.and_then(TempoHardfork::from_foundry_hardfork);
-        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
-            self.labels
-                .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
-                .or_insert_with(|| "TIP20ChannelReserve".to_string());
-        }
-        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
-            self.labels
-                .entry(RECEIVE_POLICY_GUARD_ADDRESS)
-                .or_insert_with(|| "ReceivePolicyGuard".to_string());
         }
     }
 
@@ -423,7 +404,7 @@ impl CallTraceDecoder {
             ISignatureVerifier::abi::contract(),
             IReceivePolicyGuard::abi::contract(),
         ];
-        let labels = HashMap::from_iter([
+        let mut labels = HashMap::from_iter([
             (CHEATCODE_ADDRESS, "VM".to_string()),
             (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
             (DEFAULT_CREATE2_DEPLOYER, "Create2Deployer".to_string()),
@@ -446,21 +427,16 @@ impl CallTraceDecoder {
             (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
             (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
             // Tempo
-            (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
-            (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
-            (TIP20_FACTORY_ADDRESS, "TIP20Factory".to_string()),
-            (STABLECOIN_DEX_ADDRESS, "StablecoinDex".to_string()),
-            (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
-            (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
-            (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
-            (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry".to_string()),
-            (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
-            (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
-            (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
-            (STORAGE_CREDITS_ADDRESS, "StorageCredits".to_string()),
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
             (OUSD_ADDRESS, "OUSD".to_string()),
         ]);
+        // `CurrentCommittee` is only labeled in an active Tempo T8 context, see `decode_function`.
+        labels.extend(
+            TEMPO_PRECOMPILES
+                .iter()
+                .filter(|(_, address)| *address != CURRENT_COMMITTEE_ADDRESS)
+                .map(|(label, address)| (*address, (*label).to_string())),
+        );
 
         let functions = console::hh::abi::functions()
             .into_values()
@@ -554,7 +530,6 @@ impl CallTraceDecoder {
         self.constructor_args_offsets.clear();
 
         self.register_celo_metadata();
-        self.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.register_monad_metadata();
         #[cfg(feature = "base")]
@@ -1946,11 +1921,14 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
     use std::borrow::Cow;
+    use tempo_precompiles::{
+        ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
+        TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+        VALIDATOR_CONFIG_V2_ADDRESS,
+    };
 
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
-    #[cfg(feature = "base")]
-    use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
 
     #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
@@ -4052,8 +4030,9 @@ mod tests {
                 .build()
                 .precompile_labels()
         };
+        let base_precompiles = NetworkConfigs::with_base().precompiles(None);
         let base_label_count = |labels: &AddressHashMap<String>| {
-            BASE_PRECOMPILE_ADDRESSES.iter().filter(|address| labels.contains_key(*address)).count()
+            base_precompiles.values().filter(|address| labels.contains_key(*address)).count()
         };
 
         assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Azul)), 0);
@@ -4205,6 +4184,24 @@ mod tests {
             .build();
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
+    }
+
+    #[tokio::test]
+    async fn test_labels_validator_config_v2() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_execution_network(NetworkVariant::Tempo)
+            .with_hardfork(Some(TempoHardfork::T8.into()))
+            .build();
+        let trace = CallTrace { address: VALIDATOR_CONFIG_V2_ADDRESS, ..Default::default() };
+
+        assert_eq!(
+            decoder.decode_function(&trace).await.label.as_deref(),
+            Some("ValidatorConfigV2")
+        );
+        assert_eq!(
+            decoder.precompile_labels().get(&VALIDATOR_CONFIG_V2_ADDRESS).map(String::as_str),
+            Some("ValidatorConfigV2")
+        );
     }
 
     #[tokio::test]

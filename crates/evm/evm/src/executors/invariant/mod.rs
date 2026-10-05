@@ -841,25 +841,6 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
-    /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(
-        executor: Executor<FEN>,
-        runner: TestRunner,
-        config: InvariantConfig,
-        setup_contracts: &'a ContractsByAddress,
-        project_contracts: &'a ContractsByArtifact,
-    ) -> Self {
-        Self::new_with_fuzz_seed(
-            executor,
-            runner,
-            None,
-            config,
-            setup_contracts,
-            project_contracts,
-            1,
-        )
-    }
-
     /// Instantiates an invariant executor with the configured fuzz seed for deterministic worker
     /// runner derivation.
     pub fn new_with_fuzz_seed(

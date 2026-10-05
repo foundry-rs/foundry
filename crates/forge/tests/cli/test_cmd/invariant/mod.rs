@@ -485,7 +485,30 @@ contract InvariantSelectorsWeightTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
+    cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantSelectorsWeightTest.t.sol:InvariantSelectorsWeightTest
+[PASS] invariant_selectors_weight() (runs: 1, calls: 10, reverts: 0)
+
+╭------------+-----------+-------+---------+----------╮
+| Contract   | Selector  | Calls | Reverts | Discards |
++=====================================================+
+| HandlerOne | selector1 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector2 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector3 | 3     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector4 | 2     | 0       | 0        |
+|------------+-----------+-------+---------+----------|
+| HandlerTwo | selector5 | 1     | 0       | 0        |
+╰------------+-----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Tests original and new counterexample lengths are displayed on failure.
@@ -3536,7 +3559,22 @@ contract CorpusPolicyTest is Test {{
 
     // Changing only the selector must not replay calls to the previous selector.
     add_test("address(0xB0B)", "other");
-    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mc", "CorpusPolicyTest"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/CorpusPolicyTest.t.sol:CorpusPolicyTest
+[PASS] invariant_only_current_policy() (runs: 32, calls: 640, reverts: 0, failed corpus replays: 2)
+
+╭--------------------+----------+-------+---------+----------╮
+| Contract           | Selector | Calls | Reverts | Discards |
++============================================================+
+| CorpusPolicyTarget | other    | 640   | 0       | 0        |
+╰--------------------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
 }
 
 // Calls hoisted from handler sub-calls must respect `targetSenders`.
@@ -3591,5 +3629,12 @@ contract HoistSenderTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success();
+    cmd.args(["test", "--mc", "HoistSenderTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/HoistSenderTest.t.sol:HoistSenderTest
+[PASS] invariant_only_target_sender() (runs: 32, calls: 640, reverts: 0)
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

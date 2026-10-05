@@ -34,6 +34,7 @@ use std::{
     },
     time::Duration,
 };
+use tempo_alloy::TempoNetwork;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -6189,6 +6190,160 @@ contract DeployTempoAA is Script {
     for transaction in transactions {
         assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
     }
+}
+
+// A local Tempo node runs on chain 31337. Broadcasts must still resolve the sender's stored fee
+// token, with and without `--batch`.
+#[forgetest_init]
+async fn tempo_script_resolves_fee_token_on_local_chain_id(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoFeeToken.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoFeeTokenTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoFeeToken is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoFeeTokenTarget target = new TempoFeeTokenTarget();
+        target.set(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let alpha_usd = "0x20c0000000000000000000000000000000000001";
+    let broadcast = prj.root().join("broadcast");
+    let receipts = || {
+        let run_latest = foundry_common::fs::json_files(&broadcast)
+            .find(|path| {
+                path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+            })
+            .expect("no broadcast artifact found");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        json["receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|receipt| {
+                (receipt["type"].as_str().unwrap().to_owned(), receipt["feeToken"].clone())
+            })
+            .collect::<Vec<_>>()
+    };
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoFeeToken",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    cmd.assert_success().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    // CREATE requests stay Ethereum transactions; the protocol still charges the stored token.
+    assert_eq!(
+        receipts(),
+        [("0x2".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "TempoFeeToken",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+    ]);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: --batch rewrites CREATE → CREATE2 via the Arachnid factory; deployed addresses follow the CREATE2 formula and constructor msg.sender is the factory, not the EOA.
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    assert_eq!(
+        receipts(),
+        [("0x76".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
+    );
+}
+
+// Bundle estimation must preserve script-specified gas and still estimate ordinary transactions.
+#[forgetest_init]
+async fn tempo_script_preserves_fixed_gas_limit(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoFixedGas.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoFixedGas is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool fixedSuccess,) = address(0xBEEF).call{gas: 500000}("");
+        require(fixedSuccess);
+        (bool estimatedSuccess,) = address(0xBEEF).call("");
+        require(estimatedSuccess);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    // Both calls must be estimable before any transaction has been broadcast.
+    api.anvil_set_code(address!("000000000000000000000000000000000000beef"), hex!("00").into())
+        .await
+        .unwrap();
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_estimateGas", |_, _| {
+        Value::from("0x186a0")
+    })
+    .await;
+    let (rpc, estimates) = spawn_rpc_proxy_recording_method(rpc, "eth_estimateGas").await;
+    let gas_limits = |dry_run| {
+        let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| {
+                path.ends_with("run-latest.json")
+                    && path.components().any(|part| part.as_os_str() == "dry-run") == dry_run
+            })
+            .expect("no script artifact found");
+        let sequence =
+            foundry_common::fs::read_json_file::<ScriptSequence<TempoNetwork>>(&path).unwrap();
+        sequence
+            .transactions
+            .iter()
+            .map(|tx| (tx.is_fixed_gas_limit, tx.tx().gas().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--network",
+        "tempo",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-estimate-multiplier",
+        "130",
+    ]);
+    cmd.assert_success();
+    assert_eq!(gas_limits(true), [(true, 500000), (false, 130000)]);
+    assert_eq!(estimates.lock().unwrap().len(), 1);
+
+    cmd.arg("--broadcast").assert_success();
+    assert_eq!(gas_limits(false), [(true, 500000), (false, 130000)]);
+    // The second run estimates the ordinary call during bundling and again before sending.
+    assert_eq!(estimates.lock().unwrap().len(), 3);
 }
 
 #[forgetest_init]

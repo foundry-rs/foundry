@@ -1136,6 +1136,7 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
     let trace = api
         .trace_replay_transaction(tx_hash, [TraceType::Trace].into_iter().collect())
         .await
+        .unwrap()
         .unwrap();
     assert!(!trace.full_trace.trace.is_empty());
 

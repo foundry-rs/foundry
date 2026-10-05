@@ -361,6 +361,7 @@ async fn eip2935_local_block_replay_applies_pre_execution_changes() {
             [TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     let storage = &replay[0]
         .full_trace

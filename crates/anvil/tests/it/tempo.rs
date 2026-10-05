@@ -25,7 +25,10 @@ use alloy_rlp::Decodable;
 use alloy_rpc_types::{
     Authorization, BlockId, BlockNumberOrTag, TransactionRequest,
     anvil::Forking,
-    trace::geth::{GethDebugTracingOptions, GethTrace},
+    trace::{
+        geth::{GethDebugTracingOptions, GethTrace},
+        parity::Action,
+    },
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
@@ -4928,6 +4931,34 @@ async fn test_gas_estimation_with_value_fails() {
     );
 }
 
+/// An Ethereum-typed request without a nonce must be estimated at the sender's current nonce, not
+/// as a first transaction, which Tempo charges the account-creation cost for.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gas_estimation_without_nonce_uses_sender_nonce() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+
+    let calldata = IERC20::approveCall { spender: accounts[1], amount: U256::ZERO }.abi_encode();
+    let tx = TransactionRequest::default().from(sender).to(PATH_USD).with_input(calldata);
+
+    provider
+        .send_transaction(WithOtherFields::new(tx.clone().with_gas_limit(TIP20_TRANSFER_GAS)))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    assert_eq!(nonce, 1);
+
+    let without_nonce = provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap();
+    let with_nonce = provider.estimate_gas(WithOtherFields::new(tx.nonce(nonce))).await.unwrap();
+    assert_eq!(without_nonce, with_nonce);
+}
+
 // ============================================================================
 // Gas Price & Base Fee
 // ============================================================================
@@ -6918,4 +6949,47 @@ async fn test_tempo_t7_reset_restores_explicit_base_fee() {
     api.mine_one().await.unwrap();
     let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
     assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
+}
+
+/// Mined parity traces keep calls to `0x0100` before T1C, where Tempo has no P256 precompile.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_mined_traces_use_hardfork_precompiles() {
+    let p256 = address!("0x0000000000000000000000000000000000000100");
+    let target = address!("0x000000000000000000000000000000000000beef");
+    for (hardfork, frames) in
+        [(TempoHardfork::T1B, vec![p256, target]), (TempoHardfork::T1C, vec![target])]
+    {
+        let config = NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()));
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+        let from = handle.dev_accounts().next().unwrap();
+
+        // STATICCALL to 0x0100 with a P256-sized input, then a zero-value CALL to 0xbeef.
+        let caller = Address::repeat_byte(0x42);
+        let code = "0x6020600060a060006101005afa506000600060006000600061beef5af15000";
+        api.anvil_set_code(caller, code.parse().unwrap()).await.unwrap();
+
+        let tx = TransactionRequest::default().from(from).to(caller);
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let hash = receipt.transaction_hash;
+        let traces = provider.trace_transaction(hash).await.unwrap();
+        let traces = traces.into_iter().map(|trace| trace.trace).collect::<Vec<_>>();
+        let targets = traces[1..]
+            .iter()
+            .map(|trace| match &trace.action {
+                Action::Call(call) => call.to,
+                action => panic!("expected a call, got {action:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(targets, frames, "{hardfork:?}");
+
+        let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
+        assert_eq!(replay.trace, traces, "{hardfork:?}");
+    }
 }

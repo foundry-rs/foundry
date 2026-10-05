@@ -5202,6 +5202,39 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_libraries_with_whitespace() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "FOUNDRY_LIBRARIES",
+                "[src/A.sol:A:0x1111111111111111111111111111111111111111, src/B.sol:B:0x2222222222222222222222222222222222222222]",
+            );
+            let config = Config::load().unwrap();
+
+            similar_asserts::assert_eq!(
+                config.parsed_libraries().unwrap().libs,
+                BTreeMap::from([
+                    (
+                        PathBuf::from("src/A.sol"),
+                        BTreeMap::from([(
+                            "A".to_string(),
+                            "0x1111111111111111111111111111111111111111".to_string(),
+                        )]),
+                    ),
+                    (
+                        PathBuf::from("src/B.sol"),
+                        BTreeMap::from([(
+                            "B".to_string(),
+                            "0x2222222222222222222222222222222222222222".to_string(),
+                        )]),
+                    ),
+                ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_parse_many_libraries() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

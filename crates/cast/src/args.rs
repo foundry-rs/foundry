@@ -1588,13 +1588,13 @@ fn explorer_client(
 
 fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
     tx: &str,
-) -> Result<String> {
+) -> Result<serde_json::Value> {
     let tx_hex = hex::decode(tx)?;
     let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
     if let Ok(signer) = tx.recover_signer() {
-        Ok(serde_json::to_string_pretty(&Recovered::new_unchecked(tx, signer))?)
+        Ok(serde_json::to_value(Recovered::new_unchecked(tx, signer))?)
     } else {
-        Ok(serde_json::to_string_pretty(&tx)?)
+        Ok(serde_json::to_value(tx)?)
     }
 }
 

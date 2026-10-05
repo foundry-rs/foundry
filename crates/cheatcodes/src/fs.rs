@@ -15,10 +15,7 @@ use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use foundry_evm_traces::CallKind;
-use revm::{
-    context::{Cfg, ContextTr, CreateScheme, JournalTr},
-    interpreter::CreateInputs,
-};
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use semver::Version;
 use std::{
     io::{BufRead, BufReader},
@@ -518,7 +515,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
 
-    let depth = ccx.ecx.journal().depth();
+    let depth = ccx.depth();
 
     // Broadcast the synthetic create only if it was requested by the broadcaster at the broadcast
     // depth, as for native creates.
@@ -1098,7 +1095,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.cfg().chain_id();
+        let chain_id = ccx.chain_id();
 
         let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
