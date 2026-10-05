@@ -185,6 +185,8 @@ pub struct EthApi<N: Network> {
     lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
     /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
     reset_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes automatic nonce assignment through pool insertion for each sender.
+    nonce_locks: Arc<RwLock<HashMap<Address, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -205,6 +207,7 @@ impl<N: Network> Clone for EthApi<N> {
             instance_id: self.instance_id.clone(),
             lifecycle_lock: self.lifecycle_lock.clone(),
             reset_lock: self.reset_lock.clone(),
+            nonce_locks: self.nonce_locks.clone(),
         }
     }
 }
@@ -241,6 +244,7 @@ impl<N: Network> EthApi<N> {
             instance_id: Arc::new(RwLock::new(B256::random())),
             lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
             reset_lock: Arc::new(tokio::sync::Mutex::new(())),
+            nonce_locks: Default::default(),
         }
     }
 
@@ -3008,6 +3012,14 @@ impl EthApi<FoundryNetwork> {
         let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
+        // Keep nonce selection and pool insertion atomic with respect to other requests from
+        // this sender. Explicit nonces retain the pool's normal replacement behavior.
+        let _nonce_guard = if request.nonce().is_none() {
+            let lock = self.nonce_locks.write().entry(from).or_default().clone();
+            Some(lock.lock_owned().await)
+        } else {
+            None
+        };
         let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
