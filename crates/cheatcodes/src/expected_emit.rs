@@ -85,10 +85,6 @@ impl EmitMismatch {
 ///
 /// Returns the failure reason if the log violates an expectation.
 pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Option<&'static str> {
-    // This function returns an optional string indicating a failure reason.
-    // If the string is `Some`, it indicates that the expectation failed with the provided reason.
-    let mut failure_reason = None;
-
     // Fill or check the expected emits.
     // We expect for emit checks to be filled as they're declared (from oldest to newest),
     // so we fill them and push them to the back of the queue.
@@ -100,7 +96,7 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if tracker.iter().all(|(expected, _)| expected.found) {
-        return failure_reason;
+        return None;
     }
 
     // Check count=0 expectations against this log - fail immediately if violated
@@ -113,9 +109,7 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
             && (expected_emit.address.is_none_or(|address| address == log.address))
         {
             // This event was emitted but we expected it NOT to be (count=0).
-            failure_reason = Some("log emitted but expected 0 times");
-
-            return failure_reason;
+            return Some("log emitted but expected 0 times");
         }
     }
 
@@ -133,7 +127,7 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
 
     // If there are only count=0 expectations left, we can return early
     if !should_fill_logs && tracker.iter().all(|(emit, _)| emit.found || emit.count == 0) {
-        return failure_reason;
+        return None;
     }
 
     let (mut event_to_fill_or_check, mut count_map) =
@@ -147,10 +141,10 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
             // If we only filled the expected log then we put it back at the same position.
             tracker.insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
-            failure_reason = Some("use vm.expectEmitAnonymous to match anonymous events");
+            return Some("use vm.expectEmitAnonymous to match anonymous events");
         }
 
-        return failure_reason;
+        return None;
     };
 
     // Increment/set `count` for `log.address` and `log.data`
@@ -206,7 +200,7 @@ pub(crate) fn observe_log(tracker: &mut ExpectedEmitTracker, log: &Log) -> Optio
         tracker.push_front((event_to_fill_or_check, count_map));
     }
 
-    failure_reason
+    None
 }
 
 /// Handles expected emits specified by the `expectEmit` cheatcodes.
