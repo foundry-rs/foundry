@@ -740,7 +740,6 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
-    use foundry_config::NamedChain;
     use revm::interpreter::InstructionResult;
 
     #[test]
@@ -751,11 +750,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let context = TraceContext::new(
-            Chain::from_named(NamedChain::Tempo),
-            NetworkConfigs::with_tempo(),
-            None,
-        );
+        let context = TraceContext::new(Chain::tempo_mainnet(), NetworkConfigs::with_tempo(), None);
 
         assert!(matches!(context.decoding_hardfork(&config), Some(FoundryHardfork::Tempo(_))));
     }

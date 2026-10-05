@@ -20,6 +20,8 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{
     bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
 };
+#[cfg(test)]
+use revm::database::InMemoryDB;
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
@@ -66,12 +68,7 @@ pub(crate) trait DictionaryRead: Clone + 'static {
 impl EvmFuzzState {
     #[cfg(test)]
     pub(crate) fn test() -> Self {
-        Self::new(
-            &[],
-            &CacheDB::<revm::database::EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
+        Self::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
     }
 
     pub fn new<DB: DatabaseRef>(
@@ -839,17 +836,11 @@ impl FuzzDictionary {
 mod tests {
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
-    use alloy_primitives::keccak256;
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
-    use revm::{bytecode::Bytecode, database::EmptyDB};
+    use revm::bytecode::Bytecode;
 
     fn account_with_code(raw: &'static [u8]) -> AccountInfo {
-        let code = Bytecode::new_raw(Bytes::from_static(raw));
-        AccountInfo {
-            code_hash: keccak256(code.original_byte_slice()),
-            code: Some(code),
-            ..Default::default()
-        }
+        AccountInfo::default().with_code(Bytecode::new_raw(Bytes::from_static(raw)))
     }
 
     #[test]
@@ -1034,16 +1025,9 @@ mod tests {
 
     #[test]
     fn history_storage_account_is_excluded_from_initial_dictionary() {
-        let mut db = CacheDB::<EmptyDB>::default();
+        let mut db = InMemoryDB::default();
         let code = Bytecode::new_raw(Bytes::from_static(&[0x61, 0x01, 0x23, 0x00]));
-        db.insert_account_info(
-            HISTORY_STORAGE_ADDRESS,
-            AccountInfo {
-                code_hash: keccak256(code.original_byte_slice()),
-                code: Some(code),
-                ..Default::default()
-            },
-        );
+        db.insert_account_info(HISTORY_STORAGE_ADDRESS, AccountInfo::default().with_code(code));
         db.insert_account_storage(HISTORY_STORAGE_ADDRESS, U256::from(7), U256::from(0xdead_u64))
             .unwrap();
 

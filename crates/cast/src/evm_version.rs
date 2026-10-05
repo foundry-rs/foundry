@@ -142,9 +142,7 @@ mod tests {
     use super::*;
     use alloy_primitives::TxKind;
     use revm::{
-        Context, ExecuteEvm, MainBuilder, MainContext,
-        context::TxEnv,
-        database::{CacheDB, EmptyDB},
+        Context, ExecuteEvm, MainBuilder, MainContext, context::TxEnv, database::InMemoryDB,
         primitives::hardfork::SpecId,
     };
 
@@ -160,7 +158,7 @@ mod tests {
         ] {
             let result = Context::mainnet()
                 .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))
-                .with_db(CacheDB::<EmptyDB>::default())
+                .with_db(InMemoryDB::default())
                 .build_mainnet()
                 .transact(
                     TxEnv::builder()
