@@ -37,9 +37,10 @@ use alloy_rpc_types_eth::AccountInfo;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
+use axum::{Json, Router, routing::post};
 use foundry_evm::hardfork::EthereumHardfork;
 use revm::context_interface::block::BlobExcessGasAndPrice;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -2111,6 +2112,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Intersection,
         after: None,
         count: None,
+        block_hash: None,
     };
 
     for i in 0..=5 {
@@ -2141,6 +2143,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Intersection,
         after: None,
         count: None,
+        block_hash: None,
     };
 
     for i in 0..=5 {
@@ -2173,6 +2176,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
+        block_hash: None,
     };
 
     // Execute call
@@ -2200,6 +2204,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
+        block_hash: None,
     };
 
     let traces = api.trace_filter(tracer).await;
@@ -2215,6 +2220,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
+        block_hash: None,
     };
 
     let traces = api.trace_filter(tracer).await;
@@ -2230,6 +2236,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: None,
         count: None,
+        block_hash: None,
     };
 
     let traces = api.trace_filter(tracer).await;
@@ -2244,6 +2251,7 @@ async fn test_trace_filter() {
         mode: TraceFilterMode::Union,
         after: Some(3),
         count: Some(5),
+        block_hash: None,
     };
 
     for i in 0..=10 {
@@ -2254,6 +2262,281 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_rpc() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    api.anvil_set_auto_mine(false).await.unwrap();
+    for nonce in 0..3 {
+        let tx = TransactionRequest::default()
+            .from(accounts[0])
+            .to(accounts[nonce as usize + 1])
+            .nonce(nonce)
+            .gas_limit(21_000);
+        let _ = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+    }
+    api.mine_one().await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let hash = block.header.hash;
+    let expected = provider.trace_block(block.header.number.into()).await.unwrap();
+    assert_eq!(expected.len(), 3);
+
+    // A newer empty head must not replace the selected block, even for an empty result.
+    api.mine_one().await.unwrap();
+    let filter = TraceFilter::default().block_hash(hash);
+    assert_eq!(provider.trace_filter(&filter).await.unwrap(), expected);
+    assert_eq!(
+        provider.trace_filter(&filter.clone().after(1).count(1)).await.unwrap(),
+        expected[1..2]
+    );
+    assert!(provider.trace_filter(&filter.clone().after(3)).await.unwrap().is_empty());
+    assert!(provider.trace_filter(&filter.clone().count(0)).await.unwrap().is_empty());
+    assert_eq!(
+        provider.trace_filter(&filter.clone().to_address(vec![accounts[2]])).await.unwrap(),
+        expected[1..2]
+    );
+    let mismatched = filter.clone().from_address(vec![accounts[4]]).to_address(vec![accounts[2]]);
+    assert!(provider.trace_filter(&mismatched).await.unwrap().is_empty());
+    assert_eq!(
+        provider.trace_filter(&mismatched.mode(TraceFilterMode::Union)).await.unwrap(),
+        expected[1..2]
+    );
+
+    let null_bounds: Vec<LocalizedTransactionTrace> = provider
+        .raw_request(
+            "trace_filter".into(),
+            (json!({"blockHash": hash, "fromBlock": null, "toBlock": null}),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(null_bounds, expected);
+    let null_hash: Vec<LocalizedTransactionTrace> = provider
+        .raw_request(
+            "trace_filter".into(),
+            (json!({"blockHash": null, "fromBlock": "0x1", "toBlock": "0x1"}),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(null_hash, expected);
+
+    let genesis = provider.get_block_by_number(0.into()).await.unwrap().unwrap();
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(genesis.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for invalid in [
+        json!({"blockHash": hash, "fromBlock": "0x1"}),
+        json!({"blockHash": hash, "toBlock": "0x1", "count": 0}),
+        json!({"blockHash": "0x1234"}),
+    ] {
+        let err = provider
+            .raw_request::<_, Vec<LocalizedTransactionTrace>>("trace_filter".into(), (invalid,))
+            .await
+            .unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32602);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_reorg_rpc() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.block_hash.unwrap();
+    assert_eq!(
+        provider.trace_filter(&TraceFilter::default().block_hash(hash)).await.unwrap().len(),
+        1
+    );
+
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    let replacement =
+        provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(replacement.header.number, receipt.block_number.unwrap());
+    assert_ne!(replacement.header.hash, hash);
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(replacement.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for hash in [hash, B256::repeat_byte(0xff)] {
+        for count in [None, Some(0)] {
+            let filter = TraceFilter { block_hash: Some(hash), count, ..Default::default() };
+            let err = provider.trace_filter(&filter).await.unwrap_err();
+            assert_eq!(err.as_error_resp().unwrap().code, -32001);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_fork_rpc() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let snapshot = origin_api.evm_snapshot().await.unwrap();
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.block_hash.unwrap();
+    let expected = origin.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let root = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    // An upstream head after the fork boundary is not part of the fork's chain.
+    origin_api.mine_one().await.unwrap();
+    let future = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(
+        provider.trace_filter(&TraceFilter::default().block_hash(hash)).await.unwrap(),
+        expected
+    );
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(root.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(future.header.hash).count(0))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32001);
+
+    // A locally mined block remains available without consulting the upstream block at its height.
+    api.evm_set_next_block_timestamp(future.header.timestamp + 1).unwrap();
+    api.mine_one().await.unwrap();
+    let local = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(local.header.hash, future.header.hash);
+    assert!(
+        provider
+            .trace_filter(&TraceFilter::default().block_hash(local.header.hash))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Do not accept blocks on a replacement upstream branch, even below the old fork boundary.
+    assert!(origin_api.evm_revert(snapshot).await.unwrap());
+    origin_api.mine_one().await.unwrap();
+    let replacement = origin.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    origin_api.mine_one().await.unwrap();
+    for invalid in [hash, replacement.header.hash] {
+        let err =
+            provider.trace_filter(&TraceFilter::default().block_hash(invalid)).await.unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, -32001);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_fork_rejects_inconsistent_traces() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.block_hash.unwrap();
+    let mut wrong_block = origin.trace_block(receipt.block_number.unwrap().into()).await.unwrap();
+    wrong_block[0].block_hash = Some(B256::repeat_byte(0xff));
+
+    // Model a replacement block returned between the upstream header and trace reads.
+    for (traces, code) in [(vec![], -32603), (wrong_block, -32001)] {
+        let endpoint = origin_handle.http_endpoint();
+        let client = reqwest::Client::new();
+        let router = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let endpoint = endpoint.clone();
+                let client = client.clone();
+                let traces = traces.clone();
+                async move {
+                    if request["method"] == "trace_block" {
+                        return Json(
+                            json!({"jsonrpc": "2.0", "id": request["id"], "result": traces}),
+                        );
+                    }
+                    Json(
+                        client
+                            .post(endpoint)
+                            .json(&request)
+                            .send()
+                            .await
+                            .unwrap()
+                            .json::<Value>()
+                            .await
+                            .unwrap(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let proxy = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let (_api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(endpoint))).await;
+        let err = handle
+            .http_provider()
+            .trace_filter(&TraceFilter::default().block_hash(hash).count(0))
+            .await
+            .unwrap_err();
+        assert_eq!(err.as_error_resp().unwrap().code, code);
+        proxy.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_filter_block_hash_pruned_rpc() {
+    let (api, handle) = spawn(NodeConfig::test().with_transaction_block_keeper(Some(1usize))).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().map(|wallet| wallet.address()).collect::<Vec<_>>();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(accounts[0]).to(accounts[1]).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+    let err = provider
+        .trace_filter(&TraceFilter::default().block_hash(receipt.block_hash.unwrap()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_error_resp().unwrap().code, -32603);
 }
 
 #[cfg(feature = "js-tracer")]

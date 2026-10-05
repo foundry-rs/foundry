@@ -495,6 +495,68 @@ impl<N: Network> ClientFork<N> {
         Ok(traces)
     }
 
+    /// Returns canonical upstream block traces, bypassing caches keyed only by block number.
+    pub(crate) async fn trace_block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Vec<Trace>, BlockchainError> {
+        let (provider, fork_number, fork_hash) = {
+            let config = self.config.read();
+            (config.provider.clone(), config.block_number, config.block_hash)
+        };
+        let block =
+            provider.get_block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        let number = block.header().number();
+        if number > fork_number || (number == fork_number && hash != fork_hash) {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        // A current upstream branch must still contain the fork's pinned root.
+        let anchor = provider
+            .get_block_by_number(fork_number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if anchor.header().hash() != fork_hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let canonical = provider
+            .get_block_by_number(number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if canonical.header().hash() != hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let traces = provider.trace_block(number.into()).await?;
+        // A reorg between resolution and tracing must never return a replacement block's traces.
+        if traces
+            .iter()
+            .any(|trace| trace.block_hash != Some(hash) || trace.block_number != Some(number))
+        {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        // In particular, a replacement empty block must not look like an empty selected block.
+        let traced_transactions =
+            traces.iter().filter_map(|trace| trace.transaction_hash).collect::<HashSet<_>>();
+        if block.transactions().hashes().any(|tx| !traced_transactions.contains(&tx)) {
+            return Err(BlockchainError::DataUnavailable);
+        }
+        // Recheck both identities after tracing, without using cached headers.
+        let anchor = provider
+            .get_block_by_number(fork_number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if anchor.header().hash() != fork_hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        let canonical = provider
+            .get_block_by_number(number.into())
+            .await?
+            .ok_or(BlockchainError::BlockNotFound)?;
+        if canonical.header().hash() != hash {
+            return Err(BlockchainError::BlockNotFound);
+        }
+        Ok(traces)
+    }
+
     pub async fn trace_replay_block_transactions(
         &self,
         number: u64,
