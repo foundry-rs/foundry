@@ -262,8 +262,27 @@ fn compile_local_storage_layout(
         .find_map(|(_, artifact)| has_deployed_code(&artifact, address_code).then_some(artifact)))
 }
 
+/// Returns whether `code` is the artifact's deployed bytecode, ignoring the values of immutables.
 fn has_deployed_code(artifact: &ConfigurableContractArtifact, code: &Bytes) -> bool {
-    artifact.get_deployed_bytecode_bytes().as_deref() == Some(code)
+    let Some(deployed_code) = artifact.get_deployed_bytecode_bytes() else { return false };
+    if deployed_code.len() != code.len() {
+        return false;
+    }
+
+    // Immutables are zero in the artifact and only filled in at deployment.
+    let mut code = code.to_vec();
+    let immutables =
+        artifact.deployed_bytecode.iter().flat_map(|b| b.immutable_references.values());
+    for offsets in immutables.flatten() {
+        let range = offsets.start as usize..offsets.start as usize + offsets.length as usize;
+        let (Some(value), Some(placeholder)) =
+            (code.get_mut(range.clone()), deployed_code.get(range))
+        else {
+            return false;
+        };
+        value.copy_from_slice(placeholder);
+    }
+    deployed_code[..] == code[..]
 }
 
 fn find_target_artifact(
@@ -600,6 +619,54 @@ contract Target is Base {
         let artifact =
             compile_local_storage_layout(&project, &address_code, true).unwrap().unwrap();
         assert!(artifact.storage_layout.is_some());
+    }
+
+    #[test]
+    fn local_storage_layout_ignores_immutable_values() {
+        let prj = TestProject::new("cast-storage-immutable", PathStyle::Dapptools);
+        let target_path = prj.add_source(
+            "Pinned",
+            r#"
+contract Pinned {
+    address public immutable token;
+    uint256 count;
+
+    constructor(address token_) {
+        token = token_;
+    }
+}
+"#,
+        );
+        let project = load_project(&prj);
+        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
+        let (_, artifact) = output.artifact_ids().find(|(id, _)| id.source == target_path).unwrap();
+
+        // Deploy-time code with `token` set to `address(1)`.
+        let mut code = artifact.get_deployed_bytecode_bytes().unwrap().to_vec();
+        let immutables = &artifact.deployed_bytecode.as_ref().unwrap().immutable_references;
+        assert!(!immutables.is_empty());
+        for offsets in immutables.values().flatten() {
+            code[(offsets.start + offsets.length - 1) as usize] = 1;
+        }
+        let address_code = Bytes::from(code.clone());
+        assert!(has_deployed_code(artifact, &address_code));
+
+        for json in [false, true] {
+            let artifact =
+                compile_local_storage_layout(&project, &address_code, json).unwrap().unwrap();
+            let labels = artifact
+                .storage_layout
+                .as_ref()
+                .unwrap()
+                .storage
+                .iter()
+                .map(|slot| slot.label.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(labels, ["count"]);
+        }
+
+        code[0] ^= 1;
+        assert!(!has_deployed_code(artifact, &Bytes::from(code)));
     }
 
     #[test]
