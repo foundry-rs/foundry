@@ -27,7 +27,14 @@ fn base_azul_excludes_beryl_precompiles(prj: _, cmd: _) {
         "--match-test",
         "test_azul_excludes_beryl_precompiles",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseEvm.t.sol:BaseEvmTest
+[PASS] test_azul_excludes_beryl_precompiles() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -43,7 +50,14 @@ fn base_defaults_to_azul(prj: _, cmd: _) {
         "--match-test",
         "test_azul_excludes_beryl_precompiles",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseEvm.t.sol:BaseEvmTest
+[PASS] test_azul_excludes_beryl_precompiles() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -108,7 +122,17 @@ async fn base_fork_allows_stateful_precompile_writes(prj: _, cmd: _) {
         "BaseForkWritesTest",
         "-vvvv",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/BaseForkWrites.t.sol:BaseForkWritesTest
+[PASS] test_factory_is_code_less_and_still_callable() ([GAS])
+...
+[PASS] test_fork_activation_write() ([GAS])
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -127,7 +151,17 @@ fn base_local_allows_stateful_precompile_writes(prj: _, cmd: _) {
         "BaseForkWritesTest",
         "-vvvv",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/BaseForkWrites.t.sol:BaseForkWritesTest
+[PASS] test_factory_is_code_less_and_still_callable() ([GAS])
+...
+[PASS] test_fork_activation_write() ([GAS])
+...
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -224,7 +258,14 @@ contract BaseExecuteTransactionTest {{
         "--match-contract",
         "BaseExecuteTransactionTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseExecuteTransaction.t.sol:BaseExecuteTransactionTest
+[PASS] test_rejects_eip8130_without_state_changes() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -326,7 +367,16 @@ contract BaseIsolatedFeesTest {
         "--match-contract",
         "BaseIsolatedFeesTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/BaseIsolatedFees.t.sol:BaseIsolatedFeesTest
+[PASS] test_create_does_not_credit_fee_vaults() ([GAS])
+[PASS] test_funded_caller_balance_is_unchanged() ([GAS])
+[PASS] test_zero_balance_caller_succeeds() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -453,7 +503,16 @@ contract BaseIsolatedSnapshotFeesTest {{
         "--match-contract",
         "BaseIsolatedSnapshotFeesTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/BaseIsolatedSnapshotFees.t.sol:BaseIsolatedSnapshotFeesTest
+[PASS] test_revert_and_delete_inside_isolated_helper_does_not_credit_fee_vaults() ([GAS])
+[PASS] test_revert_inside_isolated_helper_does_not_credit_fee_vaults() ([GAS])
+[PASS] test_snapshot_from_isolated_helper_does_not_disable_broadcast_fees() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -556,7 +615,17 @@ contract BaseForkIsolatedSnapshotFeeTest {{
         "--match-contract",
         "BaseForkIsolatedSnapshotFeeTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/BaseForkIsolatedSnapshotFee.t.sol:BaseForkIsolatedSnapshotFeeTest
+[PASS] test_explicit_fee_survives_fork_roll() ([GAS])
+[PASS] test_implicit_fee_follows_fork_roll() ([GAS])
+[PASS] test_repeated_restore_and_delete_keeps_implicit_fee_fork() ([GAS])
+[PASS] test_repeated_restore_keeps_implicit_fee_fork() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]
@@ -657,5 +726,12 @@ contract BaseForkIsolatedReplayFeesTest {{
         "--match-contract",
         "BaseForkIsolatedReplayFeesTest",
     ])
-    .assert_success();
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/BaseForkIsolatedReplayFees.t.sol:BaseForkIsolatedReplayFeesTest
+[PASS] test_fork_inactive_hash_roll_from_isolated_helper_charges_replay_fees() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

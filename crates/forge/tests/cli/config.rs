@@ -2046,7 +2046,13 @@ contract ReadLinkTest is Test {
 }
 "#,
     );
-    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success();
+    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ReadLink.t.sol:ReadLinkTest
+[PASS] testReadLink() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // tests if evm version is normalized for config output
@@ -3167,7 +3173,15 @@ contract AnotherCounterTest is Test {
 }
 "#,
     );
-    cmd.args(["test", "--fail-fast"]).assert_failure();
+    // The fuzz test can be skipped or interrupted after any number of runs.
+    cmd.args(["test", "--fail-fast"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
+...
+[FAIL: EvmError: Revert] test_Failure() ([GAS])
+Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest]

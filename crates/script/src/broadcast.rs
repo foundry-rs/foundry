@@ -123,9 +123,8 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
     ) -> Result<()> {
-        let tempo_browser = matches!(self, Self::Browser(..)) && chain.is_some_and(Chain::is_tempo);
+        let browser = matches!(self, Self::Browser(..));
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
@@ -170,10 +169,10 @@ where
         }
 
         let fee_token = if let Some(sponsor) = tempo_sponsor {
-            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            sponsor.resolve_and_set_fee_token(Some(provider), tx).await?;
             None
         } else {
-            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+            resolve_and_set_fee_token(Some(provider), tx, tx.from()).await?
         };
 
         // A fee token, sponsor, validity window, or other Tempo field selects
@@ -184,7 +183,7 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
+            estimate_gas(tx, provider, estimate_multiplier, browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -255,7 +254,6 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
-        chain: Option<Chain>,
     ) -> Result<Self> {
         self.prepare(
             provider,
@@ -264,7 +262,6 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
-            chain,
         )
         .await?;
         if let Self::Unlocked(tx) = &mut self {
@@ -877,7 +874,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
@@ -898,7 +894,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     estimate_via_rpc,
                                     self.args.gas_estimate_multiplier,
                                     tempo_sponsor.as_deref(),
-                                    Some(sequence_chain.into()),
                                 )
                                 .await?;
                             if let SendTransactionKind::PreparedRaw(payload, hash) = &mut kind {
@@ -1476,22 +1471,10 @@ impl BundledState<TempoEvmNetwork> {
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
         let fee_token = if let Some(sponsor) = &tempo_sponsor {
-            sponsor
-                .resolve_and_set_fee_token(
-                    Some(provider.as_ref()),
-                    Some(Chain::from_named(NamedChain::Tempo)),
-                    &mut batch_tx,
-                )
-                .await?;
+            sponsor.resolve_and_set_fee_token(Some(provider.as_ref()), &mut batch_tx).await?;
             None
         } else {
-            resolve_and_set_fee_token(
-                Some(provider.as_ref()),
-                Some(Chain::from_named(NamedChain::Tempo)),
-                &mut batch_tx,
-                Some(sender),
-            )
-            .await?
+            resolve_and_set_fee_token(Some(provider.as_ref()), &mut batch_tx, Some(sender)).await?
         };
 
         if let BatchSigner::TempoKeychain(wallet) = &mut batch_signer {
@@ -1738,7 +1721,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
-    tempo_browser: bool,
+    browser: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -1747,8 +1730,7 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
-    let request =
-        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    let request = if browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     tx.set_gas_limit(
         provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
@@ -1804,6 +1786,7 @@ mod tests {
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
+    use foundry_common::tempo::PATH_USD_ADDRESS;
     use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
     const ROOT_PRIVATE_KEY: &str =
@@ -2112,9 +2095,11 @@ mod tests {
         let access_key_address = access_key.address();
         let access_key_wallet =
             TempoAccountsWallet::from_secp256k1(root_address, access_key, None).with_chain_id(4217);
+        // An explicit fee token keeps preparation from querying the unreachable endpoint.
         let mut sender = SendTransactionKind::<TempoNetwork>::AccessKey(
             TempoTransactionRequest {
                 inner: TransactionRequest { from: Some(root_address), ..Default::default() },
+                fee_token: Some(PATH_USD_ADDRESS),
                 ..Default::default()
             },
             Box::new(access_key_wallet),
@@ -2122,18 +2107,7 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender
-            .prepare(
-                &provider,
-                false,
-                true,
-                false,
-                100,
-                None,
-                Some(Chain::from_named(NamedChain::Mainnet)),
-            )
-            .await
-            .unwrap();
+        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _) => {

@@ -21,11 +21,7 @@ use revm::context::ContextTr;
 impl Cheatcode for activeForkCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        ccx.ecx
-            .db()
-            .active_fork_id()
-            .map(|id| id.abi_encode())
-            .ok_or_else(|| fmt_err!("no active fork"))
+        ccx.active_fork_id().map(|id| id.abi_encode()).ok_or_else(|| fmt_err!("no active fork"))
     }
 }
 
@@ -128,7 +124,7 @@ impl Cheatcode for selectForkCall {
         let Self { forkId } = self;
         persist_caller(ccx);
         check_broadcast(ccx.state)?;
-        let source_fork_id = ccx.ecx.db().active_fork_id();
+        let source_fork_id = ccx.active_fork_id();
         let initial = ccx.state.created_account_bindings(None);
         let propagated = persistent_created_accounts(ccx);
         let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
@@ -227,15 +223,14 @@ impl Cheatcode for revokePersistent_1Call {
 impl Cheatcode for isPersistentCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { account } = self;
-        Ok(ccx.ecx.db().is_persistent(account).abi_encode())
+        Ok(ccx.is_persistent(account).abi_encode())
     }
 }
 
 impl Cheatcode for rpc_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { method, params } = self;
-        let url =
-            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let url = ccx.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let result = rpc_call(&url, method, params)?;
         refresh_active_fork_state(ccx, method, params)?;
         Ok(result)
@@ -253,8 +248,7 @@ impl Cheatcode for rpc_1Call {
 impl Cheatcode for rpcJson_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { method, params } = self;
-        let url =
-            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        let url = ccx.active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let result = rpc_json_call(&url, method, params)?;
         refresh_active_fork_state(ccx, method, params)?;
         Ok(result)
@@ -370,7 +364,7 @@ fn create_select_fork<FEN: FoundryEvmNetwork>(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
-    let source_fork_id = ccx.ecx.db().active_fork_id();
+    let source_fork_id = ccx.active_fork_id();
     let initial = ccx.state.created_account_bindings(None);
     let propagated = persistent_created_accounts(ccx);
     let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
@@ -400,7 +394,7 @@ fn create_select_fork_at_transaction<FEN: FoundryEvmNetwork>(
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, None)?;
-    let source_fork_id = ccx.ecx.db().active_fork_id();
+    let source_fork_id = ccx.active_fork_id();
     let initial = ccx.state.created_account_bindings(None);
     let propagated = persistent_created_accounts(ccx);
     let result = fork_env_op::<FEN, _>(ccx.ecx, |db, evm_env, tx_env, inner| {
@@ -464,10 +458,10 @@ fn apply_context_update<FEN: FoundryEvmNetwork>(
         foundry_evm_core::backend::ContextUpdate::Unchanged => {}
         foundry_evm_core::backend::ContextUpdate::Replace(chain_context) => {
             *ecx.chain_mut() = chain_context;
-            foundry_evm_core::refresh_chain_journal(ecx);
+            foundry_evm_core::evm::refresh_chain_journal(ecx);
         }
         foundry_evm_core::backend::ContextUpdate::Rebase => {
-            foundry_evm_core::refresh_chain_journal(ecx);
+            foundry_evm_core::evm::refresh_chain_journal(ecx);
         }
     }
 }
@@ -500,11 +494,11 @@ fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
 fn persistent_created_accounts<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
 ) -> Vec<(Address, usize)> {
-    let fork_id = ccx.ecx.db().active_fork_id();
+    let fork_id = ccx.active_fork_id();
     ccx.state
         .created_account_bindings(fork_id)
         .into_iter()
-        .filter(|(address, _)| ccx.ecx.db().is_persistent(address))
+        .filter(|(address, _)| ccx.is_persistent(address))
         .collect()
 }
 
@@ -514,8 +508,8 @@ fn record_fork_switch<FEN: FoundryEvmNetwork>(
     initial: AddressHashMap<usize>,
     propagated: Vec<(Address, usize)>,
 ) {
-    let target_fork_id = ccx.ecx.db().active_fork_id();
-    ccx.state.fork_block_number_override = ccx.ecx.db().active_fork_block_number();
+    let target_fork_id = ccx.active_fork_id();
+    ccx.state.fork_block_number_override = ccx.active_fork_block_number();
     if source_fork_id != target_fork_id {
         ccx.state.commit_created_account_changes(source_fork_id);
     }
@@ -527,13 +521,13 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     target_fork_id: Option<LocalForkId>,
 ) {
-    let active_fork_id = ccx.ecx.db().active_fork_id();
+    let active_fork_id = ccx.active_fork_id();
     let rolled_fork_id = target_fork_id.or(active_fork_id);
     if let Some(overrides) = ccx.state.env_overrides.get_mut(&rolled_fork_id) {
         overrides.implicit_basefee = None;
     }
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
-        ccx.state.fork_block_number_override = ccx.ecx.db().active_fork_block_number();
+        ccx.state.fork_block_number_override = ccx.active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);
     }
 }
@@ -573,8 +567,7 @@ fn persist_caller<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
 fn active_fork_provider<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
 ) -> Result<RootProvider<AnyNetwork>> {
-    let fork =
-        ccx.ecx.db().active_fork_options().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+    let fork = ccx.active_fork_options().ok_or_else(|| fmt_err!("no active fork URL found"))?;
     Ok(fork.evm_opts.fork_provider_with_url(&fork.url)?)
 }
 

@@ -153,7 +153,7 @@ use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
     context_interface::{
-        JournalTr,
+        JournalTr, Transaction as _,
         block::BlobExcessGasAndPrice,
         result::{
             EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output, ResultAndState,
@@ -3250,8 +3250,40 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         base_evm_env: Option<&EvmEnv>,
     ) -> Result<PreparedCall, BlockchainError> {
+        let gas_omitted = request.gas.is_none();
         let request = self.parse_transaction_request(request)?;
-        self.prepare_typed_call_env_with_base(state, request, fee_details, block_env, base_evm_env)
+        let mut prepared = self.prepare_typed_call_env_with_base(
+            state,
+            request,
+            fee_details,
+            block_env,
+            base_evm_env,
+        )?;
+        // Without a gas limit, a priced call gets at most the gas its sender can pay for, rather
+        // than failing the funds check for the default limit. Tempo pays fees in tokens instead,
+        // and OP deposits mint funds before paying for execution.
+        let cap_by_balance = match &prepared.tx_env {
+            CallTxEnv::Tempo(_) => false,
+            #[cfg(feature = "optimism")]
+            CallTxEnv::Op(tx) => tx.tx_type() != DEPOSIT_TX_TYPE_ID,
+            _ => true,
+        };
+        let tx_env = prepared.tx_env.base_mut();
+        if gas_omitted && cap_by_balance && tx_env.gas_price > 0 {
+            let balance =
+                state.basic_ref(tx_env.caller)?.map(|info| info.balance).unwrap_or_default();
+            let upfront = tx_env.value.saturating_add(tx_env.calc_max_data_fee());
+            // A sender that cannot pay for the cheapest transaction keeps the default limit, so
+            // the call fails the funds check.
+            if let Some(allowance) = balance
+                .checked_sub(upfront)
+                .map(|available| available / U256::from(tx_env.gas_price))
+                && allowance >= U256::from(MIN_TRANSACTION_GAS)
+            {
+                tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
+            }
+        }
+        Ok(prepared)
     }
 
     const fn base_call_tx_env(&self, tx_env: TxEnv) -> CallTxEnv {

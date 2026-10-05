@@ -15,6 +15,7 @@ use alloy_evm::{
         BalIndexedDatabase, BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB,
         TxResult,
     },
+    precompiles::PrecompilesMap,
 };
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::B256;
@@ -175,6 +176,7 @@ where
     E: Evm<
             DB: StateDB + BalIndexedDatabase,
             Inspector = AnvilInspector,
+            Precompiles = PrecompilesMap,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
     E::HaltReason: Clone + IntoInstructionResult,
@@ -200,6 +202,7 @@ where
     E: Evm<
             DB: StateDB + BalIndexedDatabase,
             Inspector = AnvilInspector,
+            Precompiles = PrecompilesMap,
             Tx: FromRecoveredTx<FoundryTxEnvelope> + FromTxWithEncoded<FoundryTxEnvelope>,
         >,
     E::HaltReason: Clone + IntoInstructionResult,
@@ -247,7 +250,8 @@ where
         let gas_used = execution_result.tx_gas_used();
         executor.commit_transaction(result);
 
-        let traces = executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
+        let (_, inspector, precompiles) = executor.evm_mut().components_mut();
+        let traces = inspector.finish_transaction(inspector_config, precompiles);
         let (exit_reason, out) = match execution_result {
             ExecutionResult::Success { reason, output, .. } => (reason.into(), Some(output)),
             ExecutionResult::Revert { output, .. } => {
