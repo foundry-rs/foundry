@@ -17,7 +17,7 @@ updates:
   - package-ecosystem: cargo
     directory: /editors/zed
     allow:
-      - dependency-type: all
+      - dependency-type: direct
     patterns: ["*"]
     multi-ecosystem-group: code-weekly
     cooldown:
@@ -38,7 +38,7 @@ updates:
   - package-ecosystem: cargo
     directory: /
     allow:
-      - dependency-type: all
+      - dependency-type: direct
     patterns: ["*"]
     multi-ecosystem-group: code-weekly
     cooldown:
@@ -54,5 +54,8 @@ updates:
         update-types:
           - version-update:semver-minor
       - dependency-name: ecdsa
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: k256
         update-types:
           - version-update:semver-minor
