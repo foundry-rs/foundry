@@ -358,6 +358,7 @@ fn can_extract_config_values(prj: _, cmd: _) {
         force: true,
         evm_version: EvmVersion::Byzantium,
         evm_version_from_local_solc: false,
+        evm_version_configured: false,
         hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],

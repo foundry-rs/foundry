@@ -270,6 +270,10 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub evm_version_from_local_solc: bool,
+    /// Whether `evm_version` was supplied by a config provider instead of the defaults.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub evm_version_configured: bool,
     /// The runtime hardfork to use when executing tests and scripts.
     pub hardfork: Option<FoundryHardfork>,
     /// List of contracts to generate gas reports for.
@@ -776,6 +780,9 @@ impl Config {
 
     const DEFAULT_EVM_VERSION: EvmVersion = EvmVersion::Osaka;
 
+    /// Metadata source of a `Config` provider whose `evm_version` was explicitly configured.
+    const EVM_VERSION_CONFIGURED_SOURCE: &str = "explicit evm_version";
+
     /// The hardhat profile: "hardhat"
     pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
 
@@ -885,11 +892,13 @@ impl Config {
         let figment = Figment::from(provider);
         // Read provenance before wrapping, since `LegacyLabelsProvider` drops value metadata.
         // Values with unknown metadata come from nested providers, such as `extends`, not
-        // the defaults.
-        let evm_version_configured = figment
-            .find_metadata("evm_version")
-            .is_none_or(|metadata| metadata.name.as_ref() != "Foundry Config");
+        // the defaults. A `Config` provider marks an explicit value in its metadata source.
+        let evm_version_configured = figment.find_metadata("evm_version").is_none_or(|metadata| {
+            metadata.name.as_ref() != "Foundry Config"
+                || metadata.source == Some(Self::EVM_VERSION_CONFIGURED_SOURCE.into())
+        });
         let mut config = Self::from_figment(Figment::from(figment.legacy_labels()))?;
+        config.evm_version_configured = evm_version_configured;
         // Derive the default EVM version from the final compiler version, after all providers
         // have been merged. See <https://github.com/foundry-rs/foundry/issues/7014>.
         if !evm_version_configured && config.evm_version == Self::DEFAULT_EVM_VERSION {
@@ -922,6 +931,8 @@ impl Config {
             || provider.contains("invariant.workers")
             || provider.extract_inner::<bool>("invariant.workers_configured").unwrap_or(false)
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
+        let evm_version_configured =
+            self.evm_version_configured || provider.contains("evm_version");
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
@@ -932,6 +943,7 @@ impl Config {
         config.invariant.corpus_random_sequence_weight_configured =
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
+        config.evm_version_configured = evm_version_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -3060,7 +3072,12 @@ pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
 
 impl Provider for Config {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Foundry Config")
+        let metadata = Metadata::named("Foundry Config");
+        if self.evm_version_configured {
+            metadata.source(Self::EVM_VERSION_CONFIGURED_SOURCE)
+        } else {
+            metadata
+        }
     }
 
     #[track_caller]
@@ -3112,6 +3129,7 @@ impl Default for Config {
             force: false,
             evm_version: Self::DEFAULT_EVM_VERSION,
             evm_version_from_local_solc: false,
+            evm_version_configured: false,
             hardfork: None,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
@@ -3493,7 +3511,8 @@ mod tests {
         config.warnings = vec![];
     }
 
-    fn mark_serialized_invariant_provenance(config: &mut Config) {
+    fn mark_serialized_provenance(config: &mut Config) {
+        config.evm_version_configured = true;
         config.invariant.corpus_random_sequence_weight_configured = true;
         config.invariant.workers_configured = true;
     }
@@ -4969,6 +4988,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     auto_detect_solc: false,
                     evm_version: EvmVersion::Berlin,
+                    evm_version_configured: true,
                     ..Config::default().normalized_optimizer_settings()
                 }
             );
@@ -5374,7 +5394,7 @@ mod tests {
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
             let mut serialized_default = default;
-            mark_serialized_invariant_provenance(&mut serialized_default);
+            mark_serialized_provenance(&mut serialized_default);
             assert_eq!(serialized_default, other);
 
             Ok(())
@@ -5476,7 +5496,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_provenance(&mut loaded);
+            mark_serialized_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -5527,7 +5547,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
-            mark_serialized_invariant_provenance(&mut loaded);
+            mark_serialized_provenance(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -6296,6 +6316,7 @@ echo "Version: 0.8.13+commit.abaa5c0e"
             assert_eq!(project.settings.solc.evm_version, Some(EvmVersion::Osaka));
             config.normalize_evm_version_for_project(&project);
             assert_eq!(config.evm_version, EvmVersion::Osaka);
+            assert!(!Config::from_provider(&config).unwrap().evm_version_from_local_solc);
             Ok(())
         });
     }
@@ -6328,6 +6349,34 @@ echo "Version: 0.8.13+commit.abaa5c0e"
 
             let roundtrip = Config::from_provider(&explicit_env).unwrap();
             assert_eq!(roundtrip.evm_version, EvmVersion::Cancun);
+
+            // An explicit default EVM version is preserved across `Config` provider round trips.
+            jail.clear_env();
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                solc = '0.8.13'
+                evm_version = 'osaka'
+            ",
+            )?;
+            let explicit_default = Config::load().unwrap();
+            assert_eq!(explicit_default.evm_version, EvmVersion::Osaka);
+            let roundtrip = Config::from_provider(&explicit_default).unwrap();
+            assert_eq!(roundtrip.evm_version, EvmVersion::Osaka);
+            let merged = explicit_default.merge_inline_provider(("ffi", true)).unwrap();
+            assert_eq!(Config::from_provider(&merged).unwrap().evm_version, EvmVersion::Osaka);
+
+            // Provenance cannot be set from a config file.
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                solc = '0.8.13'
+                evm_version_configured = true
+            ",
+            )?;
+            assert_eq!(Config::load().unwrap().evm_version, EvmVersion::London);
             Ok(())
         });
     }
