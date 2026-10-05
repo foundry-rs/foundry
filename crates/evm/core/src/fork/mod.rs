@@ -29,8 +29,6 @@ pub struct CreateFork {
     pub url: String,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
-    /// Exact source and block identity resolved before fork construction.
-    pub resolved: Option<Fork>,
 }
 
 /// A prepared remote fork. The RPC client and block are shared by preflight and execution.
@@ -70,14 +68,17 @@ impl Fork {
         }
     }
 
-    pub(crate) fn matches(
-        &self,
-        url: &str,
-        headers: Option<&[String]>,
-        jwt: Option<&str>,
-        selector: Option<BlockNumber>,
-    ) -> bool {
-        self.matches_source(url, headers, jwt) && self.selector == selector
+    /// Whether this backend's fork was created from the requested source, selector, and state mode.
+    pub fn matches_request(&self, opts: &EvmOpts) -> bool {
+        opts.fork_url.as_deref().is_some_and(|url| {
+            self.state_by_number == opts.fork_state_by_number
+                && self.selector == opts.fork_block_number
+                && self.matches_source(
+                    url,
+                    opts.fork_headers.as_deref().or(opts.rpc_headers.as_deref()),
+                    opts.rpc_jwt.as_deref(),
+                )
+        })
     }
 
     pub(crate) fn matches_source(

@@ -26,7 +26,10 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::{fork::Fork, opts::EvmOpts};
+use foundry_evm::{
+    backend::Backend, core::evm::FoundryEvmNetwork, executors::ExecutorBuilder, fork::Fork,
+    opts::EvmOpts,
+};
 
 use crate::{
     cmd::test::{FilterArgs, RerunFailure},
@@ -129,18 +132,21 @@ pub struct MutationRunResult {
 /// - Per-file mutation handling with caching
 /// - Parallel mutation execution
 /// - Result aggregation and reporting
-pub async fn run_mutation_testing(
+pub async fn run_mutation_testing<FEN: FoundryEvmNetwork>(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
-    resolved_fork: Option<Fork>,
+    backend: Backend<FEN>,
+    executor_builder: ExecutorBuilder<FEN>,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let create2_deployer_available =
-        evm_opts.can_use_create2_deployer_resolved(resolved_fork.as_ref()).await?;
+        backend.can_use_create2_deployer(evm_opts.create2_deployer).await?;
+    let fork = backend.fork()?;
     let mutation_evm = MutationEvmConfig {
         opts: evm_opts.clone(),
-        resolved_fork: resolved_fork.clone(),
+        backend,
+        executor_builder,
         create2_deployer_available,
     };
     let num_workers = mutation_config.effective_workers();
@@ -176,7 +182,7 @@ pub async fn run_mutation_testing(
         &config,
         &execution_cache_output,
         &evm_opts,
-        resolved_fork.as_ref(),
+        fork.as_ref(),
         &mutation_config.filter_args,
         mutation_config.rerun_failures.as_deref(),
         num_workers,
