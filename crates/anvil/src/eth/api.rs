@@ -36,7 +36,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, TxType, Typed2718,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
@@ -1636,7 +1636,7 @@ impl EthApi<FoundryNetwork> {
         idx: Index,
     ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
-        if block == BlockNumber::Pending {
+        if block.is_pending() {
             return Ok(self.pending_block_full().await?.and_then(|block| {
                 let WithOtherFields { inner: block, .. } = block.0;
                 block.transactions.into_transactions().nth(idx.into())
@@ -1919,7 +1919,7 @@ impl EthApi<FoundryNetwork> {
             if gas_price > 0 {
                 // Blob gas is paid on top of execution gas, so reserve its maximum cost first. Like
                 // the call itself, pay no blob fee when no cap is given.
-                if inner.minimal_tx_type() == TxType::Eip4844
+                if inner.minimal_tx_type().is_eip4844()
                     && let Some(hashes) = &inner.blob_versioned_hashes
                 {
                     let max_fee_per_blob_gas = fees.max_fee_per_blob_gas.unwrap_or_default();
@@ -2726,7 +2726,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
-        if number == BlockNumber::Pending {
+        if number.is_pending() {
             return Ok(Some(self.pending_block().await?));
         }
 
@@ -2741,7 +2741,7 @@ impl EthApi<FoundryNetwork> {
         number: BlockNumber,
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
-        if number == BlockNumber::Pending {
+        if number.is_pending() {
             let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
             return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
@@ -2757,7 +2757,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
-        if number == BlockNumber::Pending {
+        if number.is_pending() {
             return self.pending_block_full().await;
         }
         self.backend.block_by_number_full(number).await
@@ -2917,7 +2917,7 @@ impl EthApi<FoundryNetwork> {
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
-        if block_number == BlockNumber::Pending {
+        if block_number.is_pending() {
             let txs = self.pool.ready_transactions().collect();
             let block = self.backend.pending_block(txs).await?;
             return Ok(Some(U256::from(block.block.body.transactions.len())));

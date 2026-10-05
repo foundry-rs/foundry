@@ -3279,7 +3279,7 @@ async fn test_debug_trace_block_without_history() {
                 Err(error) => TraceResult::Error { error: error.to_string(), tx_hash: Some(*hash) },
             };
             assert_eq!(
-                matches!(trace, TraceResult::Error { .. }),
+                trace.is_error(),
                 matches!(
                     options.tracer,
                     Some(GethDebugTracerType::BuiltInTracer(

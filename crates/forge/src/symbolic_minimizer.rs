@@ -794,7 +794,7 @@ fn minimize_uint(
     let bit_limit = bits.min(256);
     for bit in (0..bit_limit).rev() {
         let mask = U256::ONE << bit;
-        if current & mask == U256::ZERO {
+        if (current & mask).is_zero() {
             continue;
         }
         let candidate = current & !mask;
@@ -898,7 +898,7 @@ fn minimize_address(
 }
 
 fn address_candidates(current: Address) -> Vec<Address> {
-    if current == Address::ZERO {
+    if current.is_zero() {
         return Vec::new();
     }
 
@@ -929,7 +929,7 @@ fn minimize_fixed_bytes(
     size: usize,
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
 ) -> bool {
-    if current != B256::ZERO
+    if !current.is_zero()
         && accept_candidate(value, DynSolValue::FixedBytes(B256::ZERO, size), try_value)
     {
         return true;

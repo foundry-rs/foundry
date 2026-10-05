@@ -405,7 +405,7 @@ async fn recovery_warning(
     recovery_authority: Address,
     rpc: &RpcOpts,
 ) -> Result<Option<String>> {
-    if recovery_authority != Address::ZERO {
+    if !recovery_authority.is_zero() {
         return Ok(None);
     }
 
@@ -441,7 +441,7 @@ async fn recovery_warning(
 /// registry's spec-aware check), since a not-yet-active precompile is never a sound authority and
 /// becomes unclaimable once it activates.
 fn invalid_recovery_authority_message(recovery_authority: Address) -> Option<String> {
-    if recovery_authority == Address::ZERO {
+    if recovery_authority.is_zero() {
         return None;
     }
     if recovery_authority.is_virtual() {
@@ -467,7 +467,7 @@ fn decode_claim_receipt(receipt: &Bytes) -> Result<IReceivePolicyGuard::ClaimRec
         "unsupported ReceivePolicyGuard claim receipt version {}",
         decoded.version
     );
-    ensure!(decoded.token != Address::ZERO, "ReceivePolicyGuard claim receipt token is zero");
+    ensure!(!decoded.token.is_zero(), "ReceivePolicyGuard claim receipt token is zero");
     ensure!(
         decoded.recipient != RECEIVE_POLICY_GUARD_ADDRESS,
         "ReceivePolicyGuard claim receipt recipient cannot be the guard precompile"
@@ -509,7 +509,7 @@ fn receipt_payload(
         "originator": format!("{}", decoded.originator),
         "recipient": format!("{}", decoded.recipient),
         "recipient_is_virtual": decoded.recipient.is_virtual(),
-        "claim_target": if decoded.recipient.is_virtual() || decoded.recoveryAuthority == Address::ZERO {
+        "claim_target": if decoded.recipient.is_virtual() || decoded.recoveryAuthority.is_zero() {
             Value::Null
         } else {
             json!(format!("{}", decoded.recipient))
@@ -573,7 +573,7 @@ fn print_claim_hint(payload: &Value) -> Result<()> {
 }
 
 fn recovery_mode(recovery_authority: Address) -> &'static str {
-    if recovery_authority == Address::ZERO { "originator" } else { "authority" }
+    if recovery_authority.is_zero() { "originator" } else { "authority" }
 }
 
 /// Labels a `BlockedReason` discriminant; receipts carry it as a raw `u8`.

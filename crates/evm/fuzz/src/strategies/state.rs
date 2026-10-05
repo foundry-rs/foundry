@@ -594,7 +594,7 @@ impl FuzzDictionary {
             // Don't add 0 to the dictionary as it's already present.
             if !inst.immediate.is_empty()
                 && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
-                && push_value != U256::ZERO
+                && !push_value.is_zero()
             {
                 self.insert_push_value_u256(push_value, &mut seen);
             }

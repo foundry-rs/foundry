@@ -685,25 +685,22 @@ impl CallTxEnv {
 
     fn uses_protocol_call_nonce(&self) -> bool {
         match self {
-            Self::Eth(tx) => matches!(tx.kind, TxKind::Call(_)),
+            Self::Eth(tx) => tx.kind.is_call(),
             #[cfg(feature = "base")]
             Self::Base(tx) => {
                 tx.eip8130.is_none()
                     && tx.base.tx_type != DEPOSIT_TRANSACTION_TYPE
-                    && matches!(tx.base.kind, TxKind::Call(_))
+                    && tx.base.kind.is_call()
             }
             #[cfg(feature = "monad")]
-            Self::Monad(tx) => matches!(tx.kind, TxKind::Call(_)),
+            Self::Monad(tx) => tx.kind.is_call(),
             #[cfg(feature = "optimism")]
-            Self::Op(tx) => matches!(tx.base.kind, TxKind::Call(_)),
+            Self::Op(tx) => tx.base.kind.is_call(),
             Self::Tempo(tx) => tx.tempo_tx_env.as_ref().map_or_else(
-                || matches!(tx.inner.kind, TxKind::Call(_)),
+                || tx.inner.kind.is_call(),
                 |aa| {
                     aa.nonce_key.is_zero()
-                        && aa
-                            .aa_calls
-                            .first()
-                            .is_some_and(|call| matches!(call.to, TxKind::Call(_)))
+                        && aa.aa_calls.first().is_some_and(|call| call.to.is_call())
                 },
             ),
         }
@@ -10003,7 +10000,7 @@ where
         }
 
         // EIP-3860 initcode size validation, respects --code-size-limit / --disable-code-size-limit
-        if evm_env.cfg_env.spec >= SpecId::SHANGHAI && tx.kind() == TxKind::Create {
+        if evm_env.cfg_env.spec >= SpecId::SHANGHAI && tx.kind().is_create() {
             let max_initcode_size = evm_env
                 .cfg_env
                 .limit_contract_code_size
@@ -10375,7 +10372,7 @@ fn commit_cache(db: &mut dyn Db, cache: revm::database::Cache) -> Result<(), Blo
             AccountState::None => unreachable!(),
         }
         for (slot, value) in storage {
-            let original = if account_state == AccountState::StorageCleared {
+            let original = if account_state.is_storage_cleared() {
                 U256::ZERO
             } else {
                 db.storage(address, slot)?

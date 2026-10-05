@@ -981,7 +981,7 @@ fn push_scalar_value_candidates(
             push_candidate(candidates, limit, DynSolValue::Bool(false));
         }
         DynSolValue::Uint(value, bits) => {
-            if *value != U256::ZERO {
+            if !value.is_zero() {
                 push_candidate(candidates, limit, DynSolValue::Uint(U256::ZERO, *bits));
             }
             if *value > U256::ONE {

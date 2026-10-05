@@ -63,7 +63,7 @@ pub async fn probe_evm_version<N: Network, P: Provider<N>>(
         return None;
     };
     let mask = U256::from_be_bytes(word);
-    if mask >> PROBES.len() != U256::ZERO {
+    if !(mask >> PROBES.len()).is_zero() {
         trace!(%mask, "unexpected EVM version probe mask");
         return None;
     }

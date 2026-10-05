@@ -551,7 +551,7 @@ async fn revoke(
         retire_session_entry(session_id)?;
         return print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::AlreadyRevoked);
     }
-    if info.keyId == Address::ZERO {
+    if info.keyId.is_zero() {
         return match unprovisioned_policy {
             UnprovisionedKeyPolicy::RevokeLocally => {
                 retire_session_entry(session_id)?;

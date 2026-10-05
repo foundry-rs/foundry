@@ -65,7 +65,6 @@ use revm::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         FrameInput, Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
-        return_ok,
     },
 };
 use serde_json::Value;
@@ -1463,10 +1462,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if prank.delegate_call
-                && curr_depth == prank.depth
-                && call.scheme == CallScheme::DelegateCall
-            {
+            if prank.delegate_call && curr_depth == prank.depth && call.scheme.is_delegate_call() {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
                 if let Some(new_origin) = prank.new_origin {
@@ -2447,7 +2443,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
-            let call_failed = !matches!(outcome.result.result, return_ok!());
+            let call_failed = !outcome.result.result.is_ok();
             if call_failed {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
