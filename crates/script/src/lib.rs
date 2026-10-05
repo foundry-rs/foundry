@@ -2157,7 +2157,7 @@ mod tests {
         assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn tempo_session_sets_script_sender_to_root_account() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x22; 32]);
@@ -2190,7 +2190,7 @@ mod tests {
         assert_eq!(state.script_config.evm_opts.sender, root);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn tempo_session_resume_multi_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x55; 32]);
@@ -2221,7 +2221,7 @@ mod tests {
         assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn tempo_session_resume_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x77; 32]);
@@ -2251,7 +2251,7 @@ mod tests {
         assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn tempo_session_non_resume_multi_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x66; 32]);
@@ -2281,7 +2281,7 @@ mod tests {
         assert_eq!(state.script_config.evm_opts.sender, root);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn tempo_session_initial_broadcast_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x88; 32]);
