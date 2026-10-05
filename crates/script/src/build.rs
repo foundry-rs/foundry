@@ -348,19 +348,23 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             }
             let progress = ScriptProgress::default();
             for index in 0..sequence.sequences().len() {
-                let provider = ProviderBuilder::from_config_with_url(
+                let provider = ProviderBuilder::<FEN::Network>::from_config_with_url(
                     &self.script_config.config,
                     sequence.sequences()[index].rpc_url(),
                 )?
                 .build()?;
-                // A mined signed attempt can lack a pending hash and receipt, for example when an
-                // older snapshot dropped a revert, so reconcile it before replaying anything.
+                // A mined signed attempt can lack a pending hash and receipt, for example when its
+                // response was lost or an older snapshot dropped a revert, so reconcile it before
+                // requesting signers or replaying anything.
                 for operation in 0..sequence.sequences()[index].transactions.len() {
                     let deployment = &sequence.sequences()[index];
                     if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
                         && !deployment.pending.contains(&hash)
                         && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
-                        && provider.get_transaction_receipt(hash).await?.is_some()
+                        && let Some(receipt) = provider.get_transaction_receipt(hash).await?
+                        && receipt.block_number().is_some()
+                        && receipt.block_hash().is_some()
+                        && receipt.transaction_index().is_some()
                     {
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     }

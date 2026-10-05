@@ -534,6 +534,47 @@ async fn cast_run_discovers_fork_endpoint_once(cmd: _) {
     }
 }
 
+// Tracing replays exact chain history, so it ignores the number-based state opt-in.
+#[casttest]
+async fn cast_run_keeps_hash_addressed_state(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx_hash = provider
+        .send_transaction(TransactionRequest::default().with_from(from).with_to(from).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap()
+        .transaction_hash()
+        .to_string();
+    let mut endpoint = handle.http_endpoint();
+    for method in ["anvil_nodeInfo", "anvil_metadata"] {
+        endpoint = spawn_rpc_proxy_method_not_found_before(endpoint, method, usize::MAX).await;
+    }
+    let mut recorded = Vec::new();
+    for method in ["eth_getBalance", "eth_getTransactionCount", "eth_getCode", "eth_getStorageAt"] {
+        let (next_endpoint, requests) = spawn_rpc_proxy_recording_method(endpoint, method).await;
+        endpoint = next_endpoint;
+        recorded.push(requests);
+    }
+
+    cmd.env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+    cmd.args(["run", &tx_hash, "--rpc-url", &endpoint]).assert_success();
+
+    let mut reads = 0;
+    for requests in recorded {
+        let requests = requests.lock().unwrap();
+        reads += requests.len();
+        assert!(
+            requests.iter().all(|params| params.as_array().unwrap().last().unwrap().is_object()),
+            "{requests:?}"
+        );
+    }
+    assert!(reads > 0);
+}
+
 // A replay that does not reproduce the transaction's receipt must say so. The `--evm-version`
 // overrides stand in for rules the replay does not model: Shanghai predates the `MCOPY` the first
 // transaction executes, and Cancun predates the EIP-7623 calldata floor that prices the second.
