@@ -5,7 +5,7 @@
 
 use crate::{
     MultiContractRunnerBuilder,
-    cmd::test::{FilterArgs, RerunFailure},
+    cmd::test::{FilterArgs, RerunFailure, dispatch_network},
     mutation::{
         SurvivedSpans,
         mutant::{Mutant, MutationResult},
@@ -26,6 +26,7 @@ use foundry_evm::{
     fork::ResolvedFork,
     opts::EvmOpts,
 };
+use foundry_evm_networks::NetworkVariant;
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -675,63 +676,15 @@ fn compile_and_test(
     selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
-    if evm.opts.networks.is_tempo() {
-        compile_and_test_inner::<TempoEvmNetwork>(
-            config,
-            evm,
-            filter_args,
-            rerun_failures,
-            selected_sources_relative,
-            isolate,
-            ExecutorBuilder::<TempoEvmNetwork>::new(),
-        )
-    } else {
-        #[cfg(feature = "base")]
-        if evm.opts.networks.is_base() {
-            return compile_and_test_inner::<BaseEvmNetwork>(
-                config,
-                evm,
-                filter_args,
-                rerun_failures,
-                selected_sources_relative,
-                isolate,
-                ExecutorBuilder::<BaseEvmNetwork>::new(),
-            );
-        }
-        #[cfg(feature = "monad")]
-        if evm.opts.networks.is_monad() {
-            return compile_and_test_inner::<MonadEvmNetwork>(
-                config,
-                evm,
-                filter_args,
-                rerun_failures,
-                selected_sources_relative,
-                isolate,
-                ExecutorBuilder::<MonadEvmNetwork>::new(),
-            );
-        }
-        #[cfg(feature = "optimism")]
-        if evm.opts.networks.is_optimism() {
-            return compile_and_test_inner::<OpEvmNetwork>(
-                config,
-                evm,
-                filter_args,
-                rerun_failures,
-                selected_sources_relative,
-                isolate,
-                ExecutorBuilder::<OpEvmNetwork>::new(),
-            );
-        }
-        compile_and_test_inner::<EthEvmNetwork>(
-            config,
-            evm,
-            filter_args,
-            rerun_failures,
-            selected_sources_relative,
-            isolate,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        )
-    }
+    dispatch_network!(&evm.opts, |Net| compile_and_test_inner::<Net>(
+        config,
+        evm,
+        filter_args,
+        rerun_failures,
+        selected_sources_relative,
+        isolate,
+        ExecutorBuilder::<Net>::new(),
+    ))
 }
 
 fn compile_and_test_inner<FEN: FoundryEvmNetwork>(

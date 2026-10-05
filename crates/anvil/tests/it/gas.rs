@@ -6,7 +6,10 @@ use alloy_genesis::Genesis;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{AccessList, AccessListItem, BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{
+    AccessList, AccessListItem, BlockId, BlockNumberOrTag, TransactionRequest,
+    trace::parity::TraceType,
+};
 use alloy_serde::WithOtherFields;
 use anvil::{
     EthereumHardfork, NodeConfig,
@@ -175,6 +178,34 @@ async fn test_respect_base_fee() {
 
     tx.set_gas_price(base_fee);
     provider.send_transaction(tx.clone()).await.unwrap().get_receipt().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cap_only_calls_pay_the_base_fee() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    // Returns GASPRICE.
+    let contract = Address::repeat_byte(0x3a);
+    api.anvil_set_code(contract, bytes!("3a5f5260205ff3")).await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let base_fee = block.header.base_fee_per_gas.unwrap() as u128;
+
+    let cap_only =
+        TransactionRequest::default().from(from).to(contract).max_fee_per_gas(base_fee * 10);
+    let tipped = cap_only.clone().max_priority_fee_per_gas(1);
+    for (request, expected) in [(cap_only, base_fee), (tipped, base_fee + 1)] {
+        let request = WithOtherFields::new(request);
+        let output = provider.call(request.clone()).block(BlockId::latest()).await.unwrap();
+        assert_eq!(U256::from_be_slice(&output), U256::from(expected));
+
+        let traced = api
+            .trace_call(request, [TraceType::Trace].into_iter().collect(), Some(BlockId::latest()))
+            .await
+            .unwrap();
+        assert_eq!(U256::from_be_slice(&traced.output), U256::from(expected));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

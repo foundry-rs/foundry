@@ -25,6 +25,7 @@ mod core;
 mod exact_fork;
 mod fork_bal;
 mod fuzz;
+mod halts;
 mod invariant;
 mod logs;
 mod mutation;
@@ -2576,10 +2577,11 @@ contract SetupThenTestSelfdestructTest is Test {
     .assert_success();
 }
 
+// `waste()` spends more gas than the forked block's gas limit, so it only succeeds with
+// `--disable-block-gas-limit`.
 #[forgetest_init]
-#[ignore = "Too slow"]
-fn can_disable_block_gas_limit(prj: _, cmd: _) {
-    let endpoint = rpc::next_http_archive_rpc_url();
+async fn can_disable_block_gas_limit_on_fork(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test().with_gas_limit(Some(30_000_000))).await;
 
     prj.add_test(
         "Contract.t.sol",
@@ -2605,10 +2607,44 @@ contract GasLimitTest is Test {
     }
 }
    "#
-        .replace("<rpc>", &endpoint),
+        .replace("<rpc>", &handle.http_endpoint()),
     );
 
-    cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+    cmd.args(["test", "--isolate"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Contract.t.sol:GasLimitTest
+[FAIL: EvmError: Revert] test() (block: 0) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Contract.t.sol:GasLimitTest
+[FAIL: EvmError: Revert] test() (block: 0) ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["test", "--isolate", "--disable-block-gas-limit"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Contract.t.sol:GasLimitTest
+[PASS] test() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 }
 
 #[forgetest]
@@ -5833,30 +5869,6 @@ async fn flaky_can_get_broadcast_txs(prj: _, cmd: _) {
     assert!(broadcast_path.exists() && broadcast_path.is_dir());
 
     cmd.forge_fuse().args(["test", "--mc", "GetBroadcastTest", "-vvv"]).assert_success();
-}
-
-// See <https://github.com/foundry-rs/foundry/issues/9297>
-#[forgetest_init]
-#[ignore = "RPC Service Unavailable"]
-fn test_roll_scroll_fork_with_cancun(prj: _, cmd: _) {
-    prj.add_test(
-        "ScrollForkTest.t.sol",
-        r#"
-
-import {Test} from "forge-std/Test.sol";
-
-contract ScrollForkTest is Test {
-    function test_roll_scroll_fork_to_tx() public {
-        vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
-        bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
-        vm.rollFork(targetTxHash);
-    }
-}
-   "#,
-    );
-
-    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
-        .assert_success();
 }
 
 // Test that failed fork errors still surface the provider hostname.
