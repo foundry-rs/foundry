@@ -381,6 +381,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.to_mut().allow_cheatcode_access(account)
     }
 
+    fn revoke_cheatcode_access(&mut self, account: &Address) -> bool {
+        self.backend.to_mut().revoke_cheatcode_access(account)
+    }
+
     fn has_cheatcode_access(&self, account: &Address) -> bool {
         self.backend.has_cheatcode_access(account)
     }

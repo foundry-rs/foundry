@@ -96,6 +96,11 @@ impl TestOutcome {
         self.tests().filter(|(_, t)| t.status.is_success())
     }
 
+    /// Returns an iterator over all individual skipped tests and their names.
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status.is_skipped())
+    }
+
     /// Returns an iterator over all individual failing tests and their names.
     pub fn failures(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status.is_failure())
@@ -285,6 +290,11 @@ impl SuiteResult {
     /// Returns an iterator over all individual succeeding tests and their names.
     pub fn successes(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.tests().filter(|(_, t)| t.status.is_success())
+    }
+
+    /// Returns an iterator over all individual skipped tests and their names.
+    pub fn skips(&self) -> impl Iterator<Item = (&String, &TestResult)> {
+        self.tests().filter(|(_, t)| t.status.is_skipped())
     }
 
     /// Returns an iterator over all individual failing tests and their names.
