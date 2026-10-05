@@ -203,9 +203,17 @@ impl TimeManager {
         } else {
             (current.saturating_add(state.offset) as u64, false)
         };
-        // Ensures that the timestamp is always increasing
-        if next_timestamp < last_timestamp {
-            next_timestamp = last_timestamp + 1;
+        // Equal timestamps are only allowed when explicitly requested (exact override or
+        // interval, e.g. `--block-time 0`). On the default path timestamps must strictly
+        // increase.
+        let allow_equal = exact_timestamp.is_some() || state.interval.is_some();
+        let too_low = if allow_equal {
+            next_timestamp < last_timestamp
+        } else {
+            next_timestamp <= last_timestamp
+        };
+        if too_low {
+            next_timestamp = last_timestamp.saturating_add(1);
         }
         let next_offset = update_offset.then_some((next_timestamp as i128) - current);
         (next_timestamp, exact_timestamp.map(|exact| exact.generation), next_offset)
@@ -326,5 +334,30 @@ mod tests {
         time.revert_time_increase(pending);
 
         assert_eq!(time.offset(), reset_offset);
+    }
+
+    #[test]
+    fn default_path_timestamps_strictly_increase() {
+        let time = TimeManager::new(1_000);
+        let mut prev = 1_000;
+        for _ in 0..5 {
+            let next = time.next_timestamp();
+            assert!(next > prev, "{next} must be > {prev}");
+            prev = next;
+        }
+    }
+
+    #[test]
+    fn zero_interval_still_allows_equal_timestamps() {
+        let time = TimeManager::new(1_000);
+        time.set_block_timestamp_interval(0);
+        assert_eq!(time.next_timestamp(), 1_000);
+    }
+
+    #[test]
+    fn exact_next_timestamp_may_equal_last() {
+        let time = TimeManager::new(1_000);
+        time.set_next_block_timestamp(1_000).unwrap();
+        assert_eq!(time.next_timestamp(), 1_000);
     }
 }
