@@ -34,6 +34,7 @@ use std::{
     },
     time::Duration,
 };
+use tempo_alloy::TempoNetwork;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -6324,6 +6325,71 @@ Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
         receipts(),
         [("0x76".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
     );
+}
+
+// Bundle estimation must preserve script-specified gas and still estimate ordinary transactions.
+#[forgetest_init]
+async fn tempo_script_preserves_fixed_gas_limit(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoFixedGas.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoFixedGas is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool fixedSuccess,) = address(0xBEEF).call{gas: 500000}("");
+        require(fixedSuccess);
+        (bool estimatedSuccess,) = address(0xBEEF).call("");
+        require(estimatedSuccess);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    // Both calls must be estimable before any transaction has been broadcast.
+    api.anvil_set_code(address!("000000000000000000000000000000000000beef"), hex!("00").into())
+        .await
+        .unwrap();
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_estimateGas", |_, _| {
+        Value::from("0x186a0")
+    })
+    .await;
+    let (rpc, estimates) = spawn_rpc_proxy_recording_method(rpc, "eth_estimateGas").await;
+    let gas_limits = |dry_run| {
+        let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| {
+                path.ends_with("run-latest.json")
+                    && path.components().any(|part| part.as_os_str() == "dry-run") == dry_run
+            })
+            .expect("no script artifact found");
+        let sequence =
+            foundry_common::fs::read_json_file::<ScriptSequence<TempoNetwork>>(&path).unwrap();
+        sequence
+            .transactions
+            .iter()
+            .map(|tx| (tx.is_fixed_gas_limit, tx.tx().gas().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--network",
+        "tempo",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-estimate-multiplier",
+        "130",
+    ]);
+    cmd.assert_success();
+    assert_eq!(gas_limits(true), [(true, 500000), (false, 130000)]);
+    assert_eq!(estimates.lock().unwrap().len(), 1);
+
+    cmd.arg("--broadcast").assert_success();
+    assert_eq!(gas_limits(false), [(true, 500000), (false, 130000)]);
+    // The second run estimates the ordinary call during bundling and again before sending.
+    assert_eq!(estimates.lock().unwrap().len(), 3);
 }
 
 #[forgetest_init]
