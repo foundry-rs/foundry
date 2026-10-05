@@ -1575,6 +1575,33 @@ Error: git clone exited with code 128
     assert!(!prj.root().join("lib/parent").exists());
 }
 
+#[forgetest]
+fn install_fails_on_nested_soldeer_failure(prj: _, cmd: _) {
+    let source = tempfile::tempdir().unwrap();
+    init_local_install_source(source.path());
+    fs::write(
+        source.path().join("foundry.toml"),
+        r#"[dependencies]
+bad = { version = "1.0.0", url = "http://127.0.0.1:1/bad.zip" }
+"#,
+    )
+    .unwrap();
+    fs::write(source.path().join("soldeer.lock"), "version = 2\n\ndependencies = []\n").unwrap();
+    let git = Git::new(source.path());
+    git.add(["foundry.toml", "soldeer.lock"]).unwrap();
+    git.commit("add soldeer").unwrap();
+
+    configure_local_install(&mut cmd, source.path());
+    cmd.args(["install", "--no-git", "fixture/parent"]).assert_failure().stderr_eq(str![[r#"
+...
+Error: Failed to install soldeer dependencies for parent: Failed to run soldeer install: [..]
+
+"#]]);
+
+    // The git dependency itself stays installed.
+    assert!(prj.root().join("lib/parent/source.txt").exists());
+}
+
 fn init_local_install_source(path: &Path) {
     fs::create_dir_all(path).unwrap();
     let git = Git::new(path);

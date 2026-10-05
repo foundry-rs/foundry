@@ -321,9 +321,9 @@ impl DependencyInstallOpts {
             sh_status!("{msg}")?;
 
             // Check if the dependency has soldeer.lock and install soldeer dependencies
-            if let Err(e) = install_soldeer_deps_if_needed(&path).await {
-                sh_warn!("Failed to install soldeer dependencies for {}: {e}", dep.name)?;
-            }
+            install_soldeer_deps_if_needed(&path).await.map_err(|e| {
+                eyre::eyre!("Failed to install soldeer dependencies for {}: {e}", dep.name)
+            })?;
         }
 
         // update `libs` in config if not included yet
