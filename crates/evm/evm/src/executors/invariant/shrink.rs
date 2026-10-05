@@ -1,6 +1,6 @@
 use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
-    campaign::execute_invariant_replay_tx,
+    campaign::{apply_block_delay, execute_invariant_replay_tx},
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
         error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
@@ -12,13 +12,10 @@ use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256, map::HashSet}
 use alloy_sol_types::SolCall;
 use foundry_common::ContractsByAddress;
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{
-    FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
-};
+use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use revm::context::Block;
 use std::{cell::Cell, fmt::Write, hash::Hash};
 
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
@@ -376,32 +373,6 @@ fn apply_warp_roll(mut result: BasicTxDetails, warp: U256, roll: U256) -> BasicT
         result.roll = Some(roll);
     }
     result
-}
-
-/// Applies warp/roll adjustments directly to the executor's environment.
-fn apply_warp_roll_to_env<FEN: FoundryEvmNetwork>(
-    executor: &mut Executor<FEN>,
-    warp: U256,
-    roll: U256,
-) {
-    if warp > U256::ZERO || roll > U256::ZERO {
-        let ts = executor.evm_env().block_env.timestamp();
-        let num = executor.evm_env().block_env.number();
-        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
-        executor.evm_env_mut().block_env.set_number(num + roll);
-
-        let block_env = executor.evm_env().block_env.clone();
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                let bts = block.timestamp();
-                let bnum = block.number();
-                block.set_timestamp(bts + warp);
-                block.set_number(bnum + roll);
-            } else {
-                cheatcodes.block = Some(block_env);
-            }
-        }
-    }
 }
 
 /// Builds the final shrunk sequence from the shrinker state.
@@ -1131,7 +1102,7 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     }
 
     // Apply any remaining accumulated warp/roll before calling invariant.
-    apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
+    apply_block_delay(&mut executor, accumulated_warp, accumulated_roll);
 
     let (inv_result, success) = call_invariant_function(&executor, test_address, calldata)?;
 
