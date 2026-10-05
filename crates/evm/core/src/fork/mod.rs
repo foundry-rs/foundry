@@ -29,8 +29,6 @@ pub struct CreateFork {
     pub url: String,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
-    /// Exact source and block identity resolved before fork construction.
-    pub resolved: Option<Fork>,
 }
 
 /// A prepared remote fork. The RPC client and block are shared by preflight and execution.
@@ -44,7 +42,6 @@ pub struct Fork {
     selector: Option<BlockNumber>,
     pub(crate) block: Arc<AnyRpcBlock>,
     context: ForkContext,
-    pub(crate) state_by_number: bool,
 }
 
 impl Fork {
@@ -66,18 +63,19 @@ impl Fork {
             selector: opts.fork_block_number,
             block: Arc::new(block),
             context,
-            state_by_number: opts.fork_state_by_number,
         }
     }
 
-    pub(crate) fn matches(
-        &self,
-        url: &str,
-        headers: Option<&[String]>,
-        jwt: Option<&str>,
-        selector: Option<BlockNumber>,
-    ) -> bool {
-        self.matches_source(url, headers, jwt) && self.selector == selector
+    /// Whether this backend's fork was created from the requested source, selector, and state mode.
+    pub fn matches_request(&self, opts: &EvmOpts) -> bool {
+        opts.fork_url.as_deref().is_some_and(|url| {
+            self.selector == opts.fork_block_number
+                && self.matches_source(
+                    url,
+                    opts.fork_headers.as_deref().or(opts.rpc_headers.as_deref()),
+                    opts.rpc_jwt.as_deref(),
+                )
+        })
     }
 
     pub(crate) fn matches_source(
@@ -109,10 +107,6 @@ impl Fork {
         BlockId::from((self.hash(), Some(false)))
     }
 
-    pub(crate) fn state_block_id(&self) -> BlockId {
-        if self.state_by_number { BlockId::number(self.number()) } else { self.exact_block_id() }
-    }
-
     pub(crate) fn block(&self) -> BlockNumHash {
         BlockNumHash::new(self.number(), self.hash())
     }
@@ -136,7 +130,6 @@ impl Fork {
         fork.selector = Some(block.number);
         fork.block = Arc::new(response);
         fork.context.block_number = block.number;
-        fork.state_by_number = false;
         Ok(fork)
     }
 
@@ -146,30 +139,21 @@ impl Fork {
 
     /// Returns the stable, redacted identity used by persisted execution caches.
     pub fn fingerprint(&self) -> B256 {
-        let mut encoded = serde_json::to_vec(&(
+        let encoded = serde_json::to_vec(&(
             "foundry-resolved-fork-v1",
             self.source_id,
             self.block(),
             self.context,
         ))
         .expect("fork identity is serializable");
-        if self.state_by_number {
-            encoded.extend_from_slice(b"state-by-number");
-        }
         keccak256(encoded)
     }
 }
 
 impl PartialEq for Fork {
     fn eq(&self, other: &Self) -> bool {
-        (self.source_id, self.selector, self.block(), self.context, self.state_by_number)
-            == (
-                other.source_id,
-                other.selector,
-                other.block(),
-                other.context,
-                other.state_by_number,
-            )
+        (self.source_id, self.selector, self.block(), self.context)
+            == (other.source_id, other.selector, other.block(), other.context)
     }
 }
 
@@ -177,8 +161,7 @@ impl Eq for Fork {}
 
 impl Hash for Fork {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (self.source_id, self.selector, self.block(), self.context, self.state_by_number)
-            .hash(state);
+        (self.source_id, self.selector, self.block(), self.context).hash(state);
     }
 }
 
@@ -196,7 +179,7 @@ impl fmt::Debug for Fork {
 }
 
 fn source_id(url: &str, headers: Option<&[String]>, jwt: Option<&str>) -> B256 {
-    let mut encoded = Vec::from(b"foundry-resolved-fork-source-v1".as_slice());
+    let encoded = Vec::from(b"foundry-resolved-fork-source-v1".as_slice());
     encode_source_part(&mut encoded, url.as_bytes());
     let headers = headers.unwrap_or_default();
     encoded.extend_from_slice(
@@ -288,20 +271,6 @@ mod tests {
                 "requireCanonical": false,
             })
         );
-    }
-
-    #[test]
-    fn fork_state_by_number_preserves_anchor_and_separates_identity() {
-        let block = BlockNumHash::new(42, B256::with_last_byte(1));
-        let exact = Fork::test("http://localhost:8545", None, None, None, block, context(42));
-        let mut numbered = exact.clone();
-        numbered.state_by_number = true;
-        assert_eq!(serde_json::to_value(numbered.state_block_id()).unwrap(), json!("0x2a"));
-        assert_eq!(exact.state_block_id(), exact.exact_block_id());
-        assert_eq!(numbered.exact_block_id(), exact.exact_block_id());
-        assert_ne!(numbered, exact);
-        assert_eq!(numbered.source_id, exact.source_id);
-        assert_ne!(numbered.fingerprint(), exact.fingerprint());
     }
 
     #[test]
