@@ -131,7 +131,7 @@ async fn test_trace_block_opcode_gas_local() {
         .unwrap();
     let by_hash: Option<BlockOpcodeGas> = handle
         .http_provider()
-        .raw_request("trace_blockOpcodeGas".into(), (BlockId::Hash(block_hash.into()),))
+        .raw_request("trace_blockOpcodeGas".into(), (BlockId::hash(block_hash),))
         .await
         .unwrap();
 
@@ -310,10 +310,7 @@ async fn test_debug_account_info_at_local() {
         .await
         .unwrap();
     let by_hash: Option<AccountInfo> = provider
-        .raw_request(
-            "debug_accountInfoAt".into(),
-            (BlockId::Hash(block_hash.into()), Index::from(0), to),
-        )
+        .raw_request("debug_accountInfoAt".into(), (BlockId::hash(block_hash), Index::from(0), to))
         .await
         .unwrap();
 
@@ -758,10 +755,7 @@ async fn test_trace_call_safe_at_fork_point() {
     // never the upstream chain's post-fork block 2.
     let by_safe: TraceResults = provider
         .client()
-        .request(
-            "trace_call",
-            (call.clone(), vec![TraceType::StateDiff], BlockId::Number(BlockNumberOrTag::Safe)),
-        )
+        .request("trace_call", (call.clone(), vec![TraceType::StateDiff], BlockId::safe()))
         .await
         .unwrap();
     let by_number: TraceResults = provider
@@ -931,7 +925,7 @@ async fn test_block_traces_reject_pending() {
     let provider = handle.http_provider();
     api.mine_one().await.unwrap();
 
-    let pending = BlockId::Number(BlockNumberOrTag::Pending);
+    let pending = BlockId::pending();
     let error = provider.trace_block(pending).await.unwrap_err();
     assert_eq!(error.as_error_resp().unwrap().code, -32602);
     let error = provider.trace_replay_block_transactions(pending).await.unwrap_err();
@@ -3404,7 +3398,7 @@ async fn test_debug_trace_block() {
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     let block_hash = receipt.block_hash.unwrap();
-    let block = api.backend.get_block(BlockId::Hash(block_hash.into())).unwrap();
+    let block = api.backend.get_block(BlockId::hash(block_hash)).unwrap();
 
     let mut rlp_block = Vec::new();
     block.encode(&mut rlp_block);

@@ -1648,7 +1648,7 @@ async fn test_tempo_t5_tip20_channel_reserve_basic_views() {
         Address::ZERO,
     );
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
     let signer = dev_key(0);
@@ -3584,14 +3584,8 @@ async fn test_tempo_simulate_distinguishes_expiring_nonce_transactions() {
     let provider = handle.http_provider();
     let from = handle.dev_accounts().next().unwrap();
     let recipient = Address::random();
-    let valid_before = provider
-        .get_block(BlockNumberOrTag::Latest.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .timestamp
-        + 25;
+    let valid_before =
+        provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.timestamp + 25;
     let request = |amount| {
         serde_json::json!({
             "from": from,
@@ -3624,14 +3618,8 @@ async fn test_tempo_simulate_rejects_expiring_nonce_replay_with_different_fee_pa
     let target = Address::random();
     let chain_id = provider.get_chain_id().await.unwrap();
     let gas_price = provider.get_gas_price().await.unwrap();
-    let valid_before = provider
-        .get_block(BlockNumberOrTag::Latest.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .timestamp
-        + 25;
+    let valid_before =
+        provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.timestamp + 25;
     let calls = vec![Call { to: TxKind::Call(target), value: U256::ZERO, input: Bytes::new() }];
     let tempo_tx = TempoTransaction {
         chain_id,
@@ -3689,14 +3677,8 @@ async fn test_tempo_simulate_applies_state_and_block_overrides() {
     let target = Address::random();
     let nonce_key = U256::from(9);
     let nonce_slot = NonceManager::new().nonces[from][nonce_key].slot();
-    let timestamp = provider
-        .get_block(BlockNumberOrTag::Latest.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .timestamp
-        + 100;
+    let timestamp =
+        provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.timestamp + 100;
     let payload = serde_json::json!({
         "blockStateCalls": [{
             "blockOverrides": {"time": format!("{timestamp:#x}")},
@@ -3764,14 +3746,8 @@ async fn test_tempo_simulate_resolves_omitted_lane_nonces() {
     let existing_nonce_key = U256::ONE;
     let existing_nonce = 3;
     let slot = NonceManager::new().nonces[from][existing_nonce_key].slot();
-    let valid_before = provider
-        .get_block(BlockNumberOrTag::Latest.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .timestamp
-        + 25;
+    let valid_before =
+        provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.timestamp + 25;
     api.anvil_set_storage_at(
         NONCE_PRECOMPILE_ADDRESS,
         slot,
@@ -4244,13 +4220,8 @@ async fn test_tempo_txpool_orders_same_nonce_lane() {
     let initial_balance = token.balanceOf(recipient).call().await.unwrap();
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
-    let current_time = provider
-        .get_block(BlockNumberOrTag::Latest.into())
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .timestamp;
+    let current_time =
+        provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.timestamp;
     let valid_after = current_time + 5;
     let nonce_key = U256::from(42);
     let mut tx_hashes = Vec::new();
@@ -4440,7 +4411,7 @@ async fn test_tempo_aa_transaction_with_valid_before() {
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
     let valid_before = current_time + 30;
 
@@ -4491,7 +4462,7 @@ async fn test_tempo_aa_transaction_with_valid_after() {
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
     let valid_after = current_time;
     let valid_before = current_time + 30;
@@ -4550,7 +4521,7 @@ async fn test_tempo_aa_expired_valid_before() {
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
     let valid_before = current_time.saturating_sub(10); // 10 seconds ago
 
@@ -4606,7 +4577,7 @@ async fn test_tempo_aa_valid_after_future() {
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
     let valid_after = current_time + 5;
     let valid_before = current_time + 60;
@@ -4673,7 +4644,7 @@ async fn test_tempo_aa_valid_after_pool_limit() {
     let token = IERC20::new(PATH_USD, &provider);
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let pool_time = block.header.timestamp + 1;
     api.evm_set_next_block_timestamp(pool_time).unwrap();
     let calldata: Bytes = token.transfer(accounts[1], U256::ONE).calldata().clone();
@@ -4980,7 +4951,7 @@ async fn test_base_fee() {
 
     api.mine_one().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     assert!(block.header.base_fee_per_gas.is_some());
 }
@@ -5259,14 +5230,14 @@ async fn test_block_timestamps_are_monotonic() {
     let provider = handle.http_provider();
 
     api.mine_one().await.unwrap();
-    let block1 = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block1 = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let timestamp1 = block1.header.timestamp;
 
     let future_timestamp = timestamp1 + 10;
     api.evm_set_next_block_timestamp(future_timestamp).unwrap();
 
     api.mine_one().await.unwrap();
-    let block2 = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block2 = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let timestamp2 = block2.header.timestamp;
 
     assert!(
@@ -5287,7 +5258,7 @@ async fn test_block_gas_limit() {
 
     api.mine_one().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     assert!(block.header.gas_limit > 0);
 }
@@ -5409,7 +5380,7 @@ async fn test_tempo_aa_transaction_expiring_nonce() {
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
     let valid_before = current_time + 25;
 
@@ -5464,7 +5435,7 @@ async fn test_tempo_expiring_nonce_valid_before_pool_limits() {
         let token = IERC20::new(PATH_USD, &provider);
         let chain_id = provider.get_chain_id().await.unwrap();
         let base_fee = provider.get_gas_price().await.unwrap();
-        let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+        let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
         let pool_time = block.header.timestamp + 1;
         api.evm_set_next_block_timestamp(pool_time).unwrap();
         let calldata: Bytes = token.transfer(accounts[1], U256::ONE).calldata().clone();
@@ -5514,7 +5485,7 @@ async fn test_tempo_estimate_gas_expiring_nonce_at_genesis() {
     let provider = handle.http_provider();
     let accounts: Vec<Address> = handle.dev_accounts().collect();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(block.header.number, 0);
 
     let max_nonce_key = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
@@ -5550,7 +5521,7 @@ async fn test_tempo_aa_expiring_nonce_replay() {
     let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let current_time = block.header.timestamp;
     let valid_before = current_time + 25;
 
@@ -6473,7 +6444,7 @@ async fn test_gas_estimation_t1_nonce_costs() {
     // Expiring nonce (nonce_key=MAX) at T1 should charge ~13K for ring buffer ops
     // (2*COLD_SLOAD + WARM_SLOAD + 3*WARM_SSTORE_RESET), NOT 22K like at T0.
     let max_nonce_key = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     let valid_before = block.header.timestamp + 25;
 
     let expiring_tx: WithOtherFields<TransactionRequest> = WithOtherFields {

@@ -656,7 +656,7 @@ async fn test_make_sure_historical_state_is_not_cleared_on_dump() {
     assert_eq!(block_number, Uint::from(3));
 
     // Makes sure historical states of the new instance are not cleared.
-    let code = provider.get_code_at(*address).block_id(BlockId::number(2)).await.unwrap();
+    let code = provider.get_code_at(*address).number(2).await.unwrap();
 
     assert_ne!(code, Bytes::new());
 }
