@@ -1789,7 +1789,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 ecx,
                 call,
                 self.inner,
-                isolate && call.scheme == CallScheme::Call,
+                isolate && call.scheme.is_call(),
             );
             ecx.cfg_env_mut().disable_fee_charge = execution_disable_fee_charge;
         }

@@ -50,7 +50,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{Database, DatabaseCommit, DatabaseRef},
-    interpreter::{InstructionResult, return_ok},
+    interpreter::InstructionResult,
     primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
@@ -648,11 +648,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         chain_context: ChainFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        assert!(
-            matches!(tx_env.kind(), TxKind::Create),
-            "Expected create transaction, got {:?}",
-            tx_env.kind()
-        );
+        assert!(tx_env.kind().is_create(), "Expected create transaction, got {:?}", tx_env.kind());
         trace!(sender=%tx_env.caller(), "deploying contract");
 
         let mut result = self.transact_with_env_and_context(evm_env, tx_env, chain_context)?;
@@ -1756,7 +1752,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
         execution_cancelled,
-        reverted: !matches!(exit_reason, return_ok!()),
+        reverted: !exit_reason.is_ok(),
         has_state_snapshot_failure,
         result,
         gas_used,

@@ -489,7 +489,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
                 accounts.remove(address);
                 continue;
             }
-            if overlay.account_state == AccountState::StorageCleared {
+            if overlay.account_state.is_storage_cleared() {
                 accounts.insert(*address, overlay.clone());
                 continue;
             }

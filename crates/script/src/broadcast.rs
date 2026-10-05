@@ -1417,11 +1417,8 @@ impl BundledState<TempoEvmNetwork> {
 
         // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
-        let needs_factory = sequence
-            .transactions
-            .iter()
-            .skip(batch_start)
-            .any(|tx| matches!(tx.call_kind, CallKind::Create | CallKind::Create2));
+        let needs_factory =
+            sequence.transactions.iter().skip(batch_start).any(|tx| tx.call_kind.is_any_create());
         if needs_factory {
             let code = provider.get_code_at(create2_deployer).await?;
             if keccak256(&code) != DEFAULT_CREATE2_DEPLOYER_CODEHASH {

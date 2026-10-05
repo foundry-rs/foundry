@@ -590,7 +590,7 @@ fn encode_projective_point(point: ProjectivePoint) -> Result {
 }
 
 fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
-    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    ensure!(!private_key.is_zero(), "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
         *private_key < order,

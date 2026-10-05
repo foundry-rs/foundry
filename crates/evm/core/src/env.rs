@@ -1496,7 +1496,7 @@ mod tests {
         );
         let any_tx: AnyRpcTransaction =
             serde_json::from_value(serde_json::to_value(&rpc_tx).unwrap()).unwrap();
-        assert!(matches!(&*any_tx.inner.inner, AnyTxEnvelope::Unknown(_)));
+        assert!((*any_tx.inner.inner).is_unknown());
 
         let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(tx_env.inner.tx_type, TEMPO_TX_TYPE_ID);
