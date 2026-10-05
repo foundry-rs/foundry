@@ -250,6 +250,8 @@ macro_rules! dispatch_network {
     };
 }
 
+pub(crate) use dispatch_network;
+
 /// Output format for EVM execution profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum EvmProfileFormat {
@@ -2703,10 +2705,6 @@ impl TestArgs {
                 }
             }
 
-            if !gas_snapshots.is_empty() {
-                self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
-            }
-
             // Print suite summary.
             if !silent && has_tests {
                 sh_println!("{}", suite_result.summary())?;
@@ -2720,6 +2718,12 @@ impl TestArgs {
                 break;
             }
         }
+
+        // Check and write snapshots once all suites are in, since a group can span several suites.
+        if !gas_snapshots.is_empty() {
+            self.check_and_write_gas_snapshots(&config, &gas_snapshots)?;
+        }
+
         let regressions =
             self.emit_symbolic_regressions(&config, &known_contracts, &mut outcome.results)?;
         if !silent {

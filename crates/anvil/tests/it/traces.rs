@@ -6,7 +6,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_eips::BlockId;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     hex::{self, FromHex},
@@ -27,7 +27,10 @@ use alloy_rpc_types::{
             GethTrace, PreStateConfig, PreStateFrame, TraceResult,
         },
         opcode::{BlockOpcodeGas, TransactionOpcodeGas},
-        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceResults, TraceType},
+        parity::{
+            Action, ChangedType, LocalizedTransactionTrace, TraceResults,
+            TraceResultsWithTransactionHash, TraceType,
+        },
     },
 };
 use alloy_rpc_types_eth::AccountInfo;
@@ -36,7 +39,7 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 use revm::context_interface::block::BlobExcessGasAndPrice;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -246,6 +249,41 @@ async fn test_trace_raw_transaction_local() {
     assert_eq!(provider.get_transaction_count(from).await.unwrap(), 0);
     assert_eq!(provider.get_balance(from).await.unwrap(), from_balance);
     assert_eq!(provider.get_balance(to).await.unwrap(), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_raw_transaction_rejects_code_sender() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(accounts[1].address())
+        .value(U256::from(1))
+        .with_gas_limit(21_000)
+        .max_fee_per_gas(20_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000);
+    let signed_tx = api.sign_transaction(WithOtherFields::new(tx)).await.unwrap();
+    let raw_tx = hex::decode(&signed_tx[2..]).unwrap();
+
+    api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
+    let error = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap_err();
+    let error = error.as_error_resp().unwrap();
+    assert_eq!((error.code, error.message.as_ref()), (-32003, "sender not an eoa"));
+
+    // An EIP-7702 delegation keeps the account an EOA.
+    let delegation = [&[0xef, 0x01, 0x00][..], accounts[2].address().as_slice()].concat();
+    api.anvil_set_code(from, delegation.into()).await.unwrap();
+    let traces = provider.trace_raw_transaction(&raw_tx).trace().await.unwrap();
+    assert_eq!(traces.trace.len(), 1);
+
+    // Mining keeps EIP-3607 disabled, so the code sender's transaction is still included.
+    api.anvil_set_code(from, Bytes::from_static(&[0x00])).await.unwrap();
+    let receipt =
+        provider.send_raw_transaction(&raw_tx).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -832,35 +870,116 @@ async fn test_trace_call_many_defaults_to_latest() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_trace_get_local() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall = Multicall::deploy(&provider).await.unwrap();
+    let storage = SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+    let get_value = Multicall::Call {
+        target: *storage.address(),
+        callData: storage.getValue().calldata().clone(),
+    };
+    let nested = Multicall::Call {
+        target: *multicall.address(),
+        callData: multicall.aggregate(vec![get_value.clone()]).calldata().clone(),
+    };
+    let receipt = multicall
+        .aggregate(vec![get_value, nested])
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let traces = provider.trace_transaction(hash).await.unwrap();
+    let addresses =
+        traces.iter().map(|trace| trace.trace.trace_address.clone()).collect::<Vec<_>>();
+    assert_eq!(addresses, vec![vec![], vec![0], vec![1], vec![1, 0]]);
+
+    let trace_get = async |path: &[usize]| {
+        let path = path.iter().copied().map(Index::from).collect::<Vec<_>>();
+        provider
+            .client()
+            .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, path))
+            .await
+            .unwrap()
+    };
+    for trace in &traces {
+        assert_eq!(trace_get(&trace.trace.trace_address).await.as_ref(), Some(trace));
+    }
+    for missing in [&[2][..], &[0, 0], &[1, 1], &[1, 0, 0]] {
+        assert_eq!(trace_get(missing).await, None);
+    }
+
+    let unknown = provider
+        .client()
+        .request::<_, Option<LocalizedTransactionTrace>>(
+            "trace_get",
+            (B256::ZERO, Vec::<Index>::new()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_traces_reject_pending() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
 
-    let accounts = handle.dev_wallets().collect::<Vec<_>>();
-    let from = accounts[0].address();
-    let to = accounts[1].address();
-    let amount = U256::from(1000);
-    let tx = TransactionRequest::default().to(to).value(amount).from(from);
-    let tx = WithOtherFields::new(tx);
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let pending = BlockId::Number(BlockNumberOrTag::Pending);
+    let error = provider.trace_block(pending).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+    let error = provider.trace_replay_block_transactions(pending).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
 
-    let traces = provider.trace_transaction(receipt.transaction_hash).await.unwrap();
-    assert!(!traces.is_empty());
+    // Mined block tags still resolve.
+    provider.trace_block(BlockId::latest()).await.unwrap();
+    provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap();
+}
 
-    let trace = provider.trace_get(receipt.transaction_hash, 0).await.unwrap();
-    assert_eq!(trace, traces[0]);
+#[tokio::test(flavor = "multi_thread")]
+async fn test_calls_reject_conflicting_fields() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let client = handle.http_provider();
+    let client = client.client();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let input_error = "both \"data\" and \"input\" are set and not equal. Please use \"input\" to \
+                       pass transaction call data";
+    let fee_error = "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified";
 
-    let missing: Option<LocalizedTransactionTrace> = provider
-        .client()
-        .request("trace_get", (receipt.transaction_hash, vec![Index::from(999)]))
-        .await
-        .unwrap();
-    assert_eq!(missing, None);
+    for (call, message) in [
+        (json!({ "from": from, "to": from, "data": "0x602a", "input": "0x6001" }), input_error),
+        (json!({ "from": from, "to": from, "gasPrice": "0x1", "maxFeePerGas": "0x2" }), fee_error),
+        (
+            json!({ "from": from, "to": from, "gasPrice": "0x1", "maxPriorityFeePerGas": "0x1" }),
+            fee_error,
+        ),
+    ] {
+        let simulate = json!({ "blockStateCalls": [{ "calls": [&call] }] });
+        let errors = [
+            client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap_err(),
+            client.request::<_, Value>("eth_estimateGas", (&call, "latest")).await.unwrap_err(),
+            client
+                .request::<_, Value>("trace_call", (&call, ["trace"], "latest"))
+                .await
+                .unwrap_err(),
+            client.request::<_, Value>("eth_simulateV1", (&simulate, "latest")).await.unwrap_err(),
+            client.request::<_, Value>("eth_sendTransaction", (&call,)).await.unwrap_err(),
+        ];
+        for error in errors {
+            let error = error.as_error_resp().unwrap();
+            assert_eq!((error.code, error.message.as_ref()), (-32602, message), "{call}");
+        }
+    }
 
-    let invalid_indices: Option<LocalizedTransactionTrace> = provider
-        .client()
-        .request("trace_get", (receipt.transaction_hash, vec![Index::from(0), Index::from(1)]))
-        .await
-        .unwrap();
-    assert_eq!(invalid_indices, None);
+    let call = json!({ "from": from, "data": "0x602a", "input": "0x602a" });
+    client.request::<_, Value>("eth_call", (&call, "latest")).await.unwrap();
+    client.request::<_, Value>("trace_call", (&call, ["trace"], "latest")).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1504,8 +1623,83 @@ async fn test_trace_replays_report_unavailable_historical_state() {
             [TraceType::Trace].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     assert!(genesis.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_unknown_block_and_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let head = provider.get_block_number().await.unwrap();
+    let next = BlockId::number(head + 1);
+
+    let error = provider.trace_block(next).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+    let replays = provider
+        .client()
+        .request::<_, Option<Vec<TraceResultsWithTransactionHash>>>(
+            "trace_replayBlockTransactions",
+            (next, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replays, None);
+
+    let replay = provider
+        .client()
+        .request::<_, Option<TraceResults>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, None);
+
+    let filter = TraceFilter::default().from_block(head).to_block(head + 1);
+    let error = provider.trace_filter(&filter).await.unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32001);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_fork_block() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = WithOtherFields::new(
+        TransactionRequest::default()
+            .to(accounts[1].address())
+            .value(U256::from(1))
+            .from(accounts[0].address()),
+    );
+    origin_handle
+        .http_provider()
+        .send_transaction(tx.clone())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+    let fork_block = provider.get_block_number().await.unwrap();
+
+    // The fork block is not stored locally, so its traces come from the fork.
+    assert_eq!(provider.trace_block(BlockId::latest()).await.unwrap().len(), 1);
+    assert_eq!(provider.trace_replay_block_transactions(BlockId::latest()).await.unwrap().len(), 1);
+
+    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let filter = TraceFilter::default().from_block(fork_block).to_block(fork_block + 1);
+    let blocks = provider
+        .trace_filter(&filter)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|trace| trace.block_number.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(blocks, [fork_block, fork_block + 1]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2572,6 +2766,7 @@ async fn test_trace_replay_block_transactions_local() {
             vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
 
     // Verify we have traces for both transactions
@@ -2628,7 +2823,7 @@ async fn test_trace_replay_transaction() {
     let tx = WithOtherFields::new(tx);
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let result: TraceResults = provider
+    let TraceResultsWithTransactionHash { full_trace: result, transaction_hash } = provider
         .client()
         .request(
             "trace_replayTransaction",
@@ -2637,6 +2832,7 @@ async fn test_trace_replay_transaction() {
         .await
         .unwrap();
 
+    assert_eq!(transaction_hash, receipt.transaction_hash);
     assert!(!result.trace.is_empty());
     match &result.trace[0].action {
         Action::Call(call) => {
@@ -2649,6 +2845,57 @@ async fn test_trace_replay_transaction() {
     let ChangedType::<U256> { from, to } =
         result.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
     assert_eq!(to.checked_sub(*from).unwrap(), amount);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_transaction_fork() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin = origin_handle.http_provider();
+    let accounts = origin_handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1000))
+        .from(accounts[0].address());
+    let receipt = origin
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let config = NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()));
+    let (_api, handle) = spawn(config).await;
+
+    // The pre-fork transaction is replayed upstream and keeps its hash.
+    let mut replays = Vec::new();
+    for provider in [handle.http_provider(), origin] {
+        replays.push(
+            provider
+                .client()
+                .request::<_, TraceResultsWithTransactionHash>(
+                    "trace_replayTransaction",
+                    (hash, vec![TraceType::Trace]),
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(replays[0].transaction_hash, hash);
+    assert_eq!(replays[0], replays[1]);
+
+    // A hash unknown upstream as well is null.
+    let unknown = handle
+        .http_provider()
+        .client()
+        .request::<_, Option<TraceResultsWithTransactionHash>>(
+            "trace_replayTransaction",
+            (B256::ZERO, vec![TraceType::Trace]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2689,6 +2936,7 @@ async fn test_trace_replay_state_diff_account_lifecycle() {
             [TraceType::StateDiff].into_iter().collect(),
         )
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(block.len(), expected.len());
 
@@ -2748,6 +2996,7 @@ async fn test_trace_replay_transaction_preserves_prefix_state() {
                 trace_types.iter().copied().collect(),
             )
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(block_results.len(), hashes.len());
         for (index, hash) in hashes.iter().copied().enumerate() {
