@@ -339,7 +339,7 @@ impl ForkCacheNamespace {
     fn new(source_chain_id: u64, rpc_url: &str) -> Option<Self> {
         Some(Self {
             chain_cache_dir: foundry_config::Config::foundry_chain_cache_dir(source_chain_id)?,
-            file_name: format!("storage-{}.json", hex::encode(keccak256(rpc_url))),
+            file_name: format!("storage-{:x}.json", keccak256(rpc_url)),
         })
     }
 

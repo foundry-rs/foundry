@@ -593,7 +593,7 @@ contract ExternalFactory {
         .post(rpc.as_str())
         .json(&serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "eth_call",
-            "params": [{"to": factory, "data": format!("0x{}", hex::encode(selector))}, "latest"]
+            "params": [{"to": factory, "data": hex::encode_prefixed(selector)}, "latest"]
         }))
         .send()
         .await
@@ -786,7 +786,7 @@ contract Deploy is Script {{
         .post(rpc.as_str())
         .json(&serde_json::json!({
             "jsonrpc": "2.0", "id": 2, "method": "eth_call",
-            "params": [{"to": child_address, "data": format!("0x{}", hex::encode(value_selector))}, "latest"]
+            "params": [{"to": child_address, "data": hex::encode_prefixed(value_selector)}, "latest"]
         }))
         .send()
         .await

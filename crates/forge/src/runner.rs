@@ -5613,7 +5613,7 @@ fn fuzz_test_path_name<'a>(
     config: &FuzzConfig,
     contract_name: &str,
 ) -> Cow<'a, str> {
-    let test_name = format!("{}-{}", func.name, hex::encode(func.selector()));
+    let test_name = format!("{}-{:x}", func.name, func.selector());
     let overloaded = abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1);
     let contract = contract_short_name(contract_name);
     let has_qualified_artifact = config
