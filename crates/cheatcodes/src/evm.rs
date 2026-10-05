@@ -33,7 +33,6 @@ use foundry_evm_core::{
     },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor, merge_child_state, prepare_child_state},
-    refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -59,6 +58,9 @@ use foundry_common::fmt::format_token_raw;
 use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
+
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::refresh_chain_journal;
 
 mod fork;
 pub(crate) mod mapping;
@@ -356,6 +358,7 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
@@ -371,6 +374,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
@@ -798,6 +802,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
@@ -1299,6 +1304,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
 
         if ccx.state.broadcast.is_some() {
@@ -1454,8 +1460,9 @@ impl Cheatcode for executeTransactionCall {
         // Merge state changes back into the parent journaled state.
         merge_child_state(ccx.ecx.journal_mut().evm_state_mut(), res.state, false);
 
-        // Keep network-specific caches aligned with the state merged from the nested EVM while
+        // Keep Monad reserve balances aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
 
         // Return output bytes.
@@ -1694,8 +1701,8 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
                 *ccx.ecx.chain_mut() = context.clone();
                 ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
             }
+            refresh_chain_journal(ccx.ecx);
         }
-        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1743,8 +1750,8 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
                 *ccx.ecx.chain_mut() = context;
                 ccx.ecx.journal_mut().restore_reserve_balance(state);
             }
+            refresh_chain_journal(ccx.ecx);
         }
-        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;

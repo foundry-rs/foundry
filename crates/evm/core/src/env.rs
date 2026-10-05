@@ -444,6 +444,7 @@ pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
     }
 
     /// Refreshes journal state derived from the active chain position.
+    #[cfg(feature = "monad")]
     fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
 
     /// Clears cached protocol fees after a synthetic transaction restores chain context.
@@ -660,12 +661,6 @@ pub trait FoundryContextExt:
     fn evm_clone(&self) -> EvmEnv<Self::Spec, Self::Block> {
         EvmEnv::new(self.cfg().clone().into(), self.block().clone())
     }
-}
-
-/// Refreshes journal state derived from a context's active chain position.
-pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
-    let chain = context.chain().clone();
-    chain.refresh_journal(context.journal_mut());
 }
 
 impl<

@@ -339,6 +339,12 @@ fn transaction_envs<FEN: FoundryEvmNetwork>(
         .collect())
 }
 
+/// Refreshes journal state derived from a context's active Monad chain position.
+pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
+    let chain = context.chain().clone();
+    chain.refresh_journal(context.journal_mut());
+}
+
 /// Refreshes journal state derived from a nested EVM's active Monad chain position.
 pub fn refresh_nested_chain_journal<E: NestedEvm + ?Sized>(evm: &mut E) {
     let chain = evm.chain_mut().clone();
@@ -821,7 +827,7 @@ mod tests {
 
         evm.ctx_mut().chain = new_chain.clone();
         evm.ctx_mut().journaled_state.inner.state = EvmState::from_iter([(sender, account)]);
-        crate::refresh_chain_journal(evm.ctx_mut());
+        refresh_chain_journal(evm.ctx_mut());
 
         assert_eq!(evm.ctx().chain, new_chain);
         assert!(evm.ctx().journaled_state.reserve_balance().has_violation());

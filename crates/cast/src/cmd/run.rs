@@ -1192,6 +1192,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn http_wrapped_method_not_found_has_trace_guidance() {
+        let error = alloy_transport::TransportErrorKind::http_error(
+            403,
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method disabled"}}"#.into(),
+        );
+        let error = call_tracer_frame(
+            Err(error),
+            "debug_traceTransaction",
+            "replay locally",
+            "this transaction",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the RPC endpoint does not support `debug_traceTransaction` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or replay locally"
+        );
+    }
+
+    #[test]
     fn parses_legacy_short_label_alias() {
         let address = Address::with_last_byte(1);
         let label = format!("{address}:alice");
