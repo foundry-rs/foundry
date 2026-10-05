@@ -75,6 +75,9 @@ impl ForkId {
     fn resolved(url: &str, fork: &ResolvedFork) -> Self {
         let mut id = Self::new_with_context(url, Some(fork.number()), Some(&fork.context())).0;
         write!(id, "#{}:{}", fork.hash(), fork.source_id()).unwrap();
+        if fork.state_by_number {
+            id.push_str("#state-by-number");
+        }
         Self(id)
     }
 
@@ -528,6 +531,7 @@ impl<
                     trace!(target: "fork::multi", "rolling {} to exact block {:?}", fork_id, block);
                     let mut opts = fork.opts.clone();
                     opts.evm_opts.fork_block_number = Some(block.number);
+                    opts.evm_opts.fork_state_by_number = false;
                     opts.evm_opts.fork_block_number_is_inferred = false;
                     opts.resolved = Some(
                         opts.resolved
@@ -865,7 +869,8 @@ async fn create_fork<
         .with_account_fetch_policy(account_fetch_policy);
 
     // Determine the cache path if caching is enabled.
-    let cache_path = if fork.enable_caching {
+    // Number-addressed state can follow a replacement block, so keep it in memory only.
+    let cache_path = if fork.enable_caching && !resolved.state_by_number {
         Config::foundry_block_cache_dir(fork_context.source_chain_id, number)
     } else {
         None
@@ -883,7 +888,11 @@ async fn create_fork<
         resolved.number(),
         resolved.hash(),
     );
-    let (backend, handler) = SharedBackend::new_with_anchor(provider, db, anchor)?;
+    let (backend, handler) = if resolved.state_by_number {
+        SharedBackend::new_with_anchor_by_number(provider, db, anchor)?
+    } else {
+        SharedBackend::new_with_anchor(provider, db, anchor)?
+    };
     let fork_id = ForkId::resolved(&fork.url, &resolved);
     fork.resolved = Some(resolved);
     let fork = CreatedFork::new(fork, evm_env, backend);
@@ -908,7 +917,7 @@ mod tests {
         spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_recording_method,
     };
     use futures::{channel::oneshot, task::noop_waker_ref};
-    use revm::context::BlockEnv;
+    use revm::context::{BlockEnv, TxEnv};
     use std::sync::mpsc::{Receiver as OneshotReceiver, TryRecvError};
 
     fn context(block_number: u64) -> ForkContext {
@@ -955,6 +964,68 @@ mod tests {
 
         assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &replacement));
         assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &authenticated));
+        let mut numbered = first.clone();
+        numbered.state_by_number = true;
+        assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &numbered));
+        assert_eq!(
+            ForkId::resolved(url, &first),
+            ForkId::resolved(url, &numbered.at_block(first.block()))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_state_by_number_does_not_load_or_overwrite_hash_cache() {
+        let chain_id = u64::from_be_bytes(B256::random()[..8].try_into().unwrap());
+        let (_api, handle) = anvil::spawn(
+            anvil::NodeConfig::test().with_chain_id(Some(chain_id)).with_no_mining(true),
+        )
+        .await;
+        let opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(0),
+            ..Default::default()
+        };
+        let (env, _, resolved) = opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let resolved = resolved.unwrap();
+        let path = Config::foundry_block_cache_dir(chain_id, resolved.number()).unwrap();
+        assert!(!path.exists());
+        let meta = BlockchainDbMeta::new(env.block_env, handle.http_endpoint())
+            .with_fork_identity(resolved.hash(), resolved.source_id());
+        let cached = BlockchainDb::new(meta.clone(), Some(path.clone()));
+        let address = Address::with_last_byte(0x42);
+        cached.storage().write().entry(address).or_default().insert(U256::ZERO, U256::from(42));
+        cached.cache().flush();
+        assert!(path.exists());
+
+        for state_by_number in [true, false] {
+            let mut resolved = resolved.clone();
+            resolved.state_by_number = state_by_number;
+            let fork = CreateFork {
+                url: handle.http_endpoint(),
+                enable_caching: true,
+                evm_opts: EvmOpts { fork_state_by_number: state_by_number, ..opts.clone() },
+                resolved: Some(resolved),
+            };
+            let (_, fork, handler, _) =
+                create_fork::<AnyNetwork, SpecId, BlockEnv>(fork, None, false).await.unwrap();
+            assert_eq!(fork.backend.data().storage.read().contains_key(&address), !state_by_number);
+            if state_by_number {
+                fork.backend
+                    .data()
+                    .storage
+                    .write()
+                    .entry(address)
+                    .or_default()
+                    .insert(U256::ZERO, U256::from(99));
+            }
+            fork.backend.flush_cache();
+            drop(fork);
+            drop(handler);
+            let reloaded = BlockchainDb::new(meta.clone(), Some(path.clone()));
+            assert_eq!(reloaded.storage().read()[&address][&U256::ZERO], U256::from(42));
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
     }
 
     #[test]

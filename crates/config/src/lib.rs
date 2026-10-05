@@ -426,6 +426,9 @@ pub struct Config {
     pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// Fetch fork state by block number for RPCs that cannot serve it by hash.
+    #[serde(default)]
+    pub fork_state_by_number: bool,
     /// The chain name or EIP-155 chain ID.
     #[serde(rename = "chain_id", alias = "chain")]
     pub chain: Option<Chain>,
@@ -3068,6 +3071,7 @@ impl Default for Config {
             initial_balance: U256::from((1u128 << 96) - 1),
             block_number: U256::ONE,
             fork_block_number: None,
+            fork_state_by_number: false,
             chain: None,
             gas_limit: (1u64 << 30).into(), // ~1B
             code_size_limit: None,
@@ -3484,6 +3488,48 @@ mod tests {
 
         config.no_storage_caching = false;
         assert!(!config.enable_caching(url, NamedChain::Dev));
+    }
+
+    #[test]
+    fn test_fork_state_by_number_config() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!Config::load().unwrap().fork_state_by_number);
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [profile.default]
+                fork_state_by_number = true
+                no_storage_caching = true
+
+                [profile.ci]
+                fork_state_by_number = false
+                ",
+            )?;
+            let config = Config::load().unwrap();
+            assert!(config.fork_state_by_number);
+            assert!(config.no_storage_caching);
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert!(!config.fork_state_by_number);
+            assert!(config.no_storage_caching);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fork_state_by_number_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file("foundry.toml", "[profile.default]\nfork_state_by_number = true\n")?;
+            jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "false");
+            assert!(!Config::load().unwrap().fork_state_by_number);
+            jail.create_file("foundry.toml", "[profile.default]\nfork_state_by_number = false\n")?;
+            jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "true");
+            assert!(Config::load().unwrap().fork_state_by_number);
+            jail.set_env("FOUNDRY_FORK_STATE_BY_NUMBER", "invalid");
+            assert!(Config::load().is_err());
+            Ok(())
+        });
     }
 
     #[test]
@@ -4682,6 +4728,7 @@ mod tests {
                 block_difficulty = 0
                 block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
                 block_number = 1
+                fork_state_by_number = false
                 block_timestamp = 1
                 use_literal_content = false
                 bytecode_hash = 'ipfs'

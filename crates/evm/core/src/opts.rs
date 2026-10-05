@@ -52,6 +52,10 @@ pub struct EvmOpts {
     /// Pins the block number for the state fork.
     pub fork_block_number: Option<u64>,
 
+    /// Fetch fork state by block number for RPCs that cannot serve it by hash.
+    #[serde(default)]
+    pub fork_state_by_number: bool,
+
     /// The number of retries.
     pub fork_retries: Option<u32>,
 
@@ -314,6 +318,7 @@ impl Default for EvmOpts {
             env: Env::default(),
             fork_url: None,
             fork_block_number: None,
+            fork_state_by_number: false,
             fork_retries: None,
             fork_retry_backoff: None,
             fork_headers: None,
@@ -476,14 +481,16 @@ impl EvmOpts {
         block: BlockNumHash,
         context: ForkContext,
     ) -> ResolvedFork {
-        ResolvedFork::new(
+        let mut fork = ResolvedFork::new(
             fork_url,
             self.fork_source_headers(),
             self.rpc_jwt.as_deref(),
             self.fork_block_number,
             block,
             context,
-        )
+        );
+        fork.state_by_number = self.fork_state_by_number;
+        fork
     }
 
     /// Converts an implicit `latest` selector into a block-number selector in place.
@@ -538,7 +545,7 @@ impl EvmOpts {
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
         let available = !provider
             .get_code_at(self.create2_deployer)
-            .block_id(fork.exact_block_id())
+            .block_id(fork.state_block_id())
             .await?
             .is_empty();
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
@@ -548,12 +555,13 @@ impl EvmOpts {
     /// Returns whether `fork` was resolved from the currently configured source and selector.
     pub fn resolved_fork_matches(&self, fork: &ResolvedFork) -> bool {
         self.fork_url.as_deref().is_some_and(|fork_url| {
-            fork.matches(
-                fork_url,
-                self.fork_source_headers(),
-                self.rpc_jwt.as_deref(),
-                self.fork_block_number,
-            )
+            fork.state_by_number == self.fork_state_by_number
+                && fork.matches(
+                    fork_url,
+                    self.fork_source_headers(),
+                    self.rpc_jwt.as_deref(),
+                    self.fork_block_number,
+                )
         })
     }
 
@@ -602,7 +610,7 @@ impl EvmOpts {
     ) -> eyre::Result<u64> {
         let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
-        let nonce = provider.get_transaction_count(account).block_id(fork.exact_block_id()).await?;
+        let nonce = provider.get_transaction_count(account).block_id(fork.state_block_id()).await?;
         self.ensure_resolved_fork_endpoint(&provider, fork).await?;
         Ok(nonce)
     }

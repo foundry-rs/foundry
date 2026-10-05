@@ -508,6 +508,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         // TODO: `self.evm_opts` and `self.evm_env` are only partially reconfigured.
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
         self.evm_opts.no_fork_bal = config.no_fork_bal;
+        self.evm_opts.fork_state_by_number = config.fork_state_by_number;
         self.config = config;
     }
 
