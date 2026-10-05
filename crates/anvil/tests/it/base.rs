@@ -4,7 +4,7 @@ use crate::utils::http_provider_with_signer;
 use alloy_consensus::{Sealed, Typed2718};
 use alloy_eips::Encodable2718;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, keccak256};
 use alloy_provider::{
     Provider,
     ext::{DebugApi, TxPoolApi},
