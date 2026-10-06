@@ -5,6 +5,7 @@ use std::{
     io::Read,
     path::Path,
     process::{Child, Command, Output, Stdio},
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
 };
 
@@ -153,30 +154,46 @@ contract LargeRuntime {{
 /// A spawned child process that is killed when dropped.
 pub struct KillOnDrop {
     child: Option<Child>,
-    stderr: Option<JoinHandle<Vec<u8>>>,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    reader: Option<JoinHandle<()>>,
 }
 
 impl KillOnDrop {
     pub fn spawn(command: &mut Command) -> Self {
         let mut child = command.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
         let mut child_stderr = child.stderr.take().unwrap();
-        let stderr = thread::spawn(move || {
-            let mut stderr = Vec::new();
-            child_stderr.read_to_end(&mut stderr).unwrap();
-            stderr
+        let stderr = Arc::<Mutex<Vec<u8>>>::default();
+        let buffer = stderr.clone();
+        let reader = thread::spawn(move || {
+            let mut chunk = [0; 4096];
+            while let Ok(read) = child_stderr.read(&mut chunk)
+                && read > 0
+            {
+                buffer.lock().unwrap().extend_from_slice(&chunk[..read]);
+            }
         });
-        Self { child: Some(child), stderr: Some(stderr) }
+        Self { child: Some(child), stderr, reader: Some(reader) }
     }
 
     pub fn is_running(&mut self) -> bool {
         self.child.as_mut().unwrap().try_wait().unwrap().is_none()
     }
 
+    /// Returns the stderr written so far.
+    pub fn stderr(&self) -> String {
+        String::from_utf8_lossy(&self.stderr.lock().unwrap()).into_owned()
+    }
+
     pub fn kill_and_wait(mut self) -> Output {
         let mut child = self.child.take().unwrap();
         child.kill().unwrap();
         let status = child.wait().unwrap();
-        Output { status, stdout: Vec::new(), stderr: self.stderr.take().unwrap().join().unwrap() }
+        self.reader.take().unwrap().join().unwrap();
+        Output {
+            status,
+            stdout: Vec::new(),
+            stderr: std::mem::take(&mut self.stderr.lock().unwrap()),
+        }
     }
 }
 
@@ -186,8 +203,8 @@ impl Drop for KillOnDrop {
             let _ = child.kill();
             let _ = child.wait();
         }
-        if let Some(stderr) = self.stderr.take() {
-            let _ = stderr.join();
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
         }
     }
 }

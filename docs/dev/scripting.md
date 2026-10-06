@@ -144,18 +144,18 @@ Before sending new work, `BundledState::wait_for_pending` checks each hash in `p
 from a multichain deployment are checked concurrently. A confirmed success removes the hash from
 `pending` and appends its receipt. A revert removes the hash and returns an error without appending
 the receipt, which can leave a receipt hole. Receipt-watcher timeouts keep retrying without
-consuming the retry budget while the selected RPC still returns the transaction, unless, after a
-watcher timeout, the sender's pending nonce reported by that endpoint belongs to an earlier
-unreceipted operation whose known submission the endpoint does not return, and the pending nonce is
-unchanged after that lookup. Nonces above the pending nonce can still be filled by queued
-transactions, including replacements, so they are not checked. The transaction then appears blocked
-at that endpoint, so the whole wait fails and keeps unresolved hashes in `pending`. An endpoint that
-answers `pending` with the latest nonce can make a replaced nonce look unfilled, which also stops
-the wait. This check is skipped on Tempo, whose nonce keys and expiring nonces do not follow the
-sequential account nonce. If that endpoint returns no transaction, the durable attempt remains the
-source of identity: signed bytes may be replayed; delegated attempts with a known hash remain
-checkpointed for a later plain `--resume`, while unknown outcomes remain blocked until explicitly
-resolved.
+consuming the retry budget while the selected RPC still returns the transaction. After each watcher
+timeout, Forge warns once that a still visible, unmined transaction appears blocked when the
+sender's pending nonce reported by that endpoint belongs to an earlier unreceipted operation on the
+same RPC whose known submission the endpoint does not return, and the pending nonce is unchanged
+after that lookup. Nonces above the pending nonce can still be filled by queued transactions,
+including replacements, so they are not checked. The warning is advisory and the wait continues,
+because RPC calls can reach different nodes and an endpoint that answers `pending` with the latest
+nonce can make a replaced nonce look unfilled. This check is skipped on Tempo, whose nonce keys and
+expiring nonces do not follow the sequential account nonce. If that endpoint returns no
+transaction, the durable attempt remains the source of identity: signed bytes may be replayed;
+delegated attempts with a known hash remain checkpointed for a later plain `--resume`, while
+unknown outcomes remain blocked until explicitly resolved.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
 also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint

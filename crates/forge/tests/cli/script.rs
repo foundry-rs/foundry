@@ -7176,7 +7176,7 @@ contract HandoffResume is Script {
 }
 
 #[forgetest_init]
-async fn resume_reports_transaction_queued_behind_missing_nonce(prj: _, cmd: _) {
+async fn resume_warns_about_transaction_queued_behind_missing_nonce(prj: _, cmd: _) {
     let script = prj.add_script(
         "QueuedResume.s.sol",
         r#"
@@ -7245,23 +7245,20 @@ contract QueuedResume is Script {
     prj.update_config(|config| config.transaction_timeout = 1);
     cmd.forge_fuse().arg("script").arg(&script).args(args).arg("--resume");
     let mut child = KillOnDrop::spawn(cmd.cmd());
+    let warning = format!(
+        "transaction {} appears to be blocked: the RPC endpoint reports nonce 1 from {sender} as unfilled and does not return its saved transaction",
+        hashes[2]
+    );
     tokio::time::timeout(Duration::from_secs(60), async {
-        while child.is_running() {
+        while !child.stderr().contains(&warning) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("resume kept waiting on a transaction queued behind a missing nonce");
-    let output = child.kill_and_wait();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "resume reported success: {stderr}");
-    assert!(
-        stderr.contains(&format!(
-            "transaction {} appears to be blocked: the RPC endpoint reports nonce 1 from {sender} as unfilled and does not return its saved transaction",
-            hashes[2]
-        )),
-        "{stderr}"
-    );
+    .unwrap_or_else(|_| panic!("resume did not warn about the missing nonce: {}", child.stderr()));
+    // The gap is only advisory, so resume keeps waiting for the pending transactions.
+    assert!(child.is_running(), "resume exited after the warning: {}", child.stderr());
+    drop(child.kill_and_wait());
 
     // Resume submits nothing, and the unresolved submissions keep their identities.
     assert_eq!(submissions.lock().unwrap().len(), 3);
