@@ -285,16 +285,6 @@ impl SurvivedSpans {
         })
     }
 
-    /// Check if any survived span contains this span, including exact matches.
-    ///
-    /// Live workers know exact same-span mutants are siblings in the current
-    /// run, so once one survives the remaining siblings can be skipped.
-    pub fn should_skip_in_live_run(&self, span: Span) -> bool {
-        let (lo, hi) = (span.lo().0, span.hi().0);
-
-        self.spans.iter().any(|&(parent_lo, parent_hi)| parent_lo <= lo && hi <= parent_hi)
-    }
-
     /// Serialize to a list of (lo, hi) pairs for caching
     fn to_vec(&self) -> Vec<(u32, u32)> {
         self.spans.iter().copied().collect()
