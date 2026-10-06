@@ -518,9 +518,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Set the code of an account.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.code_hash = keccak256(code.original_byte_slice());
-        account.code = Some(code);
+        let account = self.backend().basic_ref(address)?.unwrap_or_default().with_code(code);
         self.backend_mut().insert_account_info(address, account);
         Ok(())
     }
@@ -561,7 +559,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let info = revm::state::AccountInfo {
                 nonce: account_state.nonce.unwrap_or_default(),
                 balance: account_state.balance.unwrap_or_default(),
-                code_hash: keccak256(code.original_byte_slice()),
+                code_hash: code.hash_slow(),
                 code: Some(code),
                 account_id: Default::default(),
             };

@@ -170,7 +170,7 @@ use revm::{
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    primitives::hardfork::SpecId,
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
@@ -3866,7 +3866,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<Bytes, BlockchainError> {
         trace!(target: "backend", "get code for {:?}", address);
         let account = state.basic_ref(address)?.unwrap_or_default();
-        if account.code_hash == KECCAK_EMPTY {
+        if account.is_empty_code_hash() {
             // if the code hash is `KECCAK_EMPTY`, we check no further
             return Ok(Default::default());
         }
@@ -7441,9 +7441,7 @@ where
                 for slot in account.storage.keys() {
                     keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
-                if account.info.code_hash != KECCAK_EMPTY
-                    && seen_codes.insert(account.info.code_hash)
-                {
+                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash) {
                     let code = match &account.info.code {
                         Some(code) => code.original_bytes(),
                         None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),

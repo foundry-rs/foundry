@@ -1937,11 +1937,7 @@ mod tests {
     use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
-    use revm::{
-        DatabaseRef,
-        bytecode::Bytecode,
-        database::{CacheDB, EmptyDB},
-    };
+    use revm::{DatabaseRef, bytecode::Bytecode, database::InMemoryDB};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1981,12 +1977,7 @@ mod tests {
     }
 
     fn empty_fuzz_state() -> EvmFuzzState {
-        EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
+        EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
     }
 
     fn temp_corpus_dir() -> PathBuf {
