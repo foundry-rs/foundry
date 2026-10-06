@@ -517,7 +517,7 @@ fn checked_topic_count(log: &RawLog, is_anonymous: bool) -> usize {
     if is_anonymous { log.topics().len() } else { log.topics().len().saturating_sub(1) }
 }
 
-/// Why the expected emits declared at a call's depth were not satisfied when it ended.
+/// Why the tracked expected emits were not satisfied when a call ended.
 #[derive(Debug)]
 pub(crate) enum UnmetEmit {
     /// An expected log was never matched.
@@ -561,9 +561,10 @@ impl UnmetEmit {
     }
 }
 
-/// Checks the expected emits declared at `depth` when a non-reverted call at that depth ends.
+/// Checks the entire tracker when a non-static call ends at any tracked expectation's `depth`.
 ///
-/// Clears the tracker if they are all satisfied.
+/// Clears the tracker only if all expectations are satisfied; otherwise leaves it untouched.
+/// Callers must skip already-reverted calls to preserve their original failure.
 pub(crate) fn check_call_emits(
     tracker: &mut ExpectedEmitTracker,
     depth: usize,
@@ -620,6 +621,7 @@ pub(crate) fn check_call_emits(
 /// Checks for leftover expected emits when the root call ends without reverting.
 ///
 /// Returns the failure message if any expectation is still unmatched.
+/// Callers must skip already-reverted calls to preserve their original failure.
 pub(crate) fn first_unmet_root_emit(
     tracker: &mut ExpectedEmitTracker,
     succeeded: bool,
@@ -898,20 +900,19 @@ mod tests {
             count_map.insert(emitter, counts);
         }
 
-        let unmet = check_call_emits(&mut tracker.clone(), 0, false, true).unwrap();
-        assert_eq!(
-            unmet.encode(unused_identifier),
-            Error::encode("log emitted 3 times, expected 2")
-        );
-
-        let unmet = check_call_emits(&mut tracker, 0, false, false).unwrap();
-        assert_eq!(
-            unmet.encode(unused_identifier),
-            Error::encode(
+        let before = format!("{tracker:?}");
+        for (succeeded, message) in [
+            (true, "log emitted 3 times, expected 2"),
+            (
+                false,
                 "expected an emit, but the call reverted instead. \
-                 ensure you're testing the happy path when using `expectEmit`"
-            )
-        );
+                 ensure you're testing the happy path when using `expectEmit`",
+            ),
+        ] {
+            let unmet = check_call_emits(&mut tracker, 0, false, succeeded).unwrap();
+            assert_eq!(unmet.encode(unused_identifier), Error::encode(message));
+            assert_eq!(format!("{tracker:?}"), before);
+        }
     }
 
     #[test]
@@ -940,5 +941,111 @@ mod tests {
                  ensure you're testing the happy path when using `expectEmit`"
             )
         );
+    }
+
+    #[test]
+    fn call_end_skips_static_and_unrelated_calls_then_clears_tracker() {
+        let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let b = log(OTHER, vec![TOPIC_B], b"b");
+        let mut tracker = ExpectedEmitTracker::new();
+        expect(&mut tracker, Some(&a), ALL);
+        expect(&mut tracker, Some(&b), ALL);
+        tracker[1].0.depth = 1;
+        assert_eq!(observe_log(&mut tracker, &b), None);
+
+        for satisfied in [false, true] {
+            if satisfied {
+                assert_eq!(observe_log(&mut tracker, &a), None);
+                assert_eq!(observe_log(&mut tracker, &b), None);
+            }
+            let before = format!("{tracker:?}");
+            for (depth, is_static) in [(0, true), (2, false)] {
+                assert!(check_call_emits(&mut tracker, depth, is_static, true).is_none());
+                assert_eq!(format!("{tracker:?}"), before);
+            }
+        }
+
+        assert!(check_call_emits(&mut tracker, 0, false, true).is_none());
+        assert!(tracker.is_empty());
+    }
+
+    #[test]
+    fn call_end_checks_counts_at_other_depths() {
+        let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let b = log(OTHER, vec![TOPIC_B], b"b");
+        let mut tracker = ExpectedEmitTracker::new();
+        expect(&mut tracker, Some(&a), ALL);
+        expect_with(&mut tracker, Some(&b), ALL, Some(OTHER), 0, false);
+        tracker[1].0.depth = 1;
+        assert_eq!(observe_log(&mut tracker, &a), None);
+        let (expected, count_map) = &mut tracker[0];
+        assert_eq!(expected.depth, 1);
+        let mut counts = LogCountMap::new(expected);
+        assert!(counts.insert(&b.data));
+        count_map.insert(OTHER, counts);
+        let before = format!("{tracker:?}");
+
+        let unmet = check_call_emits(&mut tracker, 0, false, true).unwrap();
+        assert!(matches!(unmet, UnmetEmit::Count { expected: 0, actual: 1 }));
+        assert_eq!(format!("{tracker:?}"), before);
+    }
+
+    #[test]
+    fn call_end_unmatched_expectation_precedes_wrong_count_and_failed_call() {
+        let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let b = log(OTHER, vec![TOPIC_B], b"b");
+        let mut tracker = ExpectedEmitTracker::new();
+        expect(&mut tracker, Some(&a), ALL);
+        tracker[0].0.found = true;
+        expect(&mut tracker, Some(&b), ALL);
+        tracker[1].0.depth = 1;
+        let before = format!("{tracker:?}");
+
+        for succeeded in [false, true] {
+            let unmet = check_call_emits(&mut tracker, 0, false, succeeded).unwrap();
+            assert!(matches!(&unmet, UnmetEmit::Unmatched(expected)
+                if expected.log.as_ref() == Some(&b.data)));
+            assert_eq!(
+                unmet.encode(unused_identifier),
+                Bytes::from("log != expected log".abi_encode())
+            );
+            assert_eq!(format!("{tracker:?}"), before);
+        }
+    }
+
+    #[test]
+    fn unmatched_emit_uses_plain_abi_encoding_and_lazy_signature_resolution() {
+        let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let actual = log(EMITTER, vec![TOPIC_A], b"actual");
+        let mismatch = EmitMismatch::Log { actual: actual.data };
+        for (expected_log, mismatch_error, anonymous, message) in [
+            (None, Some(mismatch.clone()), false, "log != expected log"),
+            (Some(&a), Some(mismatch.clone()), true, "log != expected log"),
+            (
+                Some(&a),
+                Some(EmitMismatch::Emitter { expected: EMITTER, actual: OTHER }),
+                false,
+                "log emitter mismatch: expected=0x00000000000000000000000000000000000000aa, \
+                 got=0x00000000000000000000000000000000000000bb",
+            ),
+        ] {
+            let mut tracker = ExpectedEmitTracker::new();
+            expect_with(&mut tracker, expected_log, ALL, None, 1, anonymous);
+            tracker[0].0.mismatch_error = mismatch_error;
+            let unmet = check_call_emits(&mut tracker, 0, false, true).unwrap();
+            assert_eq!(unmet.encode(unused_identifier), Bytes::from(message.abi_encode()));
+        }
+
+        let mut tracker = ExpectedEmitTracker::new();
+        expect(&mut tracker, Some(&a), ALL);
+        tracker[0].0.mismatch_error = Some(mismatch);
+        let unmet = check_call_emits(&mut tracker, 0, false, true).unwrap();
+        let mut resolved = false;
+        let encoded = unmet.encode(|| {
+            resolved = true;
+            None
+        });
+        assert!(resolved, "non-anonymous log mismatches resolve signatures");
+        assert_eq!(encoded, Bytes::from("log != expected log".abi_encode()));
     }
 }
