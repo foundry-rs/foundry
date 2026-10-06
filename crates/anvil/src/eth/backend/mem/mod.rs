@@ -3875,7 +3875,7 @@ impl<N: Network> Backend<N> {
         } else {
             state.code_by_hash_ref(account.code_hash)?
         };
-        Ok(code.bytes()[..code.len()].to_vec().into())
+        Ok(code.original_bytes())
     }
 
     pub fn get_balance_with_state<D>(
