@@ -3102,9 +3102,9 @@ impl<N: Network> Backend<N> {
     /// This modifies certain EVM settings to mirror geth's `SkipAccountChecks` when transacting requests, see also: <https://github.com/ethereum/go-ethereum/blob/380688c636a654becc8f114438c2a5d93d2db032/core/state_transition.go#L145-L148>:
     ///
     ///  - `disable_eip3607` is set to `true`
-    ///  - `disable_base_fee` is set to `true`
-    ///  - the base fee is zero for a zero-fee call, and the blob base fee is zero for a blob call
-    ///    without a blob fee cap
+    ///  - the base fee is zero and its check disabled for a zero-fee call, while a priced call must
+    ///    pay at least the base fee
+    ///  - the blob base fee is zero for a blob call without a blob fee cap
     ///  - `tx_gas_limit_cap` is set to `Some(u64::MAX)` indicating no gas limit cap
     ///  - `nonce` check is skipped
     fn build_call_env_with_base(
@@ -3154,13 +3154,6 @@ impl<N: Network> Backend<N> {
         evm_env.cfg_env.disable_block_gas_limit = true;
         evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
 
-        // The basefee should be ignored for calls against state for
-        // - eth_call
-        // - eth_estimateGas
-        // - eth_createAccessList
-        // - tracing
-        evm_env.cfg_env.disable_base_fee = true;
-
         // Disable nonce check in revm
         evm_env.cfg_env.disable_nonce_check = true;
 
@@ -3168,10 +3161,15 @@ impl<N: Network> Backend<N> {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
         // A zero-fee call runs with a zero base fee, as in geth's eth_call, so BASEFEE never
-        // exceeds the price the call pays.
+        // exceeds the price the call pays. A priced call keeps the base fee check, so a price
+        // below the base fee is rejected as it is for a transaction.
         if gas_price == 0 {
             evm_env.block_env.basefee = 0;
         }
+        // Set the check on every call, because a cloned base environment can carry a disabled
+        // check. Pre-London blocks have no protocol base fee, so they skip the check too.
+        evm_env.cfg_env.disable_base_fee =
+            evm_env.block_env.basefee == 0 || evm_env.cfg_env.spec < SpecId::LONDON;
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
@@ -3207,12 +3205,6 @@ impl<N: Network> Backend<N> {
 
         if let Some(nonce) = nonce {
             tx_env.nonce = nonce;
-        }
-
-        if evm_env.block_env.basefee == 0 {
-            // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
-            // 0 is only possible if it's manually set
-            evm_env.cfg_env.disable_base_fee = true;
         }
 
         // Deposit transaction? (only valid when a deposit-capable network is active)
@@ -9084,9 +9076,11 @@ impl Backend<FoundryNetwork> {
                     evm_env.block_env.basefee = block_env.basefee;
                     evm_env.block_env.blob_excess_gas_and_price =
                         block_env.blob_excess_gas_and_price;
+                    // Without validation, calls run at any price against the simulated block's
+                    // fees.
+                    evm_env.cfg_env.disable_base_fee = !validation;
                     if validation {
                         evm_env.cfg_env.disable_nonce_check = false;
-                        evm_env.cfg_env.disable_base_fee = false;
                         evm_env.cfg_env.disable_block_gas_limit = false;
                     }
 
