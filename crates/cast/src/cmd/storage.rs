@@ -18,7 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{ProjectCompiler, add_storage_layout_output, etherscan_project},
-    shell,
+    has_metadata_hash, shell,
 };
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput,
@@ -258,14 +258,20 @@ fn compile_local_storage_layout(
     Ok(find_unique_artifact(project, output, address_code)?.map(|(_, artifact)| artifact))
 }
 
-/// Returns whether `code` is the artifact's deployed bytecode, ignoring the values of immutables.
+/// Returns whether `code` is the artifact's deployed bytecode.
+///
+/// Immutables are zero in the artifact and only filled in at deployment, so their values are
+/// ignored, but only when the artifact ends in a metadata hash. The hash commits to the sources,
+/// so the rest of the code still has to come from the same contract.
 fn has_deployed_code(artifact: &ConfigurableContractArtifact, code: &Bytes) -> bool {
     let Some(deployed_code) = artifact.get_deployed_bytecode_bytes() else { return false };
-    if deployed_code.len() != code.len() {
+    if deployed_code[..] == code[..] {
+        return true;
+    }
+    if deployed_code.len() != code.len() || !has_metadata_hash(&deployed_code) {
         return false;
     }
 
-    // Immutables are zero in the artifact and only filled in at deployment.
     let mut code = code.to_vec();
     let immutables =
         artifact.deployed_bytecode.iter().flat_map(|b| b.immutable_references.values());
@@ -687,6 +693,49 @@ contract Pinned {
 
         code[0] ^= 1;
         assert!(!has_deployed_code(artifact, &Bytes::from(code)));
+    }
+
+    #[test]
+    fn local_storage_layout_requires_metadata_hash_for_immutables() {
+        let prj = TestProject::new("cast-storage-immutable-no-hash", PathStyle::Dapptools);
+        let target_path = prj.add_source(
+            "Pinned",
+            r#"
+contract Pinned {
+    address public immutable token;
+    uint256 count;
+
+    constructor(address token_) {
+        token = token_;
+    }
+}
+"#,
+        );
+
+        for cbor_metadata in [true, false] {
+            let mut config = Config::with_root(prj.root());
+            config.bytecode_hash = BytecodeHash::None;
+            config.cbor_metadata = cbor_metadata;
+            let project = load_project_with_config(&prj, config);
+            let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
+            let (_, artifact) =
+                output.artifact_ids().find(|(id, _)| id.source == target_path).unwrap();
+            let mut code = artifact.get_deployed_bytecode_bytes().unwrap().to_vec();
+            assert!(has_deployed_code(artifact, &Bytes::from(code.clone())));
+
+            // Without a metadata hash, a different contract could share every other byte.
+            let immutables = &artifact.deployed_bytecode.as_ref().unwrap().immutable_references;
+            for offsets in immutables.values().flatten() {
+                code[(offsets.start + offsets.length - 1) as usize] = 1;
+            }
+            let address_code = Bytes::from(code);
+            assert!(!has_deployed_code(artifact, &address_code));
+            for json in [false, true] {
+                assert!(
+                    compile_local_storage_layout(&project, &address_code, json).unwrap().is_none()
+                );
+            }
+        }
     }
 
     #[test]
