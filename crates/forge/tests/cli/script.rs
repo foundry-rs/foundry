@@ -1360,8 +1360,24 @@ contract RevertedResume is Script {
 "#,
     );
     let (_api, handle) = spawn(NodeConfig::test()).await;
+    let lagging = Arc::new(AtomicBool::new(false));
+    let receipt_lookups = Arc::new(AtomicUsize::new(0));
+    let lagging_rpc = lagging.clone();
+    let lookups = receipt_lookups.clone();
+    let endpoint = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionReceipt",
+        move |_, result| {
+            if lagging_rpc.load(Ordering::SeqCst) && lookups.fetch_add(1, Ordering::SeqCst) > 0 {
+                Value::Null
+            } else {
+                result
+            }
+        },
+    )
+    .await;
     let (rpc, submissions) =
-        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+        spawn_rpc_proxy_recording_method(endpoint, "eth_sendRawTransaction").await;
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let sender = handle.dev_accounts().next().unwrap();
     let path = prj.root().join("broadcast/RevertedResume.s.sol/31337/run-latest.json");
@@ -1408,6 +1424,7 @@ Error: Transaction Failure: 0x[..]
         .retain(|receipt| receipt["transactionHash"] != reverted_hash);
     data["transactions"][1]["hash"] = Value::Null;
     foundry_common::fs::write_json_file(&recovery_path, &recovery).unwrap();
+    lagging.store(true, Ordering::SeqCst);
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "RevertedResume",
@@ -1417,7 +1434,11 @@ Error: Transaction Failure: 0x[..]
         private_key,
         "--resume",
     ]);
-    cmd.assert_failure().stderr_eq(format!("Error: Transaction Failure: {reverted_hash}\n"));
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
+    ));
+    assert_eq!(receipt_lookups.load(Ordering::SeqCst), 1);
+    lagging.store(false, Ordering::SeqCst);
     assert_eq!(submissions.lock().unwrap().len(), 2);
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let reverted = sequence["receipts"]
@@ -1438,6 +1459,34 @@ Error: Transaction Failure: 0x[..]
     cmd.assert_failure().stderr_eq(format!(
         "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
     ));
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    // A generationless legacy pair can retain only the reverted operation hash.
+    fs::remove_file(&recovery_path).unwrap();
+    let mut legacy: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    legacy.as_object_mut().unwrap().remove("recovery_generation");
+    legacy["receipts"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|receipt| receipt["transactionHash"] != reverted_hash);
+    foundry_common::fs::write_json_file(&path, &legacy).unwrap();
+    let sensitive_path = prj.root().join("cache/RevertedResume.s.sol/31337/run-latest.json");
+    let mut sensitive: Value = foundry_common::fs::read_json_file(&sensitive_path).unwrap();
+    sensitive.as_object_mut().unwrap().remove("recovery_generation");
+    foundry_common::fs::write_json_file(&sensitive_path, &sensitive).unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "RevertedResume",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    cmd.assert_failure().stderr_eq(format!(
+        "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
+    ));
+    let legacy: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert!(legacy["receipts"].as_array().unwrap().iter().any(|receipt| {
+        receipt["transactionHash"] == reverted_hash && receipt["status"] == "0x0"
+    }));
     assert_eq!(submissions.lock().unwrap().len(), 2);
     assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
 }

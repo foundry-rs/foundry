@@ -354,11 +354,14 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 )?
                 .build()?;
                 // A mined signed attempt can lack a pending hash and receipt, for example when its
-                // response was lost or an older snapshot dropped a revert, so reconcile it before
-                // requesting signers or replaying anything.
+                // response was lost or an older snapshot dropped a revert. Legacy operation hashes
+                // need the same reconciliation before requesting signers or replaying anything.
                 for operation in 0..sequence.sequences()[index].transactions.len() {
                     let deployment = &sequence.sequences()[index];
-                    if let Some(hash) = sequence.signed_payload(index, operation).map(|s| s.hash)
+                    if let Some(hash) = sequence
+                        .signed_payload(index, operation)
+                        .map(|s| s.hash)
+                        .or(deployment.transactions[operation].hash)
                         && !deployment.pending.contains(&hash)
                         && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
                         && let Some(receipt) = provider.get_transaction_receipt(hash).await?
@@ -366,7 +369,16 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         && receipt.block_hash().is_some()
                         && receipt.transaction_index().is_some()
                     {
-                        sequence.sequences_mut()[index].add_pending(operation, hash);
+                        let deployment = &mut sequence.sequences_mut()[index];
+                        if receipt.status() {
+                            // Successful transactions still wait for the requested confirmations.
+                            deployment.add_pending(operation, hash);
+                        } else {
+                            deployment.transactions[operation].hash = Some(hash);
+                            deployment.add_receipt(receipt);
+                            // Preserve the observed revert even if a later RPC lookup lags.
+                            sequence.save(true, false)?;
+                        }
                     }
                 }
                 if sequence.sequences()[index].pending.is_empty() {

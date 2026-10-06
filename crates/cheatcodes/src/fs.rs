@@ -1199,14 +1199,12 @@ where
         reader = reader.with_tx_type(filter);
     }
 
-    let broadcast = reader.read_latest::<N>()?;
+    let broadcasts =
+        if successful_only { reader.read::<N>()? } else { vec![reader.read_latest::<N>()?] };
 
-    let results = reader.into_tx_receipts(broadcast);
-
-    let summaries = parse_broadcast_results(results);
-
-    summaries
+    broadcasts
         .into_iter()
+        .flat_map(|broadcast| parse_broadcast_results(reader.into_tx_receipts(broadcast)))
         .find(|summary| !successful_only || summary.success)
         .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
 }
@@ -1802,6 +1800,19 @@ mod tests {
         sequence["receipts"][0]["status"] = "0x0".into();
         fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
         assert_eq!(outcomes(), (vec![], vec![false, false]));
+
+        // A newer all-reverted run must not hide the older successful deployment.
+        sequence["receipts"][0]["status"] = "0x1".into();
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+        sequence["timestamp"] = 2.into();
+        sequence["receipts"][0]["status"] = "0x0".into();
+        fs::write_json_file(&sequence_dir.join("run-2.json"), &sequence).unwrap();
+        assert!(!latest(false).success);
+        assert_eq!(latest(true).blockNumber, 7);
+        assert_eq!(
+            latest(true).contractAddress,
+            address!("20c0000000000000000000000000000000000000")
+        );
 
         stdfs::remove_dir_all(root).unwrap();
     }

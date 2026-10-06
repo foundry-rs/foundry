@@ -184,8 +184,8 @@ generation-tagged state fails closed. A generationless legacy public/sensitive p
 after its pair-consistency checks pass. Batch import additionally validates transaction-hash,
 pending, and receipt associations. Resume then:
 
-1. reconciles hashes currently listed in `pending`, plus mined ordinary signed attempts that lack a
-   pending hash or receipt;
+1. reconciles hashes currently listed in `pending`, plus mined ordinary signed attempts and saved
+   operation hashes that lack a pending entry or receipt;
 2. stops if any persisted receipt reverted;
 3. reuses available signers or re-executes only to collect missing script-provided signers;
 4. derives remaining ordinary work by operation hash and batch work by a validated contiguous
