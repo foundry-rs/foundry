@@ -32,7 +32,7 @@ use foundry_config::{
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{collections::BTreeSet, str::FromStr};
 
 /// The minimum Solc version for outputting storage layouts.
 ///
@@ -241,9 +241,7 @@ fn compile_local_storage_layout(
         || !project.paths.artifacts.is_dir();
     if !full_compile {
         let output = ProjectCompiler::new().quiet(false).compile(project)?;
-        let Some((target, artifact)) =
-            output.into_artifacts().find(|(_, artifact)| has_deployed_code(artifact, address_code))
-        else {
+        let Some((target, artifact)) = find_unique_artifact(project, output, address_code)? else {
             return Ok(None);
         };
         if artifact.storage_layout.is_some() {
@@ -257,9 +255,7 @@ fn compile_local_storage_layout(
     }
 
     let output = compile_full_storage_layout(project, json)?;
-    Ok(output
-        .into_artifacts()
-        .find_map(|(_, artifact)| has_deployed_code(&artifact, address_code).then_some(artifact)))
+    Ok(find_unique_artifact(project, output, address_code)?.map(|(_, artifact)| artifact))
 }
 
 /// Returns whether `code` is the artifact's deployed bytecode, ignoring the values of immutables.
@@ -296,6 +292,30 @@ fn find_target_artifact(
             && has_deployed_code(&artifact, address_code))
         .then_some(artifact)
     })
+}
+
+/// Returns the artifact whose deployed bytecode is `code`.
+///
+/// Fails if the code matches more than one contract, since each can have a different storage
+/// layout.
+fn find_unique_artifact(
+    project: &Project,
+    output: ProjectCompileOutput,
+    code: &Bytes,
+) -> Result<Option<(ArtifactId, ConfigurableContractArtifact)>> {
+    let mut found = None;
+    let mut contracts = BTreeSet::new();
+    for (id, artifact) in output.into_artifacts() {
+        if has_deployed_code(&artifact, code) {
+            contracts.insert(id.clone().with_stripped_file_prefixes(project.root()).identifier());
+            found.get_or_insert((id, artifact));
+        }
+    }
+    if contracts.len() > 1 {
+        let contracts = contracts.into_iter().collect::<Vec<_>>().join(", ");
+        eyre::bail!("Deployed code matches multiple local contracts: {contracts}");
+    }
+    Ok(found)
 }
 
 fn compile_target_storage_layout(
@@ -411,7 +431,7 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_compilers::PathStyle;
+    use foundry_compilers::{PathStyle, artifacts::BytecodeHash};
     use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
     use foundry_test_utils::{
         TestProject,
@@ -667,6 +687,27 @@ contract Pinned {
 
         code[0] ^= 1;
         assert!(!has_deployed_code(artifact, &Bytes::from(code)));
+    }
+
+    #[test]
+    fn local_storage_layout_rejects_ambiguous_artifacts() {
+        let prj = TestProject::new("cast-storage-ambiguous", PathStyle::Dapptools);
+        let first_path = prj.add_source("First", "contract First { uint256 first; }");
+        let second_path = prj.add_source("Second", "contract Second { uint256 second; }");
+        let mut config = Config::with_root(prj.root());
+        config.bytecode_hash = BytecodeHash::None;
+        config.cbor_metadata = false;
+        let project = load_project_with_config(&prj, config);
+        let (_, address_code) = compile_target(&project, &first_path, "First");
+        assert_eq!(compile_target(&project, &second_path, "Second").1, address_code);
+
+        for json in [false, true] {
+            let err = compile_local_storage_layout(&project, &address_code, json).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Deployed code matches multiple local contracts: src/First.sol:First, src/Second.sol:Second"
+            );
+        }
     }
 
     #[test]
