@@ -571,7 +571,9 @@ library Fee {
     .unwrap();
     fs::write(
         prj.root().join("broken.json"),
-        candidate("pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function testFee() public {\n        missing();\n    }\n}\n"),
+        candidate(
+            "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function unused() public {\n        uint256 x;\n    }\n    function testFee() public {\n        missing();\n    }\n}\n",
+        ),
     )
     .unwrap();
 
@@ -592,8 +594,8 @@ library Fee {
 {
   "passed": false,
   "reasons": [
-    "FeeCheckTest::testFee failed on seed 1: [..]",
-    "FeeCheckTest::testFee failed on seed 2: [..]"
+    "FeeCheckTest::testFee failed on seed 1: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^",
+    "FeeCheckTest::testFee failed on seed 2: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^"
   ],
   "possible_bugs": []
 }

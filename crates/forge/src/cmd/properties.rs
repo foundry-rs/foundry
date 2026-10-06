@@ -1294,6 +1294,33 @@ fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path)
     }
 }
 
+/// Returns stderr without compiler warning blocks and keeps both ends when it is still long.
+/// Warnings can fill the limit before the decisive error, and many tools print the error last.
 fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).trim().chars().take(2_000).collect()
+    const HALF: usize = 1_000;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut in_warning = false;
+    let stderr = stderr
+        .lines()
+        .filter(|line| {
+            if line.starts_with("Warning") {
+                in_warning = true;
+            } else if line.starts_with("Error") {
+                in_warning = false;
+            } else if in_warning && line.trim().is_empty() {
+                in_warning = false;
+                return false;
+            }
+            !in_warning
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let stderr = stderr.trim();
+    let chars = stderr.chars().count();
+    if chars <= 2 * HALF {
+        return stderr.to_string();
+    }
+    let head = stderr.chars().take(HALF).collect::<String>();
+    let tail = stderr.chars().skip(chars - HALF).collect::<String>();
+    format!("{head}\n[...]\n{tail}")
 }
