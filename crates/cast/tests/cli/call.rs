@@ -940,7 +940,7 @@ fn cast_call_can_override_state_diff(cmd: _) {
 "#]]);
     cmd.args(["--trace"]).assert_success().stdout_eq(str![[r#"
 Traces:
-  [7281] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
+  [7681] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
     ├─ [2275] 0xe537cb8a46Bd179c0C36aB7E3Fdecd759C8B80fc::fallback() [delegatecall]
     │   └─ ← [Return] 0x1337
     └─ ← [Return] 0x1337
