@@ -69,13 +69,16 @@ pub(crate) async fn handle_traces(
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
-        if debugger.is_some() {
+        if let Some(frontend) = debugger {
             if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
                 config.extra_output.push(ContractOutputSelection::StorageLayout);
             }
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in tests and scripts.
             config.build_info = true;
+            if frontend.reads_ethdebug() {
+                config.request_ethdebug();
+            }
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();

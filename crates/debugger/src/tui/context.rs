@@ -1819,6 +1819,8 @@ mod tests {
                 build_id,
                 file_id: 0,
                 via_ir: None,
+                ethdebug: None,
+                ethdebug_runtime: None,
             }],
         );
         context

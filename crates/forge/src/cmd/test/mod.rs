@@ -1240,6 +1240,9 @@ impl TestArgs {
             // Full build infos keep the sources the compiler saw, which dynamic test linking
             // rewrites in test files.
             config.build_info = true;
+            if self.debugger.unwrap_or_default().reads_ethdebug() {
+                config.request_ethdebug();
+            }
         }
     }
 
