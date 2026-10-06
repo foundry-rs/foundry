@@ -2653,13 +2653,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
 
             // Check for leftover expected creates
-            if let Some(expected_create) = self.expected_creates.first() {
-                let msg = format!(
-                    "expected {} call by address {} for bytecode {} but not found",
-                    expected_create.create_scheme,
-                    hex::encode_prefixed(expected_create.deployer),
-                    hex::encode_prefixed(&expected_create.bytecode),
-                );
+            if let Some(msg) = expect::first_unmet_create(&self.expected_creates) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
             }
@@ -2968,15 +2962,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             && let Ok(created_acc) = ecx.journal_mut().load_account(address)
         {
             let bytecode = created_acc.data.info.code.clone().unwrap_or_default().original_bytes();
-            if let Some((index, _)) =
-                self.expected_creates.iter().find_position(|expected_create| {
-                    expected_create.deployer == call.caller()
-                        && expected_create.create_scheme.eq(call.scheme().into())
-                        && expected_create.bytecode == bytecode
-                })
-            {
-                self.expected_creates.swap_remove(index);
-            }
+            expect::observe_create(
+                &mut self.expected_creates,
+                call.caller(),
+                || call.scheme().into(),
+                &bytecode,
+            );
         }
     }
 }

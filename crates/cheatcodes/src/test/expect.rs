@@ -950,6 +950,35 @@ fn expect_safe_memory<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+/// Removes the first create expectation matched by a completed create.
+///
+/// `create_scheme` is only called for expectations with a matching deployer.
+pub(crate) fn observe_create(
+    expected_creates: &mut Vec<ExpectedCreate>,
+    deployer: Address,
+    create_scheme: impl Fn() -> CreateScheme,
+    bytecode: &Bytes,
+) {
+    if let Some((index, _)) = expected_creates.iter().find_position(|expected_create| {
+        expected_create.deployer == deployer
+            && expected_create.create_scheme.eq(create_scheme())
+            && expected_create.bytecode == *bytecode
+    }) {
+        expected_creates.swap_remove(index);
+    }
+}
+
+/// Returns the failure message for the first unmet create expectation, if any.
+pub(crate) fn first_unmet_create(expected_creates: &[ExpectedCreate]) -> Option<String> {
+    let expected_create = expected_creates.first()?;
+    Some(format!(
+        "expected {} call by address {} for bytecode {} but not found",
+        expected_create.create_scheme,
+        hex::encode_prefixed(expected_create.deployer),
+        hex::encode_prefixed(&expected_create.bytecode),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1185,5 +1214,21 @@ mod tests {
             "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 \
              to be called 1 time, but was called 0 times"
         );
+    }
+
+    #[test]
+    fn observe_create_converts_the_scheme_only_for_a_matching_deployer() {
+        let bytecode = bytes!("6080");
+        let mut expected_creates = vec![ExpectedCreate {
+            deployer: Address::ZERO,
+            bytecode: bytecode.clone(),
+            create_scheme: CreateScheme::Create,
+        }];
+
+        observe_create(&mut expected_creates, TARGET, || unreachable!(), &bytecode);
+        assert_eq!(expected_creates.len(), 1);
+
+        observe_create(&mut expected_creates, Address::ZERO, || CreateScheme::Create, &bytecode);
+        assert!(expected_creates.is_empty());
     }
 }
