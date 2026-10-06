@@ -258,56 +258,64 @@ impl FromStr for GasSnapshotEntry {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        RE_BASIC_SNAPSHOT_ENTRY
+        let cap = RE_BASIC_SNAPSHOT_ENTRY
             .captures(s)
-            .and_then(|cap| {
-                cap.name("file").and_then(|file| {
-                    cap.name("sig").and_then(|sig| {
-                        if let Some(gas) = cap.name("gas") {
-                            Some(Self {
-                                contract_name: file.as_str().to_string(),
-                                signature: sig.as_str().to_string(),
-                                gas_used: TestKindReport::Unit {
-                                    gas: gas.as_str().parse().unwrap(),
-                                },
-                            })
-                        } else if let Some(runs) = cap.name("runs") {
-                            cap.name("avg")
-                                .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                .map(|(runs, avg, med)| Self {
-                                    contract_name: file.as_str().to_string(),
-                                    signature: sig.as_str().to_string(),
-                                    gas_used: TestKindReport::Fuzz {
-                                        runs: runs.as_str().parse().unwrap(),
-                                        median_gas: med.as_str().parse().unwrap(),
-                                        mean_gas: avg.as_str().parse().unwrap(),
-                                        failed_corpus_replays: 0,
-                                    },
-                                })
-                        } else {
-                            cap.name("invruns")
-                                .and_then(|runs| {
-                                    cap.name("calls").and_then(|avg| {
-                                        cap.name("reverts").map(|med| (runs, avg, med))
-                                    })
-                                })
-                                .map(|(runs, calls, reverts)| Self {
-                                    contract_name: file.as_str().to_string(),
-                                    signature: sig.as_str().to_string(),
-                                    gas_used: TestKindReport::Invariant {
-                                        runs: runs.as_str().parse().unwrap(),
-                                        calls: calls.as_str().parse().unwrap(),
-                                        reverts: reverts.as_str().parse().unwrap(),
-                                        failed_corpus_replays: 0,
-                                        optimization_best_value: None,
-                                    },
-                                })
-                        }
-                    })
-                })
-            })
-            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))
+            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?;
+        let contract_name = cap
+            .name("file")
+            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?
+            .as_str()
+            .to_string();
+        let signature = cap
+            .name("sig")
+            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?
+            .as_str()
+            .to_string();
+
+        let gas_used = if let Some(gas) = cap.name("gas") {
+            TestKindReport::Unit { gas: parse_snapshot_value(gas.as_str(), "gas")? }
+        } else if let Some(runs) = cap.name("runs") {
+            let avg = cap
+                .name("avg")
+                .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?;
+            let med = cap
+                .name("med")
+                .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?;
+            TestKindReport::Fuzz {
+                runs: parse_snapshot_value(runs.as_str(), "runs")?,
+                median_gas: parse_snapshot_value(med.as_str(), "median gas")?,
+                mean_gas: parse_snapshot_value(avg.as_str(), "mean gas")?,
+                failed_corpus_replays: 0,
+            }
+        } else {
+            let runs = cap
+                .name("invruns")
+                .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?;
+            let calls = cap
+                .name("calls")
+                .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?;
+            let reverts = cap
+                .name("reverts")
+                .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))?;
+            TestKindReport::Invariant {
+                runs: parse_snapshot_value(runs.as_str(), "runs")?,
+                calls: parse_snapshot_value(calls.as_str(), "calls")?,
+                reverts: parse_snapshot_value(reverts.as_str(), "reverts")?,
+                failed_corpus_replays: 0,
+                optimization_best_value: None,
+            }
+        };
+
+        Ok(Self { contract_name, signature, gas_used })
     }
+}
+
+fn parse_snapshot_value<T>(value: &str, field: &str) -> Result<T, String>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    value.parse().map_err(|_| format!("invalid {field} value `{value}` in gas snapshot"))
 }
 
 /// Reads a list of gas snapshot entries from a gas snapshot file.
@@ -692,5 +700,33 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[test]
+    fn rejects_overflowing_unit_gas_snapshot_value() {
+        let error = GasSnapshotEntry::from_str("Example:testFoo() (gas: 18446744073709551616)")
+            .unwrap_err();
+
+        assert_eq!(error, "invalid gas value `18446744073709551616` in gas snapshot");
+    }
+
+    #[test]
+    fn rejects_overflowing_fuzz_gas_snapshot_value() {
+        let error = GasSnapshotEntry::from_str(
+            "Example:testFoo() (runs: 1, μ: 18446744073709551616, ~: 1)",
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "invalid mean gas value `18446744073709551616` in gas snapshot");
+    }
+
+    #[test]
+    fn rejects_overflowing_invariant_gas_snapshot_value() {
+        let error = GasSnapshotEntry::from_str(
+            "Example:invariantFoo() (runs: 18446744073709551616, calls: 1, reverts: 1)",
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "invalid runs value `18446744073709551616` in gas snapshot");
     }
 }
