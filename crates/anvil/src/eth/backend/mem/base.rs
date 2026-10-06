@@ -25,7 +25,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types::EIP8130_PRE_ZENITH_RPC_ERROR;
 use base_consensus_upgrades::Jovian;
 use base_protocol::{BaseTimeUpdateTx, L1BlockInfoJovian, L1BlockInfoTx};
-use foundry_evm::backend::DatabaseError;
+use foundry_evm::{backend::DatabaseError, hardfork::FoundryHardfork};
 use foundry_primitives::FoundryTxEnvelope;
 use revm::{
     DatabaseRef, Inspector,
@@ -91,6 +91,7 @@ impl<N: Network> Backend<N> {
         db: &dyn Db,
         parent_env: &EvmEnv,
         parent_hash: B256,
+        hardfork: FoundryHardfork,
     ) -> Result<(), DatabaseError> {
         let mut evm_env = parent_env.clone();
         evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
@@ -106,7 +107,7 @@ impl<N: Network> Backend<N> {
             &mut candidate_db,
             &evm_env,
             parent_hash,
-            self.hardfork(),
+            hardfork,
             Some(B256::ZERO),
             BlockExecutionKind::Complete,
             &transactions,

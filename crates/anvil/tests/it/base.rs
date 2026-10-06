@@ -1833,6 +1833,68 @@ async fn base_denim_load_pre_denim_state_installs_base_time() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn base_denim_rejected_state_load_is_atomic() {
+    let config = || NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()));
+    let sentinel = Address::repeat_byte(0x77);
+
+    let (source, _source_handle) = spawn(config()).await;
+    source.anvil_set_balance(sentinel, U256::from(123)).await.unwrap();
+    source.mine_one().await.unwrap();
+    source.mine_one().await.unwrap();
+    let mut invalid_state = source.backend.serialized_state(false).await.unwrap();
+    let base_time = invalid_state.accounts.get_mut(&Predeploys::BASE_TIME).unwrap();
+    base_time
+        .storage
+        .insert(B256::from(BaseTime::IMPLEMENTATION_SLOT.to_be_bytes::<32>()), B256::ZERO);
+    base_time.storage.insert(
+        B256::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+        B256::from(U256::from(0xdead).to_be_bytes::<32>()),
+    );
+
+    let (target, target_handle) = spawn(config()).await;
+    target.anvil_set_balance(sentinel, U256::from(7)).await.unwrap();
+    target.mine_one().await.unwrap();
+    let original_hash = target.backend.best_hash();
+    let original_number = target.backend.best_number();
+
+    target.backend.load_state(invalid_state).await.unwrap_err();
+    assert_eq!(target.backend.best_hash(), original_hash);
+    assert_eq!(target.backend.best_number(), original_number);
+    assert_eq!(target.backend.current_balance(sentinel).await.unwrap(), U256::from(7));
+
+    target.mine_one().await.unwrap();
+    assert_eq!(target.backend.best_number(), original_number + 1);
+    assert_eq!(base_time_ms(&target_handle.http_provider(), BlockId::latest()).await % 1_000, 400);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_inferred_denim_fork_resets_to_pre_denim() {
+    let (denim, denim_handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Denim.into()))).await;
+    denim.mine_one().await.unwrap();
+    let (beryl, beryl_handle) =
+        spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;
+    beryl.mine_one().await.unwrap();
+
+    let (api, handle) =
+        spawn(NodeConfig::test_base().with_eth_rpc_url(Some(denim_handle.http_endpoint()))).await;
+    assert_eq!(api.backend.hardfork(), BaseUpgrade::Denim.into());
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(beryl_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(api.backend.hardfork(), BaseUpgrade::Beryl.into());
+    assert!(handle.http_provider().get_code_at(Predeploys::BASE_TIME).await.unwrap().is_empty());
+
+    api.mine_one().await.unwrap();
+    let block = handle.http_provider().get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert!(block.transactions.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn base_fork_denim_rejects_pre_jovian_l1_block() {
     let (source, source_handle) =
         spawn(NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Beryl.into()))).await;

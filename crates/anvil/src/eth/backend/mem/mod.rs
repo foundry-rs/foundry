@@ -3071,8 +3071,19 @@ impl<N: Network> Backend<N> {
 
         #[cfg(feature = "base")]
         if self.is_base() {
-            let upgrade =
-                self.base_upgrade_at_timestamp(evm_env.block_env.timestamp.saturating_to());
+            let configured = match hardfork {
+                FoundryHardfork::Base(upgrade) => upgrade,
+                _ => BaseUpgrade::Azul,
+            };
+            let upgrade = if self.is_fork() {
+                BaseUpgrade::from_chain_and_timestamp(
+                    evm_env.cfg_env.chain_id,
+                    evm_env.block_env.timestamp.saturating_to(),
+                )
+                .unwrap_or(configured)
+            } else {
+                configured
+            };
             let cfg =
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(BaseSpecId::new(upgrade));
             let activation_admin = self.base_activation_admin().or_else(|| {
@@ -4706,6 +4717,7 @@ impl<N: Network> Backend<N> {
                     self.startup_fork_cache_user.cache_lease.clone(),
                     &parent_env,
                     self.best_hash(),
+                    self.hardfork(),
                 )
                 .await;
         }
@@ -4786,6 +4798,7 @@ impl<N: Network> Backend<N> {
         cache_lease: StagedForkCacheLease,
         parent_env: &EvmEnv,
         parent_hash: B256,
+        hardfork: FoundryHardfork,
     ) -> Result<(), DatabaseError> {
         let user = StagedForkDbUser { db: Some(db), cache_lease };
         let mut genesis_accounts = JoinSet::new();
@@ -4829,12 +4842,17 @@ impl<N: Network> Backend<N> {
         // Denim blocks mined locally still send the BaseTime deposit. Existing deployments and
         // their admin are preserved.
         #[cfg(feature = "base")]
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+        if matches!(hardfork, FoundryHardfork::Base(upgrade) if upgrade >= BaseUpgrade::Denim) {
             ensure_base_time_predeploy(&mut **db_guard, false)?;
-            self.ensure_fork_accepts_system_transactions(&**db_guard, parent_env, parent_hash)?;
+            self.ensure_fork_accepts_system_transactions(
+                &**db_guard,
+                parent_env,
+                parent_hash,
+                hardfork,
+            )?;
         }
         #[cfg(not(feature = "base"))]
-        let _ = (parent_env, parent_hash);
+        let _ = (parent_env, parent_hash, hardfork);
         drop(db_guard);
         self.apply_funded_accounts(user.db()).await
     }
@@ -5159,6 +5177,7 @@ impl<N: Network> Backend<N> {
                 cache_lease.clone(),
                 &staged_env,
                 staged_client_config.block_hash,
+                staged_client_config.hardfork.unwrap_or_else(|| staged_config.get_hardfork()),
             )
             .await?;
 
@@ -6262,15 +6281,6 @@ where
                 let block_timestamp = pending_timestamp.timestamp;
                 evm_env.block_env.timestamp = U256::from(block_timestamp);
 
-                #[cfg(feature = "base")]
-                let protocol_transactions = self
-                    .base_system_transactions(&**db, block_number, block_timestamp, best_hash)?
-                    .into_iter()
-                    .chain(pool_transactions.iter().cloned())
-                    .collect::<Vec<_>>();
-                #[cfg(not(feature = "base"))]
-                let protocol_transactions = pool_transactions.clone();
-
                 // Forced historical transactions bypass pool admission and are replayed while
                 // mining. Keep this exception local to the disposable mining environment.
                 let mut mining_evm_env = evm_env.clone();
@@ -6280,6 +6290,21 @@ where
                         self.protocol_chain_id(),
                     );
                 }
+
+                #[cfg(feature = "base")]
+                let (protocol_transactions, system_transaction_count) = {
+                    let mut transactions = self.base_system_transactions(
+                        &**db,
+                        block_number,
+                        block_timestamp,
+                        best_hash,
+                    )?;
+                    let system_transaction_count = transactions.len();
+                    transactions.extend(pool_transactions);
+                    (transactions, system_transaction_count)
+                };
+                #[cfg(not(feature = "base"))]
+                let protocol_transactions = pool_transactions;
 
                 let inspector_tx_config = self.inspector_tx_config();
                 let gas_config = self.pool_tx_gas_config(&mining_evm_env);
@@ -6309,9 +6334,6 @@ where
                 )?;
                 let block_access_list = candidate_db.take_block_access_list();
 
-                #[cfg(feature = "base")]
-                let system_transaction_count =
-                    protocol_transactions.len() - pool_transactions.len();
                 #[cfg(feature = "base")]
                 base::validate_system_transactions(
                     &protocol_transactions[..system_transaction_count],
@@ -6565,18 +6587,17 @@ where
         let block_number = self.best_number().saturating_add(1);
 
         #[cfg(feature = "base")]
-        let user_transaction_count = pool_transactions.len();
-        #[cfg(feature = "base")]
-        let pool_transactions = self
-            .base_system_transactions(
+        let (pool_transactions, system_transaction_count) = {
+            let mut transactions = self.base_system_transactions(
                 &**db,
                 block_number,
                 evm_env.block_env.timestamp.saturating_to(),
                 parent_hash,
-            )?
-            .into_iter()
-            .chain(pool_transactions)
-            .collect::<Vec<_>>();
+            )?;
+            let system_transaction_count = transactions.len();
+            transactions.extend(pool_transactions);
+            (transactions, system_transaction_count)
+        };
         // Read the next block's beacon root override without consuming it, so the pending block
         // sees the root the next mined block will use.
         let parent_beacon_block_root = Some(
@@ -6603,7 +6624,7 @@ where
 
         #[cfg(feature = "base")]
         base::validate_system_transactions(
-            &pool_transactions[..pool_transactions.len() - user_transaction_count],
+            &pool_transactions[..system_transaction_count],
             &pool_result,
         )?;
 
@@ -8574,17 +8595,29 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         });
 
         let historical_states = state.historical_states.take();
-        if !self.db.write().await.load_state(state)? {
-            return Err(RpcError::invalid_params(
-                "Loading state not supported with the current configuration",
-            )
-            .into());
+        let mut db = self.db.write().await;
+        let db_snapshot = db.snapshot_state();
+        let load_result = (|| -> Result<(), BlockchainError> {
+            if !db.load_state(state)? {
+                return Err(RpcError::invalid_params(
+                    "Loading state not supported with the current configuration",
+                )
+                .into());
+            }
+            // A pre-Denim dump has no BaseTime deployment, but Denim blocks still send its
+            // deposit.
+            #[cfg(feature = "base")]
+            if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
+                ensure_base_time_predeploy(&mut **db, false)?;
+            }
+            Ok(())
+        })();
+        if let Err(err) = load_result {
+            db.revert_state(db_snapshot, RevertStateSnapshotAction::RevertRemove);
+            return Err(err);
         }
-        // A pre-Denim dump has no BaseTime deployment, but Denim blocks still send its deposit.
-        #[cfg(feature = "base")]
-        if self.is_base() && self.base_upgrade() >= BaseUpgrade::Denim {
-            ensure_base_time_predeploy(&mut **self.db.write().await, false)?;
-        }
+        db.delete_state_snapshot(db_snapshot);
+        drop(db);
 
         // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
         // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already

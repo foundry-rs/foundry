@@ -2749,7 +2749,7 @@ dependencies = [
  "miniz_oxide 0.9.1",
  "serde",
  "spin",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "unsigned-varint",
 ]
