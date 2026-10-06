@@ -310,11 +310,7 @@ impl FromStr for GasSnapshotEntry {
     }
 }
 
-fn parse_snapshot_value<T>(value: &str, field: &str) -> Result<T, String>
-where
-    T: FromStr,
-    T::Err: std::fmt::Display,
-{
+fn parse_snapshot_value<T: FromStr>(value: &str, field: &str) -> Result<T, String> {
     value.parse().map_err(|_| format!("invalid {field} value `{value}` in gas snapshot"))
 }
 
@@ -322,14 +318,26 @@ where
 fn read_gas_snapshot(path: impl AsRef<Path>) -> Result<Vec<GasSnapshotEntry>> {
     let path = path.as_ref();
     let mut entries = Vec::new();
-    for line in io::BufReader::new(
+    for (line_number, line) in io::BufReader::new(
         fs::File::open(path)
             .wrap_err(format!("failed to read snapshot file \"{}\"", path.display()))?,
     )
     .lines()
+    .enumerate()
     {
-        entries
-            .push(GasSnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{err}"))?);
+        let line_number = line_number + 1;
+        let line = line.wrap_err_with(|| {
+            format!("failed to read snapshot file \"{}\" at line {line_number}", path.display())
+        })?;
+        let entry = GasSnapshotEntry::from_str(&line)
+            .map_err(|err| eyre::eyre!(err))
+            .wrap_err_with(|| {
+                format!(
+                    "failed to parse snapshot file \"{}\" at line {line_number}",
+                    path.display()
+                )
+            })?;
+        entries.push(entry);
     }
     Ok(entries)
 }
@@ -703,30 +711,100 @@ mod tests {
     }
 
     #[test]
-    fn rejects_overflowing_unit_gas_snapshot_value() {
-        let error = GasSnapshotEntry::from_str("Example:testFoo() (gas: 18446744073709551616)")
-            .unwrap_err();
+    fn rejects_overflowing_gas_snapshot_values() {
+        let u64_overflow = (u64::MAX as u128 + 1).to_string();
+        let usize_overflow = (usize::MAX as u128 + 1).to_string();
+        let cases = [
+            (
+                format!("Example:testFoo() (gas: {u64_overflow})"),
+                format!("invalid gas value `{u64_overflow}` in gas snapshot"),
+            ),
+            (
+                format!("Example:testFoo() (runs: {usize_overflow}, μ: 1, ~: 1)"),
+                format!("invalid runs value `{usize_overflow}` in gas snapshot"),
+            ),
+            (
+                format!("Example:testFoo() (runs: 1, μ: {u64_overflow}, ~: 1)"),
+                format!("invalid mean gas value `{u64_overflow}` in gas snapshot"),
+            ),
+            (
+                format!("Example:testFoo() (runs: 1, μ: 1, ~: {u64_overflow})"),
+                format!("invalid median gas value `{u64_overflow}` in gas snapshot"),
+            ),
+            (
+                format!("Example:invariantFoo() (runs: {usize_overflow}, calls: 1, reverts: 1)"),
+                format!("invalid runs value `{usize_overflow}` in gas snapshot"),
+            ),
+            (
+                format!("Example:invariantFoo() (runs: 1, calls: {usize_overflow}, reverts: 1)"),
+                format!("invalid calls value `{usize_overflow}` in gas snapshot"),
+            ),
+            (
+                format!("Example:invariantFoo() (runs: 1, calls: 1, reverts: {usize_overflow})"),
+                format!("invalid reverts value `{usize_overflow}` in gas snapshot"),
+            ),
+        ];
 
-        assert_eq!(error, "invalid gas value `18446744073709551616` in gas snapshot");
+        for (snapshot, expected) in cases {
+            assert_eq!(GasSnapshotEntry::from_str(&snapshot).unwrap_err(), expected);
+        }
     }
 
     #[test]
-    fn rejects_overflowing_fuzz_gas_snapshot_value() {
-        let error = GasSnapshotEntry::from_str(
-            "Example:testFoo() (runs: 1, μ: 18446744073709551616, ~: 1)",
-        )
-        .unwrap_err();
+    fn accepts_maximum_gas_snapshot_values() {
+        let unit = format!("Example:testFoo() (gas: {})", u64::MAX);
+        assert_eq!(
+            GasSnapshotEntry::from_str(&unit).unwrap().gas_used,
+            TestKindReport::Unit { gas: u64::MAX }
+        );
 
-        assert_eq!(error, "invalid mean gas value `18446744073709551616` in gas snapshot");
+        let fuzz =
+            format!("Example:testFoo() (runs: {}, μ: {}, ~: {})", usize::MAX, u64::MAX, u64::MAX);
+        assert_eq!(
+            GasSnapshotEntry::from_str(&fuzz).unwrap().gas_used,
+            TestKindReport::Fuzz {
+                runs: usize::MAX,
+                median_gas: u64::MAX,
+                mean_gas: u64::MAX,
+                failed_corpus_replays: 0,
+            }
+        );
+
+        let invariant = format!(
+            "Example:invariantFoo() (runs: {}, calls: {}, reverts: {})",
+            usize::MAX,
+            usize::MAX,
+            usize::MAX
+        );
+        assert_eq!(
+            GasSnapshotEntry::from_str(&invariant).unwrap().gas_used,
+            TestKindReport::Invariant {
+                runs: usize::MAX,
+                calls: usize::MAX,
+                reverts: usize::MAX,
+                failed_corpus_replays: 0,
+                optimization_best_value: None,
+            }
+        );
     }
 
     #[test]
-    fn rejects_overflowing_invariant_gas_snapshot_value() {
-        let error = GasSnapshotEntry::from_str(
-            "Example:invariantFoo() (runs: 18446744073709551616, calls: 1, reverts: 1)",
+    fn reports_snapshot_path_and_line_for_invalid_values() {
+        let snapshot = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            snapshot.path(),
+            "Example:testFoo() (gas: 1)\nExample:testBar() (gas: 18446744073709551616)",
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert_eq!(error, "invalid runs value `18446744073709551616` in gas snapshot");
+        let error = read_gas_snapshot(snapshot.path()).unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            format!(
+                "failed to parse snapshot file \"{}\" at line 2: invalid gas value `18446744073709551616` in gas snapshot",
+                snapshot.path().display()
+            )
+        );
     }
 }
