@@ -4207,7 +4207,9 @@ impl EthApi<FoundryNetwork> {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 let pending_increase =
                     interval.map(|interval| this.backend.time().apply_time_increase(interval));
-                if let Err(error) = this.mine_one().await {
+                if let Err(error) =
+                    this.mine_one_with_interval(interval.filter(|interval| *interval == 0)).await
+                {
                     if let Some(pending) = pending_increase {
                         this.backend.time().revert_time_increase(pending);
                     }
@@ -4990,9 +4992,13 @@ impl EthApi<FoundryNetwork> {
 
     /// Mines exactly one block
     pub async fn mine_one(&self) -> Result<()> {
+        self.mine_one_with_interval(None).await
+    }
+
+    async fn mine_one_with_interval(&self, temporary_interval: Option<u64>) -> Result<()> {
         let _mining = self.backend.lock_mining().await;
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let outcome = self.backend.mine_block_locked(transactions).await?;
+        let outcome = self.backend.mine_block_locked(transactions, temporary_interval).await?;
 
         trace!(target: "node", blocknumber = ?outcome.block_number, "mined block");
         if self.pool.on_mined_block(outcome) {

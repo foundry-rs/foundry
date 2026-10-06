@@ -1735,41 +1735,55 @@ async fn evm_mine_blk_with_same_timestamp() {
     assert_eq!(next_blk_timestamp, init_timestamp);
 }
 
-// mine 4 blocks instantly.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_mine_blk_with_same_timestamp() {
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let provider = handle.http_provider();
+async fn test_mine_blocks_with_increasing_timestamps() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+    let init_block = api.block_by_number(0.into()).await.unwrap().unwrap();
 
-    let init_blk = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    api.anvil_mine(Some(U256::from(4)), None).await.unwrap();
 
-    let init_number = init_blk.header.number;
-    let init_timestamp = init_blk.header.timestamp;
-
-    // Mine 4 blocks instantly
-    let _ = api.anvil_mine(Some(U256::from(4)), None).await;
-
-    let latest_blk_num = api.block_number().unwrap().to::<u64>();
-
-    assert_eq!(latest_blk_num, init_number + 4);
-
-    let mut blk_futs = vec![];
-    for i in 1..=4 {
-        blk_futs.push(provider.get_block(i.into()).into_future());
+    let mut timestamps = vec![init_block.header.timestamp];
+    for number in 1..=4 {
+        let block = api.block_by_number(number.into()).await.unwrap().unwrap();
+        timestamps.push(block.header.timestamp);
     }
 
-    let timestamps = futures::future::join_all(blk_futs)
-        .await
-        .into_iter()
-        .map(|blk| blk.unwrap().unwrap().header.timestamp)
-        .collect::<Vec<_>>();
+    assert!(timestamps.windows(2).all(|window| window[0] < window[1]), "{timestamps:#?}");
+}
 
-    // All timestamps should be equal. Allow for 1 second difference.
-    assert!(timestamps.windows(2).all(|w| w[0] == w[1]), "{timestamps:#?}");
-    assert!(
-        timestamps[0] == init_timestamp || timestamps[0] == init_timestamp + 1,
-        "{timestamps:#?} != {init_timestamp}"
-    );
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_blocks_with_zero_interval() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+    let init_block = api.block_by_number(0.into()).await.unwrap().unwrap();
+
+    api.anvil_mine(Some(U256::from(4)), Some(U256::ZERO)).await.unwrap();
+
+    for number in 1..=4 {
+        let block = api.block_by_number(number.into()).await.unwrap().unwrap();
+        assert_eq!(block.header.timestamp, init_block.header.timestamp);
+    }
+
+    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    let next_block = api.block_by_number(5.into()).await.unwrap().unwrap();
+    assert!(next_block.header.timestamp > init_block.header.timestamp);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mine_blocks_increase_after_time_jump() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+    let init_block = api.block_by_number(0.into()).await.unwrap().unwrap();
+
+    api.anvil_mine(Some(U256::from(1)), Some(U256::from(10_000))).await.unwrap();
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+
+    let mut timestamps = Vec::with_capacity(4);
+    for number in 1..=4 {
+        let block = api.block_by_number(number.into()).await.unwrap().unwrap();
+        timestamps.push(block.header.timestamp);
+    }
+
+    assert_eq!(timestamps[0], init_block.header.timestamp + 10_000);
+    assert!(timestamps.windows(2).all(|window| window[0] < window[1]), "{timestamps:#?}");
 }
 
 // <https://github.com/foundry-rs/foundry/issues/8962>
