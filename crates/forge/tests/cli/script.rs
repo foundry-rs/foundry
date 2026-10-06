@@ -7083,17 +7083,34 @@ contract HandoffResume is Script {
         .await
         .expect("a submitted transaction was not mined");
     }
+    // Mining does not guarantee Forge has finished checkpointing the second submission.
+    let (recovery, planned) = tokio::time::timeout(Duration::from_secs(30), async {
+        let second_hash = serde_json::to_value(hashes[1]).unwrap();
+        loop {
+            if let Ok(recovery) =
+                foundry_common::fs::read_json_file::<Value>(&prj.root().join(snapshot))
+                && recovery["data"]["sequence"]["transactions"][1]["hash"] == second_hash
+                && let Ok(planned) =
+                    foundry_common::fs::read_json_file::<Value>(&prj.root().join(broadcast))
+                && planned["transactions"][1]["hash"] == second_hash
+                && !prj.root().join(snapshot).with_extension("pending").exists()
+            {
+                break (recovery, planned);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("second submission was not checkpointed in the snapshot and broadcast export");
     assert!(child.is_running(), "forge exited before it could be interrupted");
     drop(child.kill_and_wait());
     release.notify_one();
 
     // Both operations have durable signed attempts, so resuming needs no signer.
-    let recovery: Value = foundry_common::fs::read_json_file(&prj.root().join(snapshot)).unwrap();
     let attempts = recovery["deployments"][0]["attempts"].as_array().unwrap();
     assert_eq!(attempts.len(), 2);
     assert!(attempts.iter().all(|attempt| attempt["kind"]["kind"] == "signed"));
     assert!(!prj.root().join(snapshot).with_extension("pending").exists());
-    let planned: Value = foundry_common::fs::read_json_file(&prj.root().join(broadcast)).unwrap();
     let planned_addresses = planned["transactions"]
         .as_array()
         .unwrap()
