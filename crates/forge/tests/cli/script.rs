@@ -1332,7 +1332,7 @@ contract InterruptedResume is Script {
 }
 
 #[forgetest_init]
-async fn resume_stops_after_reverted_transaction(prj: _, cmd: _) {
+async fn resume_skips_reverted_transaction(prj: _, cmd: _) {
     let script = prj.add_script(
         "RevertedResume.s.sol",
         r#"
@@ -1413,7 +1413,8 @@ Error: Transaction Failure: 0x[..]
 
     // Older snapshots dropped the reverted hash from pending without its receipt, and an
     // interrupted checkpoint can also lose its operation hash. A fresh, non-sequential resume must
-    // reconcile that signed attempt instead of replaying it alongside the unsigned successor.
+    // reconcile that signed attempt instead of replaying it alongside the unsigned successor. It
+    // warns about the revert and, without a signer for the successor, fails before submitting.
     let recovery_path =
         prj.root().join("cache/RevertedResume.s.sol/31337/run-latest.json.recovery.json");
     let mut recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
@@ -1430,12 +1431,10 @@ Error: Transaction Failure: 0x[..]
         "RevertedResume",
         "--rpc-url",
         &rpc,
-        "--private-key",
-        private_key,
         "--resume",
     ]);
     cmd.assert_failure().stderr_eq(format!(
-        "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
+        "Warning: transaction {reverted_hash} on chain 31337 reverted; resume will not resubmit it\n[..]"
     ));
     assert_eq!(receipt_lookups.load(Ordering::SeqCst), 1);
     lagging.store(false, Ordering::SeqCst);
@@ -1448,19 +1447,8 @@ Error: Transaction Failure: 0x[..]
         .find(|receipt| receipt["transactionHash"] == reverted_hash);
     assert_eq!(reverted.unwrap()["status"], "0x0");
 
-    // Resume stops at the reverted operation before requesting a signer or submitting anything.
-    cmd.forge_fuse().arg("script").arg(&script).args([
-        "--tc",
-        "RevertedResume",
-        "--rpc-url",
-        &rpc,
-        "--resume",
-    ]);
-    cmd.assert_failure().stderr_eq(format!(
-        "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
-    ));
-    assert_eq!(submissions.lock().unwrap().len(), 2);
-    // A generationless legacy pair can retain only the reverted operation hash.
+    // A generationless legacy pair can retain only the reverted operation hash. Resume reconciles
+    // it, warns, and submits only the remaining operation.
     fs::remove_file(&recovery_path).unwrap();
     let mut legacy: Value = foundry_common::fs::read_json_file(&path).unwrap();
     legacy.as_object_mut().unwrap().remove("recovery_generation");
@@ -1478,17 +1466,19 @@ Error: Transaction Failure: 0x[..]
         "RevertedResume",
         "--rpc-url",
         &rpc,
+        "--private-key",
+        private_key,
         "--resume",
     ]);
-    cmd.assert_failure().stderr_eq(format!(
-        "Error: transaction {reverted_hash} on chain 31337 reverted; resume will not submit the remaining transactions\n"
+    cmd.assert_success().stderr_eq(format!(
+        "Warning: transaction {reverted_hash} on chain 31337 reverted; resume will not resubmit it\n"
     ));
     let legacy: Value = foundry_common::fs::read_json_file(&path).unwrap();
     assert!(legacy["receipts"].as_array().unwrap().iter().any(|receipt| {
         receipt["transactionHash"] == reverted_hash && receipt["status"] == "0x0"
     }));
-    assert_eq!(submissions.lock().unwrap().len(), 2);
-    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 2);
+    assert_eq!(submissions.lock().unwrap().len(), 3);
+    assert_eq!(handle.http_provider().get_transaction_count(sender).await.unwrap(), 3);
 }
 
 #[forgetest]
@@ -5927,7 +5917,8 @@ Error: Batch transaction 0x[..] failed (reverted)
         assert_eq!(submissions[0], submissions[1]);
     }
 
-    // A later resume stops at the reverted batch without requesting a signer or resubmitting.
+    // A later resume warns once about the reverted batch without requesting a signer or
+    // resubmitting.
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "MultiDeploy",
@@ -5938,8 +5929,8 @@ Error: Batch transaction 0x[..] failed (reverted)
         "--network",
         "tempo",
     ]);
-    cmd.assert_failure().stderr_eq(format!(
-        "Error: transaction {hash} on chain {} reverted; resume will not submit the remaining transactions\n",
+    cmd.assert_success().stderr_eq(format!(
+        "Warning: transaction {hash} on chain {} reverted; resume will not resubmit it\n",
         sequence["chain"]
     ));
     assert_eq!(submissions.lock().unwrap().len(), 2);

@@ -186,16 +186,15 @@ pending, and receipt associations. Resume then:
 
 1. reconciles hashes currently listed in `pending`, plus mined ordinary signed attempts and saved
    operation hashes that lack a pending entry or receipt;
-2. stops if any persisted receipt reverted;
+2. warns about every persisted reverted receipt;
 3. reuses available signers or re-executes only to collect missing script-provided signers;
 4. derives remaining ordinary work by operation hash and batch work by a validated contiguous
    prefix;
 5. prepares and submits that remaining work.
 
-A reverted receipt is terminal but unsuccessful. Resume may still reconcile already-submitted
-hashes, but it never submits remaining operations after a revert, including later operations on
-other chains. `--resume-retry` resolves only an unknown delegated outcome and cannot override a
-confirmed revert.
+A reverted receipt is terminal but unsuccessful. Resume never resubmits a reverted operation, but it
+continues with the remaining operations. `--resume-retry` resolves only an unknown delegated outcome
+and cannot override a confirmed revert.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an
 endpoint. Validated endpoint rebinding remains deferred to deployment plans and handoff.
@@ -234,7 +233,7 @@ completion permits skipping an operation on another.
 | The RPC returns a hash but the process exits before save                  | The pre-submission attempt remains durable and is reconciled conservatively |
 | A receipt is observed but the process exits before save                   | Resume sees old pending state and rediscovers the receipt                   |
 | A batch receipt hole precedes later confirmations                         | Batch resume advances only across a contiguous completed prefix             |
-| A submitted transaction or batch reverts                                  | Its receipt is saved and resume stops before requesting signers             |
+| A submitted transaction or batch reverts                                  | Its receipt is saved; resume warns and never resubmits it                   |
 | One RPC forgets a transaction or repeatedly returns an incomplete receipt | The attempt remains durable and replacement is not inferred                 |
 | The process exits during a snapshot write                                 | Atomic replacement retains either the previous or new complete snapshot     |
 | Two processes resume the same sequence                                    | The recovery lock excludes a competing writer                               |

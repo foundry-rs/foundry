@@ -221,7 +221,6 @@ impl ScriptProgress {
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
-        let mut reverted = false;
 
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
@@ -276,7 +275,6 @@ impl ScriptProgress {
                     } else {
                         warn!(tx_hash=?tx_hash, "Transaction Failure");
                         errors.push(format!("Transaction Failure: {tx_hash:?}"));
-                        reverted = true;
                     }
 
                     let msg = format_receipt(
@@ -296,9 +294,8 @@ impl ScriptProgress {
         if !errors.is_empty() {
             let mut error_msg = errors.join("\n");
 
-            // Add information about using --resume if necessary; resume refuses to continue after a
-            // revert.
-            if !reverted && (!deployment_sequence.pending.is_empty() || discarded_transactions) {
+            // Add information about using --resume if necessary
+            if !deployment_sequence.pending.is_empty() || discarded_transactions {
                 error_msg += r#"
 
 Add `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC."#;

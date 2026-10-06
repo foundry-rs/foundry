@@ -457,16 +457,22 @@ where
         Ok(())
     }
 
-    /// Fails if a persisted receipt reverted, so resume never submits work planned after a failed
-    /// operation.
-    pub(crate) fn ensure_no_reverted_receipts(&self) -> Result<()> {
+    /// Warns about persisted reverted receipts, whose operations resume never resubmits.
+    pub(crate) fn warn_reverted_receipts(&self) -> Result<()> {
         for deployment in self.sequences() {
-            if let Some(receipt) = deployment.receipts.iter().find(|receipt| !receipt.status()) {
-                bail!(
-                    "transaction {} on chain {} reverted; resume will not submit the remaining transactions",
-                    receipt.transaction_hash(),
+            // Batch members share one receipt, so warn once per transaction.
+            let mut reverted = deployment
+                .receipts
+                .iter()
+                .filter(|receipt| !receipt.status())
+                .map(|receipt| receipt.transaction_hash())
+                .collect::<Vec<_>>();
+            reverted.dedup();
+            for hash in reverted {
+                sh_warn!(
+                    "transaction {hash} on chain {} reverted; resume will not resubmit it",
                     deployment.chain
-                );
+                )?;
             }
         }
         Ok(())

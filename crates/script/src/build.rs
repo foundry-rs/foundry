@@ -400,7 +400,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 sequence.ensure_delegated_outcomes_known(index)?;
             }
         }
-        sequence.ensure_no_reverted_receipts()?;
+        sequence.warn_reverted_receipts()?;
 
         if !self.args.unlocked
             && !remaining_unsigned_transactions_for_recovery(&sequence).is_empty()
