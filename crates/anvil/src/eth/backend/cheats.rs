@@ -90,46 +90,48 @@ impl CheatsManager {
     /// only.
     pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
         trace!(target: "cheats", %prevrandao, "set next block prevrandao");
-        let mut state = self.state.write();
-        state.prevrandao_generation = state.prevrandao_generation.wrapping_add(1);
-        state.next_block_prevrandao = Some(prevrandao);
+        self.state.write().next_block.prevrandao.replace(Some(prevrandao));
     }
 
-    pub(crate) fn next_block_prevrandao(&self) -> Option<B256> {
-        self.state.read().next_block_prevrandao
+    /// Sets the parent beacon block root to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block and applies to that block
+    /// only.
+    pub fn set_next_block_parent_beacon_block_root(&self, root: B256) {
+        trace!(target: "cheats", %root, "set next block parent beacon block root");
+        self.state.write().next_block.parent_beacon_block_root.replace(Some(root));
     }
 
-    /// Prepares the manually set `prevrandao` without consuming it.
-    pub(crate) fn prepare_next_block_prevrandao(&self) -> Option<PendingPrevrandao> {
-        let state = self.state.read();
-        state
-            .next_block_prevrandao
-            .map(|value| PendingPrevrandao { value, generation: state.prevrandao_generation })
+    /// Returns the manually set values for the next block without consuming them.
+    pub(crate) fn next_block_overrides(&self) -> NextBlockOverrides {
+        self.state.read().next_block
     }
 
     /// Takes the manually set `prevrandao` value for forced replay mining.
     pub fn take_next_block_prevrandao(&self) -> Option<B256> {
-        let mut state = self.state.write();
-        state.prevrandao_generation = state.prevrandao_generation.wrapping_add(1);
-        state.next_block_prevrandao.take()
+        self.state.write().next_block.prevrandao.replace(None)
     }
 
-    /// Consumes a `prevrandao` override after the candidate using it was committed.
-    pub(crate) fn consume_next_block_prevrandao(&self, pending: PendingPrevrandao) {
+    /// Consumes the overrides a committed block was built with, keeping any set since.
+    pub(crate) fn consume_next_block_overrides(&self, used: &NextBlockOverrides) {
         let mut state = self.state.write();
-        if state.prevrandao_generation == pending.generation {
-            state.next_block_prevrandao.take();
-        }
+        state.next_block.prevrandao.consume(&used.prevrandao);
+        state.next_block.parent_beacon_block_root.consume(&used.parent_beacon_block_root);
     }
 
-    /// Clears any manually set `prevrandao` value for the next block.
+    /// Restores the overrides saved with a state snapshot.
+    pub(crate) fn restore_next_block_overrides(&self, saved: &NextBlockOverrides) {
+        let mut state = self.state.write();
+        state.next_block.prevrandao.replace(saved.prevrandao.value);
+        state.next_block.parent_beacon_block_root.replace(saved.parent_beacon_block_root.value);
+    }
+
+    /// Clears any manually set values for the next block.
     ///
     /// Used on reset/revert so a set-but-unmined override does not leak into a later block,
     /// mirroring how the next-block timestamp override is cleared by `TimeManager::reset`.
-    pub fn clear_next_block_prevrandao(&self) {
-        let mut state = self.state.write();
-        state.prevrandao_generation = state.prevrandao_generation.wrapping_add(1);
-        state.next_block_prevrandao.take();
+    pub fn clear_next_block_overrides(&self) {
+        self.restore_next_block_overrides(&NextBlockOverrides::default());
     }
 }
 
@@ -142,18 +144,40 @@ pub struct CheatsState {
     pub auto_impersonate_accounts: bool,
     /// Overrides for ecrecover: Signature => Address
     pub signature_overrides: HashMap<Bytes, Address>,
-    /// The `prevrandao` value to use for the next mined block, if manually set via
-    /// `anvil_setNextBlockPrevRandao`.
-    pub next_block_prevrandao: Option<B256>,
-    /// Generation of the most recently installed `prevrandao` override.
-    prevrandao_generation: u64,
+    /// Manually set values for the next mined block.
+    pub(crate) next_block: NextBlockOverrides,
 }
 
-/// A `prevrandao` override reserved by a candidate block.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PendingPrevrandao {
-    pub(crate) value: B256,
+/// Values manually set for the next mined block.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NextBlockOverrides {
+    /// Set via `anvil_setNextBlockPrevRandao`.
+    pub(crate) prevrandao: NextBlockOverride<B256>,
+    /// Set via `anvil_setNextBlockParentBeaconBlockRoot`.
+    pub(crate) parent_beacon_block_root: NextBlockOverride<B256>,
+}
+
+/// A one-shot override of a value of the next mined block.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NextBlockOverride<T> {
+    pub(crate) value: Option<T>,
+    /// Bumped on every replacement, so a block consumes only the value it was built with.
     generation: u64,
+}
+
+impl<T> NextBlockOverride<T> {
+    /// Replaces the value, returning the previous one.
+    const fn replace(&mut self, value: Option<T>) -> Option<T> {
+        self.generation = self.generation.wrapping_add(1);
+        std::mem::replace(&mut self.value, value)
+    }
+
+    /// Clears the value if it is still the one `used` was taken from.
+    fn consume(&mut self, used: &Self) {
+        if self.generation == used.generation {
+            self.value = None;
+        }
+    }
 }
 
 impl CheatEcrecover {
@@ -206,16 +230,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn candidate_consumes_only_its_prevrandao_override() {
+    fn candidate_consumes_only_its_next_block_overrides() {
         let cheats = CheatsManager::default();
         let value = B256::with_last_byte(1);
         cheats.set_next_block_prevrandao(value);
-        let pending = cheats.prepare_next_block_prevrandao().unwrap();
+        cheats.set_next_block_parent_beacon_block_root(value);
+        let used = cheats.next_block_overrides();
 
         cheats.set_next_block_prevrandao(value);
-        cheats.consume_next_block_prevrandao(pending);
+        cheats.consume_next_block_overrides(&used);
 
-        assert_eq!(cheats.prepare_next_block_prevrandao().unwrap().value, value);
+        let overrides = cheats.next_block_overrides();
+        assert_eq!(overrides.prevrandao.value, Some(value));
+        assert_eq!(overrides.parent_beacon_block_root.value, None);
     }
 
     #[test]
