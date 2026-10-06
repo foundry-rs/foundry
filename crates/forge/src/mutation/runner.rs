@@ -5,7 +5,7 @@
 
 use crate::{
     MultiContractRunnerBuilder,
-    cmd::test::{FilterArgs, RerunFailure, dispatch_network},
+    cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         SurvivedSpans,
         mutant::{Mutant, MutationResult},
@@ -19,14 +19,11 @@ use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-    },
+    backend::Backend,
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork},
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
     opts::EvmOpts,
 };
-use foundry_evm_networks::NetworkVariant;
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -42,15 +39,6 @@ use std::{
     time::Duration,
 };
 use tempfile::TempDir;
-
-#[cfg(feature = "base")]
-use foundry_evm::core::evm::BaseEvmNetwork;
-
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 
 const MUTATION_STACK_SIZE: usize = 16 * 1024 * 1024;
 
@@ -77,9 +65,10 @@ pub struct MutationBatchResult {
 
 /// Immutable EVM inputs shared by the baseline and every mutation worker.
 #[derive(Clone)]
-pub struct MutationEvmConfig {
+pub struct MutationEvmConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub opts: EvmOpts,
-    pub resolved_fork: Option<ResolvedFork>,
+    pub backend: Backend<FEN>,
+    pub executor_builder: ExecutorBuilder<FEN>,
     pub create2_deployer_available: bool,
 }
 
@@ -190,12 +179,12 @@ impl Default for SharedMutationState {
 
 /// Run mutation tests in parallel with optional progress display.
 #[allow(clippy::too_many_arguments)]
-pub fn run_mutations_parallel_with_progress(
+pub fn run_mutations_parallel_with_progress<FEN: FoundryEvmNetwork>(
     mutants: Vec<Mutant>,
     source_path: PathBuf,
     original_source: Arc<String>,
     config: Arc<Config>,
-    evm: MutationEvmConfig,
+    evm: MutationEvmConfig<FEN>,
     num_workers: usize,
     progress: Option<MutationProgress>,
     silent: bool,
@@ -358,12 +347,12 @@ pub fn run_mutations_parallel_with_progress(
 
 /// Test a single mutant in an isolated temporary workspace.
 #[allow(clippy::too_many_arguments)]
-fn test_single_mutant_isolated(
+fn test_single_mutant_isolated<FEN: FoundryEvmNetwork>(
     mutant: Mutant,
     source_relative: &PathBuf,
     original_source: &Arc<String>,
     config: &Arc<Config>,
-    evm: &MutationEvmConfig,
+    evm: &MutationEvmConfig<FEN>,
     shared_state: &Arc<SharedMutationState>,
     temp_root: &Path,
     filter_args: &Arc<FilterArgs>,
@@ -491,9 +480,9 @@ fn test_single_mutant_isolated(
 /// timeout the `JoinHandle` is parked in `shared_state.pending_workers`
 /// and joined at the end of the parallel run.
 #[allow(clippy::too_many_arguments)]
-fn run_compile_and_test_with_timeout(
+fn run_compile_and_test_with_timeout<FEN: FoundryEvmNetwork>(
     config: Arc<Config>,
-    evm: &MutationEvmConfig,
+    evm: &MutationEvmConfig<FEN>,
     budget: Duration,
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
@@ -665,39 +654,16 @@ fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
     temp_config
 }
 
-/// Compile the project and run tests, returning true if any test failed (mutant killed).
-///
-/// Dispatches to the correct network type based on `evm_opts.networks`.
-fn compile_and_test(
+/// Compiles and tests a mutant using the campaign's already selected EVM and remote backend.
+fn compile_and_test<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
-    evm: &MutationEvmConfig,
+    evm: &MutationEvmConfig<FEN>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
-) -> Result<bool> {
-    dispatch_network!(&evm.opts, |Net| compile_and_test_inner::<Net>(
-        config,
-        evm,
-        filter_args,
-        rerun_failures,
-        selected_sources_relative,
-        isolate,
-        ExecutorBuilder::<Net>::new(),
-    ))
-}
-
-fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
-    config: &Arc<Config>,
-    evm: &MutationEvmConfig,
-    filter_args: &FilterArgs,
-    rerun_failures: Option<&[RerunFailure]>,
-    selected_sources_relative: &[PathBuf],
-    isolate: bool,
-    executor_builder: ExecutorBuilder<FEN>,
 ) -> Result<bool> {
     let evm_opts = &evm.opts;
-    let resolved_fork = evm.resolved_fork.as_ref();
     // Compile
     let files = selected_sources_relative
         .iter()
@@ -731,12 +697,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env) = evm_opts
-            .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(resolved_fork)
-            .await?;
-        let fork_context = resolved_fork.map(ResolvedFork::context);
-        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
-        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        let (evm_env, tx_env) = evm.backend.env(evm_opts).await?;
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -746,9 +707,6 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork_resolved(config, evm_env.cfg_env.chain_id, resolved_fork))
-            .with_fork_chain_id(fork_chain_id)
-            .with_fork_hardfork(fork_hardfork)
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(evm.create2_deployer_available)
@@ -757,7 +715,8 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
                 evm_env,
                 tx_env,
                 evm_opts.clone(),
-                executor_builder,
+                evm.backend.clone_with_fork_scope()?,
+                evm.executor_builder.clone(),
             )?;
 
         runner.test_collect(&filter)
@@ -792,7 +751,8 @@ mod tests {
             let config = Arc::new(config);
             let evm = MutationEvmConfig {
                 opts: EvmOpts::default(),
-                resolved_fork: None,
+                backend: Backend::<EthEvmNetwork>::spawn(None).unwrap(),
+                executor_builder: ExecutorBuilder::<EthEvmNetwork>::new(),
                 create2_deployer_available: false,
             };
             let shared_state = Arc::new(SharedMutationState::default());

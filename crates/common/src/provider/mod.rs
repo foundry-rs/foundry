@@ -17,7 +17,7 @@ use alloy_provider::{
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
-use alloy_rpc_client::ClientBuilder;
+use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_transport::{
     TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
 };
@@ -346,6 +346,11 @@ impl<N: Network> ProviderBuilder<N> {
 
     /// Constructs the `RetryProvider` taking all configs into account.
     pub fn build(self) -> Result<RetryProvider<N>> {
+        Ok(RootProvider::new(self.build_client()?))
+    }
+
+    /// Constructs a shared RPC client with the configured transport, authentication, and retries.
+    pub fn build_client(self) -> Result<RpcClient> {
         let Self {
             url,
             chain,
@@ -372,10 +377,7 @@ impl<N: Network> ProviderBuilder<N> {
             let transport = CurlTransport::new(url).with_headers(headers).with_jwt(jwt);
             let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
 
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .connect_provider(RootProvider::new(client));
-
-            return Ok(provider);
+            return Ok(client);
         }
 
         let transport = RuntimeTransportBuilder::new(url)
@@ -399,10 +401,7 @@ impl<N: Network> ProviderBuilder<N> {
             );
         }
 
-        let provider =
-            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
-
-        Ok(provider)
+        Ok(client)
     }
 }
 

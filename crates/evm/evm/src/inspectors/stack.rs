@@ -2379,7 +2379,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
     buf[8..16].copy_from_slice(&chain_id.to_be_bytes());
     buf[16..24].copy_from_slice(&nonce.to_be_bytes());
     buf[24..32].copy_from_slice(&counter.to_be_bytes());
-    U256::from_be_bytes(keccak256(buf).0)
+    keccak256(buf).into()
 }
 
 #[cfg(test)]
