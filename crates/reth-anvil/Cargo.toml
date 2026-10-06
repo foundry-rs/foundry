@@ -82,6 +82,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
 tokio-stream.workspace = true
 tower.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 tracing.workspace = true
 yansi.workspace = true
 
@@ -99,4 +100,4 @@ optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
 [dev-dependencies]
 alloy-chains.workspace = true
 foundry-test-utils.workspace = true
-jsonrpsee = { version = "0.26", features = ["http-client"] }
+jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }

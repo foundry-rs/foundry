@@ -20,6 +20,7 @@ mod node;
 pub mod opts;
 mod pool;
 mod provider;
+mod server;
 mod signer;
 mod snapshot;
 mod state;

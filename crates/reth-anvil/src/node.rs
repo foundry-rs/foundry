@@ -11,6 +11,7 @@ use crate::{
     mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
     network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
     provider::AnvilProvider,
+    server::{RpcServer, SharedModule},
     signer::DevSigner,
     snapshot::SnapshotManager,
     state::{AnvilState, SharedAnvilState},
@@ -22,14 +23,13 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm_networks::NetworkVariant;
+use jsonrpsee::RpcModule;
 use parking_lot::RwLock;
 use reth_ethereum::{
     chainspec::EthChainSpec,
     node::{
         api::NodeTypes,
-        builder::{
-            LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle, rpc::RethRpcServerHandles,
-        },
+        builder::{LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle},
         core::{
             args::{DatadirArgs, PayloadBuilderArgs, RpcServerArgs, StorageArgs},
             dirs::{DataDirPath, MaybePlatformPath},
@@ -52,22 +52,83 @@ use reth_ethereum::{
 use reth_rpc_eth_api::helpers::EthTransactions;
 use std::{
     net::{SocketAddr, TcpListener},
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll},
+    time::Duration,
 };
 use tempfile::TempDir;
-use tokio::{runtime::Handle, sync::broadcast::error::RecvError};
+use tokio::{
+    runtime::Handle,
+    sync::{broadcast::error::RecvError, mpsc, oneshot},
+};
 
 /// A running node.
 #[derive(Debug)]
 pub struct NodeHandle {
     config: NodeConfig,
     address: SocketAddr,
-    /// The RPC server handles.
-    pub rpc_server_handles: RethRpcServerHandles,
     /// Resolves when the node exits.
-    pub node_exit_future: NodeExitFuture,
+    pub node_exit_future: NodeExit,
+    /// Stops the node when the handle drops.
+    _shutdown: oneshot::Sender<()>,
+}
+
+/// Resolves when the node exits, with its exit result.
+#[derive(Debug)]
+pub struct NodeExit(oneshot::Receiver<Result<()>>);
+
+impl Future for NodeExit {
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.0).poll(cx).map(|result| result.unwrap_or(Ok(())))
+    }
+}
+
+/// The reth node and the resources it runs on. Replaced on a relaunch.
+struct RunningNode {
+    node_exit_future: NodeExitFuture,
     _datadir: TempDir,
-    _runtime: Runtime,
+    runtime: Runtime,
+}
+
+impl RunningNode {
+    /// Shuts the node's tasks down and removes its datadir.
+    async fn stop(self) {
+        let runtime = self.runtime;
+        let _ = tokio::task::spawn_blocking(move || {
+            runtime.graceful_shutdown_with_timeout(Duration::from_secs(10))
+        })
+        .await;
+    }
+}
+
+/// A request to replace the running node with one built from a new config.
+pub(crate) struct Relaunch {
+    config: NodeConfig,
+    reply: oneshot::Sender<Result<(), String>>,
+}
+
+/// Replaces the running node from inside the `anvil_*` namespace.
+#[derive(Clone, Debug)]
+pub struct Relauncher {
+    requests: mpsc::UnboundedSender<Relaunch>,
+    /// The config the current node was launched from, before the network prepared it.
+    config: Arc<RwLock<NodeConfig>>,
+}
+
+impl Relauncher {
+    /// Replaces the running node with one launched from the current config changed by `update`.
+    /// Returns once the new node serves requests.
+    pub async fn relaunch(&self, update: impl FnOnce(&mut NodeConfig)) -> Result<(), String> {
+        let mut config = self.config.read().clone();
+        update(&mut config);
+        let (reply, rx) = oneshot::channel();
+        let stopped = || "the node supervisor has stopped".to_string();
+        self.requests.send(Relaunch { config, reply }).map_err(|_| stopped())?;
+        rx.await.map_err(|_| stopped())?
+    }
 }
 
 impl NodeHandle {
@@ -153,31 +214,138 @@ pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     }
 }
 
-/// Launches a node of the given network.
-pub(crate) async fn launch<Net: AnvilNetwork>(
+/// Launches a node of the given network and the RPC server in front of it.
+pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+    let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
+    let instance_id = Arc::new(RwLock::new(B256::random()));
+    let (requests, relaunches) = mpsc::unbounded_channel();
+    let relauncher = Relauncher { requests, config: Arc::new(RwLock::new(config.clone())) };
+    let (module, running) =
+        launch_node::<Net>(config.clone(), instance_id.clone(), relauncher.clone()).await?;
+    let module: SharedModule = Arc::new(RwLock::new(module));
+    let logging = LoggingState::new(!config.silent);
+    let server =
+        RpcServer::start(address, config.ipc_path.clone(), module.clone(), logging).await?;
+    let address = server.address();
+
+    let (exit_tx, exit_rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    tokio::spawn(supervise::<Net>(Supervisor {
+        running: Some(running),
+        server: Some(server),
+        module: module.clone(),
+        instance_id: instance_id.clone(),
+        relauncher,
+        relaunches,
+        exit: Some(exit_tx),
+        shutdown: shutdown_rx,
+    }));
+
+    Ok((
+        EthApi::new(module, instance_id),
+        NodeHandle { config, address, node_exit_future: NodeExit(exit_rx), _shutdown: shutdown_tx },
+    ))
+}
+
+/// Owns the running node and replaces it on request.
+struct Supervisor {
+    running: Option<RunningNode>,
+    server: Option<RpcServer>,
+    module: SharedModule,
+    instance_id: Arc<RwLock<B256>>,
+    relauncher: Relauncher,
+    relaunches: mpsc::UnboundedReceiver<Relaunch>,
+    exit: Option<oneshot::Sender<Result<()>>>,
+    shutdown: oneshot::Receiver<()>,
+}
+
+async fn supervise<Net: AnvilNetwork>(mut supervisor: Supervisor) {
+    while let Some(running) = supervisor.running.as_mut() {
+        tokio::select! {
+            request = supervisor.relaunches.recv() => {
+                let Some(Relaunch { config, reply }) = request else { break };
+                let result = relaunch::<Net>(&mut supervisor, config).await;
+                let _ = reply.send(result.map_err(|error| error.to_string()));
+            }
+            result = &mut running.node_exit_future => {
+                supervisor.running = None;
+                if let Some(exit) = supervisor.exit.take() {
+                    let _ = exit.send(result);
+                }
+                break;
+            }
+            _ = &mut supervisor.shutdown => break,
+        }
+    }
+    if let Some(server) = supervisor.server.take() {
+        server.stop();
+    }
+    if let Some(running) = supervisor.running.take() {
+        running.stop().await;
+    }
+}
+
+/// Stops the running node and launches one from `config`. If that fails, the previous config is
+/// launched again, so the node keeps serving.
+async fn relaunch<Net: AnvilNetwork>(
+    supervisor: &mut Supervisor,
+    config: NodeConfig,
+) -> Result<()> {
+    if let Some(running) = supervisor.running.take() {
+        running.stop().await;
+    }
+    let launch = |config: NodeConfig| {
+        launch_node::<Net>(config, supervisor.instance_id.clone(), supervisor.relauncher.clone())
+    };
+    let (result, config) = match launch(config.clone()).await {
+        Ok(launched) => (Ok(launched), config),
+        Err(error) => {
+            let previous = supervisor.relauncher.config.read().clone();
+            match launch(previous.clone()).await {
+                Ok(launched) => {
+                    *supervisor.module.write() = launched.0;
+                    supervisor.running = Some(launched.1);
+                    (Err(error), previous)
+                }
+                Err(fallback) => {
+                    if let Some(exit) = supervisor.exit.take() {
+                        let _ = exit.send(Err(fallback));
+                    }
+                    return Err(error);
+                }
+            }
+        }
+    };
+    *supervisor.relauncher.config.write() = config;
+    *supervisor.instance_id.write() = B256::random();
+    match result {
+        Ok((module, running)) => {
+            *supervisor.module.write() = module;
+            supervisor.running = Some(running);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Launches the reth node of the given network, without RPC servers, and returns its RPC module.
+async fn launch_node<Net: AnvilNetwork>(
     mut config: NodeConfig,
-) -> Result<(EthApi, NodeHandle)> {
+    instance_id: Arc<RwLock<B256>>,
+    relauncher: Relauncher,
+) -> Result<(RpcModule<()>, RunningNode)> {
     let runtime = RuntimeBuilder::new(
         RuntimeConfig::default().with_tokio(TokioConfig::ExistingHandle(Handle::current())),
     )
     .build()?;
     let Prepared { chain_spec, fork } = Net::prepare(&mut config).await?;
-    let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
 
     let datadir = tempfile::tempdir()?;
+    // The RPC servers run in front of the node, see `RpcServer`.
     let mut rpc_args = RpcServerArgs {
-        http: true,
-        http_addr: address.ip(),
-        http_port: address.port(),
-        http_corsdomain: Some("*".to_string()),
-        http_api: Some(RpcModuleSelection::All),
-        ws: true,
-        ws_addr: address.ip(),
-        ws_port: address.port(),
-        ws_allowed_origins: Some("*".to_string()),
-        ws_api: Some(RpcModuleSelection::All),
-        ipcdisable: config.ipc_path.is_none(),
-        ipcpath: config.ipc_path.clone().unwrap_or_default(),
+        http: false,
+        ws: false,
+        ipcdisable: true,
         disable_auth_server: true,
         ..Default::default()
     };
@@ -219,7 +387,6 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
     let logging = LoggingState::new(!config.silent);
-    let instance_id = Arc::new(RwLock::new(B256::random()));
     let rpc_module = Arc::new(Mutex::new(None));
     let launcher = AnvilNodeLauncher::new(
         runtime.clone(),
@@ -254,7 +421,6 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
             let identity = Net::identity(&config)?;
-            let instance_id = instance_id.clone();
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
                 {
@@ -264,6 +430,7 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
                 }
                 let rpc = AnvilRpc::new(
                     identity,
+                    relauncher,
                     impersonation,
                     mining,
                     time,
@@ -341,24 +508,8 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
         .expect("rpc module lock")
         .take()
         .ok_or_else(|| eyre::eyre!("the rpc modules were not built"))?;
-    let address = node
-        .add_ons_handle
-        .rpc_server_handles
-        .rpc
-        .http_local_addr()
-        .ok_or_else(|| eyre::eyre!("the http server did not start"))?;
 
-    Ok((
-        EthApi::new(module, instance_id),
-        NodeHandle {
-            config,
-            address,
-            rpc_server_handles: node.add_ons_handle.rpc_server_handles,
-            node_exit_future,
-            _datadir: datadir,
-            _runtime: runtime,
-        },
-    ))
+    Ok((module, RunningNode { node_exit_future, _datadir: datadir, runtime }))
 }
 
 /// Returns the configured port, or a free port when the config asks for port zero.

@@ -1,9 +1,10 @@
+use crate::server::SharedModule;
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{anvil::Forking, txpool::TxpoolStatus};
 use alloy_rpc_types_eth::{Account, Index, Transaction, TransactionReceipt, TransactionRequest};
 use eyre::Result;
-use jsonrpsee::{RpcModule, core::params::ArrayParams};
+use jsonrpsee::core::params::ArrayParams;
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -13,14 +14,15 @@ use std::sync::Arc;
 /// Every call runs the same handler the HTTP and WebSocket servers run, without a transport.
 #[derive(Clone, Debug)]
 pub struct EthApi {
-    module: RpcModule<()>,
+    /// The RPC module of the current node. A relaunch replaces it.
+    module: SharedModule,
     /// The instance id, shared with the `anvil_*` namespace, which rotates it on `anvil_reset`.
     instance_id: Arc<RwLock<B256>>,
 }
 
 impl EthApi {
     /// Creates the API over the node's RPC module.
-    pub(crate) const fn new(module: RpcModule<()>, instance_id: Arc<RwLock<B256>>) -> Self {
+    pub(crate) const fn new(module: SharedModule, instance_id: Arc<RwLock<B256>>) -> Self {
         Self { module, instance_id }
     }
 
@@ -29,7 +31,8 @@ impl EthApi {
     where
         R: DeserializeOwned + Clone,
     {
-        Ok(self.module.call(method, params).await?)
+        let module = self.module.read().clone();
+        Ok(module.call(method, params).await?)
     }
 
     /// Returns the unique identifier of this node instance. It changes on `anvil_reset`.
@@ -132,6 +135,11 @@ impl EthApi {
     /// Resets the chain to genesis, or to the fork block when forking.
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         self.call("anvil_reset", params![forking]).await
+    }
+
+    /// Sets the chain id. The node relaunches with its state and height.
+    pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
+        self.call("anvil_setChainId", params![chain_id]).await
     }
 
     /// Sets the balance of an account.

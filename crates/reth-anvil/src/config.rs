@@ -280,8 +280,17 @@ impl NodeConfig {
 
     /// Sets the chain id.
     pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: Option<U>) -> Self {
-        self.chain_id = chain_id.map(Into::into);
+        self.set_chain_id(chain_id);
         self
+    }
+
+    /// Sets the chain id, and the chain id the dev wallets sign for.
+    pub fn set_chain_id<U: Into<u64>>(&mut self, chain_id: Option<U>) {
+        self.chain_id = chain_id.map(Into::into);
+        let chain_id = Some(self.get_chain_id());
+        for wallet in self.genesis_accounts.iter_mut().chain(self.signer_accounts.iter_mut()) {
+            wallet.set_chain_id(chain_id);
+        }
     }
 
     /// Returns the chain id.
@@ -643,11 +652,7 @@ impl NodeConfig {
     /// explicitly, and re-keys the dev wallets for the chain id.
     pub fn apply_fork(&mut self, chain_id: u64, header: &SealedHeader, gas_price: u128) {
         if self.chain_id.is_none() {
-            self.chain_id = Some(chain_id);
-            let chain_id = Some(chain_id);
-            for wallet in self.genesis_accounts.iter_mut().chain(self.signer_accounts.iter_mut()) {
-                wallet.set_chain_id(chain_id);
-            }
+            self.set_chain_id(Some(chain_id));
         }
         if self.gas_limit.is_none() {
             self.gas_limit = Some(header.gas_limit);

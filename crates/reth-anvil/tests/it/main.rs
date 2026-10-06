@@ -4,14 +4,18 @@ use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
 use alloy_eips::Encodable2718;
 use alloy_network::{TransactionBuilder, TransactionResponse, TxSignerSync};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types::anvil::{Metadata, MineOptions, NodeInfo};
+use alloy_rpc_types::anvil::{Forking, Metadata, MineOptions, NodeInfo};
 use alloy_rpc_types_eth::{Block, TransactionRequest, state::StateOverridesBuilder};
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{OptionExt, Result, bail};
 use jsonrpsee::{
-    core::{ClientError, client::ClientT},
+    core::{
+        ClientError,
+        client::{ClientT, SubscriptionClientT},
+    },
     http_client::{HttpClient, HttpClientBuilder},
     rpc_params,
+    ws_client::WsClientBuilder,
 };
 use reth_anvil::{EthApi, EthereumHardfork, NodeConfig, NodeHandle, spawn};
 use serde_json::Value;
@@ -1738,5 +1742,100 @@ async fn memory_limit_applies_to_calls() -> Result<()> {
         spawn_with_client(NodeConfig::test().with_memory_limit(Some(1024))).await?;
     let err = call_mstore_far(&client).await.unwrap_err();
     assert!(err.to_string().to_lowercase().contains("memory"), "{err}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn ws_subscriptions_deliver_new_heads() -> Result<()> {
+    let (_api, handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let ws = WsClientBuilder::default().build(handle.ws_endpoint()).await?;
+    let mut heads = ws
+        .subscribe::<Value, _>("eth_subscribe", rpc_params!["newHeads"], "eth_unsubscribe")
+        .await?;
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let head = tokio::time::timeout(Duration::from_secs(10), heads.next())
+        .await?
+        .ok_or_eyre("the subscription ended")??;
+    assert_eq!(head["number"].as_str(), Some("0x1"));
+    let block_number: U256 = ws.request("eth_blockNumber", rpc_params![]).await?;
+    assert_eq!(block_number, U256::from(1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn anvil_set_chain_id_relaunches_with_state() -> Result<()> {
+    let (api, handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let recipient = Address::repeat_byte(0x5F);
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![transfer(funder, recipient, gas_price)])
+        .await?;
+    wait_for_receipt(&client, tx_hash).await?;
+    client.request::<(), _>("anvil_setBalance", rpc_params![recipient, U256::from(7)]).await?;
+    let instance_id = api.instance_id();
+
+    api.anvil_set_chain_id(1234).await?;
+
+    // The endpoint, the in-process api, the state, and the height survive the relaunch.
+    assert_eq!(api.chain_id().await?, U256::from(1234));
+    let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
+    assert_eq!(chain_id, U256::from(1234));
+    assert_eq!(handle.http_endpoint(), format!("http://{}", handle.socket_address()));
+    assert_eq!(block_number(&client).await?, 1);
+    assert_eq!(balance(&client, recipient, "latest").await?, U256::from(7));
+    assert_ne!(api.instance_id(), instance_id);
+
+    // The new chain keeps going.
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    assert_eq!(block_number(&client).await?, 2);
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![transfer(funder, recipient, gas_price)])
+        .await?;
+    assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
+    Ok(())
+}
+
+#[tokio::test]
+async fn anvil_reset_switches_to_another_fork_block() -> Result<()> {
+    let (api, _handle, client) = spawn_with_client(fork_config()).await?;
+    let instance_id = api.instance_id();
+    let earlier = FORK_BLOCK_NUMBER - 10;
+    let earlier_header = get_block(&client, format!("0x{earlier:x}")).await?;
+
+    client
+        .request::<(), _>(
+            "anvil_reset",
+            rpc_params![Forking { json_rpc_url: None, block_number: Some(earlier) }],
+        )
+        .await?;
+
+    assert_eq!(block_number(&client).await?, earlier);
+    assert_eq!(get_block(&client, "latest").await?["hash"], earlier_header["hash"]);
+    assert_ne!(api.instance_id(), instance_id);
+    let info: NodeInfo = client.request("anvil_nodeInfo", rpc_params![]).await?;
+    assert_eq!(info.fork_config.fork_block_number, Some(earlier));
+
+    // Mining and a plain reset work on the new fork.
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    assert_eq!(block_number(&client).await?, earlier + 1);
+    client.request::<(), _>("anvil_reset", rpc_params![]).await?;
+    assert_eq!(block_number(&client).await?, earlier);
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_chain_id_signs_dev_transactions() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_chain_id(Some(99u64))).await?;
+    let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
+    assert_eq!(chain_id, U256::from(99));
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let tx_hash: B256 = client
+        .request(
+            "eth_sendTransaction",
+            rpc_params![transfer(funder, Address::repeat_byte(0x60), gas_price)],
+        )
+        .await?;
+    assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
     Ok(())
 }

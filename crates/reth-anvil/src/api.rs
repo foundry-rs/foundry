@@ -4,11 +4,12 @@ use crate::{
     impersonation::ImpersonationState,
     logging::LoggingState,
     mining::MiningController,
+    node::Relauncher,
     snapshot::{Snapshot, SnapshotManager},
     state::{AnvilState, SharedAnvilState},
     state_dump::{AccountDump, SerializableState},
     time::TimeManager,
-    types::{ReorgOptions, TransactionData, TransactionOrder},
+    types::{ForkChoice, ForkUrl, ReorgOptions, TransactionData, TransactionOrder},
 };
 use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
@@ -101,6 +102,11 @@ pub trait AnvilApi<B: RpcObject, TxReq: RpcObject> {
     /// or block is not supported yet.
     #[method(name = "reset", aliases = ["hardhat_reset"])]
     async fn anvil_reset(&self, forking: Option<Forking>) -> RpcResult<()>;
+
+    /// Sets the chain id. The node relaunches with its state and height; earlier blocks are no
+    /// longer served.
+    #[method(name = "setChainId")]
+    async fn anvil_set_chain_id(&self, chain_id: u64) -> RpcResult<()>;
 
     /// Replaces the fork endpoint.
     #[method(name = "setRpcUrl")]
@@ -308,6 +314,7 @@ pub struct NodeIdentity {
 #[derive(Debug, Clone)]
 pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     identity: NodeIdentity,
+    relauncher: Relauncher,
     impersonation: ImpersonationState,
     mining: MiningController<HeaderOf<Provider>>,
     time: TimeManager,
@@ -329,6 +336,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         identity: NodeIdentity,
+        relauncher: Relauncher,
         impersonation: ImpersonationState,
         mining: MiningController<HeaderOf<Provider>>,
         time: TimeManager,
@@ -346,6 +354,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
     ) -> Self {
         Self {
             identity,
+            relauncher,
             impersonation,
             mining,
             time,
@@ -473,6 +482,52 @@ where
     }
 
     /// Returns the lowercase name of the latest hardfork active at the given block.
+    /// Reads the accounts, the pending anvil state writes, and the block environment into a
+    /// state dump.
+    fn serializable_state(&self) -> RpcResult<SerializableState> {
+        let best = self.best_block_number()?;
+        let header = self.sealed_header(best)?;
+        let mut accounts = self
+            .provider
+            .dump_accounts()
+            .map_err(|error| internal_error(format!("failed to read accounts: {error}")))?;
+        // The anvil state writes not yet in a block.
+        {
+            let state = self.state.read();
+            for (address, account_override) in state.accounts() {
+                let record = accounts.entry(*address).or_default();
+                if let Some(balance) = account_override.balance() {
+                    record.balance = balance;
+                }
+                if let Some(nonce) = account_override.nonce() {
+                    record.nonce = nonce;
+                }
+                if let Some(code) =
+                    account_override.code_hash().and_then(|hash| state.bytecode_by_hash(&hash))
+                {
+                    record.code = code.original_bytes();
+                }
+                for (slot, value) in account_override.storage() {
+                    if value.is_zero() {
+                        record.storage.remove(slot);
+                    } else {
+                        record.storage.insert(*slot, (*value).into());
+                    }
+                }
+            }
+        }
+        let block = block_env_from_header::<BlockEnv>(header.header());
+        let state = SerializableState {
+            block: Some(
+                serde_json::to_value(block).map_err(|error| internal_error(error.to_string()))?,
+            ),
+            accounts,
+            best_block_number: Some(best),
+            ..Default::default()
+        };
+        Ok(state)
+    }
+
     fn hardfork_name(&self, timestamp: u64, number: u64) -> String {
         self.chain_spec
             .forks_iter()
@@ -681,9 +736,19 @@ where
                 self.fork.as_ref().is_some_and(|fork| fork.block_number() == number)
             });
             if !same_url || !same_block {
-                return Err(invalid_params(
-                    "resetting to a different fork endpoint or block is not supported yet",
-                ));
+                // Another endpoint or block means another chain spec, so the node relaunches.
+                return self
+                    .relauncher
+                    .relaunch(|config| {
+                        if let Some(url) = forking.json_rpc_url {
+                            config.fork_urls = vec![ForkUrl { url, block: None }];
+                        }
+                        config.fork_choice =
+                            forking.block_number.map(|number| ForkChoice::Block(number.into()));
+                        config.init_state = None;
+                    })
+                    .await
+                    .map_err(internal_error);
             }
         }
         let genesis = self.sealed_header(self.chain_spec.genesis_header().number())?;
@@ -967,51 +1032,22 @@ where
         Ok(())
     }
 
+    async fn anvil_set_chain_id(&self, chain_id: u64) -> RpcResult<()> {
+        let state = self.serializable_state()?;
+        self.relauncher
+            .relaunch(|config| {
+                config.set_chain_id(Some(chain_id));
+                config.init_state = Some(state);
+            })
+            .await
+            .map_err(internal_error)
+    }
+
     async fn anvil_dump_state(
         &self,
         _preserve_historical_states: Option<bool>,
     ) -> RpcResult<Bytes> {
-        let best = self.best_block_number()?;
-        let header = self.sealed_header(best)?;
-        let mut accounts = self
-            .provider
-            .dump_accounts()
-            .map_err(|error| internal_error(format!("failed to read accounts: {error}")))?;
-        // The anvil state writes not yet in a block.
-        {
-            let state = self.state.read();
-            for (address, account_override) in state.accounts() {
-                let record = accounts.entry(*address).or_default();
-                if let Some(balance) = account_override.balance() {
-                    record.balance = balance;
-                }
-                if let Some(nonce) = account_override.nonce() {
-                    record.nonce = nonce;
-                }
-                if let Some(code) =
-                    account_override.code_hash().and_then(|hash| state.bytecode_by_hash(&hash))
-                {
-                    record.code = code.original_bytes();
-                }
-                for (slot, value) in account_override.storage() {
-                    if value.is_zero() {
-                        record.storage.remove(slot);
-                    } else {
-                        record.storage.insert(*slot, (*value).into());
-                    }
-                }
-            }
-        }
-        let block = block_env_from_header::<BlockEnv>(header.header());
-        let state = SerializableState {
-            block: Some(
-                serde_json::to_value(block).map_err(|error| internal_error(error.to_string()))?,
-            ),
-            accounts,
-            best_block_number: Some(best),
-            ..Default::default()
-        };
-        state.encode().map_err(|error| internal_error(error.to_string()))
+        self.serializable_state()?.encode().map_err(|error| internal_error(error.to_string()))
     }
 
     async fn anvil_load_state(&self, buf: Bytes) -> RpcResult<bool> {

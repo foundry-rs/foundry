@@ -25,14 +25,15 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Replaces `eth_sendTransaction`, because reth rejects a request without `to`: alloy serializes a create recipient as `null`, which reads back as missing, and the dev signer then fails to build the transaction | `src/api.rs` (`EthExtApi`) | ~20 | Treat a missing `to` as a contract creation in `send_transaction_request` |
 | Reports an unlimited balance for every valid transaction when `--disable-pool-balance-checks` is set, because the validator's `disable_balance_check` still reports the real balance and the pool parks a transaction the sender cannot afford yet | `src/pool.rs` (`AnvilValidator`) | ~10 | Let `disable_balance_check` also skip the pool's balance-based parking |
 | Rewrites every EVM environment to set the code size limit, the memory limit, EIP-3607, the block gas limit check, and the EIP-7825 cap | `src/evm.rs` (`EvmSettings`) | ~40 | A `CfgEnv` overrides hook on `ConfigureEvm`, or dev-mode flags for these limits |
+| Runs its own RPC server in front of the node, forwarding every method to the current node's module, so `anvil_reset` to another fork and `anvil_setChainId` can relaunch the node without losing the endpoint, the connections, or the in-process API | `src/server.rs`, `src/node.rs` (`Relauncher`) | ~300 | A way to replace a running node's chain spec and database in place, or to restart the node behind reth's RPC servers |
 
 ## Gaps that are not hooks
 
 These are not yet implemented here and do not need a reth change to be implemented, but would also
 be free if reth had a dev mode:
 
-- `anvil_reset` to a different fork endpoint or block, and `anvil_setChainId`: both change what the
-  chain spec says and need a node relaunch. A reth dev node could rebuild its chain spec in place.
+- `anvil_setChainId` relaunches the node from a state dump, so the state and the height survive but
+  earlier blocks are no longer served; anvil keeps them.
 - Forking at a transaction hash, which replays the transactions before it in the fork block.
 - `BLOCKHASH` of pre-fork blocks during block execution: the engine's state provider cannot reach the
   remote endpoint for block hashes.
