@@ -1057,30 +1057,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         self.sequence.save(true, false)?;
                         result?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
-
-                        // A submitted transaction that the endpoint stopped returning has no
-                        // outcome yet, so later work must not be sent or reported as successful.
-                        let unresolved = remaining_operation_indices(&self.sequence, i)
-                            .into_iter()
-                            .filter(|index| {
-                                batch.iter().any(|(_, _, batch_index)| batch_index == index)
-                            })
-                            .collect::<Vec<_>>();
-                        if !unresolved.is_empty() {
-                            self.sequence.save(true, false)?;
-                            let deployment = &self.sequence.sequences()[i];
-                            let hashes = unresolved.iter().filter_map(|&index| {
-                                self.sequence
-                                    .signed_payload(i, index)
-                                    .map(|signed| signed.hash)
-                                    .or(deployment.transactions[index].hash)
-                            });
-                            bail!(
-                                "submitted transactions on chain {} have no receipt after a transaction disappeared from the RPC endpoint: {}\n\nStopped before sending later transactions. Add `--resume` to your command to resend them.",
-                                deployment.chain,
-                                hashes.format(", ")
-                            );
-                        }
                     }
                     // Checkpoint save
                     self.sequence.save(true, false)?;
@@ -1114,8 +1090,33 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             seq_progress.inner.write().finish();
         }
 
+        // A submitted transaction that the endpoint stopped returning has no receipt, so the
+        // broadcast must not be reported as successful.
+        let unresolved = (0..self.sequence.sequences().len())
+            .filter_map(|i| {
+                let deployment = &self.sequence.sequences()[i];
+                let hashes = remaining_operation_indices(&self.sequence, i)
+                    .into_iter()
+                    .filter_map(|index| {
+                        self.sequence
+                            .signed_payload(i, index)
+                            .map(|signed| signed.hash)
+                            .or(deployment.transactions[index].hash)
+                    })
+                    .collect::<Vec<_>>();
+                (!hashes.is_empty())
+                    .then(|| format!("chain {}: {}", deployment.chain, hashes.iter().format(", ")))
+            })
+            .collect::<Vec<_>>();
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
+        }
+        if !unresolved.is_empty() {
+            sh_warn!(
+                "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\n{}\nAdd `--resume` to your command to retry them.",
+                unresolved.join("\n")
+            )?;
+        } else if !shell::is_json() {
             sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
         }
 

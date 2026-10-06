@@ -1356,7 +1356,7 @@ contract InterruptedResume is Script {
 }
 
 #[forgetest_init]
-async fn broadcast_stops_after_dropped_predecessor(prj: _, cmd: _) {
+async fn broadcast_warns_after_dropped_predecessor(prj: _, cmd: _) {
     let script = prj.add_script(
         "DroppedPredecessor.s.sol",
         r#"
@@ -1424,7 +1424,16 @@ contract DroppedPredecessor is Script {
     .await
     .expect("receipt polling hung on the visible successor of a dropped transaction");
     let output = child.kill_and_wait();
-    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stdout.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"), "{stdout}");
+    assert!(
+        stderr.contains(&format!(
+            "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\nchain 31337: {first_hash}, {second_hash}\n"
+        )),
+        "{stderr}"
+    );
     let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
     let pending = sequence["pending"].as_array().unwrap();
     assert_eq!(pending.len(), 2);

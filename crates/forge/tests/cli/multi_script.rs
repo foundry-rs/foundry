@@ -322,7 +322,7 @@ async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
 }
 
 #[forgetest]
-async fn multi_chain_stops_when_submission_disappears(prj: _, cmd: _) {
+async fn multi_chain_warns_when_submission_disappears(prj: _, cmd: _) {
     let (api1, handle1) = spawn(NodeConfig::test()).await;
     let (api2, handle2) = spawn(NodeConfig::test()).await;
     api1.anvil_set_auto_mine(false).await.unwrap();
@@ -369,22 +369,24 @@ async fn multi_chain_stops_when_submission_disappears(prj: _, cmd: _) {
         }
     })
     .await
-    .expect("Forge did not stop after the submission disappeared");
+    .expect("Forge did not finish after the submission disappeared");
     let output = child.kill_and_wait();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "Forge reported success: {stderr}");
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stdout.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"), "{stdout}");
     assert!(
         stderr.contains(&format!(
-            "submitted transactions on chain 31337 have no receipt after a transaction disappeared from the RPC endpoint: {submitted_hash}"
+            "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\nchain 31337: {submitted_hash}\n"
         )),
         "{stderr}"
     );
 
-    // Nothing after the unresolved submission was sent, and its signed attempt is kept.
-    assert_eq!(chain1_submissions.lock().unwrap().len(), 1);
-    assert!(chain2_submissions.lock().unwrap().is_empty());
+    // Later transactions and chains are still sent, and the signed attempt is kept.
+    assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
+    assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
     assert_eq!(api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 0);
-    assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 0);
+    assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 1);
     let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
         .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
         .expect("no authoritative recovery snapshot");
@@ -403,10 +405,10 @@ async fn multi_chain_stops_when_submission_disappears(prj: _, cmd: _) {
         .arg("--resume");
     tester.cmd.assert_success();
 
-    // Resume resends the identical signed bytes before completing both chains.
+    // Resume resends only the identical signed bytes.
     let chain1_payloads = chain1_submissions.lock().unwrap().clone();
     assert_eq!(chain1_payloads.len(), 3);
-    assert_eq!(chain1_payloads[1][0], submitted);
+    assert_eq!(chain1_payloads[2][0], submitted);
     assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
     assert_eq!(api1.transaction_count(tester.accounts_pub[0], None).await.unwrap().to::<u32>(), 1);
     assert_eq!(api1.transaction_count(tester.accounts_pub[1], None).await.unwrap().to::<u32>(), 1);
