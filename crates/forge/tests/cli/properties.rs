@@ -441,9 +441,21 @@ added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(
 fn properties_reports_possible_bugs(prj: _, cmd: _) {
     const GENERATOR: &str = r#"#!/bin/sh
 set -eu
-if grep -q '"round": 2' "$1"; then
+if grep -q '"round": 3' "$1"; then
     echo "generator quota exceeded" >&2
     exit 3
+fi
+if grep -q '"round": 2' "$1"; then
+grep -q '"possible_bugs"' "$1"
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "large fees are capped at the current cap",
+  "files": [{"path": "test/generated/FeeCurrentCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCurrentCapTest {\n    function testCurrentCap() public pure {\n        require(Fee.fee(1e30) == 10 ether);\n        require(Fee.fee(1001 ether) == 10 ether);\n    }\n}\n"}],
+  "tests": [{"path": "test/generated/FeeCurrentCap.t.sol", "contract": "FeeCurrentCapTest", "name": "testCurrentCap"}]
+}
+JSON
+exit 0
 fi
 grep -q '"likely_equivalent": "the comparisons agree when the operand is unsigned"' "$1"
 grep -q '"check_command"' "$1"
@@ -515,17 +527,18 @@ contract FeeTest {
         "--match-contract",
         "^FeeTest$",
         "--rounds",
-        "2",
+        "3",
     ])
     .assert_failure()
     .stdout_eq(str![[r#"
 possible bug: FeeCapTest::testFuzzCap (seed 24301: fee; counterexample: [..]; seed 12648430: fee; counterexample: [..])
   the property fails on every seed against the current implementation; candidate: cache/properties/0x[..]
-no candidate reproducibly resolved a mutation survivor
+added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
+  test/generated/FeeCurrentCap.t.sol (kept after a possible bug was reported; review it together with that report)
 
 "#]])
     .stderr_eq(str![[r#"
-Error: generator failed in round 2 (exit status: 3): generator quota exceeded
+Error: generator failed in round 3 (exit status: 3): generator quota exceeded
 
 "#]]);
 
@@ -533,8 +546,9 @@ Error: generator failed in round 2 (exit status: 3): generator quota exceeded
         &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(rounds.as_array().unwrap().len(), 1);
+    assert_eq!(rounds.as_array().unwrap().len(), 2);
     assert_eq!(rounds[0]["possible_bugs"].as_array().unwrap().len(), 1);
+    assert_eq!(rounds[1]["after_possible_bug"], true);
     assert!(!prj.root().join("test/generated/FeeCap.t.sol").exists());
 }
 

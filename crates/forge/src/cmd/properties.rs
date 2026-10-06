@@ -231,6 +231,10 @@ struct Evaluation {
     /// property is either incorrect or exposes a bug, so it is reported for review.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     possible_bugs: Vec<String>,
+    /// Whether this candidate was kept after an earlier round reported a possible bug. It can
+    /// encode the reported behavior, so it needs review together with that report.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    after_possible_bug: bool,
 }
 
 impl Evaluation {
@@ -250,6 +254,7 @@ impl Evaluation {
             resolved_survivors: 0,
             newly_resolved_survivors: 0,
             possible_bugs: vec![],
+            after_possible_bug: false,
         }
     }
 
@@ -324,6 +329,7 @@ impl PropertiesArgs {
             .chain(self.seed.iter().flat_map(|seed| ["--seed".to_string(), format!("{seed:#x}")]))
             .collect::<Vec<_>>();
         let mut evaluations = Vec::new();
+        let mut review_paths = HashSet::new();
         let mut feedback = Vec::new();
         let mut current_candidate = None::<Candidate>;
         let mut last_rejected_sources = None::<Vec<PromptSource>>;
@@ -426,7 +432,7 @@ impl PropertiesArgs {
                             &resolved_survivors,
                             &candidate,
                         );
-                        let (evaluation, candidate_results, newly_resolved) = evaluated
+                        let (mut evaluation, candidate_results, newly_resolved) = evaluated
                             .unwrap_or_else(|error| {
                                 (
                                     Evaluation::rejected(
@@ -439,6 +445,14 @@ impl PropertiesArgs {
                                     BTreeSet::new(),
                                 )
                             });
+                        evaluation.after_possible_bug = evaluation.accepted
+                            && evaluations
+                                .iter()
+                                .any(|earlier: &Evaluation| !earlier.possible_bugs.is_empty());
+                        if evaluation.after_possible_bug {
+                            review_paths
+                                .extend(proposal.files.iter().map(|file| file.path.clone()));
+                        }
                         let candidate_cache = cache_root.join(&evaluation.candidate_digest);
                         fs::create_dir_all(&candidate_cache)?;
                         fs::write(
@@ -520,7 +534,14 @@ impl PropertiesArgs {
                 resolved_survivors.len(),
             )?;
             for file in &candidate.files {
-                sh_println!("  {}", file.path.display())?;
+                if review_paths.contains(&file.path) {
+                    sh_println!(
+                        "  {} (kept after a possible bug was reported; review it together with that report)",
+                        file.path.display()
+                    )?;
+                } else {
+                    sh_println!("  {}", file.path.display())?;
+                }
             }
         } else {
             sh_println!("no candidate reproducibly resolved a mutation survivor")?;
@@ -622,6 +643,7 @@ impl PropertiesArgs {
                     .len(),
                 newly_resolved_survivors: newly_resolved.len(),
                 possible_bugs,
+                after_possible_bug: false,
             },
             candidate_results,
             newly_resolved,
