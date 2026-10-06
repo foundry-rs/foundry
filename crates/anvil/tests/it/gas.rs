@@ -719,3 +719,50 @@ async fn zero_fee_calls_observe_zero_base_fee() {
         traced.iter().map(|result| U256::from_be_slice(&result.output)).collect::<Vec<_>>();
     assert_eq!(outputs, [U256::ZERO, base_fee, U256::ZERO]);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn priced_calls_below_base_fee_are_rejected() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let to = handle.dev_accounts().nth(1).unwrap();
+
+    // Returns GASPRICE.
+    let contract = Address::repeat_byte(0x3a);
+    api.anvil_set_code(contract, bytes!("3a5f5260205ff3")).await.unwrap();
+    let block = provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    let base_fee = block.header.base_fee_per_gas.unwrap() as u128;
+    let latest = Some(BlockId::latest());
+    let trace = || [TraceType::Trace].into_iter().collect();
+    let is_fee_cap_too_low = |err: BlockchainError| {
+        matches!(err, BlockchainError::InvalidTransaction(InvalidTransactionError::FeeCapTooLow))
+    };
+
+    let call = TransactionRequest::default().from(from).to(contract);
+    let legacy = WithOtherFields::new(call.clone().gas_price(base_fee - 1));
+    let capped = WithOtherFields::new(call.clone().max_fee_per_gas(base_fee - 1));
+    let transfer = WithOtherFields::new(
+        TransactionRequest::default().from(from).to(to).gas_price(base_fee - 1),
+    );
+    for request in [legacy, capped, transfer] {
+        let err = api.call(request.clone(), latest, Default::default()).await.unwrap_err();
+        assert!(is_fee_cap_too_low(err));
+        let err = api.trace_call(request.clone(), trace(), latest).await.unwrap_err();
+        assert!(is_fee_cap_too_low(err));
+        let err = api.estimate_gas(request.clone(), latest, Default::default()).await.unwrap_err();
+        assert!(is_fee_cap_too_low(err));
+
+        // A batch with an underpriced call fails as a whole.
+        let free = WithOtherFields::new(call.clone());
+        let batch = vec![(free, trace()), (request, trace())];
+        let err = api.trace_call_many(batch, latest).await.unwrap_err();
+        assert!(is_fee_cap_too_low(err));
+    }
+
+    // A fee cap at the base fee is accepted even when the tip cannot be paid in full.
+    let tipped = WithOtherFields::new(call.max_fee_per_gas(base_fee).max_priority_fee_per_gas(1));
+    let output = api.call(tipped.clone(), latest, Default::default()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&output), U256::from(base_fee));
+    let traced = api.trace_call(tipped, trace(), latest).await.unwrap();
+    assert_eq!(U256::from_be_slice(&traced.output), U256::from(base_fee));
+}

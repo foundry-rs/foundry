@@ -1967,7 +1967,9 @@ impl EthApi<FoundryNetwork> {
                 && inner.access_list.is_none()
                 && inner.blob_versioned_hashes.is_none();
 
+            // A priced transfer below the base fee falls through, so execution rejects it.
             if maybe_transfer
+                && (gas_price == 0 || gas_price >= u128::from(block_env.basefee))
                 && highest_gas_limit >= MIN_TRANSACTION_GAS
                 && let Some(to) = to
                 && !self.backend.is_precompile(to, &block_env)
