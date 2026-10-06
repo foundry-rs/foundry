@@ -1,12 +1,12 @@
 use foundry_test_utils::util::ExtTester;
 
 // Actively maintained tests
-// Last updated: June 19th 2025
+// Last updated: April 29th 2026
 
 // <https://github.com/foundry-rs/forge-std>
 #[test]
 fn forge_std() {
-    ExtTester::new("foundry-rs", "forge-std", "b69e66b0ff79924d487d49bf7fb47c9ec326acba")
+    ExtTester::new("foundry-rs", "forge-std", "8987040ede9553cea20c95ad40d0455930f9c8e0")
         // Skip fork tests.
         .args(["--nmc", "Fork"])
         .verbosity(2)
@@ -17,7 +17,7 @@ fn forge_std() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
-    ExtTester::new("PaulRBerg", "prb-math", "aad73cfc6cdc2c9b660199b5b1e9db391ea48640")
+    ExtTester::new("PaulRBerg", "prb-math", "82e5ed5561d0a1c43a3a59edbf4291c8de26479e")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
@@ -39,24 +39,21 @@ fn prb_proxy() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2_core() {
+    // Keep the standalone v1.2.0 fixture; newer revisions use a different monorepo layout.
     let mut tester =
-        ExtTester::new("sablier-labs", "v2-core", "d85521f5615f6c19612ff250ee89c57b9afa6aa2")
+        ExtTester::new("sablier-labs", "v2-core", "73356945b53e8dd4112f34f3e2c63c278c4a5239")
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
             .args(["--gas-limit", &u64::MAX.to_string()])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
-            .install_command(&["bun", "install", "--prefer-offline"])
-            // Try npm if bun fails / is not installed.
-            .install_command(&["npm", "install", "--prefer-offline"])
+            .install_command(&["bun", "install", "--frozen-lockfile"])
             .verbosity(2);
 
     // This test reverts due to memory limit without isolation. This revert is not reached with
     // isolation because memory is divided between separate EVMs created by inner calls.
-    if cfg!(feature = "isolate-by-default") {
-        tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
-    }
+    tester = tester.args(["--nmt", "test_RevertWhen_LoopCalculationOverflowsBlockGasLimit"]);
 
     tester.run();
 }
@@ -65,14 +62,12 @@ fn sablier_v2_core() {
 #[test]
 fn solady() {
     let mut tester =
-        ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd");
+        ExtTester::new("Vectorized", "solady", "90db92ce173856605d24a554969f2c67cadbc7e9");
 
     // This test expects the mover contract created via CREATE2 to be selfdestructed within the
     // same transaction. In isolation mode, each top-level call runs as a separate transaction
     // context, so the selfdestruct doesn't clear the code as expected by the test.
-    if cfg!(feature = "isolate-by-default") {
-        tester = tester.args(["--nmt", "testSafeMoveETHViaMover"]);
-    }
+    tester = tester.args(["--nmt", "testSafeMoveETHViaMover"]);
 
     tester.run();
 }
@@ -80,19 +75,18 @@ fn solady() {
 // <https://github.com/pcaversaccio/snekmate>
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
-#[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "601031d244475b160a00f73053532528bf665cc3")
-        .install_command(&["pnpm", "install", "--prefer-offline"])
-        // Try npm if pnpm fails / is not installed.
-        .install_command(&["npm", "install", "--prefer-offline"])
+    ExtTester::new("pcaversaccio", "snekmate", "df2816d6a5ecdb8dcc1257e22089422825fd5e27")
+        .fuzz_runs(256)
+        .python_package("git+https://github.com/vyperlang/vyper@v0.5.0a3")
+        .install_command(&["pnpm", "install", "--frozen-lockfile"])
         .run();
 }
 
 // <https://github.com/mds1/multicall>
 #[test]
 fn mds1_multicall3() {
-    ExtTester::new("mds1", "multicall", "5f90062160aedb7c807fadca469ac783a0557b57").run();
+    ExtTester::new("mds1", "multicall", "b667d67ecfa5361a81e8f110234ce242613b0012").run();
 }
 
 // Legacy tests

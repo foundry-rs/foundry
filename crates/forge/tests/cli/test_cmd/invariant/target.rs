@@ -1,6 +1,7 @@
 use super::*;
 
-forgetest!(filters, |prj, cmd| {
+#[forgetest]
+fn filters(prj: _, cmd: _) {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.update_config(|config| {
@@ -744,41 +745,46 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/TargetArtifacts.t.sol:TargetArtifacts
-[FAIL: false world]
+Ran 1 test for test/TargetArtifacts.t.sol:TargetArtifacts
+[FAIL: false world] invariantShouldFail
 	[SEQUENCE]
- invariantShouldFail() ([RUNS])
+
+TargetArtifacts invariants: 1/2 invariants broken
+[FAIL: false world] invariantShouldFail
+[PASS] invariantShouldPass
+ TargetArtifacts invariants ([RUNS])
 
 [STATS]
 
-[PASS] invariantShouldPass() ([RUNS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-[STATS]
-
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/TargetArtifacts.t.sol:TargetArtifacts
-[FAIL: false world]
+[FAIL: false world] invariantShouldFail
 	[SEQUENCE]
- invariantShouldFail() ([RUNS])
 
-Encountered a total of 1 failing tests, 1 tests succeeded
+TargetArtifacts invariants: 1/2 invariants broken
+[FAIL: false world] invariantShouldFail
+[PASS] invariantShouldPass
+ TargetArtifacts invariants ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
-});
+}
 
 // https://github.com/foundry-rs/foundry/issues/5625
 // https://github.com/foundry-rs/foundry/issues/6166
 // `Target.wrongSelector` is not called when handler added as `targetContract`
 // `Target.wrongSelector` is called (and test fails) when no `targetContract` set
-forgetest!(fuzzed_selected_targets, |prj, cmd| {
+#[forgetest]
+fn fuzzed_selected_targets(prj: _, cmd: _) {
     prj.insert_vm();
     prj.insert_ds_test();
     prj.update_config(|config| {
@@ -858,4 +864,4 @@ contract DynamicTargetContract is Test {
 ...
 
 "#]]);
-});
+}

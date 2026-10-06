@@ -10,12 +10,6 @@ use foundry_evm_traces::debug::{ArtifactData, ContractSources, SourceData};
 use serde::Serialize;
 use std::{collections::HashMap, path::Path};
 
-/// Dumps debugger data to a JSON file.
-pub(crate) fn dump(path: &Path, context: &DebuggerContext) -> eyre::Result<()> {
-    write_json_file(path, &DebuggerDump::new(context))?;
-    Ok(())
-}
-
 /// Holds info of debugger dump.
 #[derive(Serialize)]
 struct DebuggerDump<'a> {
@@ -145,4 +139,10 @@ impl<'a> ArtifactDataDump<'a> {
             file_id: v.file_id,
         }
     }
+}
+
+/// Dumps debugger data to a JSON file.
+pub(crate) fn dump(path: &Path, context: &DebuggerContext) -> eyre::Result<()> {
+    write_json_file(path, &DebuggerDump::new(context))?;
+    Ok(())
 }

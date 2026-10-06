@@ -6,7 +6,7 @@ permissions: {}
 
 on:
   schedule:
-    - cron: "0 1 * * *" # Run daily at 1 AM UTC (offset from test-isolate)
+    - cron: "0 1 * * *" # Run daily at 1 AM UTC
   workflow_dispatch: # Needed so we can run it manually
 
 concurrency:
@@ -21,29 +21,58 @@ env:
 jobs:
   test:
     name: flaky tests
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:
+      id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: taiki-e/install-action@7f491e26f71f4ec2e6902c7c95c73043f209ab79 # v2
+      - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: nextest
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Vyper
+        # Also update vyper version in .devcontainer/Dockerfile.dev
+        run: pip --version && pip install vyper==0.4.3
+      - name: Install Z3
+        # Same pin as test.yml, for the symbolic suites below.
+        run: pip install z3-solver==5.1.0.0 && z3 --version
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test flaky tests
         env:
           SVM_TARGET_PLATFORM: linux-amd64
-          HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-        run: cargo nextest run --profile flaky --no-fail-fast
+          ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
+          ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+          CELO_RPC: ${{ secrets.CELO_RPC }}
+          GNOSIS_RPC: ${{ secrets.GNOSIS_RPC }}
+          HYPERLIQUID_RPC: ${{ secrets.HYPERLIQUID_RPC }}
+          ROBINHOOD_RPC: ${{ secrets.ROBINHOOD_RPC }}
+        run: cargo nextest run --locked --profile flaky --no-fail-fast
+      # Broader and slower symbolic coverage that PR CI skips; the tests return early unless these
+      # variables are set.
+      - name: Test symbolic conformance and limits
+        if: ${{ !cancelled() }}
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+          SYMBOLIC_CONFORMANCE: 1
+          SYMBOLIC_LIMITS: 1
+        run: >-
+          cargo nextest run --locked -p forge --test cli --no-fail-fast
+          -E 'test(/symbolic_conformance::|symbolic_limits::/)'
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.
   issue:
@@ -55,10 +84,10 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WORKFLOW_URL: |

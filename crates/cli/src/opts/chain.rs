@@ -2,7 +2,6 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use eyre::Result;
 use foundry_config::{Chain, NamedChain};
 use std::ffi::OsStr;
-use strum::VariantNames;
 
 /// Custom Clap value parser for [`Chain`]s.
 ///
@@ -14,7 +13,7 @@ pub struct ChainValueParser {
 
 impl Default for ChainValueParser {
     fn default() -> Self {
-        Self { inner: PossibleValuesParser::from(NamedChain::VARIANTS) }
+        Self { inner: PossibleValuesParser::from(NamedChain::VARIANT_NAMES) }
     }
 }
 
@@ -32,11 +31,11 @@ impl TypedValueParser for ChainValueParser {
         if let Ok(id) = s.parse() {
             Ok(Chain::from_id(id))
         } else {
-            // NamedChain::VARIANTS is a subset of all possible variants, since there are aliases:
-            // amoy instead of polygon-amoy etc
+            // NamedChain::VARIANT_NAMES is a subset of all possible variants, since there are
+            // aliases: amoy instead of polygon-amoy etc
             //
-            // Parse first as NamedChain, if it fails parse with NamedChain::VARIANTS for displaying
-            // the error to the user
+            // Parse first as NamedChain, if it fails parse with NamedChain::VARIANT_NAMES for
+            // displaying the error to the user
             s.parse()
                 .map_err(|_| self.inner.parse_ref(cmd, arg, value).unwrap_err())
                 .map(Chain::from_named)

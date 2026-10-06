@@ -186,7 +186,7 @@ impl BoundMutator for I256 {
 
             // Map to range.
             let range = max.saturating_sub(min).saturating_add(Self::ONE).unsigned_abs();
-            let wrapped = Self::from_raw(U256::from(signed_candidate.unsigned_abs()) % range);
+            let wrapped = Self::from_raw(signed_candidate.unsigned_abs() % range);
             let candidate =
                 if signed_candidate.is_negative() { max - wrapped } else { min + wrapped };
 
@@ -482,10 +482,12 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
 
     for i in (0..bytes.len()).rev() {
         let byte_val = bytes[i] as f64;
-        let scaled = (byte_val + carry_down * 256.0) * scale_factor;
+        let scaled = f64::mul_add(carry_down, 256.0, byte_val) * scale_factor;
 
         if i == 0 && scaled >= 256.0 {
-            bytes.iter_mut().for_each(|b| *b = 0xFF);
+            for b in bytes.iter_mut() {
+                *b = 0xFF;
+            }
             return Some(());
         }
 
@@ -500,7 +502,9 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
             j -= 1;
             let new_val = bytes[j] as f64 + carry_up;
             if j == 0 && new_val >= 256.0 {
-                bytes.iter_mut().for_each(|b| *b = 0xFF);
+                for b in bytes.iter_mut() {
+                    *b = 0xFF;
+                }
                 return Some(());
             }
             bytes[j] = (new_val % 256.0).floor() as u8;
@@ -520,8 +524,8 @@ fn validate_uint_mutation(original: U256, mutated: U256, size: usize) -> Option<
     }
 
     // Check if mutated value fits the given size.
-    let max = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
-    (mutated < max).then_some(mutated)
+    let max = if size < 256 { (U256::ONE << size) - U256::ONE } else { U256::MAX };
+    (mutated <= max).then_some(mutated)
 }
 
 /// Returns mutated int value if different from the original value and if it fits in the given size,
@@ -533,10 +537,14 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
     }
 
     // Check if mutated value fits the given size.
-    let max_abs = (U256::from(1) << (size - 1)) - U256::from(1);
+    // Valid signed range for `size` bits is `[-2^(size-1), 2^(size-1) - 1]`.
+    let max =
+        I256::overflowing_from_sign_and_abs(Sign::Positive, (U256::ONE << (size - 1)) - U256::ONE)
+            .0;
+    let min = I256::overflowing_from_sign_and_abs(Sign::Negative, U256::ONE << (size - 1)).0;
     match mutated.sign() {
-        Sign::Positive => mutated < I256::overflowing_from_sign_and_abs(Sign::Positive, max_abs).0,
-        Sign::Negative => mutated > I256::overflowing_from_sign_and_abs(Sign::Negative, max_abs).0,
+        Sign::Positive => mutated <= max,
+        Sign::Negative => mutated >= min,
     }
     .then_some(mutated)
 }
@@ -545,6 +553,49 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
 mod tests {
     use super::*;
     use proptest::test_runner::Config;
+
+    #[test]
+    fn validate_uint_mutation_accepts_inclusive_max() {
+        // For width `size`, valid unsigned values are 0..=max where max = 2^size - 1.
+        // Regression: `< max` incorrectly rejected `mutated == max`; must use `<= max`.
+        for size in [8usize, 16, 32, 64, 128] {
+            let max = (U256::ONE << size) - U256::ONE;
+            assert_eq!(
+                super::validate_uint_mutation(U256::ZERO, max, size),
+                Some(max),
+                "size={size}"
+            );
+        }
+        let original = U256::ONE;
+        assert_eq!(super::validate_uint_mutation(original, U256::MAX, 256), Some(U256::MAX));
+    }
+
+    #[test]
+    fn validate_int_mutation_accepts_inclusive_bounds() {
+        // For width `size`, valid signed values are [-2^(size-1), 2^(size-1) - 1].
+        // Regression: strict comparisons rejected the inclusive max and min bounds.
+        for size in [8usize, 16, 32, 64, 128] {
+            let max = I256::overflowing_from_sign_and_abs(
+                Sign::Positive,
+                (U256::ONE << (size - 1)) - U256::ONE,
+            )
+            .0;
+            let min =
+                I256::overflowing_from_sign_and_abs(Sign::Negative, U256::ONE << (size - 1)).0;
+            assert_eq!(
+                super::validate_int_mutation(I256::ZERO, max, size),
+                Some(max),
+                "size={size} max"
+            );
+            assert_eq!(
+                super::validate_int_mutation(I256::ZERO, min, size),
+                Some(min),
+                "size={size} min"
+            );
+        }
+        assert_eq!(super::validate_int_mutation(I256::ZERO, I256::MAX, 256), Some(I256::MAX));
+        assert_eq!(super::validate_int_mutation(I256::ZERO, I256::MIN, 256), Some(I256::MIN));
+    }
 
     #[test]
     fn test_mutate_uint() {
@@ -666,7 +717,7 @@ mod tests {
     #[test]
     fn test_u256_bound() {
         let mut runner = TestRunner::new(Config::default());
-        let min = U256::from(0u64);
+        let min = U256::ZERO;
         let max = U256::from(200u64);
         let original = U256::from(100u64);
 

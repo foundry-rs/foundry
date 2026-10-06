@@ -3,6 +3,7 @@ use foundry_common::{
     shell::{ColorChoice, OutputFormat, OutputMode, Shell, Verbosity},
     version::{IS_NIGHTLY_VERSION, NIGHTLY_VERSION_WARNING_MESSAGE},
 };
+use foundry_config::{Config, figment::Profile};
 use serde::{Deserialize, Serialize};
 
 /// Global arguments for the CLI.
@@ -48,6 +49,10 @@ pub struct GlobalArgs {
     /// Number of threads to use. Specifying 0 defaults to the number of logical cores.
     #[arg(global = true, long, short = 'j', visible_alias = "jobs")]
     threads: Option<usize>,
+
+    /// The configuration profile to use.
+    #[arg(global = true, long, value_name = "PROFILE")]
+    profile: Option<Profile>,
 }
 
 impl GlobalArgs {
@@ -56,7 +61,8 @@ impl GlobalArgs {
     /// This must be called **before** parsing arguments, since commands with required
     /// subcommands would fail parsing before the flag is checked.
     pub fn check_markdown_help<C: clap::CommandFactory>() {
-        if std::env::args().any(|arg| arg == "--markdown-help") {
+        if std::env::args_os().take_while(|a| a != "--").any(|a| a == "--markdown-help") {
+            // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
             foundry_cli_markdown::print_help_markdown::<C>();
             std::process::exit(0);
         }
@@ -64,6 +70,16 @@ impl GlobalArgs {
 
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
+        if let Some(profile) = &self.profile
+            && let Err(selected) = Config::try_set_selected_profile(profile.clone())
+        {
+            eyre::bail!(
+                "configuration profile was already initialized as `{selected}`, cannot select \
+                 `{profile}`"
+            );
+        }
+        let _ = Config::selected_profile();
+
         // Set the global shell.
         let shell = self.shell();
         // Argument takes precedence over the env var global color choice.

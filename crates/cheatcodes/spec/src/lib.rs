@@ -15,6 +15,9 @@ pub use function::{Function, Mutability, Visibility};
 mod items;
 pub use items::{Enum, EnumVariant, Error, Event, Struct, StructField};
 
+mod symbolic;
+pub use symbolic::SymbolicVm;
+
 mod vm;
 pub use vm::Vm;
 
@@ -78,6 +81,8 @@ impl Cheatcodes<'static> {
                 Vm::Log::STRUCT.clone(),
                 Vm::Rpc::STRUCT.clone(),
                 Vm::EthGetLogs::STRUCT.clone(),
+                Vm::EthStorageProof::STRUCT.clone(),
+                Vm::EthGetProof::STRUCT.clone(),
                 Vm::DirEntry::STRUCT.clone(),
                 Vm::FsMetadata::STRUCT.clone(),
                 Vm::Wallet::STRUCT.clone(),

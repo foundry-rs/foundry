@@ -1,3 +1,5 @@
+//@compile-flags: --only-lint erc20-unchecked-transfer
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -24,19 +26,21 @@ contract UncheckedTransfer {
 
     // SHOULD FAIL: Unchecked transfer calls
     function uncheckedTransfer(address to, uint256 amount) public {
-        IERC20(address(token)).transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        IERC20(address(token)).transfer(to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transfer(to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transfer({to: to, amount: amount}); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
     }
 
     function uncheckedTransferFrom(address from, address to, uint256 amount) public {
-        IERC20(address(token)).transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-        token.transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        IERC20(address(token)).transferFrom(from, to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transferFrom(from, to, amount); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+        token.transferFrom({from: from, to: to, amount: amount}); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
     }
 
     function uncheckedInLoop(address[] memory recipients, uint256[] memory amounts) public {
-        for (uint i = 0; i < recipients.length; i++) {
-            IERC20(address(token)).transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
-            token.transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        for (uint256 i = 0; i < recipients.length; i++) {
+            IERC20(address(token)).transfer(recipients[i], amounts[i]); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
+            token.transfer(recipients[i], amounts[i]); //~WARN: ERC20 `transfer` or `transferFrom` call does not check the return value
         }
     }
 
@@ -54,6 +58,10 @@ contract UncheckedTransfer {
     // SHOULD PASS: Properly checked transfer calls
     function checkedTransferWithRequire(address to, uint256 amount) public {
         require(token.transfer(to, amount), "Transfer failed");
+    }
+
+    function checkedTransferWithNamedArgs(address to, uint256 amount) public {
+        require(token.transfer({to: to, amount: amount}), "Transfer failed");
     }
 
     function checkedTransferWithVariable(address to, uint256 amount) public {
@@ -85,10 +93,7 @@ contract UncheckedTransfer {
     }
 
     function checkedTransferInRequireWithLogic(address to, uint256 amount) public {
-        require(
-            amount > 0 && token.transfer(to, amount),
-            "Invalid amount or transfer failed"
-        );
+        require(amount > 0 && token.transfer(to, amount), "Invalid amount or transfer failed");
     }
 
     function uncheckedApprove(address spender, uint256 amount) public {
@@ -124,5 +129,16 @@ contract UncheckedTransferUsingCurrencyLib {
     function currencyTransferFrom(address from, address to, uint256 amount) public {
         token.transferFrom(from, to, amount);
         token.transferFrom(from, to, amount);
+    }
+}
+
+interface IOverloadedTransfer {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transfer(address to, bytes32 referenceId) external returns (uint256);
+}
+
+contract SelectedTransferOverload {
+    function transferReference(IOverloadedTransfer token, address to, bytes32 referenceId) external {
+        token.transfer(to, referenceId);
     }
 }

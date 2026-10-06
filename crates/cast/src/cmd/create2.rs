@@ -1,22 +1,82 @@
-use alloy_primitives::{Address, B256, U256, hex, keccak256};
-use clap::Parser;
+use alloy_dyn_abi::JsonAbiExt;
+use alloy_primitives::{Address, B256, U256, hex, hex::FromHex, keccak256};
+use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
+use foundry_cli::{
+    json::print_scalar,
+    opts::BuildOpts,
+    utils::{LoadConfig, find_contract_artifacts, parse_constructor_args},
+};
+use foundry_common::{compile, shell};
+use foundry_compilers::{info::ContractInfo, utils::canonicalize};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use regex::RegexSetBuilder;
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Instant,
-};
+use std::time::Instant;
 
 // https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
 const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
+#[derive(Clone, Debug, Subcommand)]
+enum Create2Subcommand {
+    /// Compute a contract's CREATE2 init code hash.
+    #[command(visible_alias = "initcodehash")]
+    InitCodeHash(InitCodeHashArgs),
+}
+
+foundry_config::impl_figment_convert!(InitCodeHashArgs, build);
+
+#[derive(Clone, Debug, Args)]
+struct InitCodeHashArgs {
+    /// The contract identifier in the form `<path>:<contractname>`.
+    contract: ContractInfo,
+
+    /// The constructor arguments.
+    #[arg(value_name = "ARGS", allow_negative_numbers = true)]
+    constructor_args: Vec<String>,
+
+    #[command(flatten)]
+    build: BuildOpts,
+}
+
+impl InitCodeHashArgs {
+    fn run(&self) -> Result<()> {
+        let config = self.load_config()?;
+        let project = config.project()?;
+        let target_path = if let Some(path) = &self.contract.path {
+            canonicalize(project.root().join(path))?
+        } else {
+            project.find_contract_path(&self.contract.name)?
+        };
+
+        let output = compile::compile_target(&target_path, &project, true)?;
+        let (abi, bin, _) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
+        let Some(bytecode) = bin.object.into_bytes() else {
+            eyre::bail!("contract contains unlinked libraries");
+        };
+        if bytecode.is_empty() {
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name);
+        }
+
+        let mut init_code = bytecode.to_vec();
+        if let Some(constructor) = &abi.constructor {
+            let params = parse_constructor_args(constructor, &self.constructor_args)?;
+            init_code.extend(constructor.abi_encode_input(&params)?);
+        } else if !self.constructor_args.is_empty() {
+            eyre::bail!("contract does not have a constructor");
+        }
+
+        print_scalar(keccak256(init_code))?;
+        Ok(())
+    }
+}
+
 /// CLI arguments for `cast create2`.
 #[derive(Clone, Debug, Parser)]
+#[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
 pub struct Create2Args {
+    #[command(subcommand)]
+    command: Option<Create2Subcommand>,
+
     /// Prefix for the contract address.
     #[arg(
         long,
@@ -89,14 +149,18 @@ pub struct Create2Args {
     no_random: bool,
 }
 
-pub struct Create2Output {
-    pub address: Address,
-    pub salt: B256,
-}
-
 impl Create2Args {
-    pub fn run(self) -> Result<Create2Output> {
+    pub fn execute(self) -> Result<()> {
+        if let Some(Create2Subcommand::InitCodeHash(args)) = &self.command {
+            return args.run();
+        }
+        self.run().map(drop)
+    }
+
+    /// Mines (or derives) the salt and returns the resulting address and salt.
+    fn run(self) -> Result<(Address, B256)> {
         let Self {
+            command: _,
             starts_with,
             ends_with,
             matching,
@@ -111,19 +175,17 @@ impl Create2Args {
             no_random,
         } = self;
 
-        let init_code_hash = if let Some(init_code_hash) = init_code_hash {
-            hex::FromHex::from_hex(init_code_hash)
-        } else if let Some(init_code) = init_code {
-            hex::decode(init_code).map(keccak256)
-        } else {
-            unreachable!();
-        }?;
+        let init_code_hash = match (init_code_hash, init_code) {
+            (Some(init_code_hash), _) => B256::from_hex(init_code_hash)?,
+            // Clap requires one of the two.
+            (None, init_code) => keccak256(hex::decode(init_code.unwrap_or_default())?),
+        };
 
         if let Some(salt) = salt {
-            let salt = hex::FromHex::from_hex(salt)?;
+            let salt = B256::from_hex(salt)?;
             let address = deployer.create2(salt, init_code_hash);
-            sh_println!("{address}")?;
-            return Ok(Create2Output { address, salt });
+            sh_println!("{address}\t{salt}")?;
+            return Ok((address, salt));
         }
 
         let mut regexs = vec![];
@@ -165,10 +227,10 @@ impl Create2Args {
 
         let regex = RegexSetBuilder::new(regexs).case_insensitive(!case_sensitive).build()?;
 
-        let mut n_threads = threads.unwrap_or(0);
-        if n_threads == 0 {
-            n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        }
+        let mut n_threads = match threads {
+            Some(n) if n != 0 => n,
+            _ => std::thread::available_parallelism().map_or(1, |n| n.get()),
+        };
         if cfg!(test) {
             n_threads = n_threads.min(2);
         }
@@ -189,81 +251,43 @@ impl Create2Args {
             rng.fill_bytes(remaining);
         }
 
-        sh_println!("Configuration:")?;
-        sh_println!("Init code hash: {init_code_hash}")?;
-        sh_println!("Regex patterns: {:?}\n", regex.patterns())?;
-        sh_println!(
+        sh_status!("Configuration:")?;
+        sh_status!("Init code hash: {init_code_hash}")?;
+        sh_status!("Regex patterns: {:?}\n", regex.patterns())?;
+        sh_status!(
             "Starting to generate deterministic contract address with {n_threads} threads..."
         )?;
-        let mut handles = Vec::with_capacity(n_threads);
-        let found = Arc::new(AtomicBool::new(false));
         let timer = Instant::now();
-
-        // Loops through all possible salts in parallel until a result is found.
-        // Each thread iterates over `(i..).step_by(n_threads)`.
-        for i in 0..n_threads {
-            // Create local copies for the thread.
-            let increment = n_threads;
-            let regex = regex.clone();
-            let regex_len = regex.patterns().len();
-            let found = Arc::clone(&found);
-            handles.push(std::thread::spawn(move || {
-                // Read the first bytes of the salt as a usize to be able to increment it.
-                struct B256Aligned(B256, [usize; 0]);
-                let mut salt = B256Aligned(salt, []);
-                // SAFETY: B256 is aligned to `usize`.
-                let salt_word = unsafe {
-                    &mut *salt.0.as_mut_ptr().add(32 - usize::BITS as usize / 8).cast::<usize>()
-                };
-                // Important: add the thread index to the salt to avoid duplicate results.
-                *salt_word = salt_word.wrapping_add(i);
-
-                // Use checksum format only when case_sensitive is enabled.
-                // This avoids an extra keccak256 call per iteration when not needed.
-                let mut checksum_buf = [0u8; 42];
-                let mut hex_buf = [0u8; 40];
-                loop {
-                    // Stop if a result was found in another thread.
-                    if found.load(Ordering::Relaxed) {
-                        break None;
-                    }
-
-                    // Calculate the `CREATE2` address.
-                    #[expect(clippy::needless_borrows_for_generic_args)]
-                    let addr = deployer.create2(&salt.0, &init_code_hash);
-
-                    // Check if the regex matches the calculated address.
-                    // When case_sensitive is true, use EIP-55 checksum format (requires keccak256).
-                    // Otherwise, use lowercase hex to avoid the extra hash computation.
-                    let s = if case_sensitive {
-                        let _ = addr.to_checksum_raw(&mut checksum_buf, None);
-                        // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8
-                        // string is safe.
-                        unsafe { std::str::from_utf8_unchecked(checksum_buf.get_unchecked(2..)) }
-                    } else {
-                        // SAFETY: hex::encode_to_slice always produces valid UTF-8 (hex digits).
-                        let _ = hex::encode_to_slice(addr.as_slice(), &mut hex_buf);
-                        unsafe { std::str::from_utf8_unchecked(&hex_buf) }
-                    };
-                    if regex.matches(s).into_iter().count() == regex_len {
-                        // Notify other threads that we found a result.
-                        found.store(true, Ordering::Relaxed);
-                        break Some((addr, salt.0));
-                    }
-
-                    // Increment the salt for the next iteration.
-                    *salt_word = salt_word.wrapping_add(increment);
-                }
-            }));
+        let regex_len = regex.patterns().len();
+        let mut checksum_buf = [0u8; 42];
+        let mut hex_buf = [0u8; 40];
+        let (address, salt) = super::miner::mine_salt(salt, n_threads, move |salt| {
+            #[expect(clippy::needless_borrows_for_generic_args)]
+            let addr = deployer.create2(&salt, &init_code_hash);
+            // Use checksum format only when case_sensitive is enabled — it requires an extra
+            // keccak256 call, so we fall back to plain hex when case sensitivity is off.
+            let s = if case_sensitive {
+                let _ = addr.to_checksum_raw(&mut checksum_buf, None);
+                // SAFETY: stripping 2 ASCII bytes ("0x") off of an already valid UTF-8 string.
+                unsafe { std::str::from_utf8_unchecked(checksum_buf.get_unchecked(2..)) }
+            } else {
+                // SAFETY: hex::encode_to_slice always produces valid UTF-8 (hex digits).
+                let _ = hex::encode_to_slice(addr.as_slice(), &mut hex_buf);
+                unsafe { std::str::from_utf8_unchecked(&hex_buf) }
+            };
+            (regex.matches(s).into_iter().count() == regex_len).then_some((addr, salt))
+        })
+        .ok_or_else(|| eyre::eyre!("create2 salt mining failed: all threads panicked"))?;
+        sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
+        sh_status!("Address: {address}")?;
+        sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
+        // The machine-readable stdout record duplicates the prose above when stdout is an
+        // interactive terminal.
+        if !shell::is_out_tty() {
+            sh_println!("{address}\t{salt}")?;
         }
 
-        let results = handles.into_iter().filter_map(|h| h.join().unwrap()).collect::<Vec<_>>();
-        let (address, salt) = results.into_iter().next().unwrap();
-        sh_println!("Successfully found contract address in {:?}", timer.elapsed())?;
-        sh_println!("Address: {address}")?;
-        sh_println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
-
-        Ok(Create2Output { address, salt })
+        Ok((address, salt))
     }
 }
 
@@ -280,85 +304,64 @@ mod tests {
     use alloy_primitives::{address, b256};
     use std::str::FromStr;
 
+    const ZERO_HASH: &str =
+        "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    fn run(args: &[&str]) -> Result<(Address, B256)> {
+        Create2Args::parse_from(["foundry-cli"].iter().chain(args)).run()
+    }
+
     #[test]
     fn basic_create2() {
-        let mk_args = |args: &[&str]| {
-            Create2Args::parse_from(["foundry-cli", "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000"].iter().chain(args))
-        };
+        for (flag, pattern) in [
+            ("--starts-with", "aa"),
+            ("--ends-with", "bb"),
+            ("--starts-with", "aaa"),
+            ("--ends-with", "bbb"),
+            ("--starts-with", "0xaa"),
+            ("--starts-with", "0xaaa"),
+        ] {
+            let (address, _) = run(&[ZERO_HASH, flag, pattern]).unwrap();
+            let address = format!("{address:x}");
+            let pattern = pattern.trim_start_matches("0x");
+            assert!(
+                if flag == "--starts-with" {
+                    address.starts_with(pattern)
+                } else {
+                    address.ends_with(pattern)
+                },
+                "{flag} {pattern}: {address}"
+            );
+        }
 
-        // even hex chars
-        let args = mk_args(&["--starts-with", "aa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aa"));
-
-        let args = mk_args(&["--ends-with", "bb"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).ends_with("bb"));
-
-        // odd hex chars
-        let args = mk_args(&["--starts-with", "aaa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
-
-        let args = mk_args(&["--ends-with", "bbb"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).ends_with("bbb"));
-
-        // even hex chars with 0x prefix
-        let args = mk_args(&["--starts-with", "0xaa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aa"));
-
-        // odd hex chars with 0x prefix
-        let args = mk_args(&["--starts-with", "0xaaa"]);
-        let create2_out = args.run().unwrap();
-        assert!(format!("{:x}", create2_out.address).starts_with("aaa"));
-
-        // check fails on wrong chars
-        let args = mk_args(&["--starts-with", "0xerr"]);
-        let create2_out = args.run();
-        assert!(create2_out.is_err());
-
-        // check fails on wrong x prefixed string provided
-        let args = mk_args(&["--starts-with", "x00"]);
-        let create2_out = args.run();
-        assert!(create2_out.is_err());
+        // Non-hex and misplaced prefixes are rejected.
+        assert!(run(&[ZERO_HASH, "--starts-with", "0xerr"]).is_err());
+        assert!(run(&[ZERO_HASH, "--starts-with", "x00"]).is_err());
     }
 
     #[test]
     fn matches_pattern() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
-            "--init-code-hash=0x0000000000000000000000000000000000000000000000000000000000000000",
-            "--matching=0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        let (address, _) =
+            run(&[ZERO_HASH, "--matching=0xbbXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"]).unwrap();
         assert!(format!("{address:x}").starts_with("bb"));
     }
 
     #[test]
     fn create2_salt() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, _) = run(&[
             "--deployer=0x8ba1f109551bD432803012645Ac136ddd64DBA72",
             "--salt=0x7c5ea36004851c764c44143b1dcb59679b11c9a68e5f41497f6cf3d480715331",
             "--init-code=0x6394198df16000526103ff60206004601c335afa6040516060f3",
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        ])
+        .unwrap();
         assert_eq!(address, address!("0x533AE9D683B10C02EBDB05471642F85230071FC3"));
     }
 
     #[test]
     fn create2_init_code() {
         let init_code = "00";
-        let args =
-            Create2Args::parse_from(["foundry-cli", "--starts-with=cc", "--init-code", init_code]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        let (address, salt) = run(&["--starts-with=cc", "--init-code", init_code]).unwrap();
         assert!(format!("{address:x}").starts_with("cc"));
-        let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
         assert_eq!(address, deployer.create2_from_code(salt, hex::decode(init_code).unwrap()));
     }
@@ -366,87 +369,54 @@ mod tests {
     #[test]
     fn create2_init_code_hash() {
         let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
-        let args = Create2Args::parse_from([
-            "foundry-cli",
-            "--starts-with=dd",
-            "--init-code-hash",
-            init_code_hash,
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
+        let (address, salt) =
+            run(&["--starts-with=dd", "--init-code-hash", init_code_hash]).unwrap();
         assert!(format!("{address:x}").starts_with("dd"));
-
-        let salt = create2_out.salt;
         let deployer = Address::from_str(DEPLOYER).unwrap();
-
-        assert_eq!(
-            address,
-            deployer
-                .create2(salt, B256::from_slice(hex::decode(init_code_hash).unwrap().as_slice()))
-        );
+        assert_eq!(address, deployer.create2(salt, B256::from_str(init_code_hash).unwrap()));
     }
 
     #[test]
     fn create2_caller() {
-        let init_code_hash = "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a";
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, salt) = run(&[
             "--starts-with=dd",
-            "--init-code-hash",
-            init_code_hash,
+            "--init-code-hash=bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a",
             "--caller=0x66f9664f97F2b50F62D13eA064982f936dE76657",
-        ]);
-        let create2_out = args.run().unwrap();
-        let address = create2_out.address;
-        let salt = create2_out.salt;
+        ])
+        .unwrap();
         assert!(format!("{address:x}").starts_with("dd"));
         assert!(format!("{salt:x}").starts_with("66f9664f97f2b50f62d13ea064982f936de76657"));
     }
 
     #[test]
     fn deterministic_seed() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, salt) = run(&[
             "--starts-with=0x00",
             "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "--seed=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "-j1",
-        ]);
-        let out = args.run().unwrap();
-        assert_eq!(out.address, address!("0x00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
+        ])
+        .unwrap();
+        assert_eq!(address, address!("0x00614b3D65ac4a09A376a264fE1aE5E5E12A6C43"));
         assert_eq!(
-            out.salt,
-            b256!("0x322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d"),
+            salt,
+            b256!("0x322113f523203e2c0eb00bbc8e69208b0eb0c8dad0eaac7b01d64ff016edb40d")
         );
     }
 
     #[test]
     fn deterministic_output() {
-        let args = Create2Args::parse_from([
-            "foundry-cli",
+        let (address, salt) = run(&[
             "--starts-with=0x00",
             "--init-code-hash=0x479d7e8f31234e208d704ba1a123c76385cea8a6981fd675b784fbd9cffb918d",
             "--no-random",
             "-j1",
-        ]);
-        let out = args.run().unwrap();
-        assert_eq!(out.address, address!("0x00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
-        assert_eq!(
-            out.salt,
-            b256!("0x000000000000000000000000000000000000000000000000df00000000000000"),
-        );
-    }
-
-    #[test]
-    fn j0() {
-        let args = Create2Args::try_parse_from([
-            "foundry-cli",
-            "--starts-with=00",
-            "--init-code-hash",
-            &B256::ZERO.to_string(),
-            "-j0",
         ])
         .unwrap();
-        assert_eq!(args.threads, Some(0));
+        assert_eq!(address, address!("0x00bF495b8b42fdFeb91c8bCEB42CA4eE7186AEd2"));
+        assert_eq!(
+            salt,
+            b256!("0x000000000000000000000000000000000000000000000000df00000000000000")
+        );
     }
 }

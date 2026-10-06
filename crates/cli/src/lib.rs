@@ -13,6 +13,9 @@ extern crate tracing;
 
 pub mod clap;
 pub mod handler;
+pub mod install;
+pub mod json;
+pub mod lockfile;
 pub mod opts;
 pub mod utils;
 

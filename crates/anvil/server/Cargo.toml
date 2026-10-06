@@ -35,11 +35,13 @@ tokio-util = { version = "0.7", features = ["codec"], optional = true }
 # misc
 serde_json.workspace = true
 serde.workspace = true
-async-trait.workspace = true
 thiserror.workspace = true
 
 clap = { version = "4", features = ["derive", "env"], optional = true }
 pin-project = "1"
+
+[dev-dependencies]
+tower.workspace = true
 
 [features]
 default = ["ipc"]

@@ -1,0 +1,120 @@
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp > deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp != 0;
+   │                ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp <= deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp >= deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp < deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return deadline > block.timestamp;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp + 1 > deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return (block.timestamp / 3600) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         require(block.timestamp > deadline);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         if (block.timestamp > deadline) {
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return foo(block.timestamp) > 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return t < deadline;
+   │                ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         require(t < deadline);
+   │                 ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return currentTime() < deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+

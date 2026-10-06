@@ -159,6 +159,20 @@ update of the files.
 4. Update the JSON interface by running `cargo cheats` twice. This is expected to fail the first time that this is run after adding a new cheatcode; see [JSON interface](#json-interface)
 5. Write an integration test for the cheatcode in [`testdata/default/cheats/`]
 
+### Mapping storage hooks
+
+The experimental, unsafe `registerMappingSstoreHook` cheatcode registers a post-store callback for
+one concrete mapping root in a target's effective storage context. Its callback arguments are
+`(account, computedSlot, rootSlot, keys, oldValue, newValue)`. `keys` contains raw `bytes32` storage
+words in root-to-leaf order.
+
+Mapping hooks require complete 64-byte Keccak provenance observed after the latest mapping-hook
+registration for the target. Resolution follows the complete chain to its terminal root rather
+than stopping at a registered intermediate hash. Scalar, offset, incomplete, unknown, and
+previously precomputed slots do not invoke them. Raw and mapping SSTORE hooks cannot be combined
+for the same target. Callbacks must authenticate `msg.sender == address(vm)` to prevent external
+spoofing.
+
 [`sol!`]: https://docs.rs/alloy-sol-macro/latest/alloy_sol_macro/macro.sol.html
 [`cheatcodes/spec/src/vm.rs`]: ../../crates/cheatcodes/spec/src/vm.rs
 [`cheatcodes`]: ../../crates/cheatcodes/

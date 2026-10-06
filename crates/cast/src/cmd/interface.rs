@@ -1,24 +1,25 @@
-use alloy_json_abi::{ContractObject, JsonAbi, ToSolConfig};
-use alloy_primitives::Address;
+use alloy_json_abi::{ContractObject, InternalType, JsonAbi, Param, ToSolConfig};
+use alloy_primitives::{
+    Address,
+    map::{HashMap, HashSet},
+};
 use clap::Parser;
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::{
+    json::print_json_object,
     opts::EtherscanOpts,
     utils::{LoadConfig, fetch_abi_from_etherscan},
 };
 use foundry_common::{
     ContractsByArtifact,
-    compile::{PathOrContractInfo, ProjectCompiler},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_abi_project},
     find_target_path, fs, shell,
 };
 use foundry_config::load_config;
 use itertools::Itertools;
 use serde_json::Value;
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast interface`.
 #[derive(Clone, Debug, Parser)]
@@ -26,7 +27,8 @@ pub struct InterfaceArgs {
     /// The target contract, which can be one of:
     /// - A file path to an ABI JSON file.
     /// - A contract identifier in the form `<path>:<contractname>` or just `<contractname>`.
-    /// - An Ethereum address, for which the ABI will be fetched from Etherscan.
+    /// - An Ethereum address, for which the ABI will be fetched from Etherscan. If Etherscan
+    ///   reports the contract as a proxy, the ABI of its implementation is included as well.
     contract: String,
 
     /// The name to use for the generated interface.
@@ -62,115 +64,158 @@ pub struct InterfaceArgs {
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, name, pragma, output: output_location, flatten, etherscan } = self;
+        let Self { contract, name, pragma, output, flatten, etherscan } = self;
 
-        // Determine if the target contract is an ABI file, a local contract or an Ethereum address.
-        let abis = if Path::new(&contract).is_file()
-            && fs::read_to_string(&contract)
-                .ok()
-                .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-                .is_some()
-        {
-            load_abi_from_file(&contract, name)?
+        // The target is an ABI file, an Ethereum address, or a local contract.
+        let is_json_file = fs::read_to_string(&contract)
+            .is_ok_and(|content| serde_json::from_str::<Value>(&content).is_ok());
+        let abis = if is_json_file {
+            vec![(load_abi_from_file(&contract)?, name.unwrap_or_else(|| "Interface".to_owned()))]
+        } else if let Ok(address) = Address::from_str(&contract) {
+            fetch_abi_from_etherscan(address, &etherscan.load_config()?, true).await?
         } else {
-            match Address::from_str(&contract) {
-                Ok(address) => fetch_abi_from_etherscan(address, &etherscan.load_config()?).await?,
-                Err(_) => load_abi_from_artifact(&contract)?,
+            vec![load_abi_from_artifact(&contract)?]
+        };
+
+        let config = flatten.then(|| ToSolConfig::new().one_contract(true));
+        let mut json_abis = Vec::with_capacity(abis.len());
+        let mut sources = Vec::with_capacity(abis.len());
+        let multiple = abis.len() > 1;
+        let mut declarations = HashSet::default();
+        for (mut abi, mut name) in abis {
+            json_abis.push(serde_json::to_value(&abi)?);
+            abi.dedup();
+            if multiple {
+                let mut names = HashMap::<_, _>::default();
+                let unique = unique_declaration_name(&name, &mut declarations, Some(&abi));
+                names.insert(name, unique.clone());
+                name = unique;
+                visit_abi_types(&mut abi, &mut |ty| {
+                    if let InternalType::Struct { contract: Some(contract), .. }
+                    | InternalType::Enum { contract: Some(contract), .. }
+                    | InternalType::Other { contract: Some(contract), .. } = ty
+                    {
+                        *contract = names
+                            .entry(contract.clone())
+                            .or_insert_with(|| {
+                                if flatten {
+                                    contract.clone()
+                                } else {
+                                    unique_declaration_name(contract, &mut declarations, None)
+                                }
+                            })
+                            .clone();
+                    }
+                });
             }
-        };
+            let source = abi.to_sol(&name, config.clone());
+            sources.push(
+                match forge_fmt::format(&source, FormatterConfig::default()).into_result() {
+                    Ok(formatted) => formatted,
+                    Err(e) => {
+                        sh_warn!("Failed to format interface for {name}: {e}")?;
+                        source
+                    }
+                },
+            );
+        }
+        let source = format!(
+            "// SPDX-License-Identifier: UNLICENSED\n\
+             pragma solidity {pragma};\n\n\
+             {}",
+            sources.iter().format("\n")
+        );
 
-        // Build config for to_sol conversion.
-        let config = if flatten { Some(ToSolConfig::new().one_contract(true)) } else { None };
-
-        // Retrieve interfaces from the array of ABIs.
-        let interfaces = get_interfaces(abis, config)?;
-
-        // Print result or write to file.
-        let res = if shell::is_json() {
-            // Format as JSON.
-            interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
-        } else {
-            // Format as Solidity.
-            format!(
-                "// SPDX-License-Identifier: UNLICENSED\n\
-                 pragma solidity {pragma};\n\n\
-                 {}",
-                interfaces.iter().map(|iface| &iface.source).format("\n")
-            )
-        };
-
-        if let Some(loc) = output_location {
+        if let Some(loc) = output {
+            let res =
+                if shell::is_json() { serde_json::to_string_pretty(&json_abis)? } else { source };
             if let Some(parent) = loc.parent() {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, res)?;
-            sh_println!("Saved interface at {}", loc.display())?;
+            sh_status!("Saved interface at {}", loc.display())?;
+        } else if shell::is_json() {
+            print_json_object(json_abis)?;
         } else {
-            sh_print!("{res}")?;
+            sh_print!("{source}")?;
         }
-
         Ok(())
     }
 }
 
-struct InterfaceSource {
-    json_abi: String,
-    source: String,
+/// Reserves a declaration name across all generated interfaces and libraries.
+fn unique_declaration_name(
+    name: &str,
+    declarations: &mut HashSet<String>,
+    abi: Option<&JsonAbi>,
+) -> String {
+    let mut available = |candidate: &str| {
+        !abi.is_some_and(|abi| abi.functions.contains_key(candidate))
+            && declarations.insert(candidate.to_owned())
+    };
+    if available(name) {
+        return name.to_owned();
+    }
+    for suffix in 1.. {
+        let candidate = format!("{name}_{suffix}");
+        if available(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Visits internal types, including nested tuples, in every ABI parameter.
+fn visit_abi_types(abi: &mut JsonAbi, visit: &mut impl FnMut(&mut InternalType)) {
+    if let Some(constructor) = abi.constructor_mut() {
+        visit_param_types(&mut constructor.inputs, visit);
+    }
+    for function in abi.functions_mut() {
+        visit_param_types(&mut function.inputs, visit);
+        visit_param_types(&mut function.outputs, visit);
+    }
+    for error in abi.errors_mut() {
+        visit_param_types(&mut error.inputs, visit);
+    }
+    for event in abi.events_mut() {
+        for param in &mut event.inputs {
+            if let Some(ty) = &mut param.internal_type {
+                visit(ty);
+            }
+            visit_param_types(&mut param.components, visit);
+        }
+    }
+}
+
+fn visit_param_types(params: &mut [Param], visit: &mut impl FnMut(&mut InternalType)) {
+    for param in params {
+        if let Some(ty) = &mut param.internal_type {
+            visit(ty);
+        }
+        visit_param_types(&mut param.components, visit);
+    }
 }
 
 /// Load the ABI from a file.
-pub fn load_abi_from_file(path: &str, name: Option<String>) -> Result<Vec<(JsonAbi, String)>> {
+pub(crate) fn load_abi_from_file(path: &str) -> Result<JsonAbi> {
     let file = std::fs::read_to_string(path).wrap_err("unable to read abi file")?;
     let obj: ContractObject = serde_json::from_str(&file)?;
-    let abi = obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))?;
-    let name = name.unwrap_or_else(|| "Interface".to_owned());
-    Ok(vec![(abi, name)])
+    obj.abi.ok_or_else(|| eyre::eyre!("could not find ABI in file {path}"))
 }
 
-/// Load the ABI from the artifact of a locally compiled contract.
-fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String)>> {
+/// Load the ABI and name from the artifact of a locally compiled contract.
+fn load_abi_from_artifact(path_or_contract: &str) -> Result<(JsonAbi, String)> {
     let config = load_config()?;
-    let project = config.project()?;
+    let mut project = config.project()?;
+    project.no_artifacts = true;
     let compiler = ProjectCompiler::new().quiet(true);
 
     let contract = PathOrContractInfo::from_str(path_or_contract)?;
-
     let target_path = find_target_path(&project, &contract)?;
-    let output = compiler.files([target_path.clone()]).compile(&project)?;
+    let output = compile_abi_project(&mut project, compiler.files([target_path.clone()]))?;
 
-    let contracts_by_artifact = ContractsByArtifact::from(output);
-
-    let maybe_abi = contracts_by_artifact
-        .find_abi_by_name_or_src_path(contract.name().unwrap_or(&target_path.to_string_lossy()));
-
-    let (abi, name) =
-        maybe_abi.as_ref().ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
-
-    Ok(vec![(abi.clone(), contract.name().unwrap_or(name).to_string())])
-}
-
-/// Converts a vector of tuples containing the ABI and contract name into a vector of
-/// `InterfaceSource` objects.
-fn get_interfaces(
-    abis: Vec<(JsonAbi, String)>,
-    config: Option<ToSolConfig>,
-) -> Result<Vec<InterfaceSource>> {
-    abis.into_iter()
-        .map(|(contract_abi, name)| {
-            let source = match forge_fmt::format(
-                &contract_abi.to_sol(&name, config.clone()),
-                FormatterConfig::default(),
-            )
-            .into_result()
-            {
-                Ok(generated_source) => generated_source,
-                Err(e) => {
-                    sh_warn!("Failed to format interface for {name}: {e}")?;
-                    contract_abi.to_sol(&name, config.clone())
-                }
-            };
-
-            Ok(InterfaceSource { json_abi: serde_json::to_string_pretty(&contract_abi)?, source })
-        })
-        .collect()
+    let (abi, name) = ContractsByArtifact::from(output)
+        .find_abi_by_name_or_src_path(contract.name().unwrap_or(&target_path.to_string_lossy()))
+        .ok_or_else(|| eyre::eyre!("Failed to fetch lossless ABI"))?;
+    Ok((abi, contract.name().unwrap_or(&name).to_string()))
 }

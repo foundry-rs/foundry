@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
@@ -16,7 +16,7 @@ where
     let args: Vec<S> = args.into_iter().collect();
 
     if inputs.len() != args.len() {
-        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len())
+        eyre::bail!("encode length mismatch: expected {} types, got {}", inputs.len(), args.len());
     }
 
     std::iter::zip(inputs, args)
@@ -92,7 +92,7 @@ pub fn abi_decode_calldata(
 
     // in case the decoding worked but nothing was decoded
     if res.is_empty() {
-        eyre::bail!("no data was decoded")
+        eyre::bail!("no data was decoded");
     }
 
     Ok(res)
@@ -106,6 +106,25 @@ pub fn get_func(sig: &str) -> Result<Function> {
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
     Event::parse(sig).wrap_err("could not parse event signature")
+}
+
+/// ABI-decodes the non-indexed parameters (the log data) of an event.
+///
+/// Indexed parameters are stored in the log topics rather than in the data, so they are skipped.
+/// This allows decoding the data of a log without knowing its topics.
+pub fn abi_decode_event_data(event: &Event, data: &[u8]) -> Result<Vec<DynSolValue>> {
+    let body = DynSolType::Tuple(
+        event
+            .inputs
+            .iter()
+            .filter(|input| !input.indexed)
+            .map(|input| input.resolve())
+            .collect::<Result<_, _>>()?,
+    );
+    Ok(match body.abi_decode_sequence(data)? {
+        DynSolValue::Tuple(values) => values,
+        _ => unreachable!("body is a tuple"),
+    })
 }
 
 /// Given an error signature string, it tries to parse it as a `Error`
@@ -143,8 +162,17 @@ pub async fn get_func_etherscan(
     args: &[String],
     chain: Chain,
     etherscan_api_key: &str,
+    etherscan_api_url: Option<&str>,
 ) -> Result<Function> {
-    let client = Client::new(chain, etherscan_api_key)?;
+    let client = if let Some(api_url) = etherscan_api_url {
+        Client::builder()
+            .with_api_key(etherscan_api_key)
+            .with_api_url(api_url)?
+            .with_url(api_url)?
+            .build()?
+    } else {
+        Client::new(chain, etherscan_api_key)?
+    };
     let source = find_source(client, contract).await?;
     let metadata = source.items.first().wrap_err("etherscan returned empty metadata")?;
 
@@ -170,25 +198,31 @@ pub fn find_source(
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
-        if metadata.proxy == 0 {
-            Ok(source)
-        } else {
-            let implementation = metadata.implementation.unwrap();
+        // `Proxy: 1` can still come with an empty `Implementation` (unresolved/unverified);
+        // treat that like "not a proxy" instead of panicking on `.unwrap()`.
+        let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
+        if let Some(implementation) = implementation {
             sh_println!(
                 "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
             )?;
             match find_source(client, implementation).await {
                 impl_source @ Ok(_) => impl_source,
-                Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
-                    if e.to_string() == err {
-                        error!(%err);
-                        Ok(source)
-                    } else {
-                        Err(e)
-                    }
+                Err(e)
+                    if matches!(
+                        e.downcast_ref::<EtherscanError>(),
+                        Some(EtherscanError::ContractCodeNotVerified(address)) if *address == implementation
+                    ) =>
+                {
+                    error!(%e);
+                    Ok(source)
                 }
+                Err(e) => Err(e),
             }
+        } else {
+            if metadata.proxy != 0 {
+                error!(%address, "Etherscan reports this contract as a proxy but returned no implementation address");
+            }
+            Ok(source)
         }
     })
 }
@@ -204,6 +238,69 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::{B256, U256};
+
+    /// `Proxy: 1` with an empty `Implementation` used to panic on `.unwrap()`
+    /// (real-world shape, see `foundry_block_explorers`' own `can_deserialize_address_opt` test).
+    #[test]
+    fn test_proxy_without_implementation_does_not_panic() {
+        use foundry_block_explorers::contract::Metadata;
+
+        let json = serde_json::json!({
+            "SourceCode": "// dummy",
+            "ABI": "[]",
+            "ContractName": "Dummy",
+            "CompilerVersion": "v0.8.0+commit.c7dfd78e",
+            "OptimizationUsed": "0",
+            "Runs": "200",
+            "ConstructorArguments": "",
+            "EVMVersion": "Default",
+            "Library": "",
+            "LicenseType": "None",
+            "Proxy": "1",
+            "Implementation": "",
+            "SwarmSource": ""
+        });
+
+        let metadata: Metadata =
+            serde_json::from_value(json).expect("realistic Etherscan payload must deserialize");
+
+        // This is exactly the combination that used to reach `.unwrap()` on `None`.
+        assert_eq!(metadata.proxy, 1, "Proxy: 1 must deserialize to a nonzero proxy flag");
+        assert_eq!(
+            metadata.implementation, None,
+            "an empty Implementation string must deserialize to None, not a parsed address"
+        );
+
+        // Must not panic: this is the exact decision `find_source` makes.
+        let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
+        assert_eq!(implementation, None);
+    }
+
+    #[test]
+    fn proxy_implementation_decision_follows_real_implementation() {
+        use alloy_primitives::address;
+        use foundry_block_explorers::contract::Metadata;
+
+        let json = serde_json::json!({
+            "SourceCode": "// dummy",
+            "ABI": "[]",
+            "ContractName": "Dummy",
+            "CompilerVersion": "v0.8.0+commit.c7dfd78e",
+            "OptimizationUsed": "0",
+            "Runs": "200",
+            "ConstructorArguments": "",
+            "EVMVersion": "Default",
+            "Library": "",
+            "LicenseType": "None",
+            "Proxy": "1",
+            "Implementation": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            "SwarmSource": ""
+        });
+        let metadata: Metadata = serde_json::from_value(json).unwrap();
+
+        let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
+        assert_eq!(implementation, Some(address!("0x1F98431c8aD98523631AE4a59f267346ea31F984")));
+    }
 
     #[test]
     fn test_get_func() {
@@ -269,6 +366,36 @@ mod tests {
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
         assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
+    }
+
+    #[test]
+    fn test_abi_decode_event_data_ignores_indexed() {
+        let event =
+            get_event("event Ev(uint256 indexed a, string b, address indexed c, uint256 d)")
+                .unwrap();
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::String("hello".into()),
+            DynSolValue::Uint(U256::from(42), 256),
+        ])
+        .abi_encode_params();
+
+        let decoded = abi_decode_event_data(&event, &data).unwrap();
+        assert_eq!(
+            decoded,
+            vec![DynSolValue::String("hello".into()), DynSolValue::Uint(U256::from(42), 256)]
+        );
+    }
+
+    #[test]
+    fn test_abi_decode_event_data_without_indexed() {
+        let event = get_event("event Ev(uint256 a, address b)").unwrap();
+        let addr = Address::random();
+        let data =
+            DynSolValue::Tuple(vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)])
+                .abi_encode_params();
+
+        let decoded = abi_decode_event_data(&event, &data).unwrap();
+        assert_eq!(decoded, vec![DynSolValue::Uint(U256::ONE, 256), DynSolValue::Address(addr)]);
     }
 
     #[test]

@@ -84,6 +84,32 @@ contract NestedPranker {
     }
 }
 
+contract NestedCreatePranker {
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function createAs(address sender) public returns (ConstructorVictim) {
+        vm.prank(sender);
+        return new ConstructorVictim(
+            sender, "msg.sender was not set for nested create", tx.origin, "tx.origin was changed by nested create"
+        );
+    }
+
+    function deployCodeAs(address sender) public returns (ConstructorVictim) {
+        vm.prank(sender);
+        return ConstructorVictim(
+            vm.deployCode(
+                "cheats/Prank.t.sol:ConstructorVictim",
+                abi.encode(
+                    sender,
+                    "msg.sender was not set for nested deployCode",
+                    tx.origin,
+                    "tx.origin was changed by nested deployCode"
+                )
+            )
+        );
+    }
+}
+
 contract ImplementationTest {
     uint256 public num;
     address public sender;
@@ -411,6 +437,37 @@ contract PrankTest is Test {
         // Ensure we cleaned up correctly
         victim.assertCallerAndOrigin(
             address(this), "msg.sender was not cleaned up", tx.origin, "tx.origin was not cleaned up"
+        );
+    }
+
+    function testPrankNestedCreateRestoresOuterOrigin() public {
+        address oldOrigin = tx.origin;
+        NestedCreatePranker pranker = new NestedCreatePranker();
+        Victim victim = new Victim();
+
+        // The outer prank is consumed by the call; the callee pranks a single `new` at a deeper
+        // depth, which must only clean up its own prank.
+        vm.prank(address(0xA11CE), address(0xdeadbeef));
+        pranker.createAs(address(0xB0B));
+
+        // Ensure the outer prank was cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin was not cleaned up"
+        );
+    }
+
+    function testPrankNestedDeployCodeRestoresOuterOrigin() public {
+        address oldOrigin = tx.origin;
+        NestedCreatePranker pranker = new NestedCreatePranker();
+        Victim victim = new Victim();
+
+        // Same as above with the nested create rewritten to `vm.deployCode`.
+        vm.prank(address(0xA11CE), address(0xdeadbeef));
+        pranker.deployCodeAs(address(0xB0B));
+
+        // Ensure the outer prank was cleaned up correctly
+        victim.assertCallerAndOrigin(
+            address(this), "msg.sender was not cleaned up", oldOrigin, "tx.origin was not cleaned up"
         );
     }
 

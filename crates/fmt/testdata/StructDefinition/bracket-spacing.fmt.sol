@@ -6,6 +6,12 @@ struct Bar {
     string bar;
 }
 
+struct EmptyStructWithComment { /* body */ }
+
+struct NonEmptyStructTrailingComments {
+    uint256 x;
+    /* one */ /* two */ }
+
 struct MyStruct {
     // first 1
     // first 2

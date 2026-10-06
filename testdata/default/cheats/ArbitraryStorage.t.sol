@@ -68,6 +68,38 @@ contract CounterArbitraryStorageWithSeedTest is Test {
     }
 }
 
+// <https://github.com/foundry-rs/forge-std/issues/667>
+/// forge-config: default.fuzz.seed = "100"
+contract ArbitraryStorageStoreWithSeedTest is Test {
+    Counter source;
+    Counter copy;
+    Counter overwrite;
+
+    function setUp() public {
+        source = new Counter();
+        copy = new Counter();
+        overwrite = new Counter();
+
+        vm.setArbitraryStorage(address(source));
+        vm.store(address(source), bytes32(uint256(0)), bytes32(uint256(0)));
+        vm.copyStorage(address(source), address(copy));
+
+        vm.setArbitraryStorage(address(overwrite), true);
+        vm.store(address(overwrite), bytes32(uint256(0)), bytes32(uint256(0)));
+
+        assertEq(source.a(), 0);
+        assertEq(copy.a(), 0);
+        assertEq(overwrite.a(), 0);
+    }
+
+    function test_storeZeroPersistsAcrossSetup() public {
+        assertEq(vm.load(address(source), bytes32(uint256(0))), bytes32(uint256(0)));
+        assertEq(source.a(), 0);
+        assertEq(copy.a(), 0);
+        assertEq(overwrite.a(), 0);
+    }
+}
+
 contract AContract {
     uint256[] public a;
     address[] public b;

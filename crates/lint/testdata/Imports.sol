@@ -6,18 +6,18 @@ pragma solidity ^0.8.18;
 import {
     symbol0 as mySymbol,
     symbol1 as myOtherSymbol,
-    symbol2 as notUsed, //~NOTE: unused imports should be removed
+    symbol2 as notUsed, //~NOTE: unused import
     symbol3,
     symbol4,
     symbol5,
     docSymbol,
     docSymbol2,
-    docSymbolWrongTag, //~NOTE: unused imports should be removed
+    docSymbolWrongTag, //~NOTE: unused import
     eventSymbol,
     BaseContract,
-    symbolNotUsed, //~NOTE: unused imports should be removed
+    symbolNotUsed, //~NOTE: unused import
     IContract,
-    IContractNotUsed //~NOTE: unused imports should be removed
+    IContractNotUsed //~NOTE: unused import
 } from "./auxiliary/ImportsFile.sol";
 
 // forge-lint: disable-next-item
@@ -28,28 +28,28 @@ import {
 // in this case, disabling the following line doesn't do anything
 // forge-lint: disable-next-line
 import {
-    symbolNotUsed3 //~NOTE: unused imports should be removed
+    symbolNotUsed3 //~NOTE: unused import
 } from "./auxiliary/ImportsFile.sol";
 
 import {
     CONSTANT_0,
-    CONSTANT_1 //~NOTE: unused imports should be removed
+    CONSTANT_1 //~NOTE: unused import
 } from "./auxiliary/ImportsConstants.sol";
 
 import {
     MyType,
     MyOtherType,
-    YetAnotherType //~NOTE: unused imports should be removed
+    YetAnotherType //~NOTE: unused import
 } from "./auxiliary/ImportsTypes.sol";
 
-import "./auxiliary/ImportsSomeFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
-import "./auxiliary/ImportsAnotherFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
+import "./auxiliary/ImportsSomeFile.sol"; //~NOTE: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
+import "./auxiliary/ImportsAnotherFile.sol"; //~NOTE: plain import has no alias; use named imports `{A, B}` or alias `import ".." as X`
 
 import "./auxiliary/ImportsSomeFile2.sol" as SomeFile2;
-import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
+import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2; //~NOTE: unused import
 
 import * as Utils from "./auxiliary/ImportsUtils.sol";
-import * as OtherUtils from "./auxiliary/ImportsUtils2.sol"; //~NOTE: unused imports should be removed
+import * as OtherUtils from "./auxiliary/ImportsUtils2.sol"; //~NOTE: unused import
 
 
 abstract contract UnusedImport is IContract, BaseContract {

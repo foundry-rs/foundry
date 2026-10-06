@@ -1,0 +1,48 @@
+warning[unused-return]: return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturnInternal.sol:LL:CC
+   │
+LL │         Challenge.computePublic(value);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturnInternal.sol:LL:CC
+   │
+LL │         (, uint256 result) = Challenge.computePublic(value);
+   │                              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturnInternal.sol:LL:CC
+   │
+LL │         (, result) = Challenge.computePublic(value);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturnInternal.sol:LL:CC
+   │
+LL │         value.computePublic();
+   │         ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturnInternal.sol:LL:CC
+   │
+LL │         (, result) = value.computePublic();
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+
+warning[unused-return]: return value of an external call is not used
+   ╭▸ ROOT/testdata/UnusedReturnInternal.sol:LL:CC
+   │
+LL │         this.computeBase();
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-return
+

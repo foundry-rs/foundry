@@ -96,18 +96,31 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas`.
+    /// Gas measured for the last completed call or create frame, from the callee's perspective,
+    /// including nested execution. Isolated transactions include intrinsic gas.
+    /// Regular gas (the EIP's execution gas) and EIP-8037 state gas are reported separately.
+    /// Without EIP-8037, state creation uses the ordinary gas schedule and `gasStateUsed` is zero.
+    /// See <https://eips.ethereum.org/EIPS/eip-8037> and <https://getfoundry.sh/reference/cheatcodes/last-frame-gas>.
     struct Gas {
-        /// The gas limit of the call.
+        /// Regular gas available to the frame at entry. Excludes the EIP-8037 state gas reservoir.
         uint64 gasLimit;
-        /// The total gas used.
+        /// Regular gas spent by the frame, before refunds. Excludes EIP-8037 state gas; see `gasStateUsed`.
+        /// With isolation, includes intrinsic gas and the regular-gas calldata floor.
         uint64 gasTotalUsed;
-        /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
+        /// DEPRECATED: always zero. Memory expansion costs are included in `gasTotalUsed`.
+        /// Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>.
         uint64 gasMemoryUsed;
-        /// The amount of gas refunded.
+        /// Ordinary refund counter before transaction settlement; finalized for an isolated transaction.
+        /// Can be negative in nested frames. State gas refills are already netted into `gasStateUsed`.
         int64 gasRefunded;
-        /// The amount of gas remaining.
+        /// Regular gas left at frame end. Excludes the EIP-8037 state gas reservoir.
+        /// State charges can draw from this allowance, so `gasLimit - gasRemaining` can include state gas.
         uint64 gasRemaining;
+        /// Net EIP-8037 state gas: state creation charges minus refills, including nested execution.
+        /// Zero without EIP-8037 or if the frame reverted or halted. Can be negative when the frame
+        /// undoes state created earlier in the same transaction; use signed arithmetic with `gasTotalUsed`.
+        /// Their sum measures net consumption, not the gas limit needed to execute.
+        int64 gasStateUsed;
     }
 
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
@@ -138,6 +151,34 @@ interface Vm {
         uint256 logIndex;
         /// Whether the log was removed.
         bool removed;
+    }
+
+    /// A Merkle proof for a single storage slot. Part of `EthGetProof`.
+    struct EthStorageProof {
+        /// The storage slot.
+        bytes32 key;
+        /// The value stored at the slot.
+        uint256 value;
+        /// The RLP-encoded trie nodes from the storage root to the slot, root first.
+        bytes[] proof;
+    }
+
+    /// An EIP-1186 account and storage proof. Returned by `eth_getProof`.
+    struct EthGetProof {
+        /// The address of the account.
+        address account;
+        /// The balance of the account.
+        uint256 balance;
+        /// The hash of the account's code.
+        bytes32 codeHash;
+        /// The nonce of the account.
+        uint64 nonce;
+        /// The root of the account's storage trie.
+        bytes32 storageHash;
+        /// The RLP-encoded trie nodes from the state root to the account, root first.
+        bytes[] accountProof;
+        /// The proofs for the requested storage slots, in the order they were requested.
+        EthStorageProof[] storageProof;
     }
 
     /// A single entry in a directory listing. Returned by `readDir`.
@@ -353,7 +394,7 @@ interface Vm {
     struct PotentialRevert {
         /// The allowed origin of the revert opcode; address(0) allows reverts from any address
         address reverter;
-        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        /// When true, only matches on the first 4 bytes (usually the selector) of the revert data, otherwise, matches on entire revert data
         bool partialMatch;
         /// The data to use to match encountered reverts
         bytes revertData;
@@ -365,7 +406,8 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function addr(uint256 privateKey) external pure returns (address keyAddr);
 
-    /// Dump a genesis JSON file's `allocs` to disk.
+    /// Dumps a genesis JSON file's `allocs` to disk. Accounts created in the current transaction
+    /// are ordered by deployment, followed by the remaining accounts in ascending address order.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function dumpState(string calldata pathToStateJson) external;
 
@@ -415,6 +457,56 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 
+    /// Registers a callback invoked after each SLOAD against `target`'s effective storage account,
+    /// including when its code runs by delegatecall.
+    ///
+    /// The callback must have the signature `function(address,bytes32,bytes32) external`.
+    /// Registering another callback for the same target and access kind replaces it. Registration
+    /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
+    /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
+    /// the callback and its entire call subtree. The callback must authenticate
+    /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
+    /// mocks, expectations, log recording, and storage-access recording. It does not inherit
+    /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
+    /// protocol call-depth slots; a load at the maximum legal call depth can have its callback
+    /// rejected as too deep, propagating as a failure of the load.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function registerSloadHook(address target, bytes4 callback) external;
+
+    /// Registers a callback invoked after each SSTORE against `target`'s effective storage account,
+    /// including when its code runs by delegatecall.
+    ///
+    /// The callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.
+    /// Registering another callback for the same target and access kind replaces it. Registration
+    /// survives EVM reverts, while callback state follows the enclosing EVM context and rolls back
+    /// with it. Callback reverts propagate through the storage operation. Hooks are suppressed in
+    /// the callback and its entire call subtree. The callback must authenticate
+    /// `msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from
+    /// mocks, expectations, log recording, and storage-access recording. It does not inherit
+    /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
+    /// protocol call-depth slots; a store at the maximum legal call depth can have its callback
+    /// rejected as too deep, propagating as a failure of the store.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function registerSstoreHook(address target, bytes4 callback) external;
+
+    /// Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.
+    ///
+    /// The callback signature is `function(address account, bytes32 computedSlot, bytes32 rootSlot,
+    /// bytes32[] keys, bytes32 oldValue, bytes32 newValue) external`; keys are raw words in
+    /// root-to-leaf order. Only complete 64-byte Keccak chains observed after the latest mapping
+    /// hook registration for `target` in the current top-level execution match; provenance is
+    /// cleared between top-level executions. Resolution follows the complete chain to its terminal
+    /// root and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,
+    /// hashes computed before registration or in an earlier top-level execution, and source layouts
+    /// do not match. The contract that calls this cheatcode receives the callback. Registration
+    /// persists across reverts and replaces the same target/root callback; callback state rolls back
+    /// with its enclosing context, callback reverts propagate, and hooks are suppressed throughout
+    /// callback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent
+    /// external spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping
+    /// roots may be registered.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
+
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
     /// along with the context of the calls
     #[cheatcode(group = Evm, safety = Safe)]
@@ -440,13 +532,13 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
 
-    // -------- Recording Map Writes --------
+    // -------- Recording Mapping Accesses --------
 
-    /// Starts recording all map SSTOREs for later retrieval.
+    /// Starts recording mapping SSTOREs for later retrieval.
     #[cheatcode(group = Evm, safety = Safe)]
     function startMappingRecording() external;
 
-    /// Stops recording all map SSTOREs for later retrieval and clears the recorded data.
+    /// Stops recording mapping SSTOREs and clears the recorded data.
     #[cheatcode(group = Evm, safety = Safe)]
     function stopMappingRecording() external;
 
@@ -510,7 +602,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function blobhashes(bytes32[] calldata hashes) external;
 
-    /// Gets the blockhashes from the current transaction.
+    /// Gets the blobhashes from the current transaction.
     /// Not available on EVM versions before Cancun.
     /// If used on unsupported EVM versions it will revert.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -526,6 +618,20 @@ interface Vm {
     /// See https://github.com/foundry-rs/foundry/issues/6180
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockNumber() external view returns (uint256 height);
+
+    /// Sets `block.slotnum` without changing the block number or timestamp.
+    /// Not available on EVM versions before Amsterdam.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function rollSlot(uint64 newSlotNumber) external;
+
+    /// Gets the current `block.slotnum`.
+    /// Use this instead of `block.slotnum` after `vm.rollSlot`, as the compiler assumes
+    /// `block.slotnum` is constant across a transaction and may optimize repeated reads away.
+    /// Not available on EVM versions before Amsterdam.
+    /// If used on unsupported EVM versions it will revert.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getSlotNumber() external view returns (uint64 slotNumber);
 
     /// Sets `tx.gasprice`.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -597,6 +703,16 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setTip20LogoURI(address token, string calldata newLogoURI) external;
+
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setLogoURI(address token, string calldata newLogoURI) external;
+
     /// Marks the slots of an account and the account address as cold.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
@@ -617,17 +733,34 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function coolSlot(address target, bytes32 slot) external;
 
+    /// Returns true if isolated test execution is enabled.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isIsolateMode() external view returns (bool result);
+
     /// Returns the test or script execution evm version.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
     function getEvmVersion() external pure returns (string memory evm);
 
-    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    /// Selects the test or script execution hardfork, e.g. `berlin`, `cancun`, or `tempo:T7`.
+    /// Uses the active network's version mappings and gas schedule. Does not change the network
+    /// or Solidity compiler target. On Tempo, runtime changes do not rebuild instructions or
+    /// precompiles; configure `hardfork` before execution to select a different revision.
     ///
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
     function setEvmVersion(string calldata evm) external;
+
+    /// Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,
+    /// meaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.
+    /// Returns `false` on non-Tempo networks.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+
+    /// Skips a fuzz/invariant input unless `spender` is implicitly approved.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeImplicitApproval(address spender) external view;
 
     // -------- Call Manipulation --------
     // --- Mocks ---
@@ -663,6 +796,21 @@ interface Vm {
     /// Overload to pass the function selector directly `token.approve.selector` instead of `abi.encodeWithSelector(token.approve.selector)`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function mockCall(address callee, uint256 msgValue, bytes4 data, bytes calldata returnData) external;
+
+    /// Mocks a call to an address, returning specified data.
+    /// Calldata can either be strict or a partial match, e.g. if you only
+    /// pass a Solidity selector to the expected calldata, then the entire Solidity
+    /// function will be mocked.
+    ///
+    /// Overload to control whether code is injected into `callee`. The other overloads etch a
+    /// single byte into an empty account to circumvent Solidity's `extcodesize` check, with the
+    /// side effect that unmocked calls to it no longer revert; `injectCode = false` leaves the
+    /// account codeless, so unmocked calls to it revert in the caller. Mocked calls that return
+    /// data still succeed, as Solidity checks `returndatasize()` instead of `extcodesize()` when
+    /// return data is expected, but mocked calls to functions without return values may still
+    /// revert in the caller due to the `extcodesize` check.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function mockCall(address callee, bytes calldata data, bytes calldata returnData, bool injectCode) external;
 
     /// Mocks multiple calls to an address, returning specified data for each call.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -758,33 +906,56 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    /// Without isolation, measures regular counter consumption, including spillover but excluding reservoir-funded state gas.
+    /// Isolated frames with zero net state gas use receipt gas; see <https://getfoundry.sh/reference/cheatcodes/gas-snapshots>.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata name) external;
 
     /// Start a snapshot capture of the current gas usage by name in a group.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function startSnapshotGas(string calldata group, string calldata name) external;
 
     /// Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas() external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name, capturing the gas used since the start.
     /// The group name is derived from the contract name.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
 
     /// Stop the snapshot capture of the current gas usage by name in a group, capturing the gas used since the start.
+    /// Measures gas consumed from the regular counter, including state spillover but excluding reservoir-funded state gas.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
@@ -911,12 +1082,30 @@ interface Vm {
         external
         returns (bytes memory data);
 
+    /// Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+
+    /// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (string memory data);
+
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
         external
         view
         returns (EthGetLogs[] memory logs);
+
+    /// Gets the EIP-1186 account and storage proof of `target` at `blockNumber` from the active fork.
+    /// The proof is fetched from the fork's RPC endpoint and does not reflect local state changes.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function eth_getProof(address target, bytes32[] calldata slots, uint256 blockNumber)
+        external
+        view
+        returns (EthGetProof memory proof);
 
     // --- Behavior ---
 
@@ -982,9 +1171,18 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
-    /// Gets the gas used in the last call from the callee perspective.
-    #[cheatcode(group = Evm, safety = Safe)]
+    /// DEPRECATED: use `lastFrameGas` instead.
+    /// Gets gas measurements for the last completed call, from the callee's perspective.
+    /// Unlike `lastFrameGas`, CREATE and CREATE2 frames are not recorded; calls made by a constructor are.
+    /// See `Gas` for field semantics.
+    #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
+
+    /// Gets gas measurements for the last completed call or create, from the callee's perspective.
+    /// Unlike `lastCallGas`, CREATE and CREATE2 frames are recorded too. Cheatcode calls are never recorded.
+    /// See `Gas` for field semantics and <https://getfoundry.sh/reference/cheatcodes/last-frame-gas>.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastFrameGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 
@@ -1070,6 +1268,11 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
 
+    /// Expects a delegate call to an address with the specified calldata.
+    /// Calldata can either be a strict or a partial match.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectDelegateCall(address callee, bytes calldata data) external;
+
     /// Expect a call to an address with the specified `msg.value` and calldata, and a *minimum* amount of gas.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
@@ -1082,6 +1285,9 @@ interface Vm {
     /// Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).
     /// Call this function, then emit an event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
+    /// Must be placed immediately before the call you want to assert on. If the next call reverts and the
+    /// revert is caught by the caller (low-level call or try/catch), the expectation remains active and may
+    /// be satisfied by a log emitted from a later call.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
 
@@ -1093,6 +1299,9 @@ interface Vm {
     /// Prepare an expected log with all topic and data checks enabled.
     /// Call this function, then emit an event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data.
+    /// Must be placed immediately before the call you want to assert on. If the next call reverts and the
+    /// revert is caught by the caller (low-level call or try/catch), the expectation remains active and may
+    /// be satisfied by a log emitted from a later call.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit() external;
 
@@ -1146,6 +1355,25 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCreate2(bytes calldata bytecode, address deployer) external;
 
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.
+    ///
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert() external;
@@ -1159,14 +1387,28 @@ interface Vm {
     function expectRevert(bytes calldata revertData) external;
 
     /// Expects an error with any revert data on next call to reverter address.
+    ///
+    /// The `reverter` argument is matched against the address associated with
+    /// the frame that produced the revert:
+    ///   - For a CALL: the address that was called.
+    ///   - For a CREATE / CREATE2: the would-be deployed address of the failed
+    ///     deployment (computed from the deployer + nonce, or salt + initcode).
+    ///
+    /// For a single expected revert, the innermost reverting frame wins in
+    /// nested CALL, CREATE, or mixed chains. With `count > 1`, nested
+    /// CREATE / CREATE2 chains apply the same rule independently to each
+    /// iteration; nested CALL chains keep their existing
+    /// outermost-call-per-iteration behavior.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(address reverter) external;
 
     /// Expects an error from reverter address on next call, with any revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes4 revertData, address reverter) external;
 
     /// Expects an error from reverter address on next call, that exactly matches the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter) external;
 
@@ -1183,14 +1425,17 @@ interface Vm {
     function expectRevert(bytes calldata revertData, uint64 count) external;
 
     /// Expects a `count` number of reverts from the upcoming calls from the reverter address.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(address reverter, uint64 count) external;
 
     /// Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
 
     /// Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;
 
@@ -1199,6 +1444,7 @@ interface Vm {
     function expectPartialRevert(bytes4 revertData) external;
 
     /// Expects an error on next call to reverter address, that starts with the revert data.
+    /// See `expectRevert(address)` for `reverter` matching semantics.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectPartialRevert(bytes4 revertData, address reverter) external;
 
@@ -1210,7 +1456,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes4 revertData) external;
 
-    /// Expects an error on next cheatcode call that exactly matches the revert data.
+    /// Expects an error on next cheatcode call that contains the revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes calldata revertData) external;
 
@@ -1243,7 +1489,7 @@ interface Vm {
 
     /// Asserts that the given condition is true and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertTrue(bool condition, string calldata error) external pure;
+    function assertTrue(bool condition, string calldata err) external pure;
 
     /// Asserts that the given condition is false.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1251,7 +1497,7 @@ interface Vm {
 
     /// Asserts that the given condition is false and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertFalse(bool condition, string calldata error) external pure;
+    function assertFalse(bool condition, string calldata err) external pure;
 
     /// Asserts that two `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1259,7 +1505,7 @@ interface Vm {
 
     /// Asserts that two `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool left, bool right, string calldata error) external pure;
+    function assertEq(bool left, bool right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1267,7 +1513,7 @@ interface Vm {
 
     /// Asserts that two `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256 left, uint256 right, string calldata error) external pure;
+    function assertEq(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Asserts that two `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1275,7 +1521,7 @@ interface Vm {
 
     /// Asserts that two `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256 left, int256 right, string calldata error) external pure;
+    function assertEq(int256 left, int256 right, string calldata err) external pure;
 
     /// Asserts that two `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1283,7 +1529,7 @@ interface Vm {
 
     /// Asserts that two `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address left, address right, string calldata error) external pure;
+    function assertEq(address left, address right, string calldata err) external pure;
 
     /// Asserts that two `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1291,7 +1537,7 @@ interface Vm {
 
     /// Asserts that two `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;
+    function assertEq(bytes32 left, bytes32 right, string calldata err) external pure;
 
     /// Asserts that two `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1299,7 +1545,7 @@ interface Vm {
 
     /// Asserts that two `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string calldata left, string calldata right, string calldata error) external pure;
+    function assertEq(string calldata left, string calldata right, string calldata err) external pure;
 
     /// Asserts that two `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1307,7 +1553,7 @@ interface Vm {
 
     /// Asserts that two `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
+    function assertEq(bytes calldata left, bytes calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1315,7 +1561,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
+    function assertEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `uint256 values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1323,7 +1569,7 @@ interface Vm {
 
     /// Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
+    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1331,7 +1577,7 @@ interface Vm {
 
     /// Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
+    function assertEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1339,7 +1585,7 @@ interface Vm {
 
     /// Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
+    function assertEq(address[] calldata left, address[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1347,7 +1593,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
+    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1355,7 +1601,7 @@ interface Vm {
 
     /// Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
+    function assertEq(string[] calldata left, string[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1363,7 +1609,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
+    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1372,7 +1618,7 @@ interface Vm {
     /// Asserts that two `uint256` values are equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `int256` values are equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1381,7 +1627,7 @@ interface Vm {
     /// Asserts that two `int256` values are equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1389,7 +1635,7 @@ interface Vm {
 
     /// Asserts that two `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool left, bool right, string calldata error) external pure;
+    function assertNotEq(bool left, bool right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1397,7 +1643,7 @@ interface Vm {
 
     /// Asserts that two `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;
+    function assertNotEq(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Asserts that two `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1405,7 +1651,7 @@ interface Vm {
 
     /// Asserts that two `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256 left, int256 right, string calldata error) external pure;
+    function assertNotEq(int256 left, int256 right, string calldata err) external pure;
 
     /// Asserts that two `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1413,7 +1659,7 @@ interface Vm {
 
     /// Asserts that two `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address left, address right, string calldata error) external pure;
+    function assertNotEq(address left, address right, string calldata err) external pure;
 
     /// Asserts that two `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1421,7 +1667,7 @@ interface Vm {
 
     /// Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;
+    function assertNotEq(bytes32 left, bytes32 right, string calldata err) external pure;
 
     /// Asserts that two `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1429,7 +1675,7 @@ interface Vm {
 
     /// Asserts that two `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;
+    function assertNotEq(string calldata left, string calldata right, string calldata err) external pure;
 
     /// Asserts that two `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1437,7 +1683,7 @@ interface Vm {
 
     /// Asserts that two `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
+    function assertNotEq(bytes calldata left, bytes calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1445,7 +1691,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
+    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1453,7 +1699,7 @@ interface Vm {
 
     /// Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
+    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1461,7 +1707,7 @@ interface Vm {
 
     /// Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
+    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1469,7 +1715,7 @@ interface Vm {
 
     /// Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
+    function assertNotEq(address[] calldata left, address[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1477,7 +1723,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
+    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1485,7 +1731,7 @@ interface Vm {
 
     /// Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
+    function assertNotEq(string[] calldata left, string[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1493,7 +1739,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
+    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1502,7 +1748,7 @@ interface Vm {
     /// Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `int256` values are not equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1511,7 +1757,7 @@ interface Vm {
     /// Asserts that two `int256` values are not equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1520,7 +1766,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(uint256 left, uint256 right, string calldata error) external pure;
+    function assertGt(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1529,7 +1775,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(int256 left, int256 right, string calldata error) external pure;
+    function assertGt(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message.
@@ -1539,7 +1785,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message.
@@ -1549,7 +1795,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1558,7 +1804,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(uint256 left, uint256 right, string calldata error) external pure;
+    function assertGe(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1567,7 +1813,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(int256 left, int256 right, string calldata error) external pure;
+    function assertGe(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1577,7 +1823,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1587,7 +1833,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1596,7 +1842,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(uint256 left, uint256 right, string calldata error) external pure;
+    function assertLt(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1605,7 +1851,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(int256 left, int256 right, string calldata error) external pure;
+    function assertLt(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message.
@@ -1615,7 +1861,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message.
@@ -1625,7 +1871,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1634,7 +1880,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(uint256 left, uint256 right, string calldata error) external pure;
+    function assertLe(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1643,7 +1889,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(int256 left, int256 right, string calldata error) external pure;
+    function assertLe(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1653,7 +1899,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1663,7 +1909,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1672,7 +1918,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1681,7 +1927,7 @@ interface Vm {
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Formats values with decimals in failure message.
@@ -1696,7 +1942,7 @@ interface Vm {
         uint256 right,
         uint256 maxDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
@@ -1712,7 +1958,7 @@ interface Vm {
         int256 right,
         uint256 maxDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
@@ -1724,7 +1970,7 @@ interface Vm {
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
@@ -1735,7 +1981,7 @@ interface Vm {
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
@@ -1757,7 +2003,7 @@ interface Vm {
         uint256 right,
         uint256 maxPercentDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
@@ -1780,7 +2026,7 @@ interface Vm {
         int256 right,
         uint256 maxPercentDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Returns true if the current Foundry version is greater than or equal to the given version.
@@ -1827,6 +2073,11 @@ interface Vm {
     /// Get the path of the current project root.
     #[cheatcode(group = Filesystem)]
     function projectRoot() external view returns (string memory path);
+
+    /// Get the source file path of the currently running test or script contract,
+    /// relative to the project root.
+    #[cheatcode(group = Filesystem)]
+    function currentFilePath() external view returns (string memory path);
 
     /// Returns the time since unix epoch in milliseconds.
     #[cheatcode(group = Filesystem)]
@@ -1931,18 +2182,27 @@ interface Vm {
     function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
 
     /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional. Use <profile> to select artifacts compiled with a specific profile
+    /// from foundry.toml.
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
-    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// Gets all function selectors from a contract artifact. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function getSelectors(string calldata artifactPath) external view returns (bytes4[] memory selectors);
+
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
@@ -1950,7 +2210,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
@@ -1958,7 +2219,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
@@ -1966,13 +2228,15 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
@@ -1980,7 +2244,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
@@ -1988,7 +2253,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
@@ -1996,7 +2262,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
 
@@ -2043,6 +2310,18 @@ interface Vm {
     /// Performs a foreign function call via the terminal.
     #[cheatcode(group = Filesystem)]
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+
+    /// Performs a foreign function call via the terminal and parses the output as a `uint256`.
+    #[cheatcode(group = Filesystem)]
+    function ffiUint(string[] calldata commandInput) external returns (uint256 result);
+
+    /// Performs a foreign function call via the terminal and returns the output as a string.
+    #[cheatcode(group = Filesystem)]
+    function ffiString(string[] calldata commandInput) external returns (string memory result);
+
+    /// Performs a foreign function call via the terminal and decodes the output as hex bytes.
+    #[cheatcode(group = Filesystem)]
+    function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);
 
     /// Performs a foreign function call via terminal and returns the exit code, stdout, and stderr.
     #[cheatcode(group = Filesystem)]
@@ -2394,18 +2673,18 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-json to understand the
     // limitations and caveats of the JSON parsing cheats.
 
-    /// Checks if `key` exists in a JSON object
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
     #[cheatcode(group = Json, status = Deprecated(Some("replaced by `keyExistsJson`")))]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
-    /// Checks if `key` exists in a JSON object.
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     #[cheatcode(group = Json)]
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
     /// ABI-encodes a JSON object.
     #[cheatcode(group = Json)]
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
-    /// ABI-encodes a JSON object at `key`.
+    /// ABI-encodes a JSON object at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     #[cheatcode(group = Json)]
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
 
@@ -2415,51 +2694,123 @@ interface Vm {
     // Type coercion works ONLY for discrete values or arrays. That means that the key must return a value or array, not
     // a JSON object.
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`.
     #[cheatcode(group = Json)]
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`.
     #[cheatcode(group = Json)]
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `int256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue)
+        external
+        pure
+        returns (uint256[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`.
     #[cheatcode(group = Json)]
     function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`.
     #[cheatcode(group = Json)]
     function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bool`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue)
+        external
+        pure
+        returns (int256[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`.
     #[cheatcode(group = Json)]
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`.
     #[cheatcode(group = Json)]
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `address`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue)
+        external
+        pure
+        returns (bool[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`.
     #[cheatcode(group = Json)]
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`.
     #[cheatcode(group = Json)]
     function parseJsonAddressArray(string calldata json, string calldata key)
         external
         pure
         returns (address[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue)
+        external
+        pure
+        returns (address[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`.
     #[cheatcode(group = Json)]
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonString(string calldata json, string calldata key, string calldata defaultValue)
+        external
+        pure
+        returns (string memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue)
+        external
+        pure
+        returns (string[] memory);
+    /// Returns the length of the JSON array at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
+    #[cheatcode(group = Json)]
+    function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue)
+        external
+        pure
+        returns (bytes memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue)
+        external
+        pure
+        returns (bytes[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32Array(string calldata json, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
@@ -2467,10 +2818,10 @@ interface Vm {
     /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type array corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
         external
@@ -2620,48 +2971,117 @@ interface Vm {
     /// Parses a string of TOML data at `key` and coerces it to `uint256`.
     #[cheatcode(group = Toml)]
     function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlUint(string calldata toml, string calldata key, uint256 defaultValue) external pure returns (uint256);
     /// Parses a string of TOML data at `key` and coerces it to `uint256[]`.
     #[cheatcode(group = Toml)]
     function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlUintArray(string calldata toml, string calldata key, uint256[] calldata defaultValue)
+        external
+        pure
+        returns (uint256[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `int256`.
     #[cheatcode(group = Toml)]
     function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    /// Parses a string of TOML data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlInt(string calldata toml, string calldata key, int256 defaultValue) external pure returns (int256);
     /// Parses a string of TOML data at `key` and coerces it to `int256[]`.
     #[cheatcode(group = Toml)]
     function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlIntArray(string calldata toml, string calldata key, int256[] calldata defaultValue)
+        external
+        pure
+        returns (int256[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bool`.
     #[cheatcode(group = Toml)]
     function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    /// Parses a string of TOML data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBool(string calldata toml, string calldata key, bool defaultValue) external pure returns (bool);
     /// Parses a string of TOML data at `key` and coerces it to `bool[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBoolArray(string calldata toml, string calldata key, bool[] calldata defaultValue)
+        external
+        pure
+        returns (bool[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `address`.
     #[cheatcode(group = Toml)]
     function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    /// Parses a string of TOML data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddress(string calldata toml, string calldata key, address defaultValue) external pure returns (address);
     /// Parses a string of TOML data at `key` and coerces it to `address[]`.
     #[cheatcode(group = Toml)]
     function parseTomlAddressArray(string calldata toml, string calldata key)
         external
         pure
         returns (address[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddressArray(string calldata toml, string calldata key, address[] calldata defaultValue)
+        external
+        pure
+        returns (address[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `string`.
     #[cheatcode(group = Toml)]
     function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlString(string calldata toml, string calldata key, string calldata defaultValue)
+        external
+        pure
+        returns (string memory);
     /// Parses a string of TOML data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Toml)]
     function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlStringArray(string calldata toml, string calldata key, string[] calldata defaultValue)
+        external
+        pure
+        returns (string[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes(string calldata toml, string calldata key, bytes calldata defaultValue)
+        external
+        pure
+        returns (bytes memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytesArray(string calldata toml, string calldata key, bytes[] calldata defaultValue)
+        external
+        pure
+        returns (bytes[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes32`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32(string calldata toml, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
     /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes32Array(string calldata toml, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32Array(string calldata toml, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
@@ -2735,6 +3155,20 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.
+    #[cheatcode(group = Crypto)]
+    function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Crypto)]
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
@@ -2790,6 +3224,67 @@ interface Vm {
     /// Derives secp256r1 public key from the provided `privateKey`.
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
+
+    /// Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.
+    /// The point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecAffineToProjective(uint256 pointX, uint256 pointY)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
+    /// Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.
+    /// The point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
+
+    /// Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and
+    /// `point2 = (pointX2, pointY2)`.
+    /// The point at infinity is represented as `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
+
+    /// Adds the secp256k1 projective points `point1 = (pointX1, pointY1, pointZ1)` and
+    /// `point2 = (pointX2, pointY2, pointZ2)`.
+    /// The point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as
+    /// `(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.
+    #[cheatcode(group = Crypto)]
+    function ecAddProjective(
+        uint256 pointX1,
+        uint256 pointY1,
+        uint256 pointZ1,
+        uint256 pointX2,
+        uint256 pointY2,
+        uint256 pointZ2
+    )
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
+    /// Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.
+    /// The scalar is reduced modulo the secp256k1 group order.
+    /// The point at infinity is represented as `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
+
+    /// Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.
+    /// The scalar is reduced modulo the secp256k1 group order.
+    /// The point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as
+    /// `(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.
+    #[cheatcode(group = Crypto)]
+    function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
 
     /// Generates an Ed25519 key pair from a deterministic salt.
     /// Returns (publicKey, privateKey) as 32-byte values.
@@ -2963,16 +3458,16 @@ interface Vm {
     function resumeTracing() external view;
 
     /// Utility cheatcode to copy storage of `from` contract to another `to` contract.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function copyStorage(address from, address to) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address and overwrite
     /// any storage slots that have been previously set.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target, bool overwrite) external;
 
     /// Sorts an array in ascending order.
@@ -3005,7 +3500,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
@@ -3027,7 +3522,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will use the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will use the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);

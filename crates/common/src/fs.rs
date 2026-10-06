@@ -9,6 +9,9 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 /// The [`fs`](self) result type.
 pub type Result<T> = std::result::Result<T, FsPathError>;
 
@@ -95,7 +98,27 @@ pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
 
 /// Writes the object as a pretty JSON object.
 pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
-    let file = create_file(path)?;
+    write_pretty_json(path, obj, create_file(path)?)
+}
+
+/// Writes an object as pretty JSON with owner-only permissions on Unix.
+pub fn write_sensitive_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
+    let mut options = File::options();
+    // Truncate only after restricting permissions so a failed `chmod` preserves existing contents.
+    options.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let file = options.open(path).map_err(|err| FsPathError::create_file(err, path))?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|err| FsPathError::write(err, path))?;
+    file.set_len(0).map_err(|err| FsPathError::write(err, path))?;
+
+    write_pretty_json(path, obj, file)
+}
+
+fn write_pretty_json<T: Serialize>(path: &Path, obj: &T, file: File) -> Result<()> {
     let mut writer = BufWriter::new(file);
     serde_json::to_writer_pretty(&mut writer, obj)
         .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
@@ -127,10 +150,11 @@ pub fn locked_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Resul
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .open(path)
         .map_err(|err| FsPathError::open(err, path))?;
     file.lock().map_err(|err| FsPathError::lock(err, path))?;
+    file.set_len(0).map_err(|err| FsPathError::write(err, path))?;
     file.write_all(contents.as_ref()).map_err(|err| FsPathError::write(err, path))?;
     file.unlock().map_err(|err| FsPathError::unlock(err, path))
 }
@@ -265,11 +289,61 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{sync::mpsc, thread, time::Duration};
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_sensitive_json_file_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["new", "existing"] {
+            let path = dir.path().join(name);
+            if name == "existing" {
+                fs::write(&path, []).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+
+            write_sensitive_json_file(&path, &()).unwrap();
+            assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
 
     #[test]
     fn test_normalize_path() {
         let p = Path::new("/a/../file.txt");
         let normalized = normalize_path(p);
         assert_eq!(normalized, PathBuf::from("/file.txt"));
+    }
+
+    #[test]
+    fn test_locked_write_waits_before_truncating() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("locked.txt");
+        fs::write(&path, b"original contents").unwrap();
+        let mut reader = File::open(&path).unwrap();
+        reader.lock_shared().unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let writer_path = path.clone();
+        let writer = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = locked_write(writer_path, b"new");
+            finished_tx.send(()).unwrap();
+            result
+        });
+        started_rx.recv().unwrap();
+        // Give the writer time to reach the held lock before inspecting the original contents.
+        let pending = finished_rx.recv_timeout(Duration::from_millis(100));
+        let mut contents = Vec::new();
+        let read_result = reader.read_to_end(&mut contents);
+        let unlock_result = reader.unlock();
+        drop(reader);
+        writer.join().unwrap().unwrap();
+
+        unlock_result.unwrap();
+        assert_eq!(pending, Err(mpsc::RecvTimeoutError::Timeout));
+        read_result.unwrap();
+        assert_eq!(contents, b"original contents");
+        assert_eq!(fs::read(&path).unwrap(), b"new");
     }
 }

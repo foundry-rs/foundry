@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// Strategy for extending configuration from a base file.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExtendStrategy {
     /// Uses `admerge` figment strategy.
@@ -26,7 +26,7 @@ pub enum ExtendStrategy {
 /// Supports two formats:
 /// - String: `extends = "base.toml"`
 /// - Object: `extends = { path = "base.toml", strategy = "no-collision" }`
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Extends {
     /// Simple string path to base file
@@ -35,7 +35,7 @@ pub enum Extends {
     Config(ExtendConfig),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendConfig {
     pub path: String,
     #[serde(default)]

@@ -62,7 +62,11 @@ contract ReturnStatement {
             );
         }
 
-        return someFunction().getValue().modifyValue().negate()
-            .scaleBySomeFactor(1000).transformToTuple();
+        return someFunction()
+            .getValue()
+            .modifyValue()
+            .negate()
+            .scaleBySomeFactor(1000)
+            .transformToTuple();
     }
 }

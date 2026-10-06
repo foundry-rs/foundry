@@ -1,4 +1,5 @@
-use forge_fmt::FormatterConfig;
+use forge_fmt::{DocCommentStyle, FormatterConfig};
+use foundry_config::fmt::IndentStyle;
 use foundry_test_utils::init_tracing;
 use snapbox::{Data, assert_data_eq};
 use solar::sema::Compiler;
@@ -24,6 +25,519 @@ fn format(source: &str, path: &Path, fmt_config: Arc<FormatterConfig>) -> String
 fn assert_eof(content: &str) {
     assert!(content.ends_with('\n'), "missing trailing newline");
     assert!(!content.ends_with("\n\n"), "extra trailing newline");
+}
+
+#[test]
+fn binary_assignment_layout_ignores_operator_spacing() {
+    for (line_length, source, expected) in [
+        (
+            105,
+            r#"contract C {
+    function f() external {
+        p2pSupplyRate =
+            p2pSupplyRate.mul(CompoundMath.WAD - shareOfTheDelta) +
+            _params.poolRate.mul(shareOfTheDelta);
+    }
+}
+"#,
+            r#"contract C {
+    function f() external {
+        p2pSupplyRate = p2pSupplyRate.mul(CompoundMath.WAD - shareOfTheDelta)
+            + _params.poolRate.mul(shareOfTheDelta);
+    }
+}
+"#,
+        ),
+        (
+            116,
+            r#"contract C {
+    function f() external {
+        p2pSupplyGrowthFactor =
+            p2pGrowthFactor -
+            (_params.reserveFactor * (p2pGrowthFactor - poolSupplyGrowthFactor)) /
+            MAX_BASIS_POINTS;
+    }
+}
+"#,
+            r#"contract C {
+    function f() external {
+        p2pSupplyGrowthFactor = p2pGrowthFactor
+            - (_params.reserveFactor * (p2pGrowthFactor - poolSupplyGrowthFactor)) / MAX_BASIS_POINTS;
+    }
+}
+"#,
+        ),
+        (
+            120,
+            r#"contract C {
+    function f() external {
+        uint256 poolTVL = (IERC20Detailed(address(_cpToken)).totalSupply() *
+            _cpToken.getCurrentExchangeRate()) / 10**18;
+    }
+}
+"#,
+            r#"contract C {
+    function f() external {
+        uint256 poolTVL =
+            (IERC20Detailed(address(_cpToken)).totalSupply() * _cpToken.getCurrentExchangeRate()) / 10 ** 18;
+    }
+}
+"#,
+        ),
+    ] {
+        let config = Arc::new(FormatterConfig { line_length, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn line_end_operators_do_not_change_layout() {
+    for (source, expected) in [
+        (
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return
+            super._postOpGasBudget(userOp) +
+            Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _guaranteedPostOpCost());
+    }
+}
+"#,
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return super._postOpGasBudget(userOp)
+            + Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _guaranteedPostOpCost());
+    }
+}
+"#,
+        ),
+        (
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return c
+            ? super._postOpGasBudget(userOp) +
+                Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _postOpBudget())
+            : 0;
+    }
+}
+"#,
+            r#"contract C {
+    function f() internal view returns (uint256) {
+        return c
+            ? super._postOpGasBudget(userOp) + Math.ternary(_fetchGuarantor(userOp) == address(0), 0, _postOpBudget())
+            : 0;
+    }
+}
+"#,
+        ),
+    ] {
+        let config = Arc::new(FormatterConfig::default());
+        assert_eq!(format(source, Path::new("test.sol"), config.clone()), expected);
+        assert_eq!(format(expected, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn for_initializer_leading_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for (
+            /* lead
+            detail */ uint i = 0; i < 1; ++i
+        ) {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for (
+            /* lead
+            detail */
+            uint256 i = 0;
+            i < 1;
+            ++i
+        ) {}
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn for_initializer_comment_run_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for (uint i = 0 /* detail
+        more */; // after init
+        i < 1; ++i) {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for (
+            uint256 i = 0;
+
+            /* detail
+            more */
+            // after init
+            i < 1;
+            ++i
+        ) {}
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn for_keyword_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for // comment
+        (; ; ++i) {}
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        for // comment
+            (;; ++i) {}
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn block_opening_comment_run_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        if (a) {} else { // First.
+            // Second.
+            f();
+        }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        if (a) {} else {
+            // First.
+            // Second.
+            f();
+        }
+    }
+}
+"#;
+    for wrap_comments in [false, true] {
+        let config = Arc::new(FormatterConfig { wrap_comments, ..Default::default() });
+        assert_eq!(format(source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn chained_named_call_layout_ignores_source_spacing() {
+    let path = Path::new("test.sol");
+
+    for (line_length, bracket_spacing, compact, spaced) in [
+        (
+            40,
+            false,
+            "factory().foo(a,b,c).baz({value: result});",
+            "factory().foo(a, b, c).baz({value: result});",
+        ),
+        (
+            32,
+            false,
+            "factory().foo(a+b).baz({value: result});",
+            "factory().foo(a + b).baz({value: result});",
+        ),
+        (
+            34,
+            false,
+            "factory().foo([a,b]).baz({value: result});",
+            "factory().foo([a, b]).baz({value: result});",
+        ),
+        (38, true, "factory().foo(a,b,c).baz({});", "factory().foo(a, b, c).baz({ });"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = |expr| format!("contract C {{ function f() external {{ {expr} }} }}");
+        assert_eq!(
+            format(&source(compact), path, config.clone()),
+            format(&source(spaced), path, config),
+        );
+    }
+}
+
+#[test]
+fn statement_trailing_blank_line_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        uint value;
+        value += 1
+        /* detail. */
+
+        ;
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        uint256 value;
+        value += 1;
+        /* detail. */
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn source_offsets_with_unicode_and_crlf() {
+    let source = r#"// 😀 文
+contract C {
+    /// First line.
+    /// Second line.
+    function f() external {
+        // forgefmt: disable-next-line
+        uint  x =  1; // Comment.
+    }
+}
+"#
+    .replace('\n', "\r\n");
+    let path = Path::new("offset.sol");
+    let mut compiler = Compiler::new(
+        solar::interface::Session::builder().with_buffer_emitter(Default::default()).build(),
+    );
+    forge_fmt::format_source(
+        "// Different file with Unicode: 😀\ncontract Prefix {}",
+        Some(Path::new("prefix.sol")),
+        Arc::new(FormatterConfig::default()),
+        &mut compiler,
+    )
+    .into_result()
+    .unwrap();
+
+    for config in [
+        FormatterConfig::default(),
+        FormatterConfig {
+            wrap_comments: true,
+            docs_style: DocCommentStyle::Block,
+            ..Default::default()
+        },
+    ] {
+        let config = Arc::new(config);
+        let expected = format(&source, path, config.clone());
+        let actual = forge_fmt::format_source(&source, Some(path), config, &mut compiler)
+            .into_result()
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3831>
+#[test]
+fn disable_line_uses_comment_context() {
+    let source = r#"contract  C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn narrow_multiline_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        for (uint i = 0; i < 10; ++i) /* detail.
+        more text. */ {}
+    }
+}
+"#;
+    let expected = "contract C {\n    function f() external {\n        for (uint256 i = 0; i < 10; ++i) \n        /* detail.\n        more text. */\n        {}\n    }\n}\n";
+    let config = Arc::new(FormatterConfig { line_length: 40, ..Default::default() });
+
+    let first = format(source, Path::new("test.sol"), config.clone());
+    assert_eq!(first, expected);
+    assert_eq!(format(&first, Path::new("test.sol"), config), first);
+}
+
+#[test]
+fn wrapped_mixed_comment_at_line_start_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        /* detail.
+        more text. */ uint value;
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        /* detail.
+        more text. */
+        uint256 value;
+    }
+}
+"#;
+    let config = Arc::new(FormatterConfig { wrap_comments: true, ..Default::default() });
+
+    let first = format(source, Path::new("test.sol"), config.clone());
+    assert_eq!(first, expected);
+    assert_eq!(format(&first, Path::new("test.sol"), config), first);
+}
+
+#[test]
+fn trailing_line_comment_separates_following_comment() {
+    let source = r#"contract C {
+    function f() external {
+        uint value;
+        value // Trailing line.
+        ; /* Following block.
+        more text. */
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        uint256 value;
+        value; // Trailing line.
+        /* Following block.
+        more text. */
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn tab_style_preserves_crlf_disabled_block_lines() {
+    let source = "contract C {\n// forgefmt: disable-start\nfunction  disabled( ) external { uint   value = 1; }\n// forgefmt: disable-end\nuint value;\n}\n"
+        .replace('\n', "\r\n");
+    let expected = "contract C {\n\t// forgefmt: disable-start\nfunction  disabled( ) external { uint   value = 1; }\n// forgefmt: disable-end\n\tuint256 value;\n}\n";
+    let config = Arc::new(FormatterConfig { style: IndentStyle::Tab, ..Default::default() });
+
+    assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn array_type_comment_before_bracket_is_idempotent() {
+    let source = r#"contract C {
+    function f() external {
+        uint256 /* first */ [
+            /* second */
+
+            3
+        ] memory values;
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        uint256 /* first */ [
+            /* second */
+
+            3] memory values;
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn yul_assignment_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external pure returns (uint256 x) {
+        assembly {
+            x := /* comment */ add(1, 2)
+        }
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external pure returns (uint256 x) {
+        assembly {
+            x := /* comment */
+            add(1, 2)
+        }
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
+#[test]
+fn return_expression_comment_is_idempotent() {
+    let source = r#"contract C {
+    function f() external pure returns (uint256, uint256, bool) {
+        return /* return values */ (1234567890, 9876543210, false);
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f()
+        external
+        pure
+        returns (uint256, uint256, bool)
+    {
+        return /* return values */
+            (1234567890, 9876543210, false);
+    }
+}
+"#;
+    let config =
+        Arc::new(FormatterConfig { line_length: 60, wrap_comments: true, ..Default::default() });
+
+    assert_eq!(format(source, Path::new("test.sol"), config), expected);
 }
 
 fn tests_dir() -> PathBuf {
@@ -138,11 +652,10 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
             undeclared.push(actual_dir_name.to_string());
         }
     }
-    if !undeclared.is_empty() {
-        panic!(
-            "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
-        );
-    }
+    assert!(
+        undeclared.is_empty(),
+        "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
+    )
 }
 
 macro_rules! fmt_tests {
@@ -167,8 +680,10 @@ fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions,
+    AssignmentMemberChain,
     BlockComments,
     BlockCommentsFunction,
+    CallOptionsAssign,
     CommentEmptyLine,
     ConditionalOperatorExpression,
     ConstructorDefinition,
@@ -181,6 +696,7 @@ fmt_tests! {
     EnumVariants,
     ErrorDefinition,
     EventDefinition,
+    FnAttributeComment,
     ForStatement,
     FunctionCall,
     FunctionCallArgsStatement,
@@ -190,12 +706,24 @@ fmt_tests! {
     HexUnderscore,
     IfStatement,
     IfStatement2,
+    IfStatement3,
+    IfStatementLongCondition,
+    IfStatementMultilineCall,
     ImportDirective,
+    IndexedAssignment,
     InlineDisable,
     IntTypes,
+    LineComments,
     LiteralExpression,
+    MappingNamedParams,
     MappingType,
+    MemberChainIndent,
+    MethodChain,
+    MethodChainCallOptions,
+    MixedBlockComments,
     ModifierDefinition,
+    NamedCallArgsInChain,
+    NestedNamedCallArgumentChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,
@@ -223,30 +751,218 @@ fmt_tests! {
     VariableDefinition,
     WhileStatement,
     Yul,
+    YulInlineBlock,
     YulStrings,
 }
 
 #[test]
-fn test_comment_empty_line_bug() {
+fn test_override_state_variable_without_initializer_does_not_leak_indent() {
     init_tracing();
-    let source = r#"pragma solidity ^0.8.0;
 
-contract ProofOfConcept {
-    // some comment
+    let cases = [
+        (
+            "top-level items after override variable",
+            r#"pragma solidity ^0.8.28;
 
+contract BaseStorage {
+  uint256 public total;
 }
-"#;
 
-    let expected = r#"pragma solidity ^0.8.0;
-
-contract ProofOfConcept {
-    // some comment
+contract ChildStorage is BaseStorage {
+  uint256 public override total;
 }
-"#;
+
+struct Info {
+  uint256 a;
+}
+
+function topLevel(uint256 value) pure returns (uint256) {
+  return value;
+}
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total;
+}
+
+struct Info {
+    uint256 a;
+}
+
+function topLevel(uint256 value) pure returns (uint256) {
+    return value;
+}
+"#,
+        ),
+        (
+            "contract member after override variable",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+  uint256 public override total;
+  uint256 public next;
+}
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total;
+    uint256 public next;
+}
+"#,
+        ),
+        (
+            "override path list without initializer",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseA {
+  uint256 public total;
+}
+
+contract BaseB {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseA, BaseB {
+  uint256 public override(BaseA, BaseB) total;
+}
+
+error AfterOverride(uint256 value);
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseA {
+    uint256 public total;
+}
+
+contract BaseB {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseA, BaseB {
+    uint256 public override(BaseA, BaseB) total;
+}
+
+error AfterOverride(uint256 value);
+"#,
+        ),
+        (
+            "override variable with initializer",
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+  uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+  uint256 public override total = 0;
+}
+
+struct AfterInitializer {
+  uint256 a;
+}
+"#,
+            r#"pragma solidity ^0.8.28;
+
+contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total = 0;
+}
+
+struct AfterInitializer {
+    uint256 a;
+}
+"#,
+        ),
+    ];
 
     let fmt_config = Arc::new(FormatterConfig::default());
-    let path = Path::new("test.sol");
-    let formatted = format(source, path, fmt_config);
+    let path = Path::new("override-indent.sol");
 
-    assert_eq!(formatted, expected, "Formatting mismatch");
+    for (case, source, expected) in cases {
+        let formatted = format(source, path, fmt_config.clone());
+        assert_eq!(formatted, expected, "{case}");
+    }
+}
+
+#[test]
+fn size_estimate_ignores_literal_contents() {
+    for (line_length, bracket_spacing, literal, control) in [
+        (55, true, "{a}{b}{c}{d}", "abcdefghijkl"),
+        (59, false, "uint uint uint uint", "word word word word"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = format!(
+            "contract C {{ function f(uint a) external pure returns (bytes memory) {{ bytes memory encoded = abi.encode(\"{literal}\", a, a, a); return encoded; }} }}\n"
+        );
+        let control_source = source.replace(literal, control);
+        let expected = format(&control_source, Path::new("test.sol"), config.clone())
+            .replace(control, literal);
+        assert_eq!(format(&source, Path::new("test.sol"), config), expected);
+    }
+}
+
+#[test]
+fn brace_spacing_size_estimate_handles_tabs() {
+    let config =
+        Arc::new(FormatterConfig { line_length: 120, bracket_spacing: true, ..Default::default() });
+    let source = r#"contract C {
+    function f() external {
+        executions = factory({	a: assetAddress, b: receiver, c: amountToSend, d: currentNonce, e: expiryTime, f: requiredFee	});
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() external {
+        executions =
+            factory({ a: assetAddress, b: receiver, c: amountToSend, d: currentNonce, e: expiryTime, f: requiredFee });
+    }
+}
+"#;
+
+    assert_eq!(format(source, Path::new("test.sol"), config), expected);
+}
+
+#[test]
+fn concatenated_string_trailing_comment_stays_after_last_literal() {
+    let source = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return bytes.concat(
+            "abc"
+            "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+        );
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public pure returns (bytes memory) {
+        return
+            bytes.concat(
+                "abc" "123456789012345678901234567890123456789012345678901234567890" // Longer than 32 bytes
+            );
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("concatenated-string.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
 }

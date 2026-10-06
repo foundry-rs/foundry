@@ -11,19 +11,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     vergen::Emitter::new().add_instructions(&build)?.add_instructions(&git)?.emit_and_set()?;
 
-    let sha = env_var("VERGEN_GIT_SHA");
-    let sha_short = &sha[..10];
+    // `vergen` warns and carries on when it cannot reach a git worktree, so `VERGEN_GIT_SHA` is
+    // simply unset when building outside one, e.g. from a release source tarball. Fall back the
+    // same way `TAG_NAME` does below instead of assuming the variable is set and long enough.
+    let sha = try_env_var("VERGEN_GIT_SHA").unwrap_or_else(|| String::from("unknown"));
+    let sha_short = sha.get(..10).unwrap_or(&sha);
 
     let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
-    let is_nightly = tag_name.contains("nightly");
-    let version_suffix = if is_nightly { "nightly" } else { &tag_name };
+    let version = release_version(&env_var("CARGO_PKG_VERSION"), &tag_name);
+    let is_nightly = tag_name.starts_with("nightly");
 
     if is_nightly {
         println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION=true");
     }
-
-    let pkg_version = env_var("CARGO_PKG_VERSION");
-    let version = format!("{pkg_version}-{version_suffix}");
 
     // `PROFILE` captures only release or debug. Get the actual name from the out directory.
     let out_dir = PathBuf::from(env_var("OUT_DIR"));
@@ -75,11 +75,29 @@ Build Profile: {profile}"
         println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_{i}={line}");
     }
 
+    // The long SHA of the latest commit.
+    //
+    // Example: 5186142d3bb4d1be7bb4ade548b77c8e2270717e
+    println!("cargo:rustc-env=FOUNDRY_COMMIT_SHA={sha}");
+
     Ok(())
 }
 
 fn env_var(name: &str) -> String {
     try_env_var(name).unwrap()
+}
+
+fn release_version(pkg_version: &str, tag_name: &str) -> String {
+    if let Some(version) = tag_name.strip_prefix('v') {
+        return version.to_owned();
+    }
+
+    // Normalize `nightly-<sha>` to `nightly` so tarball and Docker nightly
+    // artifacts produce the same version string. The commit identifier is
+    // already included in the SemVer build metadata (after `+`).
+    let normalized = if tag_name.starts_with("nightly-") { "nightly" } else { tag_name };
+
+    format!("{pkg_version}-{normalized}")
 }
 
 fn try_env_var(name: &str) -> Option<String> {

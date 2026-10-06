@@ -40,7 +40,9 @@ function test() {
             || op == 0xF5 // CREATE2
             || op == 0xFA // STATICCALL
             || op == 0xFF // SELFDESTRUCT
-    ) return false;
+    ) {
+        return false;
+    }
 }
 
 function test_nested() {

@@ -1,7 +1,7 @@
-pragma solidity ^0.5.2;
-
 // forgefmt: disable-next-line
 pragma    solidity     ^0.5.2;
+
+pragma solidity ^0.5.2;
 
 import {
     symbol1 as alias1,
@@ -10,6 +10,7 @@ import {
     symbol4
 } from "File2.sol";
 
+// comment before the directive
 // forgefmt: disable-next-line
 import {symbol1 as alias1, symbol2 as alias2, symbol3 as alias3, symbol4} from 'File2.sol';
 
@@ -501,4 +502,56 @@ function setNumber1(uint256 newNumber , uint256 sjdfasdfasdfasdfasfsdfsadfasdfas
 function setNumber(uint256 newNumber, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf) public { // forgefmt: disable-line
     number = newNumber;
     number1 =   newNumber1; // forgefmt: disable-line
+}
+
+// forgefmt: disable-start
+contract  DisabledItemA {}
+contract  DisabledItemB {}
+
+contract  DisabledItemC {}
+// forgefmt: disable-end
+contract EnabledAfterDisabled {
+    uint256 number;
+}
+
+contract DisabledMemberSeparation {
+    // forgefmt: disable-start
+    function  first() public { number  = 1; }
+    function  second() public { number  = 2; }
+    // forgefmt: disable-end
+    function third() public {
+        number = 3;
+    }
+}
+
+contract TrailingDisableStart {
+    uint256 x;
+} // forgefmt: disable-start
+contract  DisabledSuffix {}
+// forgefmt: disable-end
+
+contract InlineTrailingDisableStart {
+    uint256 y; // forgefmt: disable-start
+}
+contract  DisabledSuffix2 {}
+// forgefmt: disable-end
+
+struct StructTrailingDisableStart {
+    uint256 a; // forgefmt: disable-start
+}
+contract  DisabledSuffix3 {}
+// forgefmt: disable-end
+
+contract IsolationBefore {}
+
+contract  IsolationDisabledLine {} // forgefmt: disable-line
+
+function disableStartAfterStatement(string[2][] memory rpcs) {
+    for (uint256 i = 0; i < rpcs.length; i++) {
+        (string memory name, string memory rpcUrl) = (rpcs[i][0], rpcs[i][1]);
+        // forgefmt: disable-start
+        if (isEqual(name, "anvil")) x = rpcUrl;
+        else if (isEqual(name, "hardhat")) y = rpcUrl;
+        // forgefmt: disable-end
+    }
 }

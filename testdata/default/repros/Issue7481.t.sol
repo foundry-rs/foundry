@@ -8,8 +8,10 @@ import "utils/Test.sol";
 contract Issue7481Test is Test {
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertTransact() public {
-        vm.expectRevert("vm.createSelectFork: invalid rpc url: mainnet");
-        vm.createSelectFork("mainnet", 19514903);
+        // Use a literal invalid URL (not an alias) so the failure is deterministic and not
+        // dependent on `[rpc_endpoints]` / RPC_MAINNET in the test environment.
+        vm.expectRevert("vm.createSelectFork: invalid rpc url: not-a-real-rpc");
+        vm.createSelectFork("not-a-real-rpc", 19514903);
 
         // Transfer some funds to sender of tx being transacted to ensure that it appears in journaled state
         (bool success,) = payable(address(0x5C60cD7a3D50877Bfebd484750FBeb245D936dAD)).call{value: 1}("");

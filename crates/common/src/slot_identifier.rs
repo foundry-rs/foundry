@@ -23,7 +23,7 @@ pub const ENCODING_BYTES: &str = "bytes";
 pub const ENCODING_DYN_ARRAY: &str = "dynamic_array";
 
 /// Information about a storage slot including its label, type, and decoded values.
-#[derive(Serialize, Debug)]
+#[derive(Clone, Serialize, Debug)]
 pub struct SlotInfo {
     /// The variable name from the storage layout.
     ///
@@ -62,7 +62,7 @@ pub struct SlotInfo {
 /// We need both because:
 /// - `label`: Used for serialization to ensure output matches user expectations
 /// - `dyn_sol_type`: The parsed type used for actual value decoding
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StorageTypeInfo {
     /// The original type label from storage layout (e.g., "uint256", "address", "mapping(address
     /// => uint256)")
@@ -94,7 +94,7 @@ impl SlotInfo {
 
                 if length_byte & 1 == 0 {
                     // Short string/bytes (less than 32 bytes)
-                    let length = (length_byte >> 1) as usize;
+                    let length = ((length_byte >> 1) as usize).min(31);
                     // Extract data
                     let data = if length == 0 { Vec::new() } else { value.0[0..length].to_vec() };
 
@@ -124,7 +124,7 @@ impl SlotInfo {
     }
 
     /// Slot is of type [`DynSolType::Bytes`] or [`DynSolType::String`]
-    pub fn is_bytes_or_string(&self) -> bool {
+    pub const fn is_bytes_or_string(&self) -> bool {
         matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
     }
 
@@ -218,11 +218,12 @@ impl SlotInfo {
             if length_byte & 1 == 1 {
                 // Long bytes/string - populate members
                 let length: U256 = U256::from_be_bytes(base_value.0) >> 1;
-                let num_slots = length.to::<usize>().div_ceil(32).min(256);
+                let byte_len = length.try_into().unwrap_or(usize::MAX);
+                let num_slots = byte_len.div_ceil(32).min(256);
                 let data_start = U256::from_be_bytes(keccak256(base_slot.0).0);
 
                 let mut members = Vec::new();
-                let mut full_data = Vec::with_capacity(length.to::<usize>());
+                let mut full_data = Vec::with_capacity(num_slots * 32);
 
                 for i in 0..num_slots {
                     let data_slot = B256::from(data_start + U256::from(i));
@@ -245,7 +246,7 @@ impl SlotInfo {
                     if let Some(value) = storage_values.get(&data_slot) {
                         // Collect data
                         let bytes_to_take =
-                            std::cmp::min(32, length.to::<usize>() - full_data.len());
+                            std::cmp::min(32, byte_len.saturating_sub(full_data.len()));
                         full_data.extend_from_slice(&value.0[..bytes_to_take]);
                     }
 
@@ -348,7 +349,7 @@ where
 }
 
 /// Decoded storage slot values
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DecodedSlotValues {
     /// Initial decoded storage value
     pub previous_value: DynSolValue,
@@ -371,14 +372,25 @@ impl Serialize for DecodedSlotValues {
 }
 
 /// Storage slot identifier that uses Solidity [`StorageLayout`] to identify storage slots.
+#[derive(Clone)]
 pub struct SlotIdentifier {
     storage_layout: Arc<StorageLayout>,
+    parsed_types: BTreeMap<String, Option<DynSolType>>,
 }
 
 impl SlotIdentifier {
     /// Creates a new SlotIdentifier with the given storage layout.
     pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
-        Self { storage_layout }
+        let parsed_types = storage_layout
+            .types
+            .iter()
+            .map(|(id, storage_type)| (id.clone(), parse_sol_type(&storage_type.label)))
+            .collect();
+        Self { storage_layout, parsed_types }
+    }
+
+    fn parsed_type(&self, storage_type: &str) -> Option<&DynSolType> {
+        self.parsed_types.get(storage_type).and_then(Option::as_ref)
     }
 
     /// Identifies a storage slots type using the [`StorageLayout`].
@@ -391,12 +403,12 @@ impl SlotIdentifier {
 
         for storage in &self.storage_layout.storage {
             let storage_type = self.storage_layout.types.get(&storage.storage_type)?;
-            let dyn_type = DynSolType::parse(&storage_type.label).ok();
+            let dyn_type = self.parsed_type(&storage.storage_type);
 
             // Check if we're able to match on a slot from the layout i.e any of the base slots.
             // This will always be the case for primitive types that fit in a single slot.
             if storage.slot == slot_str
-                && let Some(parsed_type) = dyn_type
+                && let Some(parsed_type) = dyn_type.cloned()
             {
                 // Successfully parsed - handle arrays or simple types
                 let label = if let DynSolType::FixedArray(_, _) = &parsed_type {
@@ -430,6 +442,7 @@ impl SlotIdentifier {
                     && let Some(slot_info) = self.handle_array_slot(
                         storage,
                         storage_type,
+                        parsed_type,
                         slot_u256,
                         array_start_slot,
                         &slot_str,
@@ -517,6 +530,7 @@ impl SlotIdentifier {
         &self,
         storage: &Storage,
         storage_type: &StorageType,
+        parsed_type: &DynSolType,
         slot: U256,
         array_start_slot: U256,
         slot_str: &str,
@@ -526,10 +540,9 @@ impl SlotIdentifier {
         let total_slots = total_bytes.div_ceil(32);
 
         if slot >= array_start_slot && slot < array_start_slot + U256::from(total_slots) {
-            let parsed_type = DynSolType::parse(&storage_type.label).ok()?;
             let index = (slot - array_start_slot).to::<u64>();
             // Format the array element label based on array dimensions
-            let label = match &parsed_type {
+            let label = match parsed_type {
                 DynSolType::FixedArray(inner, _) => {
                     if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
                         // 2D array: calculate row and column
@@ -548,7 +561,7 @@ impl SlotIdentifier {
                 label,
                 slot_type: StorageTypeInfo {
                     label: storage_type.label.clone(),
-                    dyn_sol_type: parsed_type,
+                    dyn_sol_type: parsed_type.clone(),
                 },
                 offset: 0,
                 slot: slot_str.to_string(),
@@ -612,7 +625,7 @@ impl SlotIdentifier {
                 for member in &members {
                     if let Some(member_type_info) =
                         self.storage_layout.types.get(&member.storage_type)
-                        && let Some(member_type) = DynSolType::parse(&member_type_info.label).ok()
+                        && let Some(member_type) = self.parsed_type(&member.storage_type).cloned()
                     {
                         member_infos.push(SlotInfo {
                             label: member.label.clone(),
@@ -654,37 +667,37 @@ impl SlotIdentifier {
                     members: if member_infos.is_empty() { None } else { Some(member_infos) },
                     keys: None,
                 });
-            } else {
-                // Multi-slot struct - return the first member.
-                let member_label = format!("{}.{}", base_label, first_member.label);
-
-                // If the first member is itself a struct, recurse
-                if is_struct(&member_type_info.label) {
-                    return self.handle_struct(
-                        &member_label,
-                        member_type_info,
-                        target_slot,
-                        struct_start_slot,
-                        first_member.offset,
-                        slot_str,
-                        depth + 1,
-                    );
-                }
-
-                // Return the first member as a primitive
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: StorageTypeInfo {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
-                    },
-                    offset: first_member.offset,
-                    slot: slot_str.to_string(),
-                    decoded: None,
-                    members: None,
-                    keys: None,
-                });
             }
+
+            // Multi-slot struct - return the first member.
+            let member_label = format!("{}.{}", base_label, first_member.label);
+
+            // If the first member is itself a struct, recurse
+            if is_struct(&member_type_info.label) {
+                return self.handle_struct(
+                    &member_label,
+                    member_type_info,
+                    target_slot,
+                    struct_start_slot,
+                    first_member.offset,
+                    slot_str,
+                    depth + 1,
+                );
+            }
+
+            // Return the first member as a primitive
+            return Some(SlotInfo {
+                label: member_label,
+                slot_type: StorageTypeInfo {
+                    label: member_type_info.label.clone(),
+                    dyn_sol_type: self.parsed_type(&first_member.storage_type)?.clone(),
+                },
+                offset: first_member.offset,
+                slot: slot_str.to_string(),
+                decoded: None,
+                members: None,
+                keys: None,
+            });
         }
 
         // Not the base slot - search through members
@@ -715,7 +728,7 @@ impl SlotIdentifier {
                 // Found the exact member slot
 
                 // Regular member
-                let member_type = DynSolType::parse(&member_type_info.label).ok()?;
+                let member_type = self.parsed_type(&member.storage_type)?.clone();
                 return Some(SlotInfo {
                     label: member_label,
                     slot_type: StorageTypeInfo {
@@ -813,7 +826,7 @@ impl SlotIdentifier {
         // Decode each key using the corresponding type
         for (i, key) in keys_to_decode.iter().enumerate() {
             if let Some(key_type_label) = key_types.get(i)
-                && let Ok(sol_type) = DynSolType::parse(key_type_label)
+                && let Some(sol_type) = parse_sol_type(key_type_label)
                 && let Ok(decoded) = sol_type.abi_decode(&key.0)
             {
                 let decoded_key_str = format_token_raw(&decoded);
@@ -826,8 +839,9 @@ impl SlotIdentifier {
             }
         }
 
-        // Parse the final value type for decoding
-        let dyn_sol_type = DynSolType::parse(&value_type_label).unwrap_or(DynSolType::Bytes);
+        // Parse the final value type for decoding.
+        // Contract types (e.g., "contract IPool") are addresses under the hood.
+        let dyn_sol_type = parse_sol_type(&value_type_label).unwrap_or(DynSolType::Bytes);
 
         Some(SlotInfo {
             label,
@@ -910,7 +924,7 @@ impl SlotIdentifier {
 
             // Check if our slot is within the data region
             if slot >= data_start && slot < data_start + num_slots {
-                let slot_index = (slot - data_start).to::<usize>();
+                let slot_index = (slot - data_start).try_into().unwrap_or(usize::MAX);
 
                 return Some(SlotInfo {
                     label: format!("{}[{}]", storage.label, slot_index),
@@ -954,14 +968,9 @@ impl SlotIdentifier {
                 let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
                 return Some((key_types, final_value, storage_type.label.clone()));
-            } else {
-                // Value is not a mapping, we're done
-                return Some((
-                    key_types,
-                    value_storage_type.label.clone(),
-                    storage_type.label.clone(),
-                ));
             }
+            // Value is not a mapping, we're done
+            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
         }
 
         None
@@ -984,7 +993,43 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     }
 }
 
+/// Parses a storage type label into a [`DynSolType`], returning `None` for labels that have no
+/// direct ABI equivalent (mappings, structs).
+///
+/// Handles `contract X` types (which are addresses under the hood) and `enum X` types
+/// (which are uint8) that `DynSolType::parse` doesn't recognize.
+fn parse_sol_type(label: &str) -> Option<DynSolType> {
+    let scalar = if label.starts_with("contract ") {
+        "address"
+    } else if label.starts_with("enum ") {
+        "uint8"
+    } else {
+        return DynSolType::parse(label).ok();
+    };
+    let suffix = label.find('[').map_or("", |index| &label[index..]);
+    DynSolType::parse(&format!("{scalar}{suffix}")).ok()
+}
+
 /// Checks if a given type label represents a struct type.
 pub fn is_struct(s: &str) -> bool {
     s.starts_with("struct ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_contract_and_enum_array_dimensions() {
+        for (label, expected) in [
+            ("contract IERC20", "address"),
+            ("contract IERC20[]", "address[]"),
+            ("contract IERC20[4][]", "address[4][]"),
+            ("enum Example.Status", "uint8"),
+            ("enum Example.Status[4]", "uint8[4]"),
+            ("enum Example.Status[][4]", "uint8[][4]"),
+        ] {
+            assert_eq!(parse_sol_type(label), DynSolType::parse(expected).ok(), "{label}");
+        }
+    }
 }

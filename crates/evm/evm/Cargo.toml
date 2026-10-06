@@ -21,10 +21,13 @@ foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-coverage.workspace = true
 foundry-evm-fuzz.workspace = true
+foundry-evm-sancov.workspace = true
+foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-eips.workspace = true
 alloy-evm.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
@@ -33,23 +36,27 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
-alloy-rpc-types.workspace = true
+alloy-rpc-types = { workspace = true, features = ["trace"] }
 alloy-sol-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
     "optional_eip3607",
+    "optional_eip7623",
     "optional_block_gas_limit",
     "optional_no_base_fee",
     "arbitrary",
     "c-kzg",
 ] }
 revm-inspectors.workspace = true
+tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
 
 eyre.workspace = true
 parking_lot.workspace = true
 proptest.workspace = true
+rand.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
@@ -58,3 +65,36 @@ serde.workspace = true
 uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
+
+[features]
+default = ["optimism"]
+monad = [
+    "foundry-evm-core/monad",
+    "foundry-evm-hardforks/monad",
+    "foundry-evm-networks/monad",
+    "foundry-cheatcodes/monad",
+    "foundry-evm-coverage/monad",
+    "foundry-evm-fuzz/monad",
+    "foundry-evm-traces/monad",
+]
+base = [
+    "foundry-cheatcodes/base",
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-evm-core/base",
+    "foundry-evm-coverage/base",
+    "foundry-evm-fuzz/base",
+    "foundry-evm-hardforks/base",
+    "foundry-evm-networks/base",
+    "foundry-evm-traces/base",
+]
+optimism = [
+    "foundry-evm-core/optimism",
+    "foundry-evm-hardforks/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-evm-coverage/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
+]

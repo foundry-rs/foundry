@@ -23,3 +23,6 @@ pub const IS_NIGHTLY_VERSION: bool = option_env!("FOUNDRY_IS_NIGHTLY_VERSION").i
 /// The warning message for nightly versions.
 pub const NIGHTLY_VERSION_WARNING_MESSAGE: &str = "This is a nightly build of Foundry. It is recommended to use the latest stable version. \
     To mute this warning set `FOUNDRY_DISABLE_NIGHTLY_WARNING` in your environment. \n";
+
+/// The long SHA of the latest commit.
+pub const COMMIT_SHA: &str = env!("FOUNDRY_COMMIT_SHA");

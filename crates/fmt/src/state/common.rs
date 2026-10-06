@@ -32,13 +32,14 @@ impl<'ast> State<'_, 'ast> {
         match *kind {
             ast::LitKind::Str(kind, ..) => {
                 self.s.ibox(0);
-                for (pos, (span, symbol)) in lit.literals().delimited() {
+                let mut literals = lit.literals().peekable();
+                while let Some((span, symbol)) = literals.next() {
                     if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
-                    if !pos.is_last {
-                        if !self.print_trailing_comment(span.hi(), None) {
+                    if let Some((next_span, _)) = literals.peek() {
+                        if !self.print_trailing_comment(span.hi(), Some(next_span.lo())) {
                             self.space_if_not_bol();
                         }
                     } else {
@@ -93,10 +94,10 @@ impl<'ast> State<'_, 'ast> {
         let config = self.config.number_underscore;
         let is_dec = !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix));
 
-        let (val, exp) = if !is_dec {
-            (source, "")
-        } else {
+        let (val, exp) = if is_dec {
             source.split_once(['e', 'E']).unwrap_or((source, ""))
+        } else {
+            (source, "")
         };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
@@ -243,16 +244,19 @@ impl<'ast> State<'_, 'ast> {
         self.print_inside_parens(|state| {
             let span = get_span(&values[0]);
             state.s.cbox(state.ind);
-            let mut skip_break = true;
-            if state.peek_comment_before(span.hi()).is_some() {
+            let skip_break = if state.peek_comment_before(span.hi()).is_some() {
                 state.hardbreak();
-                skip_break = false;
-            }
+                false
+            } else {
+                true
+            };
 
             state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             print(state, &values[0]);
 
-            if !state.print_trailing_comment(span.hi(), None) && skip_break {
+            // Bound the scan to the closing paren. Unbounded, it reaches past the list and claims a
+            // comment that trails whatever follows it, such as the modifiers of a function type.
+            if !state.print_trailing_comment(span.hi(), Some(pos_hi)) && skip_break {
                 state.neverbreak();
             } else {
                 state.break_offset_if_not_bol(0, -state.ind, false);
@@ -465,7 +469,7 @@ impl<'ast> State<'_, 'ast> {
                     let span = self.cursor.span(cmnt_span.lo());
                     self.inline_config.is_disabled(span)
                         // NOTE: necessary workaround to patch this edgecase due to lack of spans for the commas.
-                        && self.sm.span_to_snippet(span).is_ok_and(|snip| !snip.contains(','))
+                        && self.snippet(span).is_some_and(|snip| !snip.contains(','))
                 }) {
                     self.print_comments(
                         next_pos,
@@ -601,9 +605,10 @@ impl<'ast> State<'_, 'ast> {
                 let enabled =
                     !self.inline_config.is_disabled(Span::new(block_lo, block_lo + BytePos(1)))
                         && !self.handle_span(self.cursor.span(block_lo), true);
-                match self.peek_comment().and_then(|cmnt| {
-                    if cmnt.span.hi() < block_lo { Some((cmnt.span, cmnt.style)) } else { None }
-                }) {
+                match self
+                    .peek_comment()
+                    .and_then(|cmnt| (cmnt.span.hi() < block_lo).then_some((cmnt.span, cmnt.style)))
+                {
                     Some((span, style)) => {
                         if enabled {
                             // Inline config is not disabled and span not handled
@@ -656,14 +661,15 @@ impl<'ast> State<'_, 'ast> {
             print(self, stmt);
 
             let is_disabled = self.inline_config.is_disabled(get_block_span(stmt));
-            let mut next_enabled = false;
-            let mut next_lo = None;
-            if !is_last {
+            let (next_enabled, next_lo) = if is_last {
+                (false, None)
+            } else {
                 let next_span = get_block_span(&block[i + 1]);
-                next_enabled = !self.inline_config.is_disabled(next_span);
-                next_lo =
-                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo());
-            }
+                (
+                    !self.inline_config.is_disabled(next_span),
+                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo()),
+                )
+            };
 
             // when this stmt and the next one are enabled, break normally (except if last stmt)
             if !is_disabled
@@ -692,7 +698,7 @@ impl<'ast> State<'_, 'ast> {
             CommentConfig::skip_trailing_ws().mixed_no_break().mixed_prev_space(),
         );
         if !block_format.breaks() {
-            if !self.last_token_is_break() {
+            if !self.last_token_is_break() && !self.is_beginning_of_line() {
                 self.hardbreak();
             }
             self.s.offset(-self.ind);
@@ -759,17 +765,18 @@ impl<'ast> State<'_, 'ast> {
         if has_braces {
             self.word("{");
         }
-        let mut offset = 0;
-        if let BlockFormat::NoBraces(Some(off)) = block_format {
-            offset = off;
-        }
+        let offset = if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
         self.print_comments(
             pos_hi,
-            self.cmnt_config().offset(offset).mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+            self.cmnt_config()
+                .offset(offset)
+                .mixed_no_break()
+                .mixed_prev_space()
+                .mixed_post_glued(),
         );
         self.print_comments(
             pos_hi,
-            CommentConfig::default().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+            CommentConfig::default().mixed_no_break().mixed_prev_space().mixed_post_glued(),
         );
         if has_braces {
             self.word("}");
@@ -824,27 +831,27 @@ impl Default for ListFormat {
 
 impl ListFormat {
     // -- GETTER METHODS -------------------------------------------------------
-    pub(crate) fn prev_symbol(&self) -> Option<&'static str> {
+    pub(crate) const fn prev_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_prev, .. } = self.kind { sym_prev } else { None }
     }
 
-    pub(crate) fn post_symbol(&self) -> Option<&'static str> {
+    pub(crate) const fn post_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_post, .. } = self.kind { sym_post } else { None }
     }
 
-    pub(crate) fn is_consistent(&self) -> bool {
+    pub(crate) const fn is_consistent(&self) -> bool {
         matches!(self.kind, ListFormatKind::Consistent)
     }
 
-    pub(crate) fn is_compact(&self) -> bool {
+    pub(crate) const fn is_compact(&self) -> bool {
         matches!(self.kind, ListFormatKind::Compact)
     }
 
-    pub(crate) fn is_inline(&self) -> bool {
+    pub(crate) const fn is_inline(&self) -> bool {
         matches!(self.kind, ListFormatKind::Inline)
     }
 
-    pub(crate) fn breaks_with_comments(&self) -> bool {
+    pub(crate) const fn breaks_with_comments(&self) -> bool {
         self.breaks_cmnts
     }
 
@@ -880,35 +887,35 @@ impl ListFormat {
         }
     }
 
-    pub(crate) fn without_ind(mut self, without: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+    pub(crate) const fn without_ind(mut self, without: bool) -> Self {
+        if !self.is_inline() {
             self.no_ind = without;
         }
         self
     }
 
-    pub(crate) fn break_single(mut self, value: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+    pub(crate) const fn break_single(mut self, value: bool) -> Self {
+        if !self.is_inline() {
             self.break_single = value;
         }
         self
     }
 
-    pub(crate) fn break_cmnts(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+    pub(crate) const fn break_cmnts(mut self) -> Self {
+        if !self.is_inline() {
             self.breaks_cmnts = true;
         }
         self
     }
 
-    pub(crate) fn with_space(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+    pub(crate) const fn with_space(mut self) -> Self {
+        if !self.is_inline() {
             self.with_space = true;
         }
         self
     }
 
-    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
+    pub(crate) const fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
             self.with_delimiters = with;
         }
@@ -947,14 +954,14 @@ pub(crate) enum BlockFormat {
 }
 
 impl BlockFormat {
-    pub(crate) fn with_braces(&self) -> bool {
+    pub(crate) const fn with_braces(&self) -> bool {
         !matches!(self, Self::NoBraces(_))
     }
-    pub(crate) fn breaks(&self) -> bool {
+    pub(crate) const fn breaks(&self) -> bool {
         matches!(self, Self::NoBraces(None))
     }
 
-    pub(crate) fn attempt_single_line(&self) -> bool {
+    pub(crate) const fn attempt_single_line(&self) -> bool {
         matches!(self, Self::Compact(_))
     }
 }

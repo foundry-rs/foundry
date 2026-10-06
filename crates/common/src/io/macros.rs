@@ -1,4 +1,4 @@
-/// Prints a message to [`stdout`][std::io::stdout] and reads a line from stdin into a String.
+/// Prints a message to [`stderr`][std::io::stderr] and reads a line from stdin into a String.
 ///
 /// Returns `Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
 ///
@@ -20,10 +20,10 @@ macro_rules! prompt {
     };
 
     ($($tt:tt)+) => {{
-        let _ = $crate::sh_print!($($tt)+);
-        match ::std::io::Write::flush(&mut ::std::io::stdout()) {
+        let _ = $crate::sh_eprint!($($tt)+);
+        match ::std::io::Write::flush(&mut ::std::io::stderr()) {
             ::core::result::Result::Ok(()) => $crate::prompt!(),
-            ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stdout: {e}"))
+            ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stderr: {e}"))
         }
     }};
 }
@@ -102,6 +102,36 @@ macro_rules! sh_println {
     };
 }
 
+/// Prints a status message to stderr with a trailing newline.
+///
+/// Use for human-facing diagnostic prose ("Compiling…", "Deploying contract…")
+/// that is not the command's primary machine-readable result.
+#[macro_export]
+macro_rules! sh_status {
+    ($($args:tt)*) => {
+        $crate::sh_eprintln!($($args)*)
+    };
+}
+
+/// Prints a progress message to stderr with a trailing newline.
+///
+/// Use for transient progress updates outside the spinner.
+///
+/// Suppressed when:
+/// - `--quiet` is set, or
+/// - stderr is not a tty (e.g. CI logs, piped consumers).
+///
+/// Always returns `Ok(())`; progress is best-effort and never fails the caller.
+#[macro_export]
+macro_rules! sh_progress {
+    ($($args:tt)*) => {{
+        if $crate::shell::is_err_tty() && !$crate::shell::is_quiet() {
+            let _ = $crate::sh_eprintln!($($args)*);
+        }
+        ::core::result::Result::<(), ::eyre::Report>::Ok(())
+    }};
+}
+
 /// Prints a raw formatted message to stderr, with a trailing newline.
 ///
 /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
@@ -176,6 +206,12 @@ mod tests {
         sh_eprintln!("eprintln")?;
         sh_eprintln!("eprintln {}", "arg")?;
 
+        sh_status!("status")?;
+        sh_status!("status {}", "arg")?;
+
+        sh_progress!("progress")?;
+        sh_progress!("progress {}", "arg")?;
+
         sh_println!("{:?}", {
             sh_println!("hi")?;
             solar::data_structures::fmt::from_fn(|f| {
@@ -195,6 +231,66 @@ mod tests {
         sh_eprintln!(shell, "shelled eprintln")?;
         sh_eprintln!(shell, "shelled eprintln {}", "arg")?;
         sh_eprintln!(&mut crate::Shell::new(), "shelled eprintln {}", "arg")?;
+
+        Ok(())
+    }
+
+    /// Asserts that every macro routes to the channel documented in
+    /// `docs/dev/output-channels.md`.
+    #[test]
+    fn routing_contract() -> eyre::Result<()> {
+        let mut shell = crate::Shell::captured();
+
+        // stdout: machine-readable result
+        sh_print!(&mut shell, "out-print")?;
+        sh_println!(&mut shell, "out-println")?;
+
+        // stderr: diagnostics + raw stderr
+        sh_eprint!(&mut shell, "err-print")?;
+        sh_eprintln!(&mut shell, "err-println")?;
+        crate::Shell::warn(&mut shell, "warn-msg")?;
+        crate::Shell::error(&mut shell, "err-msg")?;
+
+        let stdout = std::str::from_utf8(shell.captured_stdout().unwrap()).unwrap();
+        let stderr = std::str::from_utf8(shell.captured_stderr().unwrap()).unwrap();
+
+        // stdout only contains what `sh_print!`/`sh_println!` produced.
+        assert_eq!(stdout, "out-printout-println\n");
+
+        // stderr received the eprint/warn/error output and no stdout content.
+        assert!(stderr.contains("err-print"), "stderr missing eprint: {stderr:?}");
+        assert!(stderr.contains("err-println"), "stderr missing eprintln: {stderr:?}");
+        assert!(stderr.contains("warn-msg"), "stderr missing warn: {stderr:?}");
+        assert!(stderr.contains("err-msg"), "stderr missing error: {stderr:?}");
+        assert!(!stderr.contains("out-print"), "stdout content leaked to stderr: {stderr:?}");
+        assert!(!stderr.contains("out-println"), "stdout content leaked to stderr: {stderr:?}");
+
+        Ok(())
+    }
+
+    /// `--quiet` currently suppresses both stdout and stderr diagnostics, but `sh_err!` must
+    /// always be visible. The stdout half of this is intentional for now; it will be flipped
+    /// to "stdout is never suppressed" once the prose `sh_println!` call sites in forge/script
+    /// are migrated to `sh_status!` (see `docs/dev/output-channels.md`).
+    #[test]
+    fn quiet_contract() -> eyre::Result<()> {
+        let mut shell = crate::Shell::captured();
+        shell.set_output_mode(crate::shell::OutputMode::Quiet);
+
+        sh_println!(&mut shell, "result")?;
+        sh_eprintln!(&mut shell, "diag")?;
+        crate::Shell::warn(&mut shell, "warned")?;
+        crate::Shell::error(&mut shell, "boom")?;
+
+        let stdout = std::str::from_utf8(shell.captured_stdout().unwrap()).unwrap();
+        let stderr = std::str::from_utf8(shell.captured_stderr().unwrap()).unwrap();
+
+        // Today's behavior: stdout is suppressed by --quiet. Pinned here so the future
+        // migration that flips this bypass has to deliberately update the test.
+        assert!(stdout.is_empty(), "stdout leaked through --quiet: {stdout:?}");
+        assert!(!stderr.contains("diag"), "eprintln leaked through --quiet: {stderr:?}");
+        assert!(!stderr.contains("warned"), "warn leaked through --quiet: {stderr:?}");
+        assert!(stderr.contains("boom"), "sh_err was suppressed by --quiet: {stderr:?}");
 
         Ok(())
     }

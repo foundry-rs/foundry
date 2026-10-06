@@ -1,0 +1,43 @@
+use alloy_primitives::{Address, address};
+use std::time::Duration;
+
+// HD wallet key derivation
+pub(crate) const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
+pub(crate) const MAX_REMEMBER_KEYS: u32 = 64;
+pub(crate) const SYMBOLIC_VM_COMPAT_ADDRESS: Address =
+    address!("0xF3993A62377BCd56AE39D773740A5390411E8BC9");
+
+// Symbolic exponentiation limits
+pub(crate) const SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT: u64 = 32;
+pub(crate) const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
+
+// ABI encoding lengths
+pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) + length (32)
+
+// Precompile address layout
+pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;
+
+// Solver subprocess supervision.
+pub(crate) const SOLVER_CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(50);
+
+// Portfolio scheduler launch delays.
+pub(crate) const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
+pub(crate) const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
+
+// Portfolio scheduler tuning
+pub(crate) const PORTFOLIO_SCHEDULER_HISTORY: usize = 8;
+pub(crate) const PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT: i64 = 1;
+pub(crate) const PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS: u128 = 100;
+pub(crate) const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
+
+// Solver query cache limits
+pub(crate) const SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES: usize = 4096;
+pub(crate) const SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES: usize = 512;
+
+// Bounded witness search limits.
+pub(crate) const HARD_ARITH_FALLBACK_MAX_VARS: usize = 4;
+pub(crate) const HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS: usize = 50_000;
+pub(crate) const FALLBACK_MODEL_MAX_VARS: usize = 5;
+pub(crate) const FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR: usize = 24;
+pub(crate) const FALLBACK_MODEL_MAX_ASSIGNMENTS: usize =
+    FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR * FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR;

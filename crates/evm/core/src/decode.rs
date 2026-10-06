@@ -13,6 +13,12 @@ use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
 
+/// Stable user-facing fallback for empty revert payloads.
+pub const EMPTY_REVERT_DATA: &str = "<empty revert data>";
+
+/// Prefix used by Foundry assertion helpers in user-visible failure messages.
+pub const ASSERTION_FAILED_PREFIX: &str = "assertion failed";
+
 /// A skip reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkipReason(pub Option<String>);
@@ -119,7 +125,7 @@ impl RevertDecoder {
     /// than user output.
     pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
-            if err.is_empty() { "<empty revert data>".to_string() } else { trimmed_hex(err) }
+            if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
         })
     }
 
@@ -127,10 +133,18 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        if let Some(reason) = SkipReason::decode(err) {
-            return Some(reason.to_string());
-        }
+        self.maybe_decode_known(err)
+            .or_else(|| decode_as_non_empty_string(err))
+            .or_else(|| Self::maybe_decode_fallback(err, status))
+    }
 
+    /// Tries to decode the given revert bytes as one of the errors known to this decoder:
+    /// Solidity's `Error(string)` and `Panic(uint256)`, `Vm`'s custom errors, or custom errors
+    /// registered with this decoder.
+    ///
+    /// Unlike [`maybe_decode`](Self::maybe_decode), this returns `None` for unrecognized custom
+    /// errors instead of falling back to a generic `custom error <selector>` representation.
+    pub fn maybe_decode_known(&self, err: &[u8]) -> Option<String> {
         // Solidity's `Error(string)` (handled separately in order to strip revert: prefix)
         if let Some(ContractError(Revert(revert))) = RevertReason::decode(err) {
             return Some(revert.reason);
@@ -141,29 +155,29 @@ impl RevertDecoder {
             return Some(e.to_string());
         }
 
-        let string_decoded = decode_as_non_empty_string(err);
-
-        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
-            // Custom errors.
-            if let Some(errors) = self.errors.get(selector) {
-                for error in errors {
-                    // If we don't decode, don't return an error, try to decode as a string
-                    // later.
-                    if let Ok(decoded) = error.abi_decode_input(data) {
-                        return Some(format!(
-                            "{}({})",
-                            error.name,
-                            decoded.iter().map(foundry_common::fmt::format_token).format(", ")
-                        ));
-                    }
+        // Custom errors.
+        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>()
+            && let Some(errors) = self.errors.get(selector)
+        {
+            for error in errors {
+                // If we don't decode, don't return an error, try to decode as a string later.
+                if let Ok(decoded) = error.abi_decode_input(data) {
+                    return Some(format!(
+                        "{}({})",
+                        error.name,
+                        decoded.iter().map(foundry_common::fmt::format_token).format(", ")
+                    ));
                 }
             }
+        }
 
-            if string_decoded.is_some() {
-                return string_decoded;
-            }
+        None
+    }
 
-            // Generic custom error.
+    /// Formats revert bytes that could not be decoded as a known error.
+    fn maybe_decode_fallback(err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+        // Generic custom error.
+        if let Some((selector, data)) = err.split_first_chunk::<SELECTOR_LEN>() {
             return Some({
                 let mut s = format!("custom error {}", hex::encode_prefixed(selector));
                 if !data.is_empty() {
@@ -175,10 +189,6 @@ impl RevertDecoder {
                 }
                 s
             });
-        }
-
-        if string_decoded.is_some() {
-            return string_decoded;
         }
 
         if let Some(status) = status
@@ -221,8 +231,8 @@ fn trimmed_hex(s: &[u8]) -> String {
     } else {
         format!(
             "{}…{} ({} bytes)",
-            &hex::encode(&s[..n / 2]),
-            &hex::encode(&s[s.len() - n / 2..]),
+            hex::encode(&s[..n / 2]),
+            hex::encode(&s[s.len() - n / 2..]),
             s.len(),
         )
     }
@@ -273,5 +283,23 @@ mod tests {
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
         assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
+    }
+
+    #[test]
+    fn maybe_decode_magic_skip_is_not_skip_marker() {
+        let decoder = RevertDecoder::new();
+        let reason = decoder.maybe_decode(crate::constants::MAGIC_SKIP, None).unwrap();
+
+        assert_eq!(reason, "FOUNDRY::SKIP");
+        assert!(SkipReason::decode_self(&reason).is_none());
+    }
+
+    #[test]
+    fn plain_string_is_not_a_known_error() {
+        let decoder = RevertDecoder::new();
+        let data = b".,Bo";
+
+        assert_eq!(decoder.maybe_decode_known(data), None);
+        assert_eq!(decoder.maybe_decode(data, None).as_deref(), Some(".,Bo"));
     }
 }

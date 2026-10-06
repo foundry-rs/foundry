@@ -12,24 +12,8 @@ if [ ! -f "foundryup/foundryup" ]; then
     exit 1
 fi
 
-# Copy foundryup to a location in PATH
-echo "Copying foundryup to /usr/local/bin..."
-sudo cp foundryup/foundryup /usr/local/bin/foundryup
-sudo chmod +x /usr/local/bin/foundryup
-
-# Verify foundryup is accessible
-if ! command -v foundryup &> /dev/null; then
-    echo "Error: foundryup not found in PATH after installation"
-    exit 1
-fi
-
-echo "foundryup is now available at: $(which foundryup)"
-
-# Create foundry directories
-echo "Creating foundry directories..."
-
 # Use FOUNDRY_DIR if set, otherwise default to $HOME/.foundry
-FOUNDRY_DIR="${FOUNDRY_DIR:-$HOME/.foundry}"
+export FOUNDRY_DIR="${FOUNDRY_DIR:-$HOME/.foundry}"
 echo "Using FOUNDRY_DIR: $FOUNDRY_DIR"
 
 # Create all necessary directories
@@ -37,8 +21,21 @@ mkdir -p "$FOUNDRY_DIR/bin"
 mkdir -p "$FOUNDRY_DIR/versions"
 mkdir -p "$FOUNDRY_DIR/share/man/man1"
 
+# Copy foundryup to a user-writable location so it can replace itself with the Rust binary.
+echo "Copying foundryup to $FOUNDRY_DIR/bin..."
+cp foundryup/foundryup "$FOUNDRY_DIR/bin/foundryup"
+chmod +x "$FOUNDRY_DIR/bin/foundryup"
+
 # Export PATH for current session
 export PATH="$FOUNDRY_DIR/bin:$PATH"
+
+# Verify foundryup is accessible.
+if ! command -v foundryup &> /dev/null; then
+    echo "Error: foundryup not found in PATH after installation"
+    exit 1
+fi
+
+echo "foundryup is now available at: $(command -v foundryup)"
 
 # Run foundryup to install default version
 echo "Installing default foundry version..."

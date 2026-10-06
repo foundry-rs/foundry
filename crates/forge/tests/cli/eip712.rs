@@ -1,6 +1,7 @@
 use foundry_config::fs_permissions::PathPermission;
 
-forgetest!(test_eip712, |prj, cmd| {
+#[forgetest]
+fn test_eip712(prj: _, cmd: _) {
     let path = prj.add_test(
         "Structs.sol",
         r#"
@@ -59,11 +60,16 @@ contract DummyTest {
 "#,
     );
 
-    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["eip712", path.to_string_lossy().as_ref()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Structs.sol > Structs > Foo:
  - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
  - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
@@ -101,8 +107,7 @@ Structs.sol > Structs2 > FooBar:
  - hash: 0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8
 
 
-"#]],
-    );
+"#]]);
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref(), "--json"]).assert_success().stdout_eq(
         str![[r#"
@@ -176,11 +181,13 @@ Encountered 1 failing test in test/Structs.sol:DummyTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
-forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
+#[forgetest]
+fn test_eip712_free_standing_structs(prj: _, cmd: _) {
     let path = prj.add_source(
         "FreeStandingStructs.sol",
         r#"
@@ -204,11 +211,16 @@ library InsideLibrary {
 "#,
     );
 
-    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["eip712", path.to_string_lossy().as_ref()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 FreeStanding:
  - type: FreeStanding(uint256 id,string name)
  - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
@@ -222,11 +234,11 @@ FreeStandingStructs.sol > InsideLibrary > LibraryStruct:
  - hash: 0x81d6d25f4d37549244d76a68f23ecdcbf3ae81e5a361ed6c492b6a2e126a2843
 
 
-"#]],
-    );
-});
+"#]]);
+}
 
-forgetest!(test_eip712_cheatcode_simple, |prj, cmd| {
+#[forgetest]
+fn test_eip712_cheatcode_simple(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -296,9 +308,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]
     ]);
-});
+}
 
-forgetest!(test_eip712_cheatcode_nested, |prj, cmd| {
+#[forgetest]
+fn test_eip712_cheatcode_nested(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -396,6 +409,7 @@ Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -442,6 +456,7 @@ Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -457,10 +472,18 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
             "--match-test",
             "testEip712HashType_byCustomPathAndTypeName",
         ])
-        .assert_success();
-});
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[PASS] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest!(test_eip712_hash_struct_simple, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_struct_simple(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -513,10 +536,21 @@ contract Eip712HashStructDomainTest is DSTest {
 "#,
         );
 
-    cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
-});
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712HashStructDomainTest.sol:Eip712HashStructDomainTest
+[PASS] testHashEIP712Domain() ([GAS])
+...
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest!(test_eip712_hash_struct_complex, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_struct_complex(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -758,9 +792,10 @@ Logs:
   0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
 ...
 "#]]);
-});
+}
 
-forgetest!(test_eip712_hash_typed_data, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_typed_data(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -787,11 +822,20 @@ contract Eip712HashTypedDataTest is DSTest {
 "#,
     );
 
-    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
-});
+    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for src/Eip712HashTypedData.sol:Eip712HashTypedDataTest
+[PASS] testHashEIP712Message() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+}
 
 // repro: <https://github.com/foundry-rs/foundry/issues/11366>
-forgetest!(test_eip712_hash_typed_data_repro, |prj, cmd| {
+#[forgetest]
+fn test_eip712_hash_typed_data_repro(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -878,4 +922,4 @@ contract CounterStrike_Test is DSTest {
     );
 
     cmd.forge_fuse().args(["test", "-vvv"]).assert_success();
-});
+}

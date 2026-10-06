@@ -1,0 +1,6073 @@
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_witness, json_test_result, z3_available,
+};
+use foundry_common::sh_eprintln;
+use foundry_test_utils::{forgetest_init, snapbox::IntoData, str, util::OutputExt};
+
+use crate::skip_unless_z3;
+
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_symbolic_address_targets(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_cheatcodes_accept_symbolic_address_targets because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicAddressCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAddressCheatcodes is Test {
+    function checkSymbolicDealStoreLoadAndNonce(address who, bytes32 value) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.deal(who, 11);
+        assertEq(who.balance, 11);
+
+        bytes32 slot = bytes32(uint256(1));
+        vm.store(who, slot, value);
+        assertEq(vm.load(who, slot), value);
+
+        assertEq(vm.getNonce(who), 0);
+        vm.setNonceUnsafe(who, 5);
+        assertEq(vm.getNonce(who), 5);
+        vm.resetNonce(who);
+        assertEq(vm.getNonce(who), 0);
+    }
+
+    function checkSymbolicEtch(address who) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.etch(who, hex"00");
+        assertEq(who.code.length, 1);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicAddressCheatcodes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAddressCheatcodes.t.sol:SymbolicAddressCheatcodes
+[PASS] checkSymbolicDealStoreLoadAndNonce(address,bytes32) ([METRICS])
+[PASS] checkSymbolicEtch(address) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.store target"), "{stdout}");
+    assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_prank_accepts_symbolic_sender(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_prank_accepts_symbolic_sender because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicPrankSender.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SenderTarget {
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+
+    function origin() external view returns (address) {
+        return tx.origin;
+    }
+
+    function context() external view returns (address, address) {
+        return (msg.sender, tx.origin);
+    }
+}
+
+contract SymbolicPrankSender is Test {
+    SenderTarget target;
+
+    function setUp() public {
+        target = new SenderTarget();
+    }
+
+    function checkSymbolicPrank(address who) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.prank(who);
+        assertEq(target.sender(), who);
+    }
+
+    function checkSymbolicStartPrank(address who) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.startPrank(who);
+        assertEq(target.sender(), who);
+        assertEq(target.sender(), who);
+        vm.stopPrank();
+    }
+
+    function checkSymbolicPrankOrigin(address who, address origin) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.prank(who, origin);
+        (address actualSender, address actualOrigin) = target.context();
+        assertEq(actualSender, who);
+        assertEq(actualOrigin, origin);
+    }
+
+    function checkSymbolicStartPrankOrigin(address who, address origin) public {
+        vm.assume(who != address(0));
+        vm.assume(who != address(this));
+        vm.assume(who != address(vm));
+
+        vm.startPrank(who, origin);
+        assertEq(target.sender(), who);
+        assertEq(target.origin(), origin);
+        assertEq(target.sender(), who);
+        assertEq(target.origin(), origin);
+        vm.stopPrank();
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrankSender",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicPrankSender.t.sol:SymbolicPrankSender
+[PASS] checkSymbolicPrank(address) ([METRICS])
+[PASS] checkSymbolicPrankOrigin(address,address) ([METRICS])
+[PASS] checkSymbolicStartPrank(address) ([METRICS])
+[PASS] checkSymbolicStartPrankOrigin(address,address) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.prank"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.startPrank"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_balance_accepts_symbolic_target(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_balance_accepts_symbolic_target because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBalance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBalance is Test {
+    function checkSymbolicBalance(address who) public {
+        address funded = address(0xBEEF);
+        vm.deal(funded, 123);
+
+        uint256 expected = who == funded ? 123 : 0;
+        assertEq(who.balance, expected);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBalance",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicBalance.t.sol:SymbolicBalance
+[PASS] checkSymbolicBalance(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_extcodesize_accepts_symbolic_target(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_extcodesize_accepts_symbolic_target because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExtcodeSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExtcodeSize is Test {
+    function checkSymbolicCodeLength(address who) public {
+        address coded = address(0xC0DE);
+        vm.etch(coded, hex"60006000");
+
+        uint256 expected = who == coded ? 4 : 0;
+        assertEq(who.code.length, expected);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExtcodeSize",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeSize.t.sol:SymbolicExtcodeSize
+[PASS] checkSymbolicCodeLength(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_extcodehash_accepts_symbolic_target(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_extcodehash_accepts_symbolic_target because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExtcodeHash.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExtcodeHash is Test {
+    function checkSymbolicCodeHash(address who) public {
+        address coded = address(0xC0DE);
+        vm.etch(coded, hex"60006000");
+
+        bytes32 expected = who == coded ? keccak256(hex"60006000") : bytes32(0);
+        assertEq(who.codehash, expected);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExtcodeHash",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeHash.t.sol:SymbolicExtcodeHash
+[PASS] checkSymbolicCodeHash(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic EXTCODEHASH target"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_extcodecopy_accepts_symbolic_target(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_extcodecopy_accepts_symbolic_target because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExtcodeCopy.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExtcodeCopy is Test {
+    function checkSymbolicExtcodeCopy(address who) public {
+        address coded = address(0xC0DE);
+        vm.etch(coded, hex"60016002");
+
+        bytes32 copied;
+        assembly {
+            extcodecopy(who, 0x80, 0, 4)
+            copied := mload(0x80)
+        }
+
+        bytes32 expected = who == coded ? bytes32(hex"6001600200000000000000000000000000000000000000000000000000000000") : bytes32(0);
+        assertEq(copied, expected);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExtcodeCopy",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeCopy.t.sol:SymbolicExtcodeCopy
+[PASS] checkSymbolicExtcodeCopy(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic EXTCODECOPY target"), "{stdout}");
+}
+
+// Cheatcodes that shape external calls: prank, expectRevert, mockFunction and assumeNoRevert.
+#[forgetest_init]
+fn symbolic_call_shaping_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_call_shaping_cheatcodes");
+
+    prj.add_test(
+        "SymbolicPrank.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract CallerProbe {
+    function callers() external view returns (address, address) {
+        return (msg.sender, tx.origin);
+    }
+}
+
+contract SymbolicPrank is Test {
+    CallerProbe probe;
+
+    function setUp() public {
+        probe = new CallerProbe();
+    }
+
+    function checkPrank(uint256) public {
+        address alice = address(0xA11CE);
+        address bob = address(0xB0B);
+
+        vm.prank(alice);
+        (address sender,) = probe.callers();
+        assertEq(sender, alice);
+
+        (sender,) = probe.callers();
+        assertEq(sender, address(this));
+
+        vm.startPrank(alice, bob);
+        address origin;
+        (sender, origin) = probe.callers();
+        assertEq(sender, alice);
+        assertEq(origin, bob);
+
+        vm.stopPrank();
+        (sender,) = probe.callers();
+        assertEq(sender, address(this));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedReverter {
+    error Custom(uint256 value);
+
+    function failWithCustom(uint256 value) external pure {
+        revert Custom(value);
+    }
+
+    function failPanic() external pure {
+        assert(false);
+    }
+}
+
+contract SymbolicExpectRevert is Test {
+    SymbolicExpectedReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedReverter();
+    }
+
+    function checkExpectRevert(uint256) public {
+        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        helper.failWithCustom(7);
+
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedReverter.Custom.selector, uint256(9)));
+        helper.failWithCustom(9);
+
+        vm.expectRevert(bytes4(0x4e487b71));
+        helper.failPanic();
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicMockFunction.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IFunctionMock {
+    function value(uint256 input) external returns (uint256);
+    function who(uint256 input) external returns (address);
+}
+
+contract FunctionCallee {
+    function value(uint256 input) external pure returns (uint256) {
+        return input + 1;
+    }
+
+    function who(uint256) external view returns (address) {
+        return address(this);
+    }
+}
+
+contract FunctionTarget {
+    function value(uint256 input) external pure returns (uint256) {
+        return input ^ 0x55;
+    }
+
+    function who(uint256) external view returns (address) {
+        return address(this);
+    }
+}
+
+contract SymbolicMockFunction is Test {
+    FunctionCallee callee;
+    FunctionTarget target;
+
+    function setUp() public {
+        callee = new FunctionCallee();
+        target = new FunctionTarget();
+    }
+
+    function checkMockFunction(uint256 input) public {
+        vm.mockFunction(
+            address(callee),
+            address(target),
+            abi.encodePacked(IFunctionMock.value.selector)
+        );
+        assertEq(IFunctionMock(address(callee)).value(input), input ^ 0x55);
+
+        vm.mockFunction(
+            address(callee),
+            address(target),
+            abi.encodePacked(IFunctionMock.who.selector)
+        );
+        assertEq(IFunctionMock(address(callee)).who(input), address(callee));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicAssumeNoRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAssumeNoRevertTarget {
+    function maybeRevert(uint256 x) external pure {
+        require(x != 7, "seven");
+    }
+}
+
+contract SymbolicAssumeNoRevert is Test {
+    SymbolicAssumeNoRevertTarget target;
+
+    function setUp() public {
+        target = new SymbolicAssumeNoRevertTarget();
+    }
+
+    function checkAssumeNoRevertPrunes(uint256 x) public {
+        vm.assumeNoRevert();
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.maybeRevert.selector, x));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkPrank|checkExpectRevert|checkMockFunction|checkAssumeNoRevertPrunes)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicMockFunction.t.sol:SymbolicMockFunction
+[PASS] checkMockFunction(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicPrank.t.sol:SymbolicPrank
+[PASS] checkPrank(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicExpectRevert.t.sol:SymbolicExpectRevert
+[PASS] checkExpectRevert(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicAssumeNoRevert.t.sol:SymbolicAssumeNoRevert
+[PASS] checkAssumeNoRevertPrunes(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic Foundry cheatcode", "symbolic vm.assumeNoRevert"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_vm_assert_cheatcodes_find_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_assert_cheatcodes_find_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicVmAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicVmAssert is Test {
+    function checkVmAssert(uint256 x) public {
+        vm.assertNotEq(x, uint256(42));
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVmAssert"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicVmAssert.t.sol:SymbolicVmAssert
+[FAIL: assertion failed: 42 == 42; counterexample: 		[SENDER] [SENDER] calldata=0xdaaeb166000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkVmAssert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+        .get_output()
+        .stdout_lossy();
+
+    assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_recorded_logs_round_trip(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_recorded_logs_round_trip because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRecordedLogs.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicLogEmitter {
+    event Helper(uint256 indexed topic, bytes data);
+
+    function ok(uint256 topic, bytes memory data) external {
+        emit Helper(topic, data);
+    }
+
+    function fail(uint256 topic, bytes memory data) external {
+        emit Helper(topic, data);
+        revert();
+    }
+}
+
+contract SymbolicRevertingLogConstructor {
+    event ConstructorLog();
+
+    constructor() {
+        emit ConstructorLog();
+        revert();
+    }
+}
+
+contract SymbolicRecordedLogs is Test {
+    event Local(uint256 indexed topic, bytes data);
+
+    SymbolicLogEmitter emitter;
+
+    function setUp() public {
+        emitter = new SymbolicLogEmitter();
+    }
+
+    /// forge-config: default.symbolic.array_lengths = [2]
+    function checkRecordedLogs(uint256 topic, bytes memory data) public {
+        vm.recordLogs();
+
+        emit Local(topic, data);
+        emitter.ok(topic + 1, data);
+        try emitter.fail(topic + 2, data) {} catch {}
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 3);
+
+        assertEq(logs[0].topics.length, 2);
+        assertEq(logs[0].topics[0], keccak256("Local(uint256,bytes)"));
+        assertEq(logs[0].topics[1], bytes32(topic));
+        assertEq(logs[0].emitter, address(this));
+
+        bytes memory localData = abi.decode(logs[0].data, (bytes));
+        assert(keccak256(localData) == keccak256(data));
+
+        assertEq(logs[1].topics.length, 2);
+        assertEq(logs[1].topics[0], keccak256("Helper(uint256,bytes)"));
+        assertEq(logs[1].topics[1], bytes32(topic + 1));
+        assertEq(logs[1].emitter, address(emitter));
+
+        assertEq(logs[2].topics.length, 2);
+        assertEq(logs[2].topics[0], keccak256("Helper(uint256,bytes)"));
+        assertEq(logs[2].topics[1], bytes32(topic + 2));
+        assertEq(logs[2].emitter, address(emitter));
+
+        Vm.Log[] memory drained = vm.getRecordedLogs();
+        assertEq(drained.length, 0);
+    }
+
+    /// forge-config: default.symbolic.array_lengths = [2]
+    function checkRecordedLogsJson(uint256 topic, bytes memory data) public {
+        vm.recordLogs();
+        emit Local(topic, data);
+
+        string memory json = vm.getRecordedLogsJson();
+        assert(bytes(json).length > 0);
+
+        Vm.Log[] memory drained = vm.getRecordedLogs();
+        assertEq(drained.length, 0);
+    }
+
+    function checkRecordedRevertedCreate() public {
+        vm.recordLogs();
+        try new SymbolicRevertingLogConstructor() {} catch {}
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRecordedLogs",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicRecordedLogs.t.sol:SymbolicRecordedLogs
+[PASS] checkRecordedLogs(uint256,bytes) ([METRICS])
+[PASS] checkRecordedLogsJson(uint256,bytes) ([METRICS])
+[PASS] checkRecordedRevertedCreate() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.getRecordedLogsJson"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_env_crypto_and_console_helpers(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_env_crypto_and_console_helpers because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicEnvCryptoConsole.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "forge-std/console2.sol";
+
+contract SymbolicEnvCryptoConsole is Test {
+    function checkEnvCryptoConsole(uint256 x) public {
+        assertTrue(vm.envExists("FOUNDRY_SYMBOLIC_ENV_PRESENT"));
+        assertEq(vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINT"), 42);
+        assertEq(vm.envOr("FOUNDRY_SYMBOLIC_ENV_MISSING", uint256(7)), 7);
+        assertEq(vm.envString("FOUNDRY_SYMBOLIC_ENV_STRING"), "hello");
+
+        uint256[] memory values = vm.envUint("FOUNDRY_SYMBOLIC_ENV_UINTS", ",");
+        assertEq(values.length, 3);
+        assertEq(values[0], 1);
+        assertEq(values[2], 3);
+
+        string[] memory words = vm.envString("FOUNDRY_SYMBOLIC_ENV_STRINGS", ",");
+        assertEq(words.length, 2);
+        assertEq(words[1], "beta");
+
+        bytes[] memory blobs = vm.envBytes("FOUNDRY_SYMBOLIC_ENV_BYTES_ARRAY", ",");
+        assertEq(blobs.length, 2);
+        assertEq(blobs[1], hex"cafe");
+
+        uint256[] memory defaultValues = new uint256[](2);
+        defaultValues[0] = 5;
+        defaultValues[1] = 6;
+        uint256[] memory missing = vm.envOr("FOUNDRY_SYMBOLIC_ENV_MISSING_ARRAY", ",", defaultValues);
+        assertEq(missing.length, 2);
+        assertEq(missing[1], 6);
+
+        address keyAddress = vm.addr(1);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256("foundry-symbolic"));
+        assertTrue(keyAddress != address(0));
+        assertTrue(v == 27 || v == 28);
+        assertTrue(r != bytes32(0));
+        assertTrue(s != bytes32(0));
+
+        console2.log("symbolic", x);
+    }
+
+    function checkKeyUtilities() public {
+        address keyAddress = vm.addr(1);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256("foundry-symbolic"));
+        assertTrue(keyAddress != address(0));
+        assertTrue(v == 27 || v == 28);
+        assertTrue(r != bytes32(0));
+        assertTrue(s != bytes32(0));
+        (bytes32 compactR, bytes32 vs) = vm.signCompact(1, keccak256("foundry-symbolic"));
+        assertEq(compactR, r);
+        uint8 compactV = uint8(27 + (uint256(vs) >> 255));
+        bytes32 compactS = bytes32(uint256(vs) & (type(uint256).max >> 1));
+        assertEq(ecrecover(keccak256("foundry-symbolic"), compactV, compactR, compactS), keyAddress);
+        address remembered = vm.rememberKey(2);
+        assertEq(remembered, vm.addr(2));
+        address[] memory wallets = vm.getWallets();
+        assertEq(wallets.length, 1);
+        assertEq(wallets[0], remembered);
+        uint256 derived = vm.deriveKey("test test test test test test test test test test test junk", uint32(0));
+        assertEq(vm.addr(derived), 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
+        address[] memory derivedWallets = vm.rememberKeys(
+            "test test test test test test test test test test test junk",
+            "m/44'/60'/0'/0/",
+            uint32(3)
+        );
+        assertEq(derivedWallets.length, 3);
+        assertEq(derivedWallets[0], vm.addr(derived));
+    }
+
+    function checkBase64Utilities() public {
+        assertEq(vm.toBase64(bytes("hello")), "aGVsbG8=");
+        assertEq(vm.toBase64URL(hex"ffff"), "__8=");
+    }
+
+    function checkParseToStringUtilities() public {
+        assertEq(vm.parseBytes("0x1234"), hex"1234");
+        assertEq(vm.parseAddress(vm.toString(address(0xBEEF))), address(0xBEEF));
+        assertEq(vm.parseUint(vm.toString(uint256(123))), 123);
+        assertEq(vm.parseInt(vm.toString(int256(-5))), -5);
+        assertEq(vm.parseBytes32(vm.toString(bytes32(uint256(0x12)))), bytes32(uint256(0x12)));
+        assertTrue(vm.parseBool(vm.toString(true)));
+    }
+
+    function checkStringUtilities() public {
+        assertEq(vm.toLowercase("AbC"), "abc");
+        assertEq(vm.toUppercase("AbC"), "ABC");
+        assertEq(vm.trim("  foundry  "), "foundry");
+        assertEq(vm.replace("hello forge", "forge", "symbolic"), "hello symbolic");
+        string[] memory parts = vm.split("a,b,c", ",");
+        assertEq(parts.length, 3);
+        assertEq(parts[1], "b");
+        assertEq(vm.indexOf("foundry", "dry"), 4);
+        assertTrue(vm.contains("foundry", "ound"));
+    }
+}
+"#,
+    );
+
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_PRESENT", "1");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_UINT", "42");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_STRING", "hello");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_UINTS", "1,2,3");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_STRINGS", "alpha,beta");
+    cmd.env("FOUNDRY_SYMBOLIC_ENV_BYTES_ARRAY", "12,cafe");
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEnvCryptoConsole",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicEnvCryptoConsole.t.sol:SymbolicEnvCryptoConsole
+[PASS] checkBase64Utilities() ([METRICS])
+[PASS] checkEnvCryptoConsole(uint256) ([METRICS])
+[PASS] checkKeyUtilities() ([METRICS])
+[PASS] checkParseToStringUtilities() ([METRICS])
+[PASS] checkStringUtilities() ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_ffi_is_config_gated(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_vm_ffi_is_config_gated because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFfiDisabled.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicFfiDisabled is Test {
+    function checkFfiDisabled(uint256) public {
+        string[] memory input = new string[](1);
+        input[0] = "true";
+        vm.ffi(input);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkFfiDisabled"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFfiDisabled.t.sol:SymbolicFfiDisabled
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic ffi disabled] checkFfiDisabled(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_vm_ffi_success_when_enabled(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_ffi_success_when_enabled because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFfiEnabled.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicFfiEnabled is Test {
+    function checkFfiEnabled(uint256) public {
+        string[] memory input = new string[](3);
+        input[0] = "sh";
+        input[1] = "-c";
+        input[2] = "printf 0x1234";
+
+        bytes memory output = vm.ffi(input);
+        assertEq(output.length, 2);
+        assertEq(uint8(output[0]), 0x12);
+        assertEq(uint8(output[1]), 0x34);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--ffi",
+        "--match-test",
+        "checkFfiEnabled",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFfiEnabled.t.sol:SymbolicFfiEnabled
+[PASS] checkFfiEnabled(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic ffi disabled"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_etch_and_get_deployed_code(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_etch_and_get_deployed_code because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicEtch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IEtchedHelper {
+    function value() external pure returns (uint256);
+}
+
+contract EtchedHelper {
+    function value() external pure returns (uint256) {
+        return 99;
+    }
+}
+
+contract SymbolicEtch is Test {
+    function checkEtch(uint256) public {
+        address target = address(0xBEEF);
+        bytes memory code = vm.getDeployedCode("SymbolicEtch.t.sol:EtchedHelper");
+        vm.etch(target, code);
+
+        assertGt(target.code.length, 0);
+        assertEq(IEtchedHelper(target).value(), 99);
+    }
+
+    function checkEtchSymbolicBytes(uint8 value) public {
+        address target = address(0xCAFE);
+        bytes memory code = abi.encodePacked(bytes1(0x60), bytes1(value), bytes1(0x00));
+        vm.etch(target, code);
+
+        assertEq(target.code.length, 3);
+
+        bytes memory copied = new bytes(3);
+        assembly {
+            extcodecopy(target, add(copied, 0x20), 0, 3)
+        }
+
+        assertEq(copied[0], bytes1(0x60));
+        assertEq(copied[1], bytes1(value));
+        assertEq(copied[2], bytes1(0x00));
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicEtch",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicEtch.t.sol:SymbolicEtch
+[PASS] checkEtch(uint256) ([METRICS])
+[PASS] checkEtchSymbolicBytes(uint8) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.getCode artifact"), "{stdout}");
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+// EXTCODEHASH, CODECOPY and EXTCODECOPY with symbolic offsets and bounded sizes are modeled.
+#[forgetest_init]
+fn symbolic_code_ops_accept_symbolic_operands(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_code_ops_accept_symbolic_operands");
+
+    prj.add_test(
+        "SymbolicCodeHash.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCodeHash is Test {
+    function checkCodeHash(uint256) public {
+        address target = address(0xBEEF);
+        vm.etch(target, hex"");
+
+        bytes32 emptyHash = keccak256(new bytes(0));
+        assert(target.code.length == 0);
+        assert(target.codehash == emptyHash);
+        assert(address(0xCAFE).codehash == bytes32(0));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicExtcodeCopy.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExtcodeCopy is Test {
+    function checkExtcodeCopy(uint256) public {
+        address target = address(0xBEEF);
+        vm.etch(target, hex"010203");
+
+        bytes memory copied = new bytes(5);
+        assembly {
+            extcodecopy(target, add(copied, 0x20), 1, 5)
+        }
+
+        assert(uint8(copied[0]) == 2);
+        assert(uint8(copied[1]) == 3);
+        assert(uint8(copied[2]) == 0);
+        assert(uint8(copied[3]) == 0);
+        assert(uint8(copied[4]) == 0);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicCodeCopy.t.sol",
+        r#"
+contract SymbolicCodeCopy {
+    function checkCodeCopy(uint16 offset) public pure {
+        uint256 copied;
+        uint256 size;
+        assembly {
+            size := codesize()
+            codecopy(0, offset, 1)
+            copied := mload(0)
+        }
+
+        if (offset >= size) {
+            assert(copied == 0);
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicExtcodeCopyOffset.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExtcodeCopyOffset is Test {
+    function checkExtcodeCopyOffset(uint16 offset) public {
+        address target = address(0xBEEF);
+        vm.etch(target, hex"010203");
+
+        bytes memory copied = new bytes(1);
+        assembly {
+            extcodecopy(target, add(copied, 0x20), offset, 1)
+        }
+
+        if (offset == 1) {
+            assert(uint8(copied[0]) == 2);
+        }
+        if (offset >= 3) {
+            assert(uint8(copied[0]) == 0);
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicCodeCopySize.t.sol",
+        r#"
+contract SymbolicCodeCopySize {
+    function checkCodeCopySize(uint8 rawSize) public pure {
+        uint256 size = uint256(rawSize & 1);
+        uint256 first;
+        uint256 copied;
+        assembly {
+            codecopy(0x80, 0, 1)
+            first := byte(0, mload(0x80))
+            codecopy(0xa0, 0, size)
+            copied := byte(0, mload(0xa0))
+        }
+
+        if (size == 1) {
+            assert(copied == first);
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicExtcodeCopySize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExtcodeCopySize is Test {
+    function checkExtcodeCopySize(uint8 rawSize) public {
+        address target = address(0xBEEF);
+        vm.etch(target, hex"010203");
+        uint256 size = uint256(rawSize & 3);
+
+        bytes memory copied = new bytes(3);
+        assembly {
+            extcodecopy(target, add(copied, 0x20), 0, size)
+        }
+
+        if (size == 3) {
+            assertEq(uint8(copied[0]), 1);
+            assertEq(uint8(copied[1]), 2);
+            assertEq(uint8(copied[2]), 3);
+        }
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCodeHash|checkExtcodeCopy|checkCodeCopy|checkExtcodeCopyOffset|checkCodeCopySize|checkExtcodeCopySize)\\(",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExtcodeCopy.t.sol:SymbolicExtcodeCopy
+[PASS] checkExtcodeCopy(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicExtcodeCopySize.t.sol:SymbolicExtcodeCopySize
+[PASS] checkExtcodeCopySize(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCodeHash.t.sol:SymbolicCodeHash
+[PASS] checkCodeHash(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCodeCopySize.t.sol:SymbolicCodeCopySize
+[PASS] checkCodeCopySize(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicExtcodeCopyOffset.t.sol:SymbolicExtcodeCopyOffset
+[PASS] checkExtcodeCopyOffset(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicCodeCopy.t.sol:SymbolicCodeCopy
+[PASS] checkCodeCopy(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in [
+        "symbolic CODECOPY offset",
+        "symbolic CODECOPY size",
+        "symbolic EXTCODECOPY offset",
+        "symbolic EXTCODECOPY size",
+    ] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_selfdestruct_updates_account_overlay(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_updates_account_overlay because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestruct.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "shanghai"
+
+contract Killable {
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
+contract SymbolicSelfdestruct is Test {
+    Killable killable;
+    address payable beneficiary = payable(address(0xB0B));
+
+    function setUp() public {
+        killable = new Killable();
+    }
+
+    function checkSelfdestruct(uint256) public {
+        vm.deal(address(killable), 7);
+
+        killable.die(beneficiary);
+
+        assert(address(killable).balance == 0);
+        assert(beneficiary.balance == 7);
+        assert(address(killable).code.length == 0);
+        assert(address(killable).codehash == bytes32(0));
+        assert(vm.getNonce(address(killable)) == 1);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "shanghai",
+        "--match-test",
+        "checkSelfdestruct",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestruct.t.sol:SymbolicSelfdestruct
+[PASS] checkSelfdestruct(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructBeneficiary.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract Killable {
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
+contract SymbolicSelfdestructBeneficiary is Test {
+    Killable killable;
+
+    function setUp() public {
+        killable = new Killable();
+    }
+
+    function checkSelfdestructBeneficiary(address payable beneficiary) public {
+        vm.assume(beneficiary != address(killable));
+        vm.deal(address(killable), 7);
+
+        killable.die(beneficiary);
+
+        assert(address(killable).balance == 0);
+        assert(beneficiary.balance == 7);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelfdestructBeneficiary",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestructBeneficiary.t.sol:SymbolicSelfdestructBeneficiary
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructBeneficiary(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+    assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+}
+
+// SELFDESTRUCT under Cancun keeps existing accounts and deletes same-transaction ones.
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_semantics(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_selfdestruct_cancun_semantics");
+
+    prj.add_test(
+        "SymbolicSelfdestructCancunExisting.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract KillableCancun {
+    uint256 value = 42;
+
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+
+    function get() external view returns (uint256) {
+        return value;
+    }
+}
+
+contract SymbolicSelfdestructCancunExisting is Test {
+    KillableCancun killable;
+    address payable beneficiary = payable(address(0xB0B));
+
+    function setUp() public {
+        killable = new KillableCancun();
+    }
+
+    function checkCancunSelfdestructExisting(uint256) public {
+        vm.deal(address(killable), 7);
+
+        killable.die(beneficiary);
+
+        assertEq(address(killable).balance, 0);
+        assertEq(beneficiary.balance, 7);
+        assertGt(address(killable).code.length, 0);
+        assertEq(killable.get(), 42);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicSelfdestructCancunSameTx.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract KillableCancunSameTx {
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
+contract SymbolicSelfdestructCancunSameTx is Test {
+    address payable beneficiary = payable(address(0xB0B));
+
+    function checkCancunSelfdestructSameTransaction(uint256) public {
+        KillableCancunSameTx killable = new KillableCancunSameTx();
+        vm.deal(address(killable), 7);
+
+        killable.die(beneficiary);
+
+        assertEq(address(killable).balance, 0);
+        assertEq(beneficiary.balance, 7);
+        assertEq(address(killable).code.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkCancunSelfdestructExisting|checkCancunSelfdestructSameTransaction)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestructCancunExisting.t.sol:SymbolicSelfdestructCancunExisting
+[PASS] checkCancunSelfdestructExisting(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicSelfdestructCancunSameTx.t.sol:SymbolicSelfdestructCancunSameTx
+[PASS] checkCancunSelfdestructSameTransaction(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_wrong_delete_assertion_fails(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_wrong_delete_assertion_fails because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancunWrongDelete.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract KillableCancunWrongDelete {
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
+contract SymbolicSelfdestructCancunWrongDelete is Test {
+    KillableCancunWrongDelete killable;
+    address payable beneficiary = payable(address(0xB0B));
+
+    function setUp() public {
+        killable = new KillableCancunWrongDelete();
+    }
+
+    function checkCancunSelfdestructDoesNotDeleteExisting(uint256) public {
+        killable.die(beneficiary);
+
+        assertEq(address(killable).code.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-test",
+            "checkCancunSelfdestructDoesNotDeleteExisting",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[FAIL"), "{stdout}");
+    assert!(stdout.contains("counterexample"), "{stdout}");
+    assert!(stdout.contains("checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
+    assert!(!stdout.contains("[PASS] checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
+    assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+}
+
+// BLOCKHASH with symbolic block numbers and `vm.setBlockhash` with concrete and symbolic hashes.
+#[forgetest_init]
+fn symbolic_blockhash_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_blockhash_cheatcodes");
+
+    prj.add_test(
+        "SymbolicBlockhash.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBlockhash is Test {
+    function checkSetBlockhash(uint256) public {
+        bytes32 previousHash = bytes32(uint256(0x1234));
+        vm.roll(300);
+        vm.setBlockhash(299, previousHash);
+        vm.setBlockhash(300, bytes32(uint256(0xdead)));
+        vm.setBlockhash(43, bytes32(uint256(0xbeef)));
+
+        assertEq(blockhash(299), previousHash);
+        assertEq(blockhash(300), bytes32(0));
+        assertEq(blockhash(43), bytes32(0));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicBlockhashNumber.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBlockhashNumber is Test {
+    function checkSymbolicBlockhashNumber(uint256 blockNumber) public {
+        bytes32 previousHash = bytes32(uint256(0x1234));
+        vm.roll(300);
+        vm.setBlockhash(299, previousHash);
+
+        bytes32 hash = blockhash(blockNumber);
+        if (hash == previousHash) {
+            assertEq(blockNumber, 299);
+        }
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicBlockhashValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBlockhashValue is Test {
+    function checkSymbolicBlockhashValue(bytes32 blockHash) public {
+        vm.roll(300);
+        vm.setBlockhash(299, blockHash);
+
+        assertEq(blockhash(299), blockHash);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkSetBlockhash|checkSymbolicBlockhashNumber|checkSymbolicBlockhashValue)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicBlockhashValue.t.sol:SymbolicBlockhashValue
+[PASS] checkSymbolicBlockhashValue(bytes32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicBlockhash.t.sol:SymbolicBlockhash
+[PASS] checkSetBlockhash(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicBlockhashNumber.t.sol:SymbolicBlockhashNumber
+[PASS] checkSymbolicBlockhashNumber(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic BLOCKHASH number", "symbolic vm.setBlockhash hash"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+// Block environment cheatcodes and the prepared executor environment.
+#[forgetest_init]
+fn symbolic_block_environment_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_block_environment_cheatcodes");
+
+    prj.add_test(
+        "SymbolicBlockEnvironment.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBlockEnvironment is Test {
+    function checkBlockEnvironment(uint256) public {
+        bytes32 randomness = bytes32(uint256(0xabc));
+
+        vm.warp(123);
+        assertEq(vm.getBlockTimestamp(), 123);
+        assertEq(block.timestamp, 123);
+
+        vm.txGasPrice(7);
+        assertEq(tx.gasprice, 7);
+
+        vm.prevrandao(randomness);
+        assertEq(block.prevrandao, uint256(randomness));
+
+        vm.blobBaseFee(11);
+        assertEq(block.blobbasefee, 11);
+        assertEq(vm.getBlobBaseFee(), 11);
+
+        bytes32[] memory hashes = new bytes32[](2);
+        hashes[0] = bytes32(uint256(0x1111));
+        hashes[1] = bytes32(uint256(0x2222));
+        vm.blobhashes(hashes);
+
+        assertEq(blobhash(0), hashes[0]);
+        assertEq(blobhash(1), hashes[1]);
+        assertEq(blobhash(2), bytes32(0));
+
+        bytes32[] memory got = vm.getBlobhashes();
+        assertEq(got.length, 2);
+        assertEq(got[0], hashes[0]);
+        assertEq(got[1], hashes[1]);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicPreparedEnvironment.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicPreparedEnvironment is Test {
+    function setUp() public {
+        vm.chainId(424242);
+        vm.roll(12345);
+        vm.warp(67890);
+        vm.fee(77);
+        vm.prevrandao(bytes32(uint256(99)));
+        vm.coinbase(address(0xBEEF));
+        vm.txGasPrice(66);
+    }
+
+    function checkPreparedEnvironment(uint256 x) public {
+        if (x > 1) return;
+
+        assertEq(block.chainid, 424242);
+        assertEq(block.number, 12345);
+        assertEq(block.timestamp, 67890);
+        assertEq(block.basefee, 77);
+        assertEq(block.prevrandao, 99);
+        assertEq(block.coinbase, address(0xBEEF));
+        assertEq(tx.gasprice, 66);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkBlockEnvironment|checkPreparedEnvironment)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicBlockEnvironment.t.sol:SymbolicBlockEnvironment
+[PASS] checkBlockEnvironment(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicPreparedEnvironment.t.sol:SymbolicPreparedEnvironment
+[PASS] checkPreparedEnvironment(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
+}
+
+#[forgetest_init]
+fn symbolic_vm_state_snapshots(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!("skipping symbolic_vm_state_snapshots because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicStateSnapshots.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicStateSnapshots is Test {
+    uint256 value;
+
+    function checkStateSnapshots(uint256) public {
+        value = 1;
+        vm.deal(address(this), 5 ether);
+
+        uint256 snapshotId = vm.snapshotState();
+        value = 2;
+        vm.deal(address(this), 8 ether);
+
+        assertTrue(vm.revertToState(snapshotId));
+        assertEq(value, 1);
+        assertEq(address(this).balance, 5 ether);
+
+        assertTrue(vm.deleteStateSnapshot(snapshotId));
+        assertFalse(vm.revertToState(snapshotId));
+
+        uint256 legacySnapshot = vm.snapshot();
+        value = 3;
+
+        assertTrue(vm.revertToAndDelete(legacySnapshot));
+        assertEq(value, 1);
+        assertFalse(vm.revertTo(legacySnapshot));
+
+        uint256 deletedSnapshot = vm.snapshotState();
+        assertTrue(vm.deleteSnapshot(deletedSnapshot));
+        assertFalse(vm.revertToState(deletedSnapshot));
+
+        uint256 clearedSnapshot = vm.snapshotState();
+        vm.deleteStateSnapshots();
+        assertFalse(vm.revertToState(clearedSnapshot));
+    }
+
+    receive() external payable {}
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkStateSnapshots",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicStateSnapshots.t.sol:SymbolicStateSnapshots
+[PASS] checkStateSnapshots(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// `vm.randomBytes` with concrete and bounded symbolic lengths.
+#[forgetest_init]
+fn symbolic_vm_random_bytes_cheatcodes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_random_bytes_cheatcodes");
+
+    prj.add_test(
+        "SymbolicRandomBytes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRandomBytes is Test {
+    function checkRandomBytes(uint256) public {
+        bytes memory data = vm.randomBytes(3);
+
+        assertEq(data.length, 3);
+        vm.assume(data[0] == bytes1(0x11));
+        vm.assume(data[1] == bytes1(0x22));
+        vm.assume(data[2] == bytes1(0x33));
+
+        assertTrue(data[0] == bytes1(0x11));
+        assertTrue(data[1] == bytes1(0x22));
+        assertTrue(data[2] == bytes1(0x33));
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicRandomBytesLength.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRandomBytesLength is Test {
+    function checkRandomBytesSymbolicLength(uint8 n) public {
+        uint256 len = uint256(n);
+        vm.assume(len <= 3);
+
+        bytes memory data = vm.randomBytes(len);
+
+        assertEq(data.length, len);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkRandomBytes|checkRandomBytesSymbolicLength)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicRandomBytes.t.sol:SymbolicRandomBytes
+[PASS] checkRandomBytes(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicRandomBytesLength.t.sol:SymbolicRandomBytesLength
+[PASS] checkRandomBytesSymbolicLength(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic randomBytes len", "symbolic randomBytes length"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_constrained_scalar_args(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_cheatcodes_accept_constrained_scalar_args because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicConstrainedCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicConstrainedCheatcodes is Test {
+    function checkConstrainedDeal(address target, uint256 amount) public {
+        vm.assume(target == address(0xbeef));
+        vm.assume(amount == 7);
+
+        vm.deal(target, amount);
+
+        assertEq(address(0xbeef).balance, 7);
+    }
+
+    function checkSymbolicDealValueFundsCall(uint256 amount) public {
+        address recipient = address(0xbeef);
+
+        vm.deal(address(this), amount);
+        assertEq(address(this).balance, amount);
+
+        (bool ok,) = recipient.call{value: amount}("");
+
+        assertTrue(ok);
+        assertEq(recipient.balance, amount);
+        assertEq(address(this).balance, 0);
+    }
+
+    function checkSymbolicDealInsufficientFunds(uint256 amount) public {
+        vm.assume(amount < type(uint256).max);
+        address recipient = address(0xbeef);
+
+        vm.deal(address(this), amount);
+
+        (bool ok,) = recipient.call{value: amount + 1}("");
+
+        assertFalse(ok);
+        assertEq(address(this).balance, amount);
+        assertEq(recipient.balance, 0);
+    }
+
+    function checkConstrainedRandomBytes(uint16 len) public {
+        vm.assume(len == 3);
+
+        bytes memory data = vm.randomBytes(len);
+
+        assertEq(data.length, 3);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicConstrainedCheatcodes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicConstrainedCheatcodes.t.sol:SymbolicConstrainedCheatcodes
+[PASS] checkConstrainedDeal(address,uint256) ([METRICS])
+[PASS] checkConstrainedRandomBytes(uint16) ([METRICS])
+[PASS] checkSymbolicDealInsufficientFunds(uint256) ([METRICS])
+[PASS] checkSymbolicDealValueFundsCall(uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.deal value"), "{stdout}");
+    assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_address_inputs_may_alias(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_address_inputs_may_alias");
+
+    prj.add_test(
+        "SymbolicAddressAlias.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAddressAlias is Test {
+    // Fails concretely for any a == b: the second deal overwrites the first.
+    function checkDealsMayTargetOneAccount(address a, address b) public {
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+
+    function checkDistinctDealsAreIndependent(address a, address b) public {
+        vm.assume(a != b);
+        vm.deal(a, 10 ether);
+        vm.deal(b, 0);
+        assert(a.balance + b.balance == 10 ether);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicAddressAlias"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAddressAlias.t.sol:SymbolicAddressAlias
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x5b3b1d1100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]] checkDealsMayTargetOneAccount(address,address) ([METRICS])
+[PASS] checkDistinctDealsAreIndependent(address,address) ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_cheatcode_state_survives_reverting_call(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cheatcode_state_survives_reverting_call");
+
+    prj.add_test(
+        "SymbolicRevertKeepsCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Token {
+    function balanceOf(address) external pure returns (uint256) {
+        return 7;
+    }
+}
+
+contract SymbolicRevertKeepsCheatcodes is Test {
+    uint256 constant DEADLINE = 1000;
+    Token token;
+
+    function setUp() public {
+        token = new Token();
+    }
+
+    function warpThenRevert(uint256 t) external {
+        vm.warp(t);
+        revert("boom");
+    }
+
+    function mockThenRevert(address user) external {
+        vm.mockCall(
+            address(token),
+            abi.encodeWithSelector(Token.balanceOf.selector, user),
+            abi.encode(uint256(5))
+        );
+        revert("boom");
+    }
+
+    // Concretely the warp outlives the revert, so any t >= DEADLINE breaks this.
+    function checkWarpSurvivesRevertingCall(uint256 t) public {
+        try this.warpThenRevert(t) {} catch {}
+        assert(block.timestamp < DEADLINE);
+    }
+
+    // Concretely the mock outlives the revert, so the mocked value is observed.
+    function checkMockSurvivesRevertingCall(address user) public {
+        try this.mockThenRevert(user) {} catch {}
+        assert(token.balanceOf(user) == 7);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicRevertKeepsCheatcodes",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicRevertKeepsCheatcodes.t.sol:SymbolicRevertKeepsCheatcodes
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x9389e44d0000000000000000000000000000000000000000000000000000000000000000 args=[0x0000000000000000000000000000000000000000]] checkMockSurvivesRevertingCall(address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xe9b7d25400000000000000000000000000000000000000000000000000000000000003e8 args=[1000]] checkWarpSurvivesRevertingCall(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("[PASS]"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_expect_call_follows_function_mock_redirect(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_expect_call_follows_function_mock_redirect");
+
+    prj.add_test(
+        "SymbolicExpectCallRedirect.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Redirect {
+    function ping() external pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract SymbolicExpectCallRedirect is Test {
+    Target target;
+    Redirect redirect;
+
+    function setUp() public {
+        target = new Target();
+        redirect = new Redirect();
+    }
+
+    // The redirected call runs `redirect`'s code, so an expectation on `target` is never met.
+    function checkExpectCallOnRedirectedSource() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(target), abi.encodeWithSelector(Target.ping.selector));
+        target.ping();
+    }
+
+    function checkExpectCallOnRedirectTarget() public {
+        vm.mockFunction(address(target), address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        vm.expectCall(address(redirect), abi.encodeWithSelector(Target.ping.selector));
+        assertEq(target.ping(), 2);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicExpectCallRedirect",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCallRedirect.t.sol:SymbolicExpectCallRedirect
+[PASS] checkExpectCallOnRedirectTarget() ([METRICS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x5c36b186 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallOnRedirectedSource() ([METRICS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_cheatcodes_reject_gas_deal_value(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
+
+    prj.add_test(
+        "SymbolicDealGasValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDealGasValue is Test {
+    function checkGasDealValue() public {
+        vm.deal(address(this), gasleft());
+    }
+
+    function checkDerivedGasDealValue() public {
+        vm.deal(address(this), gasleft() + 1);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkGasDealValue"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicDealGasValue.t.sol:SymbolicDealGasValue
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasDealValue() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_cheatcodes_reject_derived_gas_deal_value(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_cheatcodes_reject_derived_gas_deal_value");
+
+    prj.add_test(
+        "SymbolicDerivedDealGasValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDerivedDealGasValue is Test {
+    function checkDerivedGasDealValue() public {
+        vm.deal(address(this), gasleft() + 1);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDerivedGasDealValue",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicDerivedDealGasValue.t.sol:SymbolicDerivedDealGasValue
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkDerivedGasDealValue() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_cheatcodes_accept_bounded_symbolic_input_size(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_cheatcodes_accept_bounded_symbolic_input_size because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCheatcodeInputSize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCheatcodeInputSize is Test {
+    function checkLowLevelAssumeSize(uint256 size, bool condition) public {
+        vm.assume(size >= 36);
+        vm.assume(size <= 68);
+
+        bytes memory data = abi.encodeWithSelector(bytes4(keccak256("assume(bool)")), condition);
+        address cheatcode = address(vm);
+        bool ok;
+        assembly {
+            ok := call(gas(), cheatcode, 0, add(data, 32), size, 0, 0)
+        }
+
+        assert(ok);
+        assertTrue(condition);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkLowLevelAssumeSize",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicCheatcodeInputSize.t.sol:SymbolicCheatcodeInputSize
+[PASS] checkLowLevelAssumeSize(uint256,bool) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic cheatcode CALL input size"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_svm_creator_breadth(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!("skipping symbolic_svm_creator_breadth because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSvmCreators.t.sol",
+        r#"
+interface Svm {
+    function createUint8(string calldata name) external returns (uint8);
+    function createInt16(string calldata name) external returns (int16);
+    function createBytes2(string calldata name) external returns (bytes2);
+    function createBytes(string calldata name) external returns (bytes memory);
+    function createBytes(uint256 len, string calldata name) external returns (bytes memory);
+    function createString(string calldata name) external returns (string memory);
+    function createString(uint256 len, string calldata name) external returns (string memory);
+}
+
+contract SymbolicSvmCreators {
+    address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+
+    function checkSvmCreators(uint256) public {
+        uint8 small = Svm(SVM_ADDRESS).createUint8("small");
+        int16 signed = Svm(SVM_ADDRESS).createInt16("signed");
+        bytes2 fixedBytes = Svm(SVM_ADDRESS).createBytes2("fixedBytes");
+        bytes memory data = Svm(SVM_ADDRESS).createBytes("data");
+        bytes memory sizedData = Svm(SVM_ADDRESS).createBytes(5, "sizedData");
+        string memory text = Svm(SVM_ADDRESS).createString("text");
+        string memory sizedText = Svm(SVM_ADDRESS).createString(3, "sizedText");
+
+        assert(uint256(small) < 256);
+        assert(signed == signed);
+        assert(data.length == 2);
+        assert(sizedData.length == 5);
+        assert(bytes(text).length == 2);
+        assert(bytes(sizedText).length == 3);
+        assert(fixedBytes == fixedBytes);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSvmCreators",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSvmCreators.t.sol:SymbolicSvmCreators
+[PASS] checkSvmCreators(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
+}
+#[forgetest_init]
+fn symbolic_vm_expect_revert_double_registration_is_rejected(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_vm_expect_revert_double_registration_is_rejected");
+
+    prj.add_test(
+        "DoubleExpectRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedReverter {
+    error Custom(uint256 value);
+
+    function failPanic() external pure {
+        assert(false);
+    }
+}
+
+contract DoubleExpectRevert is Test {
+    SymbolicExpectedReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedReverter();
+    }
+
+    function checkDoubleExpectRevert(uint256) public {
+        vm.expectRevert(SymbolicExpectedReverter.Custom.selector);
+        vm.expectRevert(bytes4(0x4e487b71));
+        helper.failPanic();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDoubleExpectRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/DoubleExpectRevert.t.sol:DoubleExpectRevert
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkDoubleExpectRevert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_revert_missing_is_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_revert_missing_is_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectRevertMissing.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedNoop {
+    function noFail() external pure {}
+}
+
+contract SymbolicExpectRevertMissing is Test {
+    SymbolicExpectedNoop helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedNoop();
+    }
+
+    function checkMissingExpectedRevert(uint256) public {
+        vm.expectRevert();
+        helper.noFail();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMissingExpectedRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertMissing.t.sol:SymbolicExpectRevertMissing
+[FAIL: next call did not revert as expected; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMissingExpectedRevert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_revert_mismatch_is_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_revert_mismatch_is_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectRevertMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedMismatchReverter {
+    error Custom(uint256 value);
+
+    function failWithCustom(uint256 value) external pure {
+        revert Custom(value);
+    }
+}
+
+contract SymbolicExpectRevertMismatch is Test {
+    SymbolicExpectedMismatchReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedMismatchReverter();
+    }
+
+    function checkMismatchedExpectedRevert(uint256) public {
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedMismatchReverter.Custom.selector, uint256(1)));
+        helper.failWithCustom(2);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectedRevert",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertMismatch.t.sol:SymbolicExpectRevertMismatch
+[FAIL: Error != expected error: Custom(2) != Custom(1); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectedRevert(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_revert_accepts_symbolic_data(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_revert_accepts_symbolic_data because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectRevertSymbolicData.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedSymbolicReverter {
+    error Custom(uint256 value);
+
+    function failWithCustom(uint256 value) external pure {
+        revert Custom(value);
+    }
+
+    function failWithSelector(bytes4 selector) external pure {
+        assembly {
+            mstore(0, selector)
+            revert(0, 4)
+        }
+    }
+}
+
+contract SymbolicExpectRevertSymbolicData is Test {
+    SymbolicExpectedSymbolicReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedSymbolicReverter();
+    }
+
+    function checkSymbolicExpectedRevertPayload(uint256 value) public {
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedSymbolicReverter.Custom.selector, value));
+        helper.failWithCustom(value);
+    }
+
+    function checkSymbolicExpectedRevertSelector(bytes4 selector) public {
+        vm.expectRevert(selector);
+        helper.failWithSelector(selector);
+    }
+
+    function checkSymbolicExpectedReverter(address reverter) public {
+        vm.assume(reverter == address(helper));
+        vm.expectRevert(reverter);
+        helper.failWithCustom(9);
+    }
+
+    function checkSymbolicExpectedRevertMismatch(uint256 value) public {
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedSymbolicReverter.Custom.selector, uint256(7)));
+        helper.failWithCustom(value);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-contract",
+            "SymbolicExpectRevertSymbolicData",
+            "--match-test",
+            "checkSymbolicExpectedRevertPayload|checkSymbolicExpectedRevertSelector|checkSymbolicExpectedReverter",
+        ]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicExpectRevertSymbolicData.t.sol:SymbolicExpectRevertSymbolicData
+[PASS] checkSymbolicExpectedRevertPayload(uint256) ([METRICS])
+[PASS] checkSymbolicExpectedRevertSelector(bytes4) ([METRICS])
+[PASS] checkSymbolicExpectedReverter(address) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+        .get_output()
+        .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_revert_symbolic_data_mismatch_fails(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_revert_symbolic_data_mismatch_fails because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectRevertSymbolicMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedSymbolicMismatchReverter {
+    error Custom(uint256 value);
+
+    function failWithCustom(uint256 value) external pure {
+        revert Custom(value);
+    }
+}
+
+contract SymbolicExpectRevertSymbolicMismatch is Test {
+    SymbolicExpectedSymbolicMismatchReverter helper;
+
+    function setUp() public {
+        helper = new SymbolicExpectedSymbolicMismatchReverter();
+    }
+
+    function checkSymbolicExpectedRevertMismatch(uint256 value) public {
+        vm.expectRevert(abi.encodeWithSelector(SymbolicExpectedSymbolicMismatchReverter.Custom.selector, uint256(7)));
+        helper.failWithCustom(value);
+    }
+
+    function checkSymbolicExpectedReverterMismatch(address reverter) public {
+        vm.expectRevert(reverter);
+        helper.failWithCustom(7);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpectedRevertMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertSymbolicMismatch.t.sol:SymbolicExpectRevertSymbolicMismatch
+[FAIL: Error != expected error: Custom(0) != Custom(7); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicExpectedRevertMismatch(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic expected revert data"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicExpectedReverterMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectRevertSymbolicMismatch.t.sol:SymbolicExpectRevertSymbolicMismatch
+[FAIL: Reverter != expected reverter: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f != 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicExpectedReverterMismatch(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_emit_matches_external_logs(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_emit_matches_external_logs because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectEmit.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEmitter {
+    event Seen(address indexed who, uint256 indexed id, uint256 value);
+
+    function fire(address who, uint256 id, uint256 value) external {
+        emit Seen(who, id, value);
+    }
+
+    function fireTwice(address who, uint256 id, uint256 value) external {
+        emit Seen(who, id, value);
+        emit Seen(who, id, value);
+    }
+}
+
+contract SymbolicExpectEmit is Test {
+    event Seen(address indexed who, uint256 indexed id, uint256 value);
+
+    SymbolicEmitter emitter;
+
+    function setUp() public {
+        emitter = new SymbolicEmitter();
+    }
+
+    function checkExpectEmit(uint256) public {
+        vm.expectEmit(true, true, false, true, address(emitter));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fire(address(0xB0B), 7, 9);
+    }
+
+    function checkExpectEmitSymbolicEmitter(address expectedEmitter) public {
+        vm.assume(expectedEmitter == address(emitter));
+        vm.expectEmit(true, true, false, true, expectedEmitter);
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fire(address(0xB0B), 7, 9);
+    }
+
+    function checkExpectEmitCountOverloads(uint256) public {
+        vm.expectEmit(uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(address(emitter), uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(true, true, false, true, uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(true, true, false, true, address(emitter), uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectEmit",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicExpectEmit.t.sol:SymbolicExpectEmit
+[PASS] checkExpectEmit(uint256) ([METRICS])
+[PASS] checkExpectEmitCountOverloads(uint256) ([METRICS])
+[PASS] checkExpectEmitSymbolicEmitter(address) ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_emit_mismatch_is_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_emit_mismatch_is_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectEmitMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMismatchEmitter {
+    event Seen(address indexed who, uint256 indexed id, uint256 value);
+
+    function fire(address who, uint256 id, uint256 value) external {
+        emit Seen(who, id, value);
+    }
+}
+
+contract SymbolicExpectEmitMismatch is Test {
+    event Seen(address indexed who, uint256 indexed id, uint256 value);
+
+    SymbolicMismatchEmitter emitter;
+
+    function setUp() public {
+        emitter = new SymbolicMismatchEmitter();
+    }
+
+    function checkMismatchedExpectEmit(uint256) public {
+        vm.expectEmit(true, true, false, true, address(emitter));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fire(address(0xB0B), 8, 9);
+    }
+
+    function checkMismatchedExpectEmitSymbolicEmitter(address expectedEmitter) public {
+        vm.expectEmit(true, true, false, true, expectedEmitter);
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fire(address(0xB0B), 7, 9);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectEmit",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
+[FAIL: Seen param mismatch at id: expected=7, got=8; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmit(uint256) ([METRICS])
+[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMismatchedExpectEmitSymbolicEmitter",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectEmitMismatch.t.sol:SymbolicExpectEmitMismatch
+[FAIL: log emitter mismatch: expected=0xffffffffffffffffffffffffffffffffffffffff, got=0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMismatchedExpectEmitSymbolicEmitter(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_call_matches_and_reports_missing(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_call_matches_and_reports_missing because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicExpectCall.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicExpectedCallTarget {
+    function ping(uint256 value) external pure returns (uint256) {
+        return value + 1;
+    }
+}
+
+contract SymbolicExpectCall is Test {
+    SymbolicExpectedCallTarget target;
+
+    function setUp() public {
+        target = new SymbolicExpectedCallTarget();
+    }
+
+    function checkExpectCallMatches(uint256) public {
+        vm.expectCall(
+            address(target),
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(7))
+        );
+        assertEq(target.ping(7), 8);
+
+        vm.expectCall(address(target), 0, abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(9)), 1);
+        assertEq(target.ping(9), 10);
+    }
+
+    function checkExpectCallGasUnsupported(uint256) public {
+        vm.expectCall(
+            address(target),
+            0,
+            uint64(50000),
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(13))
+        );
+        assertEq(target.ping(13), 14);
+
+        vm.expectCallMinGas(
+            address(target),
+            0,
+            uint64(25000),
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(14))
+        );
+        assertEq(target.ping(14), 15);
+    }
+
+    function checkExpectCallSymbolicCallee(address expectedCallee) public {
+        vm.assume(expectedCallee == address(target));
+        vm.expectCall(
+            expectedCallee,
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(7))
+        );
+        assertEq(target.ping(7), 8);
+    }
+
+    function checkExpectCallMissing(uint256) public {
+        vm.expectCall(
+            address(target),
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(11))
+        );
+    }
+
+    function checkSymbolicCalleeExpectedCallMismatch(address expectedCallee) public {
+        vm.expectCall(
+            expectedCallee,
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(7))
+        );
+        assertEq(target.ping(7), 8);
+    }
+
+    function checkExpectCallMinGasMissing(uint256) public {
+        vm.expectCallMinGas(
+            address(target),
+            0,
+            uint64(60000),
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(15))
+        );
+        assertEq(target.ping{gas: 50000}(15), 16);
+    }
+
+    function checkExpectCallAdditive(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(2));
+        vm.expectCall(address(target), data);
+        vm.expectCall(address(target), data);
+        assertEq(target.ping(2), 3);
+        assertEq(target.ping(2), 3);
+    }
+
+    function checkExpectCallCountedDuplicateReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(3));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes,uint64)", address(target), data, uint64(1))
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "counted expected calls can only bet set once"
+                )
+            )
+        );
+        assertEq(target.ping(3), 4);
+    }
+
+    function checkExpectCallNonCountedOverCountedReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(4));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes)", address(target), data)
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "cannot overwrite a counted expectCall with a non-counted expectCall"
+                )
+            )
+        );
+        assertEq(target.ping(4), 5);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallMatches",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallMatches(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallGasUnsupported",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expected call gas] checkExpectCallGasUnsupported(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallSymbolicCallee",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallSymbolicCallee(address) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallMissing",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x773acdef000000000000000000000000000000000000000000000000000000000000000b to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallMissing(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicCalleeExpectedCallMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: expected call to 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF with data 0x773acdef0000000000000000000000000000000000000000000000000000000000000007 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicCalleeExpectedCallMismatch(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallMinGasMissing",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: explicit CALL gas limit not modeled] checkExpectCallMinGasMissing(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallAdditive",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallAdditive(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkExpectCallCountedDuplicateReverts|checkExpectCallNonCountedOverCountedReverts)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 2 tests for test/SymbolicExpectCall.t.sol:SymbolicExpectCall
+[PASS] checkExpectCallCountedDuplicateReverts(uint256) ([METRICS])
+[PASS] checkExpectCallNonCountedOverCountedReverts(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
+}
+
+#[forgetest_init]
+fn symbolic_vm_mock_call_returns_and_reverts(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_mock_call_returns_and_reverts because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMockCall.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IMockedTarget {
+    function value(uint256 input) external returns (uint256);
+}
+
+contract SymbolicMockCall is Test {
+    function checkMockCall(uint256) public {
+        address target = address(0x1234);
+
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(99))
+        );
+        assertEq(IMockedTarget(target).value(1), 99);
+
+        vm.mockCallRevert(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(2)),
+            abi.encodeWithSignature("Error(string)", "mocked")
+        );
+        (bool ok, bytes memory data) =
+            target.call(abi.encodeWithSelector(IMockedTarget.value.selector, uint256(2)));
+        assertFalse(ok);
+        assertGt(data.length, 0);
+    }
+
+    function checkMockCallSymbolicCallee(address mocked) public {
+        address target = address(0x1234);
+        vm.assume(mocked == target);
+
+        vm.mockCall(
+            mocked,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(99))
+        );
+        assertEq(IMockedTarget(target).value(1), 99);
+    }
+
+    function checkSymbolicCalleeMockMismatch(address mocked) public {
+        address target = address(0x1234);
+
+        vm.mockCall(
+            mocked,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(99))
+        );
+        (bool ok, bytes memory data) =
+            target.call(abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)));
+        uint256 value = data.length == 32 ? abi.decode(data, (uint256)) : 0;
+        assertTrue(ok);
+        assertEq(value, 99);
+    }
+
+    function checkSelectorMockCallsAndClear(uint256 input) public {
+        address target = address(0x4567);
+        bytes[] memory returnValues = new bytes[](2);
+        returnValues[0] = abi.encode(uint256(100));
+        returnValues[1] = abi.encode(uint256(200));
+
+        vm.mockCalls(target, abi.encodePacked(IMockedTarget.value.selector), returnValues);
+        assertEq(IMockedTarget(target).value(input), 100);
+        assertEq(IMockedTarget(target).value(1), 200);
+        assertEq(IMockedTarget(target).value(2), 200);
+
+        vm.clearMockedCalls();
+        (bool ok, bytes memory data) =
+            target.call(abi.encodeWithSelector(IMockedTarget.value.selector, input));
+        assertTrue(ok);
+        assertEq(data.length, 0);
+    }
+
+    function checkMockCallsAcceptsSymbolicData(address mocked, uint256 input) public {
+        address target = address(0x4567);
+        vm.assume(mocked == target);
+        vm.assume(input < type(uint256).max - 2);
+
+        bytes[] memory returnValues = new bytes[](2);
+        returnValues[0] = abi.encode(input + 1);
+        returnValues[1] = abi.encode(input + 2);
+
+        vm.mockCalls(
+            mocked,
+            abi.encodeWithSelector(IMockedTarget.value.selector, input),
+            returnValues
+        );
+        assertEq(IMockedTarget(target).value(input), input + 1);
+        assertEq(IMockedTarget(target).value(input), input + 2);
+        assertEq(IMockedTarget(target).value(input), input + 2);
+    }
+
+    function checkMockCallRemockReplacesStaleValue(uint256) public {
+        address target = address(0x1234);
+
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(10))
+        );
+        assertEq(IMockedTarget(target).value(1), 10);
+
+        // Re-registering the same mock replaces its return value.
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(20))
+        );
+        assertEq(IMockedTarget(target).value(1), 20);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkMockCall"]))
+            .success()
+            .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkMockCall(uint256) ([METRICS])
+[PASS] checkMockCallRemockReplacesStaleValue(uint256) ([METRICS])
+[PASS] checkMockCallSymbolicCallee(address) ([METRICS])
+[PASS] checkMockCallsAcceptsSymbolicData(address,uint256) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelectorMockCallsAndClear",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkSelectorMockCallsAndClear(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallsAcceptsSymbolicData",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkMockCallsAcceptsSymbolicData(address,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.mockCalls"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicCalleeMockMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[FAIL: assertion failed: 0 != 99; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicCalleeMockMismatch(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallRemockReplacesStaleValue",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMockCall.t.sol:SymbolicMockCall
+[PASS] checkMockCallRemockReplacesStaleValue(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicUnpinnedCallValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IValueTarget {
+    function ping(uint256 input) external payable returns (uint256);
+}
+
+contract ValueTarget {
+    function ping(uint256 input) external payable returns (uint256) {
+        return input + msg.value;
+    }
+}
+
+contract SymbolicUnpinnedCallValue is Test {
+    ValueTarget target;
+
+    function setUp() public {
+        target = new ValueTarget();
+    }
+
+    function checkExpectCallAllowsSymbolicValue(uint8 amount) public {
+        vm.assume(amount <= 1);
+        vm.deal(address(this), 1);
+
+        vm.expectCall(
+            address(target),
+            abi.encodeWithSelector(ValueTarget.ping.selector, uint256(7))
+        );
+
+        assertEq(target.ping{value: amount}(7), 7 + amount);
+    }
+
+    function checkMockCallAllowsSymbolicValue(uint8 amount) public {
+        vm.assume(amount <= 1);
+        address mocked = address(0xBEEF);
+
+        vm.mockCall(
+            mocked,
+            abi.encodeWithSelector(IValueTarget.ping.selector, uint256(3)),
+            abi.encode(uint256(44))
+        );
+
+        assertEq(IValueTarget(mocked).ping{value: amount}(3), 44);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicUnpinnedCallValue",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicUnpinnedCallValue.t.sol:SymbolicUnpinnedCallValue
+[PASS] checkExpectCallAllowsSymbolicValue(uint8) ([METRICS])
+[PASS] checkMockCallAllowsSymbolicValue(uint8) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
+    assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_call_expectations_branch_symbolic_pinned_value(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_call_expectations_branch_symbolic_pinned_value because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicPinnedCallValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IPinnedValueTarget {
+    function ping(uint256 input) external payable returns (uint256);
+}
+
+contract PinnedValueTarget {
+    function ping(uint256 input) external payable returns (uint256) {
+        return input + msg.value;
+    }
+}
+
+contract SymbolicPinnedCallValue is Test {
+    PinnedValueTarget target;
+
+    function setUp() public {
+        target = new PinnedValueTarget();
+    }
+
+    function checkExpectCallPinnedValueFindsMismatch(uint8 amount) public {
+        vm.assume(amount <= 1);
+        vm.deal(address(this), 1);
+
+        vm.expectCall(
+            address(target),
+            uint256(1),
+            abi.encodeWithSelector(PinnedValueTarget.ping.selector, uint256(7)),
+            1
+        );
+
+        assertEq(target.ping{value: amount}(7), 7 + amount);
+    }
+
+    function checkMockCallPinnedValueMatches(uint8 amount) public {
+        vm.assume(amount == 1);
+        vm.deal(address(this), 1);
+        address mocked = address(0xCAFE);
+
+        vm.mockCall(
+            mocked,
+            uint256(1),
+            abi.encodeWithSelector(IPinnedValueTarget.ping.selector, uint256(3)),
+            abi.encode(uint256(44))
+        );
+
+        assertEq(IPinnedValueTarget(mocked).ping{value: amount}(3), 44);
+    }
+
+    function checkMockCallPinnedValueFindsMismatch(uint8 amount) public {
+        vm.assume(amount <= 1);
+        vm.deal(address(this), 1);
+        address mocked = address(0xBEEF);
+
+        vm.mockCall(
+            mocked,
+            uint256(1),
+            abi.encodeWithSelector(IPinnedValueTarget.ping.selector, uint256(3)),
+            abi.encode(uint256(44))
+        );
+
+        (bool ok, bytes memory data) = mocked.call{value: amount}(
+            abi.encodeWithSelector(IPinnedValueTarget.ping.selector, uint256(3))
+        );
+        assertTrue(ok);
+        assertEq(data.length, 32);
+        assertEq(abi.decode(data, (uint256)), 44);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkExpectCallPinnedValueFindsMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x773acdef0000000000000000000000000000000000000000000000000000000000000007, value 1 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallPinnedValueFindsMismatch(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallPinnedValueMatches",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[PASS] checkMockCallPinnedValueMatches(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkMockCallPinnedValueFindsMismatch",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPinnedCallValue.t.sol:SymbolicPinnedCallValue
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockCallPinnedValueFindsMismatch(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_expect_and_mock_call_accept_symbolic_data(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_expect_and_mock_call_accept_symbolic_data because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCallDataCheatcodes.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ISymbolicDataTarget {
+    function value(uint256 input) external returns (uint256);
+}
+
+contract SymbolicDataTarget {
+    function value(uint256 input) external pure returns (uint256) {
+        return input;
+    }
+}
+
+contract SymbolicFunctionMockTarget {
+    function value(uint256 input) external pure returns (uint256) {
+        return input + 10;
+    }
+}
+
+contract SymbolicCallDataCheatcodes is Test {
+    SymbolicDataTarget target;
+    SymbolicFunctionMockTarget functionTarget;
+
+    function setUp() public {
+        target = new SymbolicDataTarget();
+        functionTarget = new SymbolicFunctionMockTarget();
+    }
+
+    function checkExpectCallAcceptsSymbolicData(uint256 input) public {
+        vm.expectCall(
+            address(target),
+            abi.encodeWithSelector(SymbolicDataTarget.value.selector, input)
+        );
+
+        assertEq(target.value(input), input);
+    }
+
+    function checkMockCallAcceptsSymbolicDataAndReturn(uint256 input) public {
+        address mocked = address(0xDADA);
+
+        vm.mockCall(
+            mocked,
+            abi.encodeWithSelector(ISymbolicDataTarget.value.selector, input),
+            abi.encode(input + 1)
+        );
+
+        assertEq(ISymbolicDataTarget(mocked).value(input), input + 1);
+    }
+
+    function checkMockCallAcceptsSymbolicBytes4Selector(bytes4 selector) public {
+        vm.assume(selector == ISymbolicDataTarget.value.selector);
+        address mocked = address(0xFACE);
+
+        vm.mockCall(mocked, selector, abi.encode(uint256(99)));
+
+        assertEq(ISymbolicDataTarget(mocked).value(1), 99);
+    }
+
+    function checkMockFunctionAcceptsSymbolicData(uint256 input) public {
+        address mocked = address(0xF00D);
+
+        vm.mockFunction(
+            mocked,
+            address(functionTarget),
+            abi.encodeWithSelector(ISymbolicDataTarget.value.selector, input)
+        );
+
+        assertEq(ISymbolicDataTarget(mocked).value(input), input + 10);
+    }
+
+    function checkMockFunctionAcceptsSymbolicCallee(address mocked, uint256 input) public {
+        address actual = address(0xF00D);
+        vm.assume(mocked == actual);
+
+        vm.mockFunction(
+            mocked,
+            address(functionTarget),
+            abi.encodeWithSelector(ISymbolicDataTarget.value.selector, input)
+        );
+
+        assertEq(ISymbolicDataTarget(actual).value(input), input + 10);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicCallDataCheatcodes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicCallDataCheatcodes.t.sol:SymbolicCallDataCheatcodes
+[PASS] checkExpectCallAcceptsSymbolicData(uint256) ([METRICS])
+[PASS] checkMockCallAcceptsSymbolicBytes4Selector(bytes4) ([METRICS])
+[PASS] checkMockCallAcceptsSymbolicDataAndReturn(uint256) ([METRICS])
+[PASS] checkMockFunctionAcceptsSymbolicCallee(address,uint256) ([METRICS])
+[PASS] checkMockFunctionAcceptsSymbolicData(uint256) ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_call_data_match_branches_find_mismatch(prj: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_call_data_match_branches_find_mismatch because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCallDataMismatch.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ISymbolicCallDataMismatchTarget {
+    function value(uint256 input) external returns (uint256);
+}
+
+contract SymbolicCallDataMismatchTarget {
+    function value(uint256 input) external pure returns (uint256) {
+        return input;
+    }
+}
+
+contract SymbolicFunctionMockMismatchTarget {
+    function value(uint256 input) external pure returns (uint256) {
+        return input + 10;
+    }
+}
+
+contract SymbolicCallDataMismatch is Test {
+    SymbolicCallDataMismatchTarget target;
+    SymbolicFunctionMockMismatchTarget functionTarget;
+
+    function setUp() public {
+        target = new SymbolicCallDataMismatchTarget();
+        functionTarget = new SymbolicFunctionMockMismatchTarget();
+    }
+
+    function checkExpectCallSymbolicDataFindsMismatch(uint256 expected, uint256 actual) public {
+        vm.expectCall(
+            address(target),
+            abi.encodeWithSelector(SymbolicCallDataMismatchTarget.value.selector, expected)
+        );
+
+        target.value(actual);
+    }
+
+    function checkMockCallSymbolicDataFindsMismatch(uint256 expected, uint256 actual) public {
+        address mocked = address(0xDADA);
+
+        vm.mockCall(
+            mocked,
+            abi.encodeWithSelector(ISymbolicCallDataMismatchTarget.value.selector, expected),
+            abi.encode(uint256(99))
+        );
+
+        (bool ok, bytes memory data) =
+            mocked.call(abi.encodeWithSelector(ISymbolicCallDataMismatchTarget.value.selector, actual));
+        assertTrue(ok);
+        assertEq(data.length, 32);
+        assertEq(abi.decode(data, (uint256)), 99);
+    }
+
+    function checkMockFunctionSymbolicDataFindsMismatch(uint256 expected, uint256 actual) public {
+        address mocked = address(0xF00D);
+
+        vm.mockFunction(
+            mocked,
+            address(functionTarget),
+            abi.encodeWithSelector(ISymbolicCallDataMismatchTarget.value.selector, expected)
+        );
+
+        (bool ok, bytes memory data) =
+            mocked.call(abi.encodeWithSelector(ISymbolicCallDataMismatchTarget.value.selector, actual));
+        assertTrue(ok);
+        assertEq(data.length, 32);
+        assertEq(abi.decode(data, (uint256)), actual + 10);
+    }
+
+    function checkMockFunctionSymbolicCalleeFindsMismatch(address mocked) public {
+        address actual = address(0xF00D);
+
+        vm.mockFunction(
+            mocked,
+            address(functionTarget),
+            abi.encodeWithSelector(ISymbolicCallDataMismatchTarget.value.selector, uint256(1))
+        );
+
+        (bool ok, bytes memory data) =
+            actual.call(abi.encodeWithSelector(ISymbolicCallDataMismatchTarget.value.selector, uint256(1)));
+        assertTrue(ok);
+        assertEq(data.length, 32);
+        assertEq(abi.decode(data, (uint256)), uint256(11));
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkExpectCallSymbolicDataFindsMismatch|checkMockCallSymbolicDataFindsMismatch|checkMockFunctionSymbolicDataFindsMismatch|checkMockFunctionSymbolicCalleeFindsMismatch)\\(",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicCallDataMismatch.t.sol:SymbolicCallDataMismatch
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc5a46ee60000000000000000000000000000000000000000000000000000000000000001 to be called 1 time, but was called 0 times; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkExpectCallSymbolicDataFindsMismatch(uint256,uint256) ([METRICS])
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockCallSymbolicDataFindsMismatch(uint256,uint256) ([METRICS])
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionSymbolicCalleeFindsMismatch(address) ([METRICS])
+[FAIL: assertion failed: 0 != 32; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMockFunctionSymbolicDataFindsMismatch(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]].unordered())
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic vm.expectCall", "symbolic vm.mockCall", "symbolic vm.mockFunction"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_vm_record_accesses_tracks_symbolic_slots(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_record_accesses_tracks_symbolic_slots because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRecordAccesses.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRevertingStorageTarget {
+    function storeThenRevert(bytes32 slot, bytes32 stored) external {
+        assembly {
+            sstore(slot, stored)
+        }
+        revert();
+    }
+}
+
+contract SymbolicRecordAccesses is Test {
+    function checkRecordAccesses(bytes32 slot, bytes32 stored) public {
+        vm.record();
+
+        bytes32 loadedSlot;
+        assembly {
+            sstore(slot, stored)
+            loadedSlot := sload(slot)
+        }
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(this));
+        assertEq(loadedSlot, stored);
+        assertEq(reads.length, 1);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(writes[0], slot);
+
+        vm.stopRecord();
+    }
+
+    function checkRecordAccessesSymbolicTarget(address target, bytes32 slot, bytes32 stored) public {
+        vm.assume(target == address(this));
+        vm.record();
+
+        bytes32 loadedSlot;
+        assembly {
+            sstore(slot, stored)
+            loadedSlot := sload(slot)
+        }
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
+        assertEq(loadedSlot, stored);
+        assertEq(reads.length, 1);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(writes[0], slot);
+
+        vm.stopRecord();
+    }
+
+    function checkRecordAccessesSymbolicTargetBranches(address target, bytes32 slot, bytes32 stored) public {
+        address other = address(0xBEEF);
+        vm.assume(target == address(this) || target == other);
+        vm.record();
+
+        bytes32 loadedSlot;
+        assembly {
+            sstore(slot, stored)
+            loadedSlot := sload(slot)
+        }
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(target);
+        assertEq(loadedSlot, stored);
+        if (target == address(this)) {
+            assertEq(reads.length, 1);
+            assertEq(writes.length, 1);
+            assertEq(reads[0], slot);
+            assertEq(writes[0], slot);
+        } else {
+            assertEq(reads.length, 0);
+            assertEq(writes.length, 0);
+        }
+
+        vm.stopRecord();
+    }
+
+    function testRecordRevertedChildAccesses() public {
+        recordRevertedChildAccesses();
+    }
+
+    function checkRecordAccessesRevertedChild() public {
+        recordRevertedChildAccesses();
+    }
+
+    function recordRevertedChildAccesses() internal {
+        SymbolicRevertingStorageTarget target = new SymbolicRevertingStorageTarget();
+        bytes32 slot = bytes32(uint256(7));
+
+        vm.record();
+        (bool ok,) = address(target).call(
+            abi.encodeCall(target.storeThenRevert, (slot, bytes32(uint256(1))))
+        );
+        assertFalse(ok);
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        assertEq(reads.length, 1);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(writes[0], slot);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
+    cmd.forge_fuse();
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkRecordAccesses",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicRecordAccesses.t.sol:SymbolicRecordAccesses
+[PASS] checkRecordAccesses(bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesRevertedChild() ([METRICS])
+[PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32) ([METRICS])
+[PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32) ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(
+        stdout
+            .contains("[PASS] checkRecordAccessesSymbolicTargetBranches(address,bytes32,bytes32)"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+    assert!(!stdout.contains("symbolic vm.accesses address"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_bound_skip_and_gas_noops(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_bound_skip_and_gas_noops because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBoundSkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SymbolicVmCompat {
+    enum CallerMode {
+        None,
+        Broadcast,
+        RecurrentBroadcast,
+        Prank,
+        RecurrentPrank
+    }
+
+    enum ForgeContext {
+        TestGroup,
+        Test,
+        Coverage,
+        Snapshot,
+        ScriptGroup,
+        ScriptDryRun,
+        ScriptBroadcast,
+        ScriptResume,
+        Unknown
+    }
+
+    function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);
+    function isContext(ForgeContext context) external view returns (bool result);
+}
+
+contract SymbolicBoundSkip is Test {
+    function externalNoop() external {}
+
+    function checkBoundSkipAndGasNoops(uint256 x, int256 y) public {
+        vm.pauseGasMetering();
+        vm.resumeGasMetering();
+        vm.resetGasMetering();
+        vm.assume(x >= 10 && x <= 12);
+        uint256 bounded = vm.bound(x, 10, 12);
+        assertGe(bounded, 10);
+        assertLe(bounded, 12);
+
+        vm.assume(y >= -3 && y <= 3);
+        int256 signedBounded = vm.bound(y, -3, 3);
+        assertGe(signedBounded, -3);
+        assertLe(signedBounded, 3);
+
+        vm.skip(x == 42);
+        assertTrue(x != 42);
+    }
+
+    function checkVmCompatibilityTail() public {
+        SymbolicVmCompat compat = SymbolicVmCompat(address(vm));
+        SymbolicVmCompat.CallerMode mode;
+        address sender;
+        (mode,,) = compat.readCallers();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.None));
+
+        vm.prank(address(0xB0B));
+        (mode, sender,) = compat.readCallers();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.Prank));
+        assertEq(sender, address(0xB0B));
+        vm.stopPrank();
+
+        vm.startPrank(address(0xCAFE));
+        (mode, sender,) = compat.readCallers();
+        assertEq(uint256(mode), uint256(SymbolicVmCompat.CallerMode.RecurrentPrank));
+        assertEq(sender, address(0xCAFE));
+        vm.stopPrank();
+
+        vm.allowCheatcodes(address(this));
+        vm.makePersistent(address(this));
+        assertTrue(vm.isPersistent(address(this)));
+        address[] memory accounts = new address[](1);
+        accounts[0] = address(0xBEEF);
+        vm.makePersistent(accounts);
+        assertTrue(vm.isPersistent(address(0xBEEF)));
+        vm.revokePersistent(address(this));
+        vm.revokePersistent(accounts);
+        assertFalse(vm.isPersistent(address(this)));
+        assertFalse(vm.isPersistent(address(0xBEEF)));
+
+        vm.label(address(this), "self");
+        assertEq(vm.getLabel(address(this)), "self");
+        vm.snapshotValue("value", 1);
+        vm.snapshotValue("group", "value", 1);
+        vm.cool(address(this));
+        vm.warmSlot(address(this), bytes32(uint256(1)));
+        vm.coolSlot(address(this), bytes32(uint256(1)));
+        vm.noAccessList();
+        assertEq(vm.getChainId(), block.chainid);
+        assertTrue(bytes(vm.projectRoot()).length != 0);
+        assertTrue(vm.unixTime() != 0);
+        assertTrue(compat.isContext(SymbolicVmCompat.ForgeContext.TestGroup));
+        assertTrue(compat.isContext(SymbolicVmCompat.ForgeContext.Test));
+        assertFalse(compat.isContext(SymbolicVmCompat.ForgeContext.ScriptGroup));
+        assertTrue(vm.isIsolateMode());
+    }
+
+    function checkRuntimeNoopsAndArrayAssertions() public {
+        vm.breakpoint("symbolic");
+        vm.breakpoint("symbolic", true);
+        assertTrue(bytes(vm.getFoundryVersion()).length != 0);
+        vm.sleep(0);
+        Vm.AccessListItem[] memory access = new Vm.AccessListItem[](0);
+        vm.accessList(access);
+
+        uint256[] memory left = new uint256[](1);
+        uint256[] memory right = new uint256[](1);
+        left[0] = 1;
+        right[0] = 1;
+        assertEq(left, right);
+        right[0] = 2;
+        assertNotEq(left, right);
+
+        string[] memory words = new string[](1);
+        string[] memory sameWords = new string[](1);
+        words[0] = "foundry";
+        sameWords[0] = "foundry";
+        assertEq(words, sameWords);
+
+        assertEqDecimal(uint256(1e18), uint256(1e18), 18);
+        assertEqDecimal(int256(-1e18), int256(-1e18), 18);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBoundSkip",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 3 tests for test/SymbolicBoundSkip.t.sol:SymbolicBoundSkip
+[PASS] checkBoundSkipAndGasNoops(uint256,int256) ([METRICS])
+[PASS] checkRuntimeNoopsAndArrayAssertions() ([METRICS])
+[PASS] checkVmCompatibilityTail() ([METRICS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_bound_invalid_range_fails_without_stuck(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_bound_invalid_range_fails_without_stuck because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBoundInvalid.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicBoundInvalid is Test {
+    function checkInvalidUnsignedBound(uint256 x) public {
+        vm.bound(x, 12, 10);
+    }
+
+    function checkInvalidSignedBound(int256 x) public {
+        vm.bound(x, 3, -3);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicBoundInvalid",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicBoundInvalid.t.sol:SymbolicBoundInvalid
+[FAIL: vm.bound: cannot bound 0 in [3, -3] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidSignedBound(int256) ([METRICS])
+[FAIL: vm.bound: cannot bound 0 in [12, 10] range; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkInvalidUnsignedBound(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.bound range"), "{stdout}");
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_vm_assume_no_revert_filters_revert_matches(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_assume_no_revert_filters_revert_matches because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicAssumeNoRevertFilters.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SymbolicVm {
+    struct PotentialRevert {
+        address reverter;
+        bool partialMatch;
+        bytes revertData;
+    }
+
+    function assume(bool condition) external pure;
+    function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
+    function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
+}
+
+error Expected(uint256 value);
+error Other(uint256 value);
+
+contract SymbolicAssumeNoRevertFilterTarget {
+    function onlyExpected(uint256 x) external pure {
+        if (x == 7) revert Expected(7);
+    }
+
+    function twoReverts(uint256 x) external pure {
+        if (x == 7) revert Expected(x);
+        if (x == 9) revert Other(x);
+    }
+}
+
+contract SymbolicAssumeNoRevertOtherTarget {
+    function onlyExpected(uint256 x) external pure {
+        if (x == 7) revert Expected(7);
+    }
+}
+
+contract SymbolicAssumeNoRevertFilters is Test {
+    SymbolicAssumeNoRevertFilterTarget target;
+    SymbolicAssumeNoRevertOtherTarget other;
+    SymbolicVm symbolicVm = SymbolicVm(VM_ADDRESS);
+
+    function setUp() public {
+        target = new SymbolicAssumeNoRevertFilterTarget();
+        other = new SymbolicAssumeNoRevertOtherTarget();
+    }
+
+    function checkAssumeNoRevertExactFilterPrunes(uint256 x) public {
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Expected.selector, uint256(7))
+        }));
+
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertArrayFilterPrunes(uint256 x) public {
+        SymbolicVm.PotentialRevert[] memory filters = new SymbolicVm.PotentialRevert[](2);
+        filters[0] = SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: true,
+            revertData: abi.encodeWithSelector(Expected.selector)
+        });
+        filters[1] = SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Other.selector, uint256(9))
+        });
+        symbolicVm.assumeNoRevert(filters);
+
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertWrongDataFails(uint256 x) public {
+        symbolicVm.assume(x == 9);
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(target),
+            partialMatch: false,
+            revertData: abi.encodeWithSelector(Other.selector, uint256(8))
+        }));
+
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.twoReverts.selector, x));
+        assertTrue(ok);
+    }
+
+    function checkAssumeNoRevertWrongReverterFails(uint256 x) public {
+        symbolicVm.assume(x == 7);
+        symbolicVm.assumeNoRevert(SymbolicVm.PotentialRevert({
+            reverter: address(other),
+            partialMatch: true,
+            revertData: abi.encodeWithSelector(Expected.selector)
+        }));
+
+        (bool ok,) = address(target).call(abi.encodeWithSelector(target.onlyExpected.selector, x));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkAssumeNoRevert.*Prunes",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[PASS] checkAssumeNoRevertArrayFilterPrunes(uint256) ([METRICS])
+[PASS] checkAssumeNoRevertExactFilterPrunes(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+
+    let stdout = assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkAssumeNoRevertWrongDataFails|checkAssumeNoRevertWrongReverterFails)\\(",
+    ]))
+    .failure()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 2 tests for test/SymbolicAssumeNoRevertFilters.t.sol:SymbolicAssumeNoRevertFilters
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongDataFails(uint256) ([METRICS])
+[FAIL: assertion failed; counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkAssumeNoRevertWrongReverterFails(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    )
+    .get_output()
+    .stdout_lossy();
+    for reason in ["symbolic vm.assumeNoRevert", "symbolic Foundry cheatcode"] {
+        assert!(!stdout.contains(reason), "{stdout}");
+    }
+}
+
+// The `vm.prank(address, bool delegateCall)` overload diverges from concrete
+// Forge semantics when `delegateCall == true`: the engine does not model
+// pranking through a delegatecall frame, so this branch must fail closed as
+// Unsupported rather than silently behaving like the address-only overload.
+#[forgetest_init]
+fn symbolic_vm_prank_delegatecall_overload_reports_unsupported(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_prank_delegatecall_overload_reports_unsupported because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicPrankDelegateCall.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Probe {
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+contract SymbolicPrankDelegateCall is Test {
+    Probe probe;
+
+    function setUp() public {
+        probe = new Probe();
+    }
+
+    function checkPrankDelegateCall(address who) public {
+        vm.prank(who, true);
+        probe.sender();
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkPrankDelegateCall",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPrankDelegateCall.t.sol:SymbolicPrankDelegateCall
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic vm.prank delegatecall] checkPrankDelegateCall(address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_vm_deploy_code_models_constructor_outcomes(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_deploy_code_models_constructor_outcomes because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeployCodeCheatcode.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+interface SymbolicDeployCodeVm {
+    function randomBool() external view returns (bool);
+}
+
+contract OkDeployCodeCtor {
+    uint256 public value = 1;
+}
+
+contract RevertingDeployCodeCtor {
+    event ConstructorLog();
+
+    constructor() {
+        emit ConstructorLog();
+        require(false, "ctor");
+    }
+}
+
+contract EnvBranchingDeployCodeCtor {
+    SymbolicDeployCodeVm constant VM =
+        SymbolicDeployCodeVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    constructor() {
+        if (VM.randomBool()) {
+            revert("branch");
+        }
+    }
+}
+
+contract SelfDestructDeployCodeCtor {
+    constructor() payable {
+        selfdestruct(payable(msg.sender));
+    }
+}
+
+contract SymbolicDeployCodeCheatcode is Test {
+    string constant TARGET = "test/SymbolicDeployCodeCheatcode.t.sol";
+
+    function checkDeployCodeExpectedRevert() public {
+        vm.recordLogs();
+        vm.expectRevert();
+        vm.deployCode(string.concat(TARGET, ":RevertingDeployCodeCtor"));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
+    }
+
+    function checkDeployCodeBranchingConstructor() public {
+        vm.deployCode(string.concat(TARGET, ":EnvBranchingDeployCodeCtor"));
+    }
+
+    function checkDeployCodeStaticContext() public {
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.helperDeployCode, ()));
+        assertFalse(ok);
+    }
+
+    function helperDeployCode() external {
+        vm.deployCode(string.concat(TARGET, ":OkDeployCodeCtor"));
+    }
+
+    function checkDeployCodeSelfDestructConstructor() public {
+        address deployed = vm.deployCode(string.concat(TARGET, ":SelfDestructDeployCodeCtor"));
+        assertEq(deployed.code.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicDeployCodeCheatcode",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/SymbolicDeployCodeCheatcode.t.sol:SymbolicDeployCodeCheatcode
+[PASS] checkDeployCodeBranchingConstructor() ([METRICS])
+[PASS] checkDeployCodeExpectedRevert() ([METRICS])
+[PASS] checkDeployCodeSelfDestructConstructor() ([METRICS])
+[PASS] checkDeployCodeStaticContext() ([METRICS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic vm.deployCode"), "{stdout}");
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+}
+
+#[forgetest_init]
+fn storage_hook_cheatcodes_concrete_and_symbolic(prj: _, cmd: _) {
+    prj.add_test(
+        "StorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSloadHook(address target, bytes4 callback) external;
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookTarget {
+    event Stored(uint256 value);
+
+    uint256 public value;
+    mapping(address => uint256) public balances;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+
+    function storeTwice(uint256 first, uint256 second) external {
+        value = first;
+        value = second;
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        value = newValue;
+        revert("target revert");
+    }
+
+    function setBalance(address account, uint256 newValue) external {
+        balances[account] = newValue;
+    }
+
+    function storeAndEmit(uint256 newValue) external {
+        value = newValue;
+        emit Stored(newValue);
+    }
+
+    function storeAfterReturningCall(address returner, uint256 newValue)
+        external
+        returns (uint256 returnDataSize)
+    {
+        (bool ok,) = returner.staticcall(abi.encodeWithSignature("answer()"));
+        require(ok);
+        assembly {
+            sstore(0, newValue)
+            returnDataSize := returndatasize()
+        }
+    }
+}
+
+contract StorageHookReturner {
+    function answer() external pure returns (uint256) {
+        return 42;
+    }
+}
+
+contract StorageHookGasProbe {
+    function readCost(StorageHookTarget target) external view returns (uint256) {
+        uint256 gasBefore = gasleft();
+        target.value();
+        return gasBefore - gasleft();
+    }
+}
+
+contract StorageHookDepthTarget {
+    uint256 public value;
+
+    function recurse(uint256 remaining) external returns (bool) {
+        if (remaining == 0) {
+            return value == 0;
+        }
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeCall(this.recurse, (remaining - 1)));
+        return ok && abi.decode(data, (bool));
+    }
+}
+
+contract StorageHookCaller {
+    function store(StorageHookTarget target, uint256 newValue) external {
+        target.store(newValue);
+    }
+}
+
+contract StorageHookImplementation {
+    function store(uint256 newValue) external {
+        assembly {
+            sstore(0, newValue)
+        }
+    }
+}
+
+contract StorageHookProxy {
+    address immutable implementation;
+
+    constructor(address implementation_) {
+        implementation = implementation_;
+    }
+
+    function store(uint256 newValue) external {
+        (bool ok, bytes memory data) =
+            implementation.delegatecall(abi.encodeCall(StorageHookImplementation.store, (newValue)));
+        if (!ok) {
+            assembly {
+                revert(add(data, 32), mload(data))
+            }
+        }
+    }
+}
+
+contract ConstructorStorageHook {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256 public ghostValue;
+
+    constructor(address target) {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        ghostValue = uint256(newValue);
+    }
+
+    function registerThenRevert(address target) external {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+        revert("after registration");
+    }
+}
+
+contract ConstructorStoreTarget {
+    uint256 public value;
+
+    constructor(uint256 newValue) {
+        value = newValue;
+    }
+}
+
+contract StorageHooksTest is Test {
+    event Stored(uint256 value);
+    event CallbackObserved(uint256 value);
+
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    address constant FINAL_OPCODE_TARGET = address(0xBEEF);
+    address constant TRACE_SUCCESS_TARGET = address(0xA11CE);
+    address constant TRACE_REVERT_TARGET = address(0xB0B);
+    address constant EXISTING_ACCOUNT = address(0xCAFE);
+
+    StorageHookTarget target;
+    StorageHookTarget mappingTarget;
+    StorageHookTarget baseStateTarget;
+    StorageHookTarget unregisteredTarget;
+    StorageHookCaller caller;
+    StorageHookProxy proxy;
+    StorageHookReturner returner;
+    StorageHookTarget coldReadTarget;
+
+    uint256 ghostValue;
+    bytes32 lastSlot;
+    address lastAccount;
+    uint256 loadCount;
+    uint256 recursiveHookCalls;
+    uint256 mappingGhost;
+    uint256 baseStateGhost;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new StorageHookTarget();
+        mappingTarget = new StorageHookTarget();
+        baseStateTarget = new StorageHookTarget();
+        unregisteredTarget = new StorageHookTarget();
+        caller = new StorageHookCaller();
+        proxy = new StorageHookProxy(address(new StorageHookImplementation()));
+        returner = new StorageHookReturner();
+        hookVm.registerSloadHook(address(target), this.onLoad.selector);
+        hookVm.registerSstoreHook(address(target), this.onStore.selector);
+        hookVm.registerSstoreHook(address(mappingTarget), this.onMappingStore.selector);
+        hookVm.registerSstoreHook(address(baseStateTarget), this.onBaseStateStore.selector);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, 5);
+        hookVm.registerSstoreHook(address(proxy), this.onStore.selector);
+        vm.etch(FINAL_OPCODE_TARGET, hex"600035600055");
+        hookVm.registerSstoreHook(FINAL_OPCODE_TARGET, this.branchingStoreHook.selector);
+        vm.etch(TRACE_SUCCESS_TARGET, hex"6001600055600260015500");
+        vm.etch(TRACE_REVERT_TARGET, hex"6001600055600260015500");
+        hookVm.registerSstoreHook(TRACE_SUCCESS_TARGET, this.noopStoreHook.selector);
+        hookVm.registerSstoreHook(TRACE_REVERT_TARGET, this.revertingStoreHook.selector);
+    }
+
+    function onLoad(address account, bytes32 slot, bytes32 value) external onlyStorageHook {
+        lastAccount = account;
+        lastSlot = slot;
+        ghostValue = uint256(value);
+        loadCount++;
+    }
+
+    function onLoadReadingColdSlot(address, bytes32, bytes32) external view onlyStorageHook {
+        coldReadTarget.value();
+    }
+
+    function onStore(address account, bytes32 slot, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        lastAccount = account;
+        lastSlot = slot;
+        ghostValue = uint256(newValue);
+    }
+
+    function onStoreWithInstrumentation(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = returner.answer();
+    }
+
+    function onStoreWithRecording(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = 42;
+    }
+
+    function onMappingStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            mappingGhost = mappingGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function onBaseStateStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            baseStateGhost = baseStateGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function testConcreteArgumentsAndRollback() public {
+        target.store(7);
+        assertEq(ghostValue, 7);
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, bytes32(0));
+
+        assertEq(target.value(), 7);
+        assertEq(loadCount, 1);
+        assertEq(ghostValue, 7);
+
+        (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (11)));
+        assertFalse(ok);
+        assertEq(target.value(), 7);
+        assertEq(ghostValue, 7);
+
+        target.storeTwice(9, 12);
+        assertEq(ghostValue, 12);
+
+        caller.store(target, 15);
+        assertEq(ghostValue, 15);
+
+        unregisteredTarget.store(99);
+        assertEq(ghostValue, 15);
+
+        ghostValue = 0;
+        proxy.store(21);
+        assertEq(lastAccount, address(proxy));
+        assertEq(ghostValue, 21);
+    }
+
+    function testConcreteReplacementAndRevertPropagation() public {
+        hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
+        vm.expectRevert("replacement hook");
+        target.store(1);
+        assertEq(target.value(), 0);
+    }
+
+    function testConcreteFinalOpcodeSstoreCallbacks() public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(6)));
+        assertTrue(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+
+        (ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(7)));
+        assertFalse(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+    }
+
+    function testConcreteConstructorSstoreCallbacks() public {
+        uint256 nonce = vm.getNonce(address(this));
+        address constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.onStore.selector);
+
+        ConstructorStoreTarget deployed = new ConstructorStoreTarget(23);
+        assertEq(address(deployed), constructorTarget);
+        assertEq(deployed.value(), 23);
+        assertEq(ghostValue, 23);
+
+        nonce = vm.getNonce(address(this));
+        constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.revertingStoreHook.selector);
+        try new ConstructorStoreTarget(24) {
+            fail();
+        } catch Error(string memory reason) {
+            assertEq(reason, "replacement hook");
+        }
+        assertEq(constructorTarget.code.length, 0);
+        assertEq(ghostValue, 23);
+    }
+
+    function testConcreteRegistrationSurvivesRevert() public {
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(unregisteredTarget));
+        (bool ok,) = address(hook).call(
+            abi.encodeCall(ConstructorStorageHook.registerThenRevert, (address(unregisteredTarget)))
+        );
+        assertFalse(ok);
+
+        unregisteredTarget.store(31);
+        assertEq(hook.ghostValue(), 31);
+    }
+
+    function testIsolateEnclosingRevertRollsBackTargetAndGhost() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.storeAndRevert, (37)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        target.store(newValue);
+        revert("enclosing revert");
+    }
+
+    function testConcreteCallbackBypassesCallMocks() public {
+        bytes memory callback = abi.encodeWithSelector(
+            this.onStore.selector, address(target), bytes32(0), bytes32(0), bytes32(uint256(17))
+        );
+        vm.mockCall(address(this), callback, bytes(""));
+
+        target.store(17);
+
+        assertEq(ghostValue, 17);
+    }
+
+    function testConcreteCallbackPanicRevertsTargetCall() public {
+        hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
+
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (1)));
+
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+    }
+
+    function testConcreteCallbackPreservesReturnData() public {
+        assertEq(target.storeAfterReturningCall(address(returner), 1), 32);
+    }
+
+    function testConcreteCallbackDoesNotWarmAccesses() public {
+        StorageHookTarget baselineReadTarget = new StorageHookTarget();
+        StorageHookGasProbe probe = new StorageHookGasProbe();
+        coldReadTarget = new StorageHookTarget();
+        hookVm.registerSloadHook(address(target), this.onLoadReadingColdSlot.selector);
+        vm.cool(address(coldReadTarget));
+        vm.coolSlot(address(coldReadTarget), bytes32(0));
+        vm.cool(address(baselineReadTarget));
+        vm.coolSlot(address(baselineReadTarget), bytes32(0));
+
+        target.value();
+
+        assertEq(probe.readCost(coldReadTarget), probe.readCost(baselineReadTarget));
+    }
+
+    function testConcreteCallbackInspectorStateIsIsolated() public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithInstrumentation.selector);
+        bytes memory helperCall = abi.encodeCall(returner.answer, ());
+        vm.mockCall(address(returner), helperCall, abi.encode(uint256(99)));
+        vm.expectCall(address(returner), helperCall, 1);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(1);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+        assertEq(returner.answer(), 99);
+    }
+
+    function testConcreteCallbackCanWriteUnderStaticcall() public {
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), 0);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (1)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function loadAndRevert() external view {
+        target.value();
+        revert("after load");
+    }
+
+    function testConcreteCallbackCannotBeSpoofed() public {
+        vm.expectRevert("only storage hook");
+        this.onStore(address(target), bytes32(0), bytes32(0), bytes32(uint256(99)));
+        assertEq(ghostValue, 0);
+    }
+
+    function testConcreteFullStackSloadPreservesResult() public {
+        address fullStackTarget = address(0xF011);
+        bytes memory code = new bytes(1028);
+        for (uint256 i; i < 1024; i++) {
+            code[i] = bytes1(uint8(0x5f));
+        }
+        code[1024] = bytes1(uint8(0x54));
+        code[1025] = bytes1(uint8(0x56));
+        code[1026] = bytes1(uint8(0x5b));
+        code[1027] = bytes1(uint8(0x00));
+        vm.etch(fullStackTarget, code);
+        vm.store(fullStackTarget, bytes32(0), bytes32(uint256(1026)));
+        hookVm.registerSloadHook(fullStackTarget, this.noopLoadHook.selector);
+
+        (bool ok,) = fullStackTarget.call("");
+
+        assertTrue(ok);
+    }
+
+    function testConcreteStorageHookConsumesCallDepth() public {
+        StorageHookDepthTarget baseline = new StorageHookDepthTarget();
+        StorageHookDepthTarget hooked = new StorageHookDepthTarget();
+        hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
+
+        assertTrue(baseline.recurse(1024));
+        assertFalse(hooked.recurse(1024));
+    }
+
+    function testConcreteTraceSuccess() public {
+        (bool ok,) = TRACE_SUCCESS_TARGET.call("");
+        assertTrue(ok);
+    }
+
+    function testConcreteTraceRevert() public {
+        (bool ok,) = TRACE_REVERT_TARGET.call("");
+        assertFalse(ok);
+    }
+
+    function noopLoadHook(address, bytes32, bytes32) external view onlyStorageHook {}
+
+    function noopStoreHook(address, bytes32, bytes32, bytes32) external view onlyStorageHook {}
+
+    function revertingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
+        revert("replacement hook");
+    }
+
+    function panickingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
+        assert(false);
+    }
+
+    function recursiveStoreHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
+        recursiveHookCalls++;
+    }
+
+    function branchingStoreHook(address, bytes32, bytes32, bytes32 newValue)
+        external
+        view
+        onlyStorageHook
+    {
+        if (uint256(newValue) == 7) {
+            revert("seven");
+        }
+    }
+
+    function checkSymbolicMapping(address account, uint256 newValue) public {
+        target.setBalance(account, newValue);
+        bytes32 expectedSlot = keccak256(abi.encode(account, uint256(1)));
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, expectedSlot);
+        assertEq(ghostValue, newValue);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkSymbolicAliasedMappingWrites(
+        address first,
+        address second,
+        uint256 firstValue,
+        uint256 secondValue
+    ) public {
+        vm.assume(first == second);
+        mappingTarget.setBalance(first, firstValue);
+        mappingTarget.setBalance(second, secondValue);
+
+        assertEq(mappingGhost, mappingTarget.balances(first));
+    }
+
+    function checkSymbolicPreexistingMappingWrites(uint256 firstValue, uint256 secondValue) public {
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, firstValue);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, secondValue);
+
+        assertEq(baseStateGhost, secondValue);
+    }
+
+    function checkSymbolicLoad(uint256 newValue) public {
+        target.store(newValue);
+        assertEq(target.value(), newValue);
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, bytes32(0));
+        assertEq(loadCount, 1);
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicMultipleWritesAndNestedCall(uint256 first, uint256 second) public {
+        target.storeTwice(first, second);
+        assertEq(ghostValue, second);
+        caller.store(target, first);
+        assertEq(ghostValue, first);
+        unregisteredTarget.store(second);
+        assertEq(ghostValue, first);
+    }
+
+    function checkSymbolicDelegatecall(uint256 newValue) public {
+        proxy.store(newValue);
+        assertEq(lastAccount, address(proxy));
+        assertEq(lastSlot, bytes32(0));
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicRollback(uint256 newValue) public {
+        (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function checkSymbolicCallbackRevert(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function checkSymbolicCallbackPanic(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+    }
+
+    function checkSymbolicCallbackSuppressesRecursiveHooks(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(this), this.recursiveStoreHook.selector);
+
+        target.store(newValue);
+
+        assertEq(ghostValue, newValue);
+        assertEq(recursiveHookCalls, 0);
+    }
+
+    function checkSymbolicCallbackPreservesPendingExpectations(uint256 newValue) public {
+        vm.expectEmit(address(target));
+        emit Stored(newValue);
+
+        target.storeAndEmit(newValue);
+
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicCallbackPreservesReturnData(uint256 newValue) public {
+        assertEq(target.storeAfterReturningCall(address(returner), newValue), 32);
+    }
+
+    function checkSymbolicCallbackInspectorStateIsIsolated(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithRecording.selector);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(newValue);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+    }
+
+    function checkSymbolicCallbackCanWriteUnderStaticcall(uint256 newValue) public {
+        target.store(newValue);
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), newValue);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function checkSymbolicConstructorRegistration(uint256 newValue) public {
+        StorageHookTarget constructorTarget = new StorageHookTarget();
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(constructorTarget));
+
+        constructorTarget.store(newValue);
+
+        assertEq(hook.ghostValue(), newValue);
+    }
+
+    function checkSymbolicFinalOpcodeCallbackBranch(uint256 newValue) public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(newValue));
+        assertEq(ok, newValue != 7);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcrete",
+            "--gas-limit",
+            "10000000000000",
+            "--disable-block-gas-limit",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--isolate",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testIsolateEnclosingRevertRollsBackTargetAndGhost",
+        ])
+        .assert_success();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcreteTrace",
+            "-vvvvv",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let suite = output.as_object().unwrap().values().next().unwrap();
+
+    let success = &suite["test_results"]["testConcreteTraceSuccess()"];
+    let success_target = success["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .find(|node| {
+            node["trace"]["address"].as_str().is_some_and(|address| {
+                address.ends_with("00000000000000000000000000000000000a11ce")
+            })
+        })
+        .unwrap();
+    let resumed_step = success_target["trace"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["pc"] == 5)
+        .unwrap();
+    let sstore_step = success_target["trace"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["pc"] == 4)
+        .unwrap();
+    assert_eq!(
+        resumed_step["gas_remaining"].as_u64().unwrap(),
+        sstore_step["gas_remaining"].as_u64().unwrap() - sstore_step["gas_cost"].as_u64().unwrap()
+    );
+    assert_eq!(resumed_step["gas_cost"], 3);
+
+    let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
+    let reverted_target = reverted["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .find(|node| {
+            node["trace"]["address"].as_str().is_some_and(|address| {
+                address.ends_with("0000000000000000000000000000000000000b0b")
+            })
+        })
+        .unwrap();
+    assert!(
+        reverted_target["trace"]["steps"].as_array().unwrap().iter().all(|step| step["pc"] != 5)
+    );
+
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic half of storage_hook_cheatcodes_concrete_and_symbolic because z3 is not available"
+        );
+        return;
+    }
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "StorageHooksTest",
+        "--match-test",
+        "checkSymbolic",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 16 tests for test/StorageHooks.t.sol:StorageHooksTest
+[PASS] checkSymbolicAliasedMappingWrites(address,address,uint256,uint256) ([METRICS])
+[PASS] checkSymbolicCallbackCanWriteUnderStaticcall(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackInspectorStateIsIsolated(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackPanic(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackPreservesPendingExpectations(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackPreservesReturnData(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackRevert(uint256) ([METRICS])
+[PASS] checkSymbolicCallbackSuppressesRecursiveHooks(uint256) ([METRICS])
+[PASS] checkSymbolicConstructorRegistration(uint256) ([METRICS])
+[PASS] checkSymbolicDelegatecall(uint256) ([METRICS])
+[PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256) ([METRICS])
+[PASS] checkSymbolicLoad(uint256) ([METRICS])
+[PASS] checkSymbolicMapping(address,uint256) ([METRICS])
+[PASS] checkSymbolicMultipleWritesAndNestedCall(uint256,uint256) ([METRICS])
+[PASS] checkSymbolicPreexistingMappingWrites(uint256,uint256) ([METRICS])
+[PASS] checkSymbolicRollback(uint256) ([METRICS])
+Suite result: ok. 16 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn storage_hook_callbacks_do_not_leak_fuzz_guidance(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "StorageHookFuzzGuidance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookFuzzTarget {
+    uint256 public value;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract StorageHookFuzzHelper {
+    function observe(uint256 value) external pure returns (uint256) {
+        if (value == 7) {
+            return 7;
+        }
+        return value;
+    }
+}
+
+contract StorageHookFuzzCallback {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HELPER = address(0x3000);
+
+    uint256 public hits;
+
+    function register(address target) external {
+        hookVm.registerSstoreHook(target, this.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        hits++;
+        assertEq(StorageHookFuzzHelper(HELPER).observe(uint256(newValue)), uint256(newValue));
+    }
+
+    function assertEq(uint256 left, uint256 right) internal pure {
+        require(left == right);
+    }
+}
+
+contract StorageHookFuzzGuidanceTest is Test {
+    address constant TARGET = address(0x1000);
+    address constant CALLBACK = address(0x2000);
+    address constant HELPER = address(0x3000);
+
+    function setUp() public {
+        StorageHookFuzzTarget target = new StorageHookFuzzTarget();
+        StorageHookFuzzCallback callback = new StorageHookFuzzCallback();
+        StorageHookFuzzHelper helper = new StorageHookFuzzHelper();
+        vm.etch(TARGET, address(target).code);
+        vm.etch(CALLBACK, address(callback).code);
+        vm.etch(HELPER, address(helper).code);
+        StorageHookFuzzCallback(CALLBACK).register(TARGET);
+    }
+
+    function testFuzz_hookGuidance(uint256 value) public {
+        StorageHookFuzzTarget(TARGET).store(value);
+        assertEq(uint256(vm.load(CALLBACK, bytes32(0))), 1);
+        if (value == 42) {
+            assertEq(StorageHookFuzzTarget(TARGET).value(), 42);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("fuzz_frontiers")
+        .join("StorageHookFuzzGuidanceTest")
+        .join("testFuzz_hookGuidance")
+        .join("branch-frontiers.json");
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(frontier_path).unwrap()).unwrap();
+    let frontiers = artifact["frontiers"].as_array().unwrap();
+    assert!(!frontiers.is_empty(), "missing user-code frontiers in {artifact:#}");
+    let instrumentation_addresses = [
+        "0x0000000000000000000000000000000000002000",
+        "0x0000000000000000000000000000000000003000",
+    ];
+    assert!(
+        frontiers.iter().all(|frontier| {
+            let address = frontier["site"]["address"].as_str().unwrap();
+            !instrumentation_addresses
+                .iter()
+                .any(|candidate| address.eq_ignore_ascii_case(candidate))
+        }),
+        "{artifact:#}"
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--showmap-out",
+            "showmap",
+            "--showmap-corpus-dir",
+            "fuzz_corpus",
+            "--showmap-trial",
+            "hook",
+        ])
+        .assert_success();
+
+    let runtime_hash_prefix = |artifact: &str| {
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(prj.root().join(artifact)).unwrap()).unwrap();
+        let bytecode = artifact["deployedBytecode"]["object"].as_str().unwrap();
+        let bytecode = alloy_primitives::hex::decode(bytecode.trim_start_matches("0x")).unwrap();
+        alloy_primitives::hex::encode(&alloy_primitives::keccak256(bytecode)[..8])
+    };
+    let callback_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzCallback.json");
+    let helper_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzHelper.json");
+    let target_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzTarget.json");
+    let mut pending = vec![prj.root().join("showmap")];
+    let mut showmap_files = 0;
+    let mut saw_target_coverage = false;
+    while let Some(path) = pending.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(!body.is_empty(), "empty showmap file: {}", path.display());
+            showmap_files += 1;
+            saw_target_coverage |= body.contains(&format!("evm_{target_hash}_"));
+            assert!(!body.contains(&format!("evm_{callback_hash}_")), "{body}");
+            assert!(!body.contains(&format!("evm_{helper_hash}_")), "{body}");
+        }
+    }
+    assert!(showmap_files > 0, "no showmap files were produced");
+    assert!(saw_target_coverage, "showmap did not contain target coverage");
+}
+
+#[forgetest_init]
+fn symbolic_mapping_storage_hooks(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_mapping_storage_hooks");
+    prj.update_config(|config| config.invariant.runs = 0);
+    prj.add_test(
+        "SymbolicMappingStorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IHookVm {
+    function registerSstoreHook(address, bytes4) external;
+    function registerMappingSstoreHook(address, bytes32, bytes4) external;
+}
+
+contract MappingTarget {
+    bytes32 public constant SLOT_42 =
+        0x64d962e4eec2a0d2e4053fc69d3b480f61c5923c09e4bad52cdeec343ff95073;
+
+    mapping(uint256 => uint256) values;
+    mapping(uint256 => mapping(uint256 => uint256)) nested;
+    function set(uint256 key, uint256 value) external { values[key] = value; }
+    function setNested(uint256 outer, uint256 inner, uint256 value) external {
+        nested[outer][inner] = value;
+    }
+    function get(uint256 key) external view returns (uint256) { return values[key]; }
+    function computedSlot(uint256 key) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, uint256(0)));
+    }
+    function computedSlot(uint256 key, uint256 root) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, root));
+    }
+    function directStore(bytes32 slot, uint256 value) external {
+        assembly { sstore(slot, value) }
+    }
+    function equivalentStore(uint256 key, uint256 value, uint256 delta) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(0)));
+        assembly {
+            slot := sub(add(slot, delta), delta)
+            sstore(slot, value)
+        }
+    }
+    function conditionalStore(uint256 key, uint256 value, uint256 control) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(0)));
+        assembly { sstore(add(slot, and(control, 1)), value) }
+    }
+    function constrainedConstantStore(uint256 key, uint256 value) external {
+        bytes32 observed = keccak256(abi.encode(key, uint256(0)));
+        require(key == 1);
+        bytes32 slot = keccak256(abi.encode(uint256(1), uint256(0)));
+        assembly { sstore(slot, value) }
+        require(observed == slot);
+    }
+    function foldedConstantStore(uint256 key, uint256 value) external {
+        bytes32 observed = keccak256(abi.encode(key, uint256(0)));
+        require(observed == SLOT_42);
+        bytes32 slot = SLOT_42;
+        assembly { sstore(slot, value) }
+    }
+    function constrainedRootStore(uint256 key, uint256 root, uint256 value) external {
+        require(root == 0);
+        bytes32 slot = keccak256(abi.encode(key, root));
+        assembly { sstore(slot, value) }
+    }
+    function constrainedNestedRootStore(
+        uint256 outer,
+        uint256 inner,
+        uint256 root,
+        uint256 value
+    ) external {
+        require(root == 1);
+        bytes32 parent = keccak256(abi.encode(outer, root));
+        bytes32 slot = keccak256(abi.encode(inner, parent));
+        assembly { sstore(slot, value) }
+    }
+    function symbolicSizeStore(uint256 key, uint256 value, uint256 size) external {
+        require(size <= 64);
+        assembly {
+            mstore(0, key)
+            mstore(32, 0)
+            sstore(keccak256(0, size), value)
+        }
+    }
+    function offsetStore(uint256 key, uint256 value) external {
+        bytes32 slot = bytes32(uint256(keccak256(abi.encode(key, uint256(0)))) + 1);
+        assembly { sstore(slot, value) }
+    }
+    function incompleteStore(uint256 key, uint256 value) external {
+        bytes32 slot = keccak256(abi.encodePacked(key));
+        assembly { sstore(slot, value) }
+    }
+    function setThenRevert(uint256 key, uint256 value) external {
+        values[key] = value;
+        revert("target rollback");
+    }
+}
+
+contract MappingHashHelper {
+    function computedSlot(uint256 key) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, uint256(0)));
+    }
+}
+
+contract DelegateImplementation {
+    function set(uint256 key, uint256 value) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(41)));
+        assembly { sstore(slot, value) }
+    }
+}
+
+contract DelegateProxy {
+    function run(address implementation, uint256 key, uint256 value) external {
+        (bool ok,) = implementation.delegatecall(abi.encodeCall(DelegateImplementation.set, (key, value)));
+        require(ok);
+    }
+}
+
+contract RevertingDelegateHelper {
+    function computeThenRevert(uint256 key) external pure {
+        bytes32 slot = keccak256(abi.encode(key, uint256(51)));
+        assembly { mstore(0, slot) revert(0, 32) }
+    }
+}
+
+contract RevertCatcher {
+    function run(address helper, uint256 key, uint256 value) external {
+        (bool ok, bytes memory data) = helper.delegatecall(abi.encodeCall(RevertingDelegateHelper.computeThenRevert, (key)));
+        require(!ok);
+        bytes32 slot = abi.decode(data, (bytes32));
+        assembly { sstore(slot, value) }
+    }
+}
+
+contract ConstructorTarget {
+    constructor() {
+        bytes32 slot = keccak256(abi.encode(uint256(62), uint256(61)));
+        assembly { sstore(slot, 63) }
+    }
+}
+
+contract StaleHandler {
+    MappingTarget target;
+    bytes32 slot;
+
+    constructor(MappingTarget target_) { target = target_; }
+    function produce(uint256 key) external { slot = target.computedSlot(key); }
+    function consume(uint256 value) external { target.directStore(slot, value); }
+}
+
+contract MappingRegistrationHandler {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 public calls;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function registerThenRevert(address target) external {
+        hookVm.registerMappingSstoreHook(target, bytes32(0), this.onStore.selector);
+        revert("after registration");
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        calls++;
+    }
+}
+
+contract AccountingToken {
+    mapping(address => uint256) public balances;
+    mapping(address => mapping(address => uint256)) public allowances;
+    uint256 public totalSupply;
+
+    function mint(address to, uint256 amount) external {
+        balances[to] += amount;
+        totalSupply += amount;
+    }
+
+    function transfer(address from, address to, uint256 amount) external {
+        require(balances[from] >= amount, "balance");
+        balances[from] -= amount;
+        balances[to] += amount;
+    }
+
+    function burn(address from, uint256 amount) external {
+        require(balances[from] >= amount, "balance");
+        balances[from] -= amount;
+        totalSupply -= amount;
+    }
+
+    function approve(address owner, address spender, uint256 amount) external {
+        allowances[owner][spender] = amount;
+    }
+
+    function mintThenRevert(address to, uint256 amount) external {
+        balances[to] += amount;
+        totalSupply += amount;
+        revert("token rollback");
+    }
+}
+
+contract SymbolicMappingStorageHooks is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    MappingTarget rawTarget;
+    AccountingToken token;
+    uint256 seenKey;
+    uint256 seenOuterKey;
+    uint256 seenInnerKey;
+    uint256 seenOld;
+    uint256 seenNew;
+    bytes32 seenSlot;
+    bytes32 callbackSlot;
+    uint256 calls;
+    uint256 nestedCalls;
+    uint256 unexpectedCalls;
+    uint256 implementationCalls;
+    uint256 ghostSum;
+    address expectedAccount;
+    address seenBalanceHolder;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new MappingTarget();
+        rawTarget = new MappingTarget();
+        token = new AccountingToken();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+        hookVm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onNestedStore.selector);
+        hookVm.registerMappingSstoreHook(address(token), bytes32(0), this.onBalanceStore.selector);
+        hookVm.registerSstoreHook(address(rawTarget), this.onRawStore.selector);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkMappingDispatch(uint256 key, uint256 first, uint256 second) public {
+        target.set(key, first);
+        assertEq(seenSlot, keccak256(abi.encode(key, uint256(0))));
+        assertEq(seenKey, key);
+        assertEq(seenOld, 0);
+        assertEq(seenNew, first);
+        target.set(key, second);
+        assertEq(seenOld, first);
+        assertEq(seenNew, second);
+        assertEq(target.get(key), second);
+        assertEq(seenKey, key);
+    }
+
+    function checkNestedMappingRootAndKeys(uint256 inner, uint256 value) public {
+        uint256 outer = 11;
+        bytes32 intermediateRoot = keccak256(abi.encode(outer, uint256(1)));
+        hookVm.registerMappingSstoreHook(
+            address(target), intermediateRoot, this.onUnexpectedStore.selector
+        );
+        target.setNested(outer, inner, value);
+
+        assertEq(seenOuterKey, outer);
+        assertEq(seenInnerKey, inner);
+        assertEq(seenSlot, keccak256(abi.encode(inner, intermediateRoot)));
+        assertEq(nestedCalls, 1);
+        assertEq(unexpectedCalls, 0);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkErc20BalanceAccounting(
+        address from,
+        address to,
+        address third,
+        uint128 minted,
+        uint128 moved,
+        uint128 burned,
+        uint128 allowance
+    ) public {
+        vm.assume(from != to);
+        vm.assume(third != from && third != to);
+        vm.assume(moved <= minted);
+        vm.assume(burned <= moved);
+
+        token.mint(from, minted);
+        assertEq(seenBalanceHolder, from);
+        assertAccounting(from, to);
+
+        token.transfer(from, to, moved);
+        assertEq(seenBalanceHolder, to);
+        assertAccounting(from, to);
+
+        uint256 ghostBeforeApproval = ghostSum;
+        token.approve(from, to, allowance);
+        assertEq(ghostSum, ghostBeforeApproval);
+        assertAccounting(from, to);
+
+        token.burn(to, burned);
+        assertEq(seenBalanceHolder, to);
+        assertAccounting(from, to);
+
+        assertRevertsDoNotChangeAccounting(from, to);
+
+        token.mint(third, 1);
+        assertEq(seenBalanceHolder, third);
+        assertEq(ghostSum, token.totalSupply());
+        assertNotEq(ghostSum, token.balances(from) + token.balances(to));
+    }
+
+    function assertRevertsDoNotChangeAccounting(address from, address to) internal {
+        uint256 fromBeforeRollback = token.balances(from);
+        uint256 supplyBeforeRollback = token.totalSupply();
+        uint256 ghostBeforeRollback = ghostSum;
+        (bool rollbackOk,) = address(token).call(
+            abi.encodeCall(token.mintThenRevert, (from, uint256(1)))
+        );
+        assertFalse(rollbackOk);
+        assertEq(token.balances(from), fromBeforeRollback);
+        assertEq(token.totalSupply(), supplyBeforeRollback);
+        assertEq(ghostSum, ghostBeforeRollback);
+
+        uint256 fromBefore = token.balances(from);
+        uint256 toBefore = token.balances(to);
+        uint256 supplyBefore = token.totalSupply();
+        uint256 ghostBeforeRevert = ghostSum;
+        (bool ok,) = address(token).call(
+            abi.encodeCall(token.transfer, (from, to, fromBefore + 1))
+        );
+        assertFalse(ok);
+        assertEq(token.balances(from), fromBefore);
+        assertEq(token.balances(to), toBefore);
+        assertEq(token.totalSupply(), supplyBefore);
+        assertEq(ghostSum, ghostBeforeRevert);
+    }
+
+    function assertAccounting(address first, address second) internal view {
+        assertEq(ghostSum, token.totalSupply());
+        assertEq(ghostSum, token.balances(first) + token.balances(second));
+    }
+
+    function checkOrdinaryCallProvenance(uint256 key, uint256 value) public {
+        bytes32 slot = target.computedSlot(key);
+        target.directStore(slot, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, slot);
+    }
+
+    function checkConstraintEquivalentProvenance(uint256 key, uint256 value, uint256 delta) public {
+        target.equivalentStore(key, value, delta);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, keccak256(abi.encode(key, uint256(0))));
+    }
+
+    function checkConditionalProvenance(uint256 key, uint256 value, uint256 control) public {
+        target.conditionalStore(key, value, control);
+        if (control & 1 == 0) {
+            assertEq(calls, 1);
+            assertEq(seenKey, key);
+        } else {
+            assertEq(calls, 0);
+        }
+    }
+
+    function checkConstraintEquivalentConstantSlot(uint256 key, uint256 value) public {
+        target.constrainedConstantStore(key, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, 1);
+    }
+
+    function checkConstraintEquivalentFoldedSlot(uint256 key, uint256 value) public {
+        target.foldedConstantStore(key, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, target.SLOT_42());
+    }
+
+    function checkConstraintEquivalentKeccakShape(
+        uint256 key,
+        uint256 equivalentKey,
+        uint256 value
+    ) public {
+        MappingHashHelper helper = new MappingHashHelper();
+        bytes32 slot = target.computedSlot(key);
+        bytes32 equivalentSlot = helper.computedSlot(equivalentKey);
+        vm.assume(key == equivalentKey);
+        target.directStore(equivalentSlot, value);
+        assertEq(slot, equivalentSlot);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+    }
+
+    function checkConstraintEquivalentRoot(uint256 key, uint256 root, uint256 value) public {
+        target.constrainedRootStore(key, root, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+    }
+
+    function checkConstraintEquivalentNestedRoot(
+        uint256 outer,
+        uint256 inner,
+        uint256 root,
+        uint256 value
+    ) public {
+        target.constrainedNestedRootStore(outer, inner, root, value);
+        assertEq(nestedCalls, 1);
+        assertEq(seenOuterKey, outer);
+        assertEq(seenInnerKey, inner);
+    }
+
+    function checkCallbackSubtreeSuppression(uint256 key, uint256 value) public {
+        hookVm.registerMappingSstoreHook(address(target), bytes32(uint256(71)), this.onUnexpectedStore.selector);
+        target.set(key, value);
+        assertEq(calls, 1);
+        assertEq(callbackSlot, keccak256(abi.encode(key, uint256(71))));
+        assertEq(target.get(key), value);
+        assertEq(calls, 1);
+        assertEq(unexpectedCalls, 0);
+    }
+
+    function checkLateRootRegistrationClearsProvenance(uint256 key, uint256 value) public {
+        bytes32 root = bytes32(uint256(72));
+        bytes32 slot = target.computedSlot(key, uint256(root));
+        hookVm.registerMappingSstoreHook(address(target), root, this.onUnexpectedStore.selector);
+
+        target.directStore(slot, value);
+
+        assertEq(unexpectedCalls, 0);
+    }
+
+    function checkCallbackRegistrationClearsParentProvenance(
+        uint256 key,
+        uint256 triggerKey,
+        uint256 value
+    ) public {
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onRegisterRoot.selector);
+        bytes32 staleSlot = target.computedSlot(key, 73);
+
+        target.set(triggerKey, value);
+        target.directStore(staleSlot, value);
+
+        assertEq(unexpectedCalls, 0);
+    }
+
+    function checkOffsetsAndIncompleteHashesDoNotDispatch(uint256 key, uint256 value) public {
+        target.offsetStore(key, value);
+        target.incompleteStore(key, value);
+        assertEq(calls, 0);
+    }
+
+    function checkDelegatecallUsesProxyAccount(uint256 key, uint256 value) public {
+        DelegateImplementation implementation = new DelegateImplementation();
+        DelegateProxy proxy = new DelegateProxy();
+        expectedAccount = address(proxy);
+        hookVm.registerMappingSstoreHook(address(proxy), bytes32(uint256(41)), this.onProxyStore.selector);
+        hookVm.registerMappingSstoreHook(address(implementation), bytes32(uint256(41)), this.onImplementationStore.selector);
+
+        proxy.run(address(implementation), key, value);
+        assertEq(calls, 1);
+        assertEq(implementationCalls, 0);
+    }
+
+    function checkCaughtRevertingDelegatecallKeepsProvenance(uint256 key) public {
+        RevertingDelegateHelper helper = new RevertingDelegateHelper();
+        RevertCatcher catcher = new RevertCatcher();
+        expectedAccount = address(catcher);
+        hookVm.registerMappingSstoreHook(address(catcher), bytes32(uint256(51)), this.onProxyStore.selector);
+        catcher.run(address(helper), key, 1);
+        assertEq(calls, 1);
+    }
+
+    function checkConstructorProvenance() public {
+        bytes32 salt = bytes32(uint256(0xC0DE));
+        address predicted = vm.computeCreate2Address(salt, keccak256(type(ConstructorTarget).creationCode), address(this));
+        expectedAccount = predicted;
+        hookVm.registerMappingSstoreHook(predicted, bytes32(uint256(61)), this.onProxyStore.selector);
+        ConstructorTarget created = new ConstructorTarget{salt: salt}();
+        assertEq(address(created), predicted);
+        assertEq(calls, 1);
+    }
+
+    function checkConflictsAreCatchable() public {
+        (bool storeOk,) = address(hookVm).call(abi.encodeCall(hookVm.registerSstoreHook, (address(target), this.onRawStore.selector)));
+        assertFalse(storeOk);
+        (storeOk,) = address(hookVm).call(abi.encodeCall(hookVm.registerMappingSstoreHook, (address(rawTarget), bytes32(0), this.onStore.selector)));
+        assertFalse(storeOk);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkRegistrationAndRollbackLifecycle(uint256 key, uint256 value) public {
+        MappingTarget registeredTarget = new MappingTarget();
+        MappingRegistrationHandler handler = new MappingRegistrationHandler();
+        (bool registrationOk,) = address(handler).call(
+            abi.encodeCall(handler.registerThenRevert, (address(registeredTarget)))
+        );
+        assertFalse(registrationOk);
+        registeredTarget.set(key, value);
+        assertEq(handler.calls(), 1);
+
+        (bool targetOk,) = address(target).call(
+            abi.encodeCall(target.setThenRevert, (key, value))
+        );
+        assertFalse(targetOk);
+        assertEq(calls, 0);
+        assertEq(target.get(key), 0);
+
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onRevertingStore.selector);
+        (bool callbackOk,) = address(target).call(abi.encodeCall(target.set, (key, value)));
+        assertFalse(callbackOk);
+        assertEq(target.get(key), 0);
+    }
+
+    function onStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, address(target));
+        assertEq(root, bytes32(0));
+        assertEq(keys.length, 1);
+        seenKey = uint256(keys[0]);
+        seenSlot = slot;
+        seenOld = uint256(oldValue);
+        seenNew = uint256(newValue);
+        calls++;
+        callbackSlot = target.computedSlot(uint256(keys[0]), uint256(71));
+        target.directStore(callbackSlot, 1);
+    }
+    function onNestedStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, address(target));
+        assertEq(root, bytes32(uint256(1)));
+        assertEq(keys.length, 2);
+        seenOuterKey = uint256(keys[0]);
+        seenInnerKey = uint256(keys[1]);
+        seenSlot = slot;
+        nestedCalls++;
+    }
+    function onBalanceStore(address account, bytes32, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, address(token));
+        assertEq(root, bytes32(0));
+        assertEq(keys.length, 1);
+        seenBalanceHolder = address(uint160(uint256(keys[0])));
+        ghostSum = ghostSum - uint256(oldValue) + uint256(newValue);
+    }
+    function onRawStore(address, bytes32, bytes32, bytes32) external onlyStorageHook {}
+    function onUnexpectedStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        unexpectedCalls++;
+    }
+    function onRegisterRoot(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        hookVm.registerMappingSstoreHook(
+            address(target), bytes32(uint256(73)), this.onUnexpectedStore.selector
+        );
+    }
+    function onRevertingStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        revert("hook rollback");
+    }
+    function onProxyStore(address account, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, expectedAccount);
+        calls++;
+    }
+    function onImplementationStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        implementationCalls++;
+    }
+}
+
+contract SymbolicMappingStorageHooksStale is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    uint256 calls;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new MappingTarget();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+        StaleHandler handler = new StaleHandler(target);
+        targetContract(address(handler));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_staleProvenanceNeverDispatches() public view { assertEq(calls, 0); }
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        calls++;
+    }
+}
+
+contract SymbolicMappingStorageHooksSymbolicSize is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    uint256 calls;
+
+    function setUp() public {
+        target = new MappingTarget();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+    }
+
+    function checkSymbolicKeccakSize(uint256 key, uint256 value, uint256 size) public {
+        target.symbolicSizeStore(key, value, size);
+        assertEq(calls, 0);
+    }
+
+    function testConcreteKeccakSize() public {
+        target.symbolicSizeStore(1, 2, 64);
+        assertEq(calls, 1);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        calls++;
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--symbolic", "--match-contract", "^SymbolicMappingStorageHooks$"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "^SymbolicMappingStorageHooksStale$",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_staleProvenanceNeverDispatches()");
+    assert_eq!(result["symbolic"]["status"], "pass", "{}", result["symbolic"]);
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--match-contract",
+        "^SymbolicMappingStorageHooksSymbolicSize$",
+        "--match-test",
+        "testConcreteKeccakSize",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "^SymbolicMappingStorageHooksSymbolicSize$",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSymbolicKeccakSize(uint256,uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{}", result["symbolic"]);
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "unsupported symbolic execution feature: symbolic KECCAK256 size may conceal mapping provenance",
+        "{}",
+        result["symbolic"]
+    );
+}

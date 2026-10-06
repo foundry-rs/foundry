@@ -80,6 +80,13 @@ contract ExpectCallFailureTest is DSTest {
         this.exposed_callTargetNTimes(target, 3, 3, 1);
     }
 
+    function testShouldFailExpectDelegateCallWithCall() public {
+        Contract target = new Contract();
+        bytes memory data = abi.encodeWithSelector(target.add.selector, 1, 2);
+        vm.expectDelegateCall(address(target), data);
+        target.add(1, 2);
+    }
+
     function testShouldFailExpectInnerCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
@@ -130,6 +137,15 @@ contract ExpectCallFailureTest is DSTest {
         vm.expectRevert();
         vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         this.exposed_callTargetNTimes(target, 5, 5, 1);
+    }
+
+    /// Ensure that a test frame that halts reports the unmet expectation as a revert.
+    function testShouldFailExpectCallWhenTestHalts() public {
+        Contract target = new Contract();
+        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        assembly {
+            invalid()
+        }
     }
 }
 

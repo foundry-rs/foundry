@@ -3,7 +3,8 @@ use foundry_test_utils::snapbox;
 // tests complete bind-json workflow
 // ensures that we can run forge-bind even if files are depending on yet non-existent bindings and
 // that generated bindings are correct
-forgetest_init!(test_bind_json, |prj, cmd| {
+#[forgetest_init]
+fn test_bind_json(prj: _, cmd: _) {
     prj.add_test(
         "JsonBindings",
         r#"
@@ -50,7 +51,10 @@ contract BindJsonTest is Test {
 "#,
     );
 
-    cmd.arg("bind-json").assert_success();
+    cmd.arg("bind-json").assert_success().stderr_eq(snapbox::str![[r#"
+Bindings written to [..]
+
+"#]]);
 
     snapbox::assert_data_eq!(
         snapbox::Data::read_from(&prj.root().join("utils/JsonBindings.sol"), None),
@@ -121,4 +125,4 @@ library JsonBindings {
     );
 
     cmd.forge_fuse().args(["test"]).assert_success();
-});
+}

@@ -1,5 +1,7 @@
-use super::{CoverageItemKind, ItemAnchor, SourceLocation};
-use crate::analysis::SourceAnalysis;
+use super::{
+    CoverageItemKind, ExecutionAnchor, ExecutionAnchorKind, ItemAnchor, ItemAnchors, SourceLocation,
+};
+use crate::analysis::{EmptySpecialFunctionKind, SourceAnalysis};
 use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
@@ -12,7 +14,13 @@ pub fn find_anchors(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
     analysis: &SourceAnalysis,
-) -> Vec<ItemAnchor> {
+) -> ItemAnchors {
+    let mut anchors = ItemAnchors::default();
+    let select_branch = |(fallthrough, taken): (ItemAnchor, ItemAnchor), path_id| match path_id {
+        0 => (fallthrough, None),
+        1 => (taken, Some(fallthrough.instruction - 1)),
+        _ => panic!("too many path IDs for branch"),
+    };
     let mut seen_sources = FxHashSet::default();
     source_map
         .iter()
@@ -20,20 +28,59 @@ pub fn find_anchors(
         .filter(|&source| seen_sources.insert(source))
         .flat_map(|source| analysis.items_for_source_enumerated(source))
         .filter_map(|(item_id, item)| {
+            if analysis.empty_special_function_kind(item_id).is_some() {
+                return None;
+            }
+            let anchor_loc = item.anchor_loc.as_ref().unwrap_or(&item.loc);
             match item.kind {
-                CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
-                    find_anchor_branch(bytecode, source_map, item_id, &item.loc).map(|anchors| {
-                        match path_id {
-                            0 => anchors.0,
-                            1 => anchors.1,
-                            _ => panic!("too many path IDs for branch"),
-                        }
-                    })
+                CoverageItemKind::Branch { path_id: 1, is_first_opcode: true, .. }
+                    if item.anchor_loc.is_some() =>
+                {
+                    find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
+                        .map(|anchor| (anchor, None))
+                        .or_else(|_| {
+                            find_anchor_branch(bytecode, source_map, item_id, &item.loc)
+                                .map(|anchors| select_branch(anchors, 1))
+                        })
                 }
-                _ => find_anchor_simple(source_map, ic_pc_map, item_id, &item.loc),
+                CoverageItemKind::Branch { branch_id, path_id, is_first_opcode: false } => {
+                    let exact = analysis.is_ternary_branch(item.loc.source_id as u32, branch_id);
+                    find_anchor_branch_inner(bytecode, source_map, item_id, anchor_loc, exact)
+                        .map(|anchors| select_branch(anchors, path_id))
+                }
+                _ => find_anchor_simple(source_map, ic_pc_map, item_id, anchor_loc)
+                    .map(|anchor| (anchor, None)),
             }
             .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
             .ok()
+        })
+        .for_each(|(anchor, jump)| {
+            if let Some(jump) = jump {
+                anchors.jumps.insert(anchors.anchors.len(), jump);
+            }
+            anchors.anchors.push(anchor);
+        });
+    anchors
+}
+
+/// Finds execution-based anchors for empty constructors, receive functions, and fallbacks in a
+/// contract.
+pub fn find_execution_anchors(
+    source_id: u32,
+    contract_name: &str,
+    analysis: &SourceAnalysis,
+) -> Vec<ExecutionAnchor> {
+    analysis
+        .empty_special_function_ids(source_id, contract_name)
+        .filter_map(|item_id| {
+            analysis.empty_special_function_kind(item_id).map(|kind| ExecutionAnchor {
+                item_id,
+                kind: match kind {
+                    EmptySpecialFunctionKind::Constructor => ExecutionAnchorKind::Constructor,
+                    EmptySpecialFunctionKind::Receive => ExecutionAnchorKind::Receive,
+                    EmptySpecialFunctionKind::Fallback => ExecutionAnchorKind::Fallback,
+                },
+            })
         })
         .collect()
 }
@@ -92,6 +139,17 @@ pub fn find_anchor_branch(
     item_id: u32,
     loc: &SourceLocation,
 ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
+    find_anchor_branch_inner(bytecode, source_map, item_id, loc, false)
+}
+
+/// Matches exact ternary spans to exclude nested decisions.
+fn find_anchor_branch_inner(
+    bytecode: &[u8],
+    source_map: &SourceMap,
+    item_id: u32,
+    loc: &SourceLocation,
+    exact: bool,
+) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
     let mut anchors: Option<(ItemAnchor, ItemAnchor)> = None;
     for (ic, (pc, inst)) in InstIter::new(bytecode).with_pc().enumerate() {
         // We found a push, so we do some PC -> IC translation accounting, but we also check if
@@ -110,7 +168,15 @@ pub fn find_anchor_branch(
             let next_pc = pc + inst.immediate.len() + 1;
             let push_size = inst.immediate.len();
             if bytecode.get(next_pc).copied() == Some(opcode::JUMPI)
-                && is_in_source_range(element, loc)
+                && if exact {
+                    source_map.get(ic + 1).is_some_and(|jump| {
+                        jump.index() == Some(loc.source_id as u32)
+                            && jump.offset() == loc.bytes.start
+                            && jump.length() == loc.len()
+                    })
+                } else {
+                    is_in_source_range(element, loc)
+                }
             {
                 // We do not support program counters bigger than u32.
                 ensure!(push_size <= 4, "jump destination overflow");
@@ -119,14 +185,19 @@ pub fn find_anchor_branch(
                 let mut pc_bytes = [0u8; 4];
                 pc_bytes[4 - push_size..].copy_from_slice(inst.immediate);
                 let pc_jump = u32::from_be_bytes(pc_bytes);
-                anchors = Some((
+                let found = (
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: (next_pc + 1) as u32,
+                        instruction: (next_pc + 1).try_into()?,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
-                ));
+                );
+                if exact {
+                    // Generated branch code can contain later jumps mapped to the ternary span.
+                    return Ok(found);
+                }
+                anchors = Some(found);
             }
         }
     }
@@ -151,10 +222,21 @@ fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> boo
     let start_of_ranges = location.bytes.start.max(element.offset());
     let end_of_ranges =
         (location.bytes.start + location.len()).min(element.offset() + element.length());
-    let within_ranges = start_of_ranges <= end_of_ranges;
-    if !within_ranges {
-        return false;
-    }
+    start_of_ranges <= end_of_ranges
+}
 
-    true
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::sourcemap;
+
+    #[test]
+    fn ternary_anchor_rejects_missing_node_mapping() {
+        let loc =
+            SourceLocation { source_id: 0, contract_name: "T".into(), bytes: 10..30, lines: 1..2 };
+        let bytecode = [opcode::PUSH1, 6, opcode::JUMPI, opcode::PUSH1, 7, opcode::JUMPI];
+        // A contained inner span must never substitute for the missing outer decision.
+        let inner_only = sourcemap::parse("15:5:0;;;").unwrap();
+        assert!(find_anchor_branch_inner(&bytecode, &inner_only, 0, &loc, true).is_err());
+    }
 }

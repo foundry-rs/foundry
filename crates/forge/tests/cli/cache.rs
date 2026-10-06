@@ -1,21 +1,30 @@
 //! Tests for various cache command.
 
-forgetest!(can_list_cache, |_prj, cmd| {
+#[forgetest]
+fn can_list_cache(cmd: _) {
     cmd.args(["cache", "ls"]);
     cmd.assert_success();
-});
+}
 
-forgetest!(can_list_cache_all, |_prj, cmd| {
+#[forgetest]
+fn can_list_cache_all(cmd: _) {
     cmd.args(["cache", "ls", "all"]);
     cmd.assert_success();
-});
+}
 
-forgetest!(can_list_specific_chain, |_prj, cmd| {
+#[forgetest]
+fn can_list_specific_chain(cmd: _) {
     cmd.args(["cache", "ls", "mainnet"]);
     cmd.assert_success();
-});
+}
 
-forgetest_init!(can_test_no_cache, |prj, cmd| {
+#[forgetest]
+fn cache_ls_output_on_stderr(cmd: _) {
+    cmd.args(["cache", "ls", "mainnet"]).assert_success().stdout_eq(str![""]);
+}
+
+#[forgetest_init]
+fn can_test_no_cache(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear_cache();
 
@@ -24,4 +33,4 @@ forgetest_init!(can_test_no_cache, |prj, cmd| {
 
     cmd.forge_fuse().arg("test").assert_success();
     assert!(prj.cache().exists(), "cache file should exist");
-});
+}

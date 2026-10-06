@@ -1,0 +1,7521 @@
+use crate::skip_unless_z3;
+use alloy_primitives::{U256, hex, keccak256};
+use foundry_common::sh_eprintln;
+use foundry_test_utils::{
+    forgetest_init,
+    snapbox::IntoData,
+    str,
+    util::{OutputExt, SOLC_VERSION},
+};
+use serde_json::Value;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use super::symbolic_helpers::{
+    assert_symbolic, assert_symbolic_witness, json_test_result, read_artifact_ref,
+};
+
+fn z3_available() -> bool {
+    Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
+}
+
+fn read_artifact(symbolic: &Value) -> Value {
+    read_artifact_ref(&symbolic["artifact"])
+}
+
+fn frontier_artifact_path(root: &Path, contract: &str, test: &str) -> PathBuf {
+    root.join("fuzz_frontiers").join(contract).join(test).join("branch-frontiers.json")
+}
+
+fn find_stateful_frontier_artifact(root: &Path) -> PathBuf {
+    let mut pending = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", dir.display()))
+        {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.file_name().is_some_and(|name| name == "branch-frontiers.json") {
+                matches.push(path);
+            }
+        }
+    }
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected one stateful frontier artifact under {}",
+        root.display()
+    );
+    matches.pop().unwrap()
+}
+
+fn keep_only_matching_frontier(
+    frontier_path: &Path,
+    missing: &str,
+    mut matches: impl FnMut(&Value) -> bool,
+) -> Value {
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let target_frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| matches(frontier))
+        .cloned()
+        .unwrap_or_else(|| panic!("missing {missing} frontier in {artifact}"));
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
+    std::fs::write(frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+    target_frontier
+}
+
+fn matching_frontier(
+    root: &Path,
+    contract: &str,
+    test: &str,
+    missing: &str,
+    mut matches: impl FnMut(&Value) -> bool,
+) -> Value {
+    let frontier_path = frontier_artifact_path(root, contract, test);
+    let artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| matches(frontier))
+        .cloned()
+        .unwrap_or_else(|| panic!("missing {missing} frontier in {artifact}"))
+}
+
+fn single_uint_corpus_values(
+    root: &Path,
+    contract: &str,
+    test: &str,
+    signature: &str,
+) -> Vec<U256> {
+    let corpus_dir =
+        root.join("fuzz_corpus").join(contract).join(test).join("worker0").join("corpus");
+    let expected_selector = hex::encode_prefixed(&keccak256(signature.as_bytes())[..4]);
+    let mut values = Vec::new();
+    for entry in std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
+    {
+        let entry = entry.unwrap();
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        for tx in corpus.as_array().unwrap() {
+            let calldata = tx["calldata"].as_str().expect("seed calldata");
+            if calldata.starts_with(&expected_selector) {
+                values.push(U256::from_be_slice(&hex::decode(&calldata[10..74]).unwrap()));
+            }
+        }
+    }
+    values
+}
+
+#[forgetest_init]
+fn symbolic_tests_are_ignored_without_flag(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicIgnored.t.sol",
+        r#"
+contract SymbolicIgnored {
+    function checkWouldFail(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "checkWouldFail"]).assert_success().stderr_eq(str![[r#"
+...
+Warning: No tests found in project! Forge looks for functions that start with `test`
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_contract_inline_config_enables_check_entrypoints(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_contract_inline_config_enables_check_entrypoints because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicContractInlineConfig.t.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+/// forge-config: default.symbolic.enabled = true
+contract SymbolicContractInlineConfig {
+    function checkEnabledByContractConfig(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--match-test", "checkEnabledByContractConfig"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicContractInlineConfig.t.sol:SymbolicContractInlineConfig
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEnabledByContractConfig(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_single_call_artifact_replay_honors_env_fields(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicSingleCallArtifactEnv.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSingleCallArtifactEnv is Test {
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        vm.warp(1000);
+        vm.roll(2000);
+        vm.deal(BOB, 2 ether);
+    }
+
+    function checkEnv() public payable {
+        if (
+            msg.sender == BOB
+                && msg.value == 2 ether
+                && block.timestamp == 1007
+                && block.number == 2011
+        ) {
+            revert("artifact env replayed");
+        }
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("single-call-env-artifact.json");
+    let selector = keccak256(b"checkEnv()");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "single_call",
+        "test": {
+            "contract": "test/SymbolicSingleCallArtifactEnv.t.sol:SymbolicSingleCallArtifactEnv",
+            "test": "checkEnv()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 0,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": "0x7",
+            "roll": "0xb",
+            "sender": "0x0000000000000000000000000000000000000b0b",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": hex::encode_prefixed(&selector[..4]),
+            "value": format!("{:#x}", 3_000_000_000_000_000_000u128),
+            "contract_name": "SymbolicSingleCallArtifactEnv",
+            "function_name": "checkEnv",
+            "signature": "checkEnv()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("artifact env replayed"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_emits_stateless_solidity_regression(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateless_solidity_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionSingle.t.sol",
+        r#"
+contract SymbolicRegressionSingle {
+    function checkBoom(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkBoom"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj
+        .root()
+        .join("test/regressions/SymbolicRegressionSingle_checkBoom_SymbolicRegression.t.sol");
+    assert!(regression.exists(), "missing regression {}", regression.display());
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkBoom_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_checkBoom_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_emits_regression_for_contract_with_receive(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_for_contract_with_receive because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionReceive.t.sol",
+        r#"
+contract SymbolicRegressionReceive {
+    receive() external payable {}
+
+    function checkReceiveRegression(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkReceiveRegression"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionReceive_checkReceiveRegression_SymbolicRegression.t.sol",
+    );
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains("pragma solidity >=0.8.0;"), "{generated}");
+    assert!(!generated.contains("receive() external payable"), "{generated}");
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkReceiveRegression_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_checkReceiveRegression_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_emit_regression_rerun_reuses_existing_file(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rerun_reuses_existing_file because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionRerun.t.sol",
+        r#"
+contract SymbolicRegressionRerun {
+    function checkRerun(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkRerun"])
+        .assert_failure();
+
+    let regression = prj
+        .root()
+        .join("test/regressions/SymbolicRegressionRerun_checkRerun_SymbolicRegression.t.sol");
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkRerun"])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(!stderr.contains("already exists"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(&regression)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display())),
+        generated
+    );
+
+    let nested = prj.root().join(
+        "test/regressions/SymbolicRegressionRerun_checkRerun_SymbolicRegression_checkRerun_SymbolicRegression.t.sol",
+    );
+    assert!(!nested.exists(), "unexpected nested regression {}", nested.display());
+}
+
+#[forgetest_init]
+fn symbolic_emits_regression_under_custom_test_dir(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_under_custom_test_dir because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.test = "tests".into());
+    let tests_dir = prj.root().join("tests");
+    std::fs::create_dir_all(&tests_dir).unwrap();
+    std::fs::write(
+        tests_dir.join("SymbolicRegressionCustomDir.t.sol"),
+        format!(
+            r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ={SOLC_VERSION};
+
+contract SymbolicRegressionCustomDir {{
+    function checkCustomDir(uint256 x) public pure {{
+        assert(x != 42);
+    }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkCustomDir"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "tests/regressions/SymbolicRegressionCustomDir_checkCustomDir_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_checkCustomDir_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_checkCustomDir_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_json_reports_solidity_regression(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_solidity_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionJson.t.sol",
+        r#"
+contract SymbolicRegressionJson {
+    function checkJsonRegression(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkJsonRegression",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkJsonRegression(uint256)");
+    let regressions = result["symbolic_regressions"].as_array().expect("symbolic regressions");
+    assert_eq!(regressions.len(), 1);
+    assert!(regressions[0]["artifact"].is_string());
+    let path = regressions[0]["path"].as_str().expect("regression path");
+    assert!(path.ends_with(
+        "test/regressions/SymbolicRegressionJson_checkJsonRegression_SymbolicRegression.t.sol"
+    ));
+    assert!(std::path::Path::new(path).exists());
+}
+
+// Basic path handling: no-op tests pass, plain reverts and `vm.assume` prune paths, and implicit
+// STOP succeeds.
+#[forgetest_init]
+fn symbolic_basic_path_outcomes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_basic_path_outcomes");
+
+    prj.add_test(
+        "SymbolicPass.t.sol",
+        r#"
+contract SymbolicPass {
+    function checkNoop(uint256) public pure {}
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicRequire.t.sol",
+        r#"
+contract SymbolicRequire {
+    function checkRequire(uint256 x) public pure {
+        require(x != 42, "hit");
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicAssume.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicAssume is Test {
+    function checkAssume(uint256 x) public {
+        vm.assume(x != 42);
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicImplicitStop.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicImplicitStop is Test {
+    function setUp() public {
+        // A single JUMPDEST falls off the end of the code without an explicit STOP.
+        vm.etch(address(this), hex"5b");
+    }
+
+    function checkImplicitStop() public {}
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkNoop|checkRequire|checkAssume|checkImplicitStop)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicRequire.t.sol:SymbolicRequire
+[PASS] checkRequire(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicPass.t.sol:SymbolicPass
+[PASS] checkNoop(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicAssume.t.sol:SymbolicAssume
+[PASS] checkAssume(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicImplicitStop.t.sol:SymbolicImplicitStop
+[PASS] checkImplicitStop() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
+}
+
+#[forgetest_init]
+fn symbolic_cli_accepts_zero_init_storage_layout(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_cli_accepts_zero_init_storage_layout because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicZeroInit.t.sol",
+        r#"
+contract SymbolicZeroInit {
+    function checkNoop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-storage-layout",
+            "zero_init",
+            "--json",
+            "--match-test",
+            "checkNoop",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoop(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["bounds"]["storage_layout"], "zero_init");
+}
+
+#[forgetest_init]
+fn symbolic_proves_bounded_carry_after_shift(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_bounded_carry_after_shift because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBoundedCarry.t.sol",
+        r#"
+contract SymbolicBoundedCarry {
+    function checkCarryBounds(uint248 limb, uint8 carry) public pure {
+        if (carry < 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkCarryBoundary(uint248 limb, uint8 carry) public pure {
+        if (limb == type(uint248).max && carry == 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkMulDivBoundary(uint256 value) public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        if (value == boundary) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
+        }
+    }
+
+    function checkMulDivPastBoundary(uint256 value) public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        if (value == boundary + 1) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--optimizer-runs",
+            "1000",
+            "--evm-version",
+            "paris",
+            "--match-test",
+            "checkCarryBounds",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkCarryBounds(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkCarryBoundary"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkCarryBoundary(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkMulDivBoundary"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivBoundary(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkMulDivPastBoundary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivPastBoundary(uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_proves_fixed_point_fee_bounds(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_fixed_point_fee_bounds because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFixedPointFee.t.sol",
+        r#"
+library FixedPointMathLib {
+    function mulWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            if gt(x, div(not(0), y)) {
+                if y { revert(0, 0) }
+            }
+            z := div(mul(x, y), 1000000000000000000)
+        }
+    }
+}
+
+contract SymbolicFixedPointFee {
+    uint256 constant WAD = 1e18;
+    uint256 constant RATE = 3e15;
+
+    function checkMinimumFee(uint128 amount, uint128 minimum) public pure {
+        uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
+        if (fee >= minimum) {
+            unchecked {
+                assert(uint256(amount) * RATE >= uint256(minimum) * WAD);
+            }
+        }
+    }
+
+    function checkMaximumFee(uint128 amount, uint128 maximum) public pure {
+        uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
+        if (fee <= maximum) {
+            unchecked {
+                assert(uint256(amount) * RATE < (uint256(maximum) + 1) * WAD);
+            }
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicFixedPointFee"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    for signature in ["checkMinimumFee(uint128,uint128)", "checkMaximumFee(uint128,uint128)"] {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+    }
+}
+
+#[forgetest_init]
+fn symbolic_proves_quadratic_quote_domain(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_quadratic_quote_domain because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicQuadraticQuote.t.sol",
+        r#"
+library FixedPointMathLib {
+    function mulWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            if gt(x, div(not(0), y)) {
+                if y { revert(0, 0) }
+            }
+            z := div(mul(x, y), 1000000000000000000)
+        }
+    }
+}
+
+contract SymbolicQuadraticQuote {
+    function quote(uint256 value) external pure returns (uint256) {
+        return FixedPointMathLib.mulWad(value, value);
+    }
+
+    function checkQuoteDomain(uint256 value) external {
+        (bool success,) = address(this).staticcall(abi.encodeCall(this.quote, (value)));
+        assert(success == (value <= type(uint128).max));
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicQuadraticQuote"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkQuoteDomain(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+}
+
+#[forgetest_init]
+fn symbolic_retries_deferred_nested_arithmetic(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_retries_deferred_nested_arithmetic because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalCall.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicConversionTarget {
+    function convert(uint256 base, uint256 coefficient) external pure returns (uint256) {
+        // A square cannot equal two, but interval bounds alone cannot establish that.
+        coefficient;
+        require(base * base != 2);
+        return base;
+    }
+}
+
+contract SymbolicCreatedConversion {
+    uint256 public value;
+
+    constructor(uint256 base, uint256 coefficient) {
+        coefficient;
+        require(base * base != 2);
+        value = base;
+    }
+}
+
+contract SymbolicDeferredExternalCall {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    SymbolicConversionTarget target;
+
+    function setUp() public {
+        target = new SymbolicConversionTarget();
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkCreatedConversion(uint256 base, uint256 coefficient) external {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        SymbolicCreatedConversion created = new SymbolicCreatedConversion(base, coefficient);
+        assert(created.value() > 0);
+    }
+
+    /// forge-config: default.symbolic.timeout = 5
+    function checkNondeterministicExternalConversion(uint256 base, uint256 coefficient) external {
+        vm.unixTime();
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 10
+    function checkQueryLimitedExternalConversion(uint256 base, uint256 coefficient) external view {
+        vm.assume(base > 0 && base < 1_000);
+        vm.assume(coefficient >= 10 && coefficient <= 100);
+        assert(target.convert(base, coefficient) > 0);
+    }
+}
+"#,
+    );
+
+    for (test, signature) in [
+        ("checkExternalConversion", "checkExternalConversion(uint256,uint256)"),
+        ("checkCreatedConversion", "checkCreatedConversion(uint256,uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--optimize", "--match-test", test])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkNondeterministicExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result =
+        json_test_result(&output, "checkNondeterministicExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkQueryLimitedExternalConversion",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkQueryLimitedExternalConversion(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("solver query limit exceeded (10)")
+    );
+    assert_eq!(result["symbolic"]["solver"]["stats"]["solver_queries"], 10);
+    assert!(result["symbolic"]["solver"]["stats"]["paths"].as_u64().unwrap() > 2);
+}
+
+#[forgetest_init]
+fn symbolic_preserves_completed_external_call_counterexamples(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_preserves_completed_external_call_counterexamples because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeferredExternalPriority.t.sol",
+        r#"
+interface SymbolicDeferredPriorityVm {
+    function assume(bool condition) external pure;
+    function unixTime() external returns (uint256);
+}
+
+contract SymbolicDeferredPriorityTarget {
+    function evaluate(uint256 x, uint256 y) external pure returns (uint256) {
+        unchecked {
+            uint256 value = (x * y + 9) / 10;
+            if (value == 37) return 1;
+            if (value == 38) return 2;
+        }
+        return 0;
+    }
+}
+
+contract SymbolicDeferredExternalPriority {
+    SymbolicDeferredPriorityVm constant vm = SymbolicDeferredPriorityVm(
+        address(uint160(uint256(keccak256("hevm cheat code"))))
+    );
+    SymbolicDeferredPriorityTarget target;
+
+    function setUp() public {
+        target = new SymbolicDeferredPriorityTarget();
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    function checkCompletedCallBfs(uint256 x, uint256 y) external view {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    /// forge-config: default.symbolic.max_solver_queries = 16
+    /// forge-config: default.symbolic.exploration_order = "dfs"
+    function checkCompletedCallDfs(uint256 x, uint256 y) external view {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        assert(target.evaluate(x, y) == 0);
+    }
+
+    function checkDeferredHostRead(uint256 x, uint256 y) external {
+        vm.assume(x >= 11 && x <= 18);
+        vm.assume(y >= 19 && y <= 30);
+        uint256 value = target.evaluate(x, y);
+        if (value != 0) vm.unixTime();
+        assert(value <= 2);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-contract",
+            "SymbolicDeferredExternalPriority",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    for signature in
+        ["checkCompletedCallBfs(uint256,uint256)", "checkCompletedCallDfs(uint256,uint256)"]
+    {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+        assert!(result["symbolic"]["solver"]["stats"]["smt_queries"].as_u64().unwrap() > 0);
+    }
+
+    let result = json_test_result(&output, "checkDeferredHostRead(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert!(
+        result["symbolic"]["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("nested hard arithmetic")
+    );
+}
+
+#[forgetest_init]
+fn symbolic_proves_saturating_mul_equivalence(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_saturating_mul_equivalence because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSaturatingMul.t.sol",
+        r#"
+library SaturatingMath {
+    function saturatingMul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            z := or(sub(or(iszero(x), eq(div(mul(x, y), x), y)), 1), mul(x, y))
+        }
+    }
+}
+
+contract SymbolicSaturatingMul {
+    function mul(uint256 x, uint256 y) external pure returns (uint256) {
+        return x * y;
+    }
+
+    function checkSaturatingMul(uint256 x, uint256 y) public view {
+        (bool success,) = address(this).staticcall(abi.encodeCall(this.mul, (x, y)));
+        uint256 expected = success ? x * y : type(uint256).max;
+        assert(SaturatingMath.saturatingMul(x, y) == expected);
+    }
+
+    function checkWrongOverflowResult(uint256 x, uint256 y) public pure {
+        if (x == type(uint256).max && y == 2) {
+            assert(SaturatingMath.saturatingMul(x, y) == 0);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkSaturatingMul"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkSaturatingMul(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkWrongOverflowResult",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_proves_p256_normalization(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_proves_p256_normalization because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicP256.t.sol",
+        r#"
+contract SymbolicP256 {
+    uint256 constant N =
+        0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551;
+    uint256 constant HALF_N =
+        0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8;
+
+    function checkP256Normalized(uint256 s) public pure {
+        uint256 result;
+        assembly {
+            result := xor(s, mul(xor(sub(N, s), s), gt(s, HALF_N)))
+        }
+        unchecked {
+            uint256 expected = s > N / 2 ? N - s : s;
+            assert(result == expected);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkP256Normalized"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkP256Normalized(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+}
+
+#[forgetest_init]
+fn symbolic_proves_branchless_operation_state(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_branchless_operation_state because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOperationState.t.sol",
+        r#"
+contract SymbolicOperationState {
+    function checkOperationState(uint256 packed, uint256 time) public pure {
+        if (!isReadyOriginal(packed ^ 1, time) && isDoneOriginal(packed, time)) {
+            packed ^= 1;
+            assert(!isReadyOriginal(packed, time));
+        }
+        uint256 optimized;
+        assembly {
+            optimized := mul(
+                iszero(iszero(packed)),
+                add(and(packed, 1), sub(2, lt(time, shr(1, packed))))
+            )
+        }
+        assert(optimized == original(packed, time));
+    }
+
+    function isReadyOriginal(uint256 packed, uint256 time) internal pure returns (bool) {
+        return original(packed, time) == 2;
+    }
+
+    function isDoneOriginal(uint256 packed, uint256 time) internal pure returns (bool) {
+        return original(packed, time) == 3;
+    }
+
+    function original(uint256 packed, uint256 time) internal pure returns (uint256) {
+        if (packed == 0) return 0;
+        if (packed & 1 == 1) return 3;
+        if (packed >> 1 > time) return 1;
+        return 2;
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkOperationState"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkOperationState(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+}
+
+#[forgetest_init]
+fn symbolic_json_schema_reports_pass(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_json_schema_reports_pass because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonPass.t.sol",
+        r#"
+contract SymbolicJsonPass {
+    function checkNoop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNoop"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoop(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["schema_version"], 1);
+    assert_eq!(symbolic["status"], "pass");
+    assert!(symbolic["incomplete"].is_null());
+    assert_eq!(symbolic["replay"]["required"], false);
+    assert_eq!(symbolic["replay"]["status"], "not_required");
+    assert!(symbolic["counterexample"].is_null());
+    assert_eq!(symbolic["bounds"]["max_paths"], 1024);
+    assert_eq!(symbolic["solver"]["name"], "z3");
+    assert!(symbolic["solver"]["stats"]["paths"].as_u64().unwrap() >= 1);
+    assert_eq!(symbolic["assumptions"][0]["kind"], "bounded_exploration");
+}
+
+#[forgetest_init]
+fn symbolic_loop_bound_limits_symbolic_unrolling(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_loop_bound_limits_symbolic_unrolling because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicLoopBound.t.sol",
+        r#"
+contract SymbolicLoopBound {
+    /// forge-config: default.symbolic.loop = 2
+    function checkLoopBound(uint8 n) public pure {
+        uint256 i;
+        while (i < n) {
+            ++i;
+        }
+        assert(i <= 2);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkLoopBound"]))
+            .success()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicLoopBound.t.sol:SymbolicLoopBound
+[PASS] checkLoopBound(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
+
+    assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_finds_assert_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_finds_assert_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicAssert.t.sol",
+        r#"
+contract SymbolicAssert {
+    function checkRejectsFortyTwo(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let stderr =
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"]))
+            .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicAssert.t.sol:SymbolicAssert
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stderr_lossy();
+
+    assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
+    assert!(stderr.contains("cache/symbolic/"), "{stderr}");
+}
+
+#[forgetest_init]
+fn symbolic_json_schema_reports_replayed_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_schema_reports_replayed_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "SymbolicJsonCounterexampleDuplicate.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "checkRejectsFortyTwo",
+            "--match-path",
+            "test/SymbolicJsonCounterexample.t.sol",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkRejectsFortyTwo(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert!(symbolic["incomplete"].is_null());
+    assert_eq!(symbolic["replay"]["required"], true);
+    assert_eq!(symbolic["replay"]["status"], "confirmed");
+    assert!(symbolic["counterexample"]["calldata"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(symbolic["counterexample"]["args"], "42");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert_eq!(symbolic["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
+    assert_eq!(result["counterexample_artifacts"][0], symbolic["artifact"]);
+    assert_eq!(symbolic["minimization"]["minimized"], symbolic["artifact"]);
+    assert_eq!(symbolic["minimization"]["accepted"], 0);
+    assert_eq!(symbolic["minimization"]["original_calldata_bytes"], 36);
+    assert_eq!(symbolic["minimization"]["minimized_calldata_bytes"], 36);
+    let original_artifact = read_artifact_ref(&symbolic["minimization"]["original"]);
+    assert_eq!(original_artifact["calls"][0]["args"], "42");
+    let artifact_path = symbolic["artifact"]["path"].as_str().unwrap().to_string();
+    let artifact = read_artifact(symbolic);
+    assert_eq!(artifact["schema_version"], 1);
+    assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(artifact["kind"], "single_call");
+    assert_eq!(artifact["test"]["test"], "checkRejectsFortyTwo(uint256)");
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(original_artifact["calls"][0]["sender"], artifact["calls"][0]["sender"]);
+    assert!(artifact["calls"][0]["calldata"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(artifact["calls"][0]["args"], "42");
+    assert_eq!(artifact["calls"][0]["raw_args"], "42");
+    assert!(symbolic["solver"]["stats"]["model_queries"].as_u64().unwrap() >= 1);
+
+    let replay_stdout = assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        &artifact_path,
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicJsonCounterexample.t.sol:SymbolicJsonCounterexample
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0xf24fa427000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkRejectsFortyTwo(uint256) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+    assert!(
+        !replay_stdout.contains("SymbolicJsonCounterexampleDuplicate.t.sol"),
+        "{replay_stdout}"
+    );
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256) public pure {}
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]).assert_success();
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRenamed(uint256) public pure {}
+}
+"#,
+    );
+    let stale_stderr = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stale_stderr.contains("symbolic artifact target"), "{stale_stderr}");
+    assert!(
+        stale_stderr.contains("checkRejectsFortyTwo(uint256)` was not found"),
+        "{stale_stderr}"
+    );
+}
+
+#[forgetest_init]
+fn symbolic_minimizes_replayed_counterexample_artifact(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizes_replayed_counterexample_artifact because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeCounterexample.t.sol",
+        r#"
+contract SymbolicMinimizeCounterexample {
+    /// forge-config: default.symbolic.array_lengths = [33]
+    function checkMinimize(uint256 x, bytes memory data) public pure {
+        if ((x & 0x2a) == 0x2a && data.length >= 2 && data[1] == 0x42) {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkMinimize"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkMinimize(uint256,bytes)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
+    assert_eq!(symbolic["minimization"]["minimized"], symbolic["artifact"]);
+    assert!(
+        symbolic["minimization"]["attempts"].as_u64().unwrap()
+            > symbolic["minimization"]["accepted"].as_u64().unwrap()
+    );
+    assert!(symbolic["minimization"]["accepted"].as_u64().unwrap() > 0);
+    assert!(
+        symbolic["minimization"]["minimized_calldata_bytes"].as_u64().unwrap()
+            < symbolic["minimization"]["original_calldata_bytes"].as_u64().unwrap()
+    );
+
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    let minimized = read_artifact(symbolic);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_ne!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
+    assert_eq!(minimized["calls"][0]["args"], "42, 0x0042");
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        symbolic["artifact"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeCounterexample.t.sol:SymbolicMinimizeCounterexample
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x29e50d14000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000020042000000000000000000000000000000000000000000000000000000000000 args=[42, 0x0042]] checkMinimize(uint256,bytes) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_minimizer_skips_reasonless_failure_flag(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizer_skips_reasonless_failure_flag because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeFailureFlag.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMinimizeFailureFlag is Test {
+    function checkFailureFlag(uint256 x) public {
+        if (x == 0) revert("candidate-revert");
+        if (x == 42) fail();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkFailureFlag"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkFailureFlag(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["replay"]["status"], "confirmed");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert!(symbolic["minimization"].is_null());
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+
+    let artifact = read_artifact(symbolic);
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"][0]["raw_args"], "42");
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        symbolic["artifact"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeFailureFlag.t.sol:SymbolicMinimizeFailureFlag
+[FAIL: <empty revert data>; counterexample: 		[SENDER] [SENDER] calldata=0x04f6a46a000000000000000000000000000000000000000000000000000000000000002a args=[42]] checkFailureFlag(uint256) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_minimizes_echidna_address_array_duplicate_fixture(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizes_echidna_address_array_duplicate_fixture because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeAddressArrayDuplicate.t.sol",
+        r#"
+library AddressArrayUtilsBug {
+    function hasDuplicate(address[] memory xs) internal pure returns (bool) {
+        for (uint256 i = 0; i < xs.length; i++) {
+            for (uint256 j = i + 1; j < xs.length; j++) {
+                if (xs[i] == xs[j]) return true;
+            }
+        }
+        return false;
+    }
+}
+
+contract SymbolicMinimizeAddressArrayDuplicate {
+    /// forge-config: default.symbolic.array_lengths = [6]
+    function checkNoDuplicate(address[] memory xs) public pure {
+        assert(!AddressArrayUtilsBug.hasDuplicate(xs));
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNoDuplicate"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoDuplicate(address[])");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
+    assert!(symbolic["minimization"]["accepted"].as_u64().unwrap() > 0);
+    assert_eq!(symbolic["minimization"]["original_calldata_bytes"], 260);
+    assert_eq!(symbolic["minimization"]["minimized_calldata_bytes"], 132);
+
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    let minimized = read_artifact(symbolic);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_ne!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
+    assert_eq!(
+        minimized["calls"][0]["args"],
+        "[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]"
+    );
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        symbolic["artifact"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMinimizeAddressArrayDuplicate.t.sol:SymbolicMinimizeAddressArrayDuplicate
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] calldata=0x788be8fd0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 args=[[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]]] checkNoDuplicate(address[]) ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_json_schema_reports_replay_skip(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_schema_reports_replay_skip because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonReplaySkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJsonReplaySkip is Test {
+    function checkReplaySkip(uint256 x) public {
+        uint256 startedAt = vm.unixTime();
+        vm.sleep(500);
+        vm.skip(vm.unixTime() >= startedAt + 250, "replay slept");
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkReplaySkip"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkReplaySkip(uint256)");
+    assert_eq!(result["status"], "Skipped");
+    assert_eq!(result["reason"], "replay slept");
+    assert!(result["counterexample"].is_null());
+
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "incomplete");
+    assert_eq!(symbolic["incomplete"]["kind"], "error");
+    assert_eq!(symbolic["replay"]["required"], true);
+    assert_eq!(symbolic["replay"]["status"], "skipped");
+    assert!(
+        symbolic["replay"]["reason"].as_str().unwrap().contains("vm.skip during concrete replay")
+    );
+    assert_eq!(symbolic["counterexample"]["args"], "42");
+    assert!(symbolic["artifact"].is_null());
+}
+
+#[forgetest_init]
+fn symbolic_json_schema_reports_incomplete(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_schema_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonIncomplete.t.sol",
+        r#"
+contract SymbolicJsonIncomplete {
+    function checkWidth(uint8 x) public pure {
+        uint256 acc;
+        if ((x & 0x01) != 0) acc += 1; else acc += 2;
+        if ((x & 0x02) != 0) acc += 4; else acc += 8;
+        assert(acc != 0);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--symbolic-width",
+            "1",
+            "--match-test",
+            "checkWidth",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkWidth(uint8)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "incomplete");
+    assert_eq!(symbolic["incomplete"]["kind"], "stuck");
+    assert!(symbolic["incomplete"]["reason"].as_str().unwrap().contains("path limit"));
+    assert_eq!(symbolic["bounds"]["max_paths"], 1);
+    assert_eq!(symbolic["replay"]["status"], "not_required");
+    assert!(symbolic["counterexample"].is_null());
+}
+
+#[forgetest_init]
+fn symbolic_finds_wrapping_arithmetic_riddle_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_finds_wrapping_arithmetic_riddle_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRiddle.t.sol",
+        r#"
+contract SymbolicRiddle {
+    function check_riddle(uint256 x) external pure {
+        uint256 msgSender = uint160(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+
+        unchecked {
+            require(x * x < msgSender);
+        }
+
+        require(x > msgSender);
+        require(x & 0x800 != 0);
+        require(x & 0x10000 == 0);
+
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "check_riddle"]))
+            .failure()
+            .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicRiddle.t.sol:SymbolicRiddle
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] check_riddle(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+            .get_output()
+            .stdout_lossy();
+
+    assert!(!stdout.contains("unsupported symbolic execution feature"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_requires_successful_path(prj: _, cmd: _) {
+    crate::skip_unless_z3!("symbolic_requires_successful_path");
+
+    prj.add_test(
+        "SymbolicEmptyDomain.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicEmptyDomain is Test {
+    function checkConstantAssumption() public {
+        vm.assume(false);
+    }
+
+    function checkContradictoryAssumptions(uint256 x) public {
+        vm.assume(x > 10);
+        vm.assume(x < 5);
+    }
+
+    function checkRejectedAndReverted(bool reject) public {
+        if (reject) vm.assume(false);
+        revert();
+    }
+
+    function checkSomeAccepted(bool accept) public {
+        vm.assume(accept);
+        assert(accept);
+    }
+
+    function checkSkipped() public {
+        vm.skip(true);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-contract", "SymbolicEmptyDomain"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicEmptyDomain.t.sol:SymbolicEmptyDomain
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkConstantAssumption() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkContradictoryAssumptions(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkRejectedAndReverted(bool) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): no successful symbolic paths] checkSkipped() ([METRICS])
+[PASS] checkSomeAccepted(bool) ([METRICS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_finds_bytes_counterexample_with_native_inline_config(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_finds_bytes_counterexample_with_native_inline_config because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBytes.t.sol",
+        r#"
+contract SymbolicBytes {
+    /// forge-config: default.symbolic.array_lengths = [3]
+    function checkBytes(bytes memory data) public pure {
+        if (data[1] == 0x42) {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkBytes"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicBytes.t.sol:SymbolicBytes
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkBytes(bytes) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_replays_string_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_replays_string_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicString.t.sol",
+        r#"
+contract SymbolicString {
+    /// forge-config: default.symbolic.array_lengths = [3]
+    function checkString(string memory value) public pure {
+        bytes memory data = bytes(value);
+        if (data[0] == bytes1(uint8(0x41))) {
+            assert(false);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkString"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicString.t.sol:SymbolicString
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkString(string) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_uses_native_array_lengths(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_uses_native_array_lengths because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicNativeArrayLengths.t.sol",
+        r#"
+contract SymbolicNativeArrayLengths {
+    /// forge-config: default.symbolic.array_lengths = [3]
+    function checkArray(uint256[] memory values) public pure {
+        assert(values.length == 3);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkArray"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicNativeArrayLengths.t.sol:SymbolicNativeArrayLengths
+[PASS] checkArray(uint256[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_handles_array_assertions_from_symbolic_memory(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_handles_array_assertions_from_symbolic_memory because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicArrayAssertions.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArrayAssertions is Test {
+    function checkArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        assertEq(values, copy);
+    }
+
+    function checkCorruptedArrayCopy(uint256[] memory values) public pure {
+        uint256[] memory copy = new uint256[](values.length);
+        for (uint256 i; i < values.length; ++i) copy[i] = values[i];
+        if (copy.length != 0) copy[0] ^= 1;
+        assertEq(values, copy);
+    }
+
+    function checkConcretePointerWithSymbolicSize(bool padded) public view {
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x60)
+            mstore(0xc4, 0)
+            mstore(0xe4, 0)
+            let size := add(0x84, shl(5, padded))
+            if iszero(staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function checkArrayCallResultTracksInputSize(bool complete, uint256 value) public view {
+        bool success;
+        assembly {
+            mstore(0x80, shl(224, 0x975d5a12))
+            mstore(0x84, 0x40)
+            mstore(0xa4, 0x80)
+            mstore(0xc4, 1)
+            mstore(0xe4, value)
+            mstore(0x104, 1)
+            mstore(0x124, value)
+            let size := add(4, mul(0xc0, complete))
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x80, size, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkNoncanonicalArrayEncoding(bool shifted) public view {
+        bool success;
+        assembly {
+            let start := add(0x80, shl(5, shifted))
+            mstore(start, shl(224, 0x975d5a12))
+            mstore(add(start, 4), 0x60)
+            mstore(add(start, 0x24), 0x60)
+            mstore(add(start, 0x64), 1)
+            mstore(add(start, 0x84), 7)
+            success := staticcall(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, start, 0xa4, 0, 0)
+        }
+        assertTrue(success);
+    }
+
+    function checkZeroLengthMcopy(uint256 dest, uint256 size) public view {
+        vm.assume(size <= 2);
+        uint256 byteAtZero;
+        assembly {
+            mstore8(0, 0xaa)
+            mstore8(0x20, 0xbb)
+            mcopy(dest, 0x1f, size)
+            byteAtZero := byte(0, mload(0))
+        }
+        assert(size != 0 || byteAtZero == 0xaa);
+    }
+}
+"#,
+    );
+
+    let args = [
+        "test",
+        "--symbolic",
+        "--symbolic-max-paths",
+        "20",
+        "--symbolic-max-solver-queries",
+        "50",
+        "--symbolic-max-depth",
+        "5000",
+        "--symbolic-timeout",
+        "1",
+    ];
+    assert_symbolic(
+        cmd.args(args)
+            .args(["--symbolic-array-lengths", "1"])
+            .args(["--match-test", "^checkArrayCopy\\("]),
+    )
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[PASS] checkArrayCopy(uint256[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(
+        cmd.forge_fuse()
+            .args(args)
+            .args(["--symbolic-array-lengths", "1"])
+            .args(["--match-test", "^checkCorruptedArrayCopy\\("]),
+    )
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[FAIL: assertion failed: [0] != [1]; counterexample: 		[SENDER] [SENDER] calldata=0x0ec64af5000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000 args=[[0]]] checkCorruptedArrayCopy(uint256[]) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(
+        cmd.forge_fuse()
+            .args(args)
+            .args(["--match-test", "^checkConcretePointerWithSymbolicSize\\("]),
+    )
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[PASS] checkConcretePointerWithSymbolicSize(bool) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic(
+        cmd.forge_fuse()
+            .args(args)
+            .args(["--match-test", "^checkArrayCallResultTracksInputSize\\("]),
+    )
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicArrayAssertions.t.sol:SymbolicArrayAssertions
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic array assertion CALL input size] checkArrayCallResultTracksInputSize(bool,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkNoncanonicalArrayEncoding\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkNoncanonicalArrayEncoding(bool)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args(args)
+        .args(["--json", "--match-test", "^checkZeroLengthMcopy\\("])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkZeroLengthMcopy(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+}
+
+#[forgetest_init]
+fn symbolic_uses_legacy_halmos_array_lengths(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_uses_legacy_halmos_array_lengths because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicHalmosLengths.t.sol",
+        r#"
+contract SymbolicHalmosLengths {
+    /// @custom:halmos --array-lengths 3
+    function checkArray(uint256[] memory values) public pure {
+        assert(values.length == 3);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkArray"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicHalmosLengths.t.sol:SymbolicHalmosLengths
+[PASS] checkArray(uint256[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+// Dynamic calldata shapes: nested structs and shorter variants with positional inner lengths.
+#[forgetest_init]
+fn symbolic_dynamic_input_shapes(prj: _, cmd: _) {
+    skip_unless_z3!("symbolic_dynamic_input_shapes");
+
+    prj.add_test(
+        "SymbolicNestedStruct.t.sol",
+        r#"
+contract SymbolicNestedStruct {
+    struct Payload {
+        uint256[] values;
+        bytes note;
+    }
+
+    /// forge-config: default.symbolic.array_lengths = [2, 3]
+    function checkStruct(Payload memory payload) public pure {
+        assert(payload.values.length == 2);
+        assert(payload.note.length == 3);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SymbolicMixedLengthSets.t.sol",
+        r#"
+contract SymbolicMixedLengthSets {
+    /// forge-config: default.symbolic.default_array_lengths = [1, 2]
+    /// forge-config: default.symbolic.array_lengths = [4, 4]
+    function checkBatch(bytes[] memory items) public pure {
+        assert(items.length == 1 || items.length == 2);
+        for (uint256 i; i < items.length; i++) {
+            assert(items[i].length == 4);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "^(checkStruct|checkBatch)\\(",
+    ]))
+    .success()
+    .stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/SymbolicMixedLengthSets.t.sol:SymbolicMixedLengthSets
+[PASS] checkBatch(bytes[]) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/SymbolicNestedStruct.t.sol:SymbolicNestedStruct
+[PASS] checkStruct((uint256[],bytes)) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]
+        .unordered(),
+    );
+}
+
+#[forgetest_init]
+fn symbolic_reports_calldata_variant_width_exhaustion(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_reports_calldata_variant_width_exhaustion because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicVariantLimit.t.sol",
+        r#"
+contract SymbolicVariantLimit {
+    /// forge-config: default.symbolic.width = 2
+    /// forge-config: default.symbolic.default_array_lengths = [1, 2]
+    /// forge-config: default.symbolic.default_bytes_lengths = [1, 2]
+    function checkVariants(bytes[] memory items) public pure {
+        items;
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVariants"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicVariantLimit.t.sol:SymbolicVariantLimit
+[FAIL: incomplete symbolic execution (Stuck): symbolic calldata variant limit exceeded (2)] checkVariants(bytes[]) ([METRICS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_rejects_malformed_halmos_array_lengths(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicMalformedHalmos.t.sol",
+        r#"
+contract SymbolicMalformedHalmos {
+    /// forge-config: default.symbolic.default_dynamic_length = 2
+    /// @custom:halmos --array-lengths nope
+    function checkBytes(bytes memory data) public pure {
+        data;
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkBytes"]).assert_failure().stderr_eq(
+        str![[r#"
+...
+Error: Inline config error at test/SymbolicMalformedHalmos.t.sol:5:5: invalid @custom:halmos annotation: invalid length `nope` in --array-lengths `nope`
+...
+"#]],
+    );
+}
+
+#[forgetest_init]
+fn symbolic_selfdestruct_cancun_self_beneficiary_halts(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_self_beneficiary_halts because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancun.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract SymbolicSelfdestructCancun is Test {
+    function checkSelfdestructCancun(uint256) public {
+        selfdestruct(payable(address(this)));
+
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSelfdestructCancun",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicSelfdestructCancun.t.sol:SymbolicSelfdestructCancun
+[PASS] checkSelfdestructCancun(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+}
+#[forgetest_init]
+fn symbolic_invariant_finds_single_step_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_finds_single_step_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSingle.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicCounterTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicInvariantSingle is Test {
+    SymbolicCounterTarget target;
+
+    function setUp() public {
+        target = new SymbolicCounterTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    let output = assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_counterNeverEleven",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSingle.t.sol:SymbolicInvariantSingle
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=set(uint256) args=[7]
+ invariant_counterNeverEleven() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
+    assert!(stderr.contains("cache/symbolic/"), "{stderr}");
+    assert!(!stdout.contains("No contracts to fuzz"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_json_reports_sequence_counterexample_artifact(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_sequence_counterexample_artifact because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSequenceArtifact.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicInvariantSequenceArtifact is Test {
+    SymbolicArtifactTarget target;
+
+    function setUp() public {
+        target = new SymbolicArtifactTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_counterNeverEleven"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_counterNeverEleven()");
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    assert_eq!(failure["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["original_sequence_len"], 1);
+    assert_eq!(minimization["minimized_sequence_len"], 1);
+    assert_eq!(minimization["accepted"], 0);
+    assert_eq!(minimization["original_calldata_bytes"], minimization["minimized_calldata_bytes"]);
+    let artifacts = result["counterexample_artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0], failure["artifact"]);
+    assert_eq!(artifacts[1], minimization["original"]);
+    let artifact_path = failure["artifact"]["path"].as_str().unwrap().to_string();
+
+    let original = read_artifact_ref(&minimization["original"]);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(original["calls"].as_array().unwrap().len(), 1);
+    let artifact = read_artifact_ref(&failure["artifact"]);
+    assert_eq!(artifact["schema_version"], 1);
+    assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(artifact["kind"], "sequence");
+    assert_eq!(artifact["test"]["test"], "invariant_counterNeverEleven()");
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(artifact["calls"][0]["function_name"], "set");
+    assert_eq!(artifact["calls"][0]["args"], "7");
+
+    assert_symbolic(cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSequenceArtifact.t.sol:SymbolicInvariantSequenceArtifact
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=set(uint256) args=[7]
+ invariant_counterNeverEleven() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_emits_stateful_solidity_regression(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateful_solidity_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionSequence.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionSequenceTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicRegressionSequence is Test {
+    SymbolicRegressionSequenceTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionSequenceTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected invariant sender");
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_counterNeverEleven",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_counterNeverEleven_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression.t.sol:SymbolicRegressionSequence_invariant_counterNeverEleven_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_counterNeverEleven_symbolic()": {
+        "status": "Failure",
+        "reason": "panic: assertion failed (0x01)",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_emits_stateful_regression_with_after_invariant(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_stateful_regression_with_after_invariant because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionAfterInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionAfterInvariantTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 1;
+        }
+    }
+}
+
+contract SymbolicRegressionAfterInvariant is Test {
+    SymbolicRegressionAfterInvariantTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionAfterInvariantTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected invariant sender");
+    }
+
+    function afterInvariant() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "unexpected afterInvariant sender");
+        require(target.value() != 1, "afterInvariant failure");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression.t.sol",
+    );
+    assert!(regression.exists(), "missing regression {}", regression.display());
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains(r#"hex"93969ddf""#), "{generated}");
+
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression.t.sol:SymbolicRegressionAfterInvariant_invariant_ok_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_ok_symbolic()": {
+        "status": "Failure",
+        "reason": "afterInvariant failure",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_emits_regression_with_setup_storage(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_regression_with_setup_storage because z3 is not available"
+        );
+        return;
+    }
+    prj.update_config(|config| config.invariant.runs = 0);
+
+    prj.add_test(
+        "StorageRegression.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageVm {
+    function setArbitraryStorage(address target) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function copyStorage(address from, address to) external;
+}
+
+contract RegressionStore {
+    uint256 public value;
+    uint256 public zero;
+
+    constructor(uint256 initial) {
+        value = initial;
+        zero = initial;
+    }
+}
+
+contract StorageRegressionTarget {
+    RegressionStore source;
+    RegressionStore store;
+    bool public hit;
+
+    constructor(RegressionStore source_, RegressionStore store_) {
+        source = source_;
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42 && store.zero() == 0);
+        require(source.value() == 42 && source.zero() == 0);
+        hit = true;
+    }
+}
+
+abstract contract StorageRegressionBase is Test {
+    StorageRegressionTarget target;
+
+    function initTarget(RegressionStore source, RegressionStore store) internal {
+        target = new StorageRegressionTarget(source, store);
+        targetContract(address(target));
+    }
+
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+
+contract DirectStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore store = new RegressionStore(0);
+        StorageVm(address(vm)).setArbitraryStorage(address(store));
+        initTarget(store, store);
+    }
+}
+
+contract CopiedStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore source = new RegressionStore(0);
+        RegressionStore copy = new RegressionStore(0);
+        StorageVm(address(vm)).setArbitraryStorage(address(source));
+        StorageVm(address(vm)).copyStorage(address(source), address(copy));
+        initTarget(source, copy);
+    }
+}
+
+contract OverwriteStorageRegression is StorageRegressionBase {
+    function setUp() public {
+        RegressionStore store = new RegressionStore(1);
+        StorageVm(address(vm)).setArbitraryStorage(address(store), true);
+        initTarget(store, store);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--emit-regression",
+        "--match-test",
+        "invariant_notHit",
+        "--symbolic-invariant-depth",
+        "1",
+    ])
+    .assert_failure();
+
+    cmd.forge_fuse()
+        .args(["test", "--json", "--match-test", "test_regression_invariant_notHit_symbolic"])
+        .assert_json_stdout_with_status(
+            false,
+            str![[r#"
+{
+  "test/regressions/DirectStorageRegression_invariant_notHit_SymbolicRegression.t.sol:DirectStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/regressions/CopiedStorageRegression_invariant_notHit_SymbolicRegression.t.sol:CopiedStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  },
+  "test/regressions/OverwriteStorageRegression_invariant_notHit_SymbolicRegression.t.sol:OverwriteStorageRegression_invariant_notHit_SymbolicRegression": {
+    "test_results": {
+      "test_regression_invariant_notHit_symbolic()": {
+        "status": "Failure",
+        "reason": "hit",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]],
+        );
+}
+
+#[forgetest_init]
+fn symbolic_emits_handler_assertion_regression(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_handler_assertion_regression because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicRegressionHandler.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionHandlerTarget {
+    uint256 sink;
+
+    function boom(uint256 x) external {
+        sink = x;
+        if (x == 7) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionHandler is Test {
+    SymbolicRegressionHandlerTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionHandlerTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("Assertion Tests: 1 assertion bug(s) found"), "{stdout}");
+    assert!(stderr.contains("Regression test:"), "{stderr}");
+
+    let regression = prj
+        .root()
+        .join("test/regressions/SymbolicRegressionHandler_invariant_ok_SymbolicRegression.t.sol");
+    assert!(regression.exists(), "missing regression {}", regression.display());
+    let generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    assert!(generated.contains("true);"), "{generated}");
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--match-test", "test_regression_invariant_ok_symbolic"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_regression_invariant_ok_symbolic()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_emits_multiple_handler_assertion_regressions(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emits_multiple_handler_assertion_regressions because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicRegressionMultipleHandlers.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionMultipleHandlersFirst {
+    uint256 sink;
+
+    function boomFirst(uint256 x) external {
+        sink = x;
+        if (x == 7) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionMultipleHandlersSecond {
+    uint256 sink;
+
+    function boomSecond(uint256 x) external {
+        sink = x;
+        if (x == 11) {
+            assert(false);
+        }
+    }
+}
+
+contract SymbolicRegressionMultipleHandlers is Test {
+    SymbolicRegressionMultipleHandlersFirst first;
+    SymbolicRegressionMultipleHandlersSecond second;
+
+    function setUp() public {
+        first = new SymbolicRegressionMultipleHandlersFirst();
+        second = new SymbolicRegressionMultipleHandlersSecond();
+        targetContract(address(first));
+        targetContract(address(second));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--match-test",
+            "invariant_ok",
+            "--symbolic-invariant-depth",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("Assertion Tests: 2 assertion bug(s) found"), "{stdout}");
+    assert_eq!(stderr.matches("Regression test:").count(), 2, "{stderr}");
+
+    let regressions_dir = prj.root().join("test/regressions");
+    let regressions = std::fs::read_dir(&regressions_dir)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regressions_dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
+        .collect::<Vec<_>>();
+    assert_eq!(regressions.len(), 2, "{regressions:?}");
+    assert!(
+        regressions.iter().any(|path| path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("_handler_")),
+        "{regressions:?}"
+    );
+}
+
+#[forgetest_init]
+fn symbolic_emit_regression_stale_file_preserves_json_output(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_stale_file_preserves_json_output because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionStaleJson.t.sol",
+        r#"
+contract SymbolicRegressionStaleJson {
+    function checkStaleJson(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--emit-regression", "--match-test", "checkStaleJson"])
+        .assert_failure();
+
+    let regression = prj.root().join(
+        "test/regressions/SymbolicRegressionStaleJson_checkStaleJson_SymbolicRegression.t.sol",
+    );
+    let mut generated = std::fs::read_to_string(&regression)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", regression.display()));
+    generated = generated.replacen("UNLICENSED", "MIT", 1);
+    std::fs::write(&regression, generated)
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", regression.display()));
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--json",
+            "--match-test",
+            "checkStaleJson",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout.clone();
+    let stderr = output.stderr_lossy();
+    assert!(stderr.contains("already exists; skipping"), "{stderr}");
+
+    let result = json_test_result(&stdout, "checkStaleJson(uint256)");
+    assert!(result.get("symbolic_regressions").is_none(), "{result}");
+}
+
+#[forgetest_init]
+fn symbolic_regression_contract_runs_only_generated_tests(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_regression_contract_runs_only_generated_tests because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionCollection.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicRegressionCollectionTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicRegressionCollection is Test {
+    SymbolicRegressionCollectionTarget target;
+
+    function setUp() public {
+        target = new SymbolicRegressionCollectionTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--symbolic",
+        "--emit-regression",
+        "--match-test",
+        "invariant_counterNeverEleven",
+        "--symbolic-invariant-depth",
+        "1",
+    ])
+    .assert_failure();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicRegressionCollection_invariant_counterNeverEleven_SymbolicRegression",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("Ran 1 test"), "{stdout}");
+    assert!(stdout.contains("test_regression_invariant_counterNeverEleven_symbolic()"), "{stdout}");
+    assert!(!stdout.contains(" invariant_counterNeverEleven()"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_regression_suffix_user_contract_runs_tests(prj: _, cmd: _) {
+    prj.add_test(
+        "RealSymbolicRegression.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Real_SymbolicRegression is Test {
+    function test_fails() public pure {
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-contract", "Real_SymbolicRegression"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("test_fails()"), "{stdout}");
+    assert!(stdout.contains("assertion failed"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_emit_regression_rejects_explicit_output_collision(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rejects_explicit_output_collision because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicRegressionCollisionFile.t.sol",
+        r#"
+contract SymbolicRegressionCollisionFileFirst {
+    function checkFirst(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+
+contract SymbolicRegressionCollisionFileSecond {
+    function checkSecond(uint256 x) public pure {
+        assert(x != 11);
+    }
+}
+"#,
+    );
+
+    let collision_path = prj.root().join("test/onlyone.sol");
+    let stderr = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--emit-regression",
+            "--regression-out",
+            "test/onlyone.sol",
+            "--regression-overwrite",
+            "--match-test",
+            "check(First|Second)",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("multiple symbolic regressions resolve to"), "{stderr}");
+    assert!(stderr.contains("checkFirst(uint256)"), "{stderr}");
+    assert!(stderr.contains("checkSecond(uint256)"), "{stderr}");
+    assert!(!collision_path.exists(), "unexpected collision file {}", collision_path.display());
+}
+
+#[forgetest_init]
+fn symbolic_emit_regression_rejects_default_path_collision(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_emit_regression_rejects_default_path_collision because z3 is not available"
+        );
+        return;
+    }
+
+    let test_dir = prj.root().join("test");
+    std::fs::create_dir_all(test_dir.join("a")).unwrap();
+    std::fs::create_dir_all(test_dir.join("b")).unwrap();
+    std::fs::write(
+        test_dir.join("a/SameName.t.sol"),
+        r#"
+contract SameName {
+    function checkSame(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        test_dir.join("b/SameName.t.sol"),
+        r#"
+contract SameName {
+    function checkSame(uint256 x) public pure {
+        assert(x != 11);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let collision_path =
+        prj.root().join("test/regressions/SameName_checkSame_SymbolicRegression.t.sol");
+    let stderr = cmd
+        .args(["test", "--symbolic", "--emit-regression", "--match-test", "checkSame"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("multiple symbolic regressions resolve to"), "{stderr}");
+    assert!(stderr.contains("test/a/SameName.t.sol:SameName::checkSame(uint256)"), "{stderr}");
+    assert!(stderr.contains("test/b/SameName.t.sol:SameName::checkSame(uint256)"), "{stderr}");
+    assert!(!collision_path.exists(), "unexpected collision file {}", collision_path.display());
+}
+
+#[forgetest_init]
+fn symbolic_json_reports_minimized_sequence_counterexample(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_minimized_sequence_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    // `check_interval = 0` makes the symbolic engine check the invariant only at the terminal
+    // depth, so the symbolic sequence budget is kept at two calls to stay within `max_paths`.
+    prj.add_test(
+        "SymbolicInvariantSequenceMinimize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSequenceMinTarget {
+    bool primed;
+    bool fired;
+
+    function prime(uint256 x) external {
+        if (x > 40) {
+            primed = true;
+        }
+    }
+
+    function fire(uint256 y) external {
+        if (y > 100) {
+            fired = true;
+        }
+    }
+
+    function broken() external view returns (bool) {
+        return primed && fired;
+    }
+}
+
+contract SymbolicInvariantSequenceMinimize is Test {
+    SymbolicSequenceMinTarget target;
+    uint256[] public fixture_x = [1000];
+    uint256[] public fixture_y = [5000];
+
+    function setUp() public {
+        target = new SymbolicSequenceMinTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = SymbolicSequenceMinTarget.prime.selector;
+        selectors[1] = SymbolicSequenceMinTarget.fire.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 20
+    /// forge-config: default.invariant.check_interval = 0
+    /// forge-config: default.invariant.shrink_run_limit = 5000
+    function invariant_targetNeverBroken() public view {
+        assertEq(target.broken(), false);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "invariant_targetNeverBroken",
+            "--fuzz-seed",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_targetNeverBroken()");
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["original_sequence_len"], 2);
+    assert_eq!(minimization["minimized_sequence_len"], 2);
+    assert_eq!(minimization["original_calldata_bytes"], minimization["minimized_calldata_bytes"]);
+    let artifacts = result["counterexample_artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert!(artifacts.contains(&failure["artifact"]));
+    assert!(artifacts.contains(&minimization["original"]));
+
+    let original = read_artifact_ref(&minimization["original"]);
+    let minimized = read_artifact_ref(&minimization["minimized"]);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_eq!(original["calls"].as_array().unwrap().len(), 2);
+    assert_eq!(minimized["calls"].as_array().unwrap().len(), 2);
+    if minimization["accepted"].as_u64().unwrap() == 0 {
+        assert_eq!(original["calls"], minimized["calls"]);
+    } else {
+        assert_ne!(original["calls"], minimized["calls"]);
+    }
+
+    let calls = minimized["calls"].as_array().unwrap();
+    let prime = calls.iter().find(|call| call["function_name"] == "prime").unwrap();
+    let fire = calls.iter().find(|call| call["function_name"] == "fire").unwrap();
+    assert_eq!(prime["args"], "41");
+    assert_eq!(fire["args"], "101");
+
+    assert_symbolic_witness(cmd.forge_fuse().args([
+        "test",
+        "--replay-symbolic-artifact",
+        minimization["minimized"]["path"].as_str().unwrap(),
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSequenceMinimize.t.sol:SymbolicInvariantSequenceMinimize
+[FAIL: assertion failed: true != false]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=prime(uint256) [ARGS]
+		[SENDER] [SENDER] calldata=fire(uint256) [ARGS]
+ invariant_targetNeverBroken() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_seed_corpus_persists_non_failing_fuzz_input(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_seed_corpus_persists_non_failing_fuzz_input because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzCorpusSeed.t.sol",
+        r#"
+contract SymbolicFuzzCorpusSeed {
+    function testHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y != 0) return;
+        assert(y == 0);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testHybridFindsBug",
+            "--symbolic-seed-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_success();
+
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicFuzzCorpusSeed")
+        .join("testHybridFindsBug")
+        .join("worker0")
+        .join("corpus");
+    let mut entries = std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    entries.sort_by_key(|entry| entry.path());
+    let expected_selector = &keccak256(b"testHybridFindsBug(uint256,uint256)")[..4];
+    let expected_x = "6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db7";
+    let expected_y = format!("{:064x}", 0);
+    let expected_x_decimal =
+        "49625181101706940895816136432294817651401421999560241731196107431962769845687";
+    let mut found_symbolic_seed = false;
+    for entry in &entries {
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        assert_eq!(corpus.as_array().unwrap().len(), 1);
+        let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
+        assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
+        if calldata[10..74] == *expected_x && calldata[74..138] == expected_y {
+            found_symbolic_seed = true;
+        } else {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    assert!(found_symbolic_seed);
+
+    prj.add_test(
+        "SymbolicFuzzCorpusSeed.t.sol",
+        r#"
+contract SymbolicFuzzCorpusSeed {
+    function testHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y == 0) return;
+        assert(false);
+    }
+
+    function checkHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y != 0) return;
+        assert(y == 0);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testHybridFindsBug", "--threads", "1", "--fuzz-runs", "8"])
+        .assert_success();
+
+    assert_symbolic(cmd.forge_fuse().args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkHybridFindsBug",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicFuzzCorpusSeed.t.sol:SymbolicFuzzCorpusSeed
+[PASS] checkHybridFindsBug(uint256,uint256) ([METRICS])
+...
+"#]]);
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testHybridFindsBug",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--threads",
+            "1",
+            "--fuzz-corpus-random-sequence-weight",
+            "0",
+            "--fuzz-mutation-weight-splice",
+            "0",
+            "--fuzz-mutation-weight-repeat",
+            "0",
+            "--fuzz-mutation-weight-interleave",
+            "0",
+            "--fuzz-mutation-weight-prefix",
+            "0",
+            "--fuzz-mutation-weight-suffix",
+            "0",
+            "--fuzz-mutation-weight-abi",
+            "1",
+            "--fuzz-mutation-weight-cmp",
+            "0",
+            "--fuzz-runs",
+            "256",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains(expected_x_decimal), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzCorpusBestEffort.t.sol",
+        r#"
+contract SymbolicFuzzCorpusBestEffort {
+    function testFuzz_symbolicHostile(uint256) public pure {
+        for (uint256 i; i < 10001; ++i) {}
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_symbolicHostile",
+            "--symbolic-seed-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[PASS] testFuzz_symbolicHostile(uint256)"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_fuzz_frontier_seeding_persists_branch_flipping_input(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_persists_branch_flipping_input because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzFrontierSeed.t.sol",
+        r#"
+contract SymbolicFuzzFrontierSeed {
+    function testFuzz_frontier(uint64 amount, uint256 feeMultiplier) public pure {
+        uint256 credited;
+        unchecked {
+            credited = uint256(amount) + (feeMultiplier - 100);
+        }
+
+        if (feeMultiplier < 100) {
+            assert(credited <= amount);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let target_frontier = matching_frontier(
+        prj.root(),
+        "SymbolicFuzzFrontierSeed",
+        "testFuzz_frontier",
+        "missed fee multiplier",
+        |frontier| {
+            frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x64" || frontier["operands"]["rhs"] == "0x64")
+        },
+    );
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    let target_frontier_pc = target_frontier["site"]["pc"].as_u64().unwrap().to_string();
+    let target_frontier_selector =
+        target_frontier["sequence"][0]["calldata"].as_str().unwrap()[..10].to_string();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_frontier",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+            "--symbolic-frontier-pcs",
+            &target_frontier_pc,
+            "--symbolic-frontier-selectors",
+            &target_frontier_selector,
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(stdout.contains("testFuzz_frontier(uint64,uint256)"), "{stdout}");
+    assert!(
+        stderr.contains("Symbolic frontier selection for testFuzz_frontier(uint64,uint256)"),
+        "{stderr}"
+    );
+
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicFuzzFrontierSeed")
+        .join("testFuzz_frontier")
+        .join("worker0")
+        .join("corpus");
+    let expected_selector = hex::encode(&keccak256(b"testFuzz_frontier(uint64,uint256)")[..4]);
+    let mut found_branch_flipping_seed = false;
+    for entry in std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
+    {
+        let entry = entry.unwrap();
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        for tx in corpus.as_array().unwrap() {
+            let calldata = tx["calldata"].as_str().expect("seed calldata");
+            if !calldata.starts_with(&format!("0x{expected_selector}")) {
+                continue;
+            }
+            let fee_multiplier = U256::from_be_slice(&hex::decode(&calldata[74..138]).unwrap());
+            if fee_multiplier < U256::from(100) {
+                found_branch_flipping_seed = true;
+            }
+        }
+    }
+    assert!(found_branch_flipping_seed);
+
+    let replay_output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicFuzzFrontierSeed",
+            "--match-test",
+            "testFuzz_frontier",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(replay_output.contains("corpus replay failed"), "{replay_output}");
+}
+
+#[forgetest_init]
+fn symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_ignores_pre_target_counterexamples because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzFrontierTargetGate.t.sol",
+        r#"
+/// forge-config: default.symbolic.exploration_order = "dfs"
+contract SymbolicFuzzFrontierTargetGate {
+    event TargetHit();
+
+    function testFuzz_targetGate(uint256 value) public {
+        if (value == 13) {
+            assert(false);
+        }
+
+        if (value < 777) {
+            emit TargetHit();
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_targetGate",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    keep_only_matching_frontier(
+        &frontier_artifact_path(
+            prj.root(),
+            "SymbolicFuzzFrontierTargetGate",
+            "testFuzz_targetGate",
+        ),
+        "value < 777",
+        |frontier| {
+            frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x309"
+                    || frontier["operands"]["rhs"] == "0x309")
+        },
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_targetGate",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success();
+
+    let values = single_uint_corpus_values(
+        prj.root(),
+        "SymbolicFuzzFrontierTargetGate",
+        "testFuzz_targetGate",
+        "testFuzz_targetGate(uint256)",
+    );
+    assert!(values.iter().any(|value| *value < U256::from(777)));
+    assert!(!values.iter().any(|value| *value == U256::from(13)));
+}
+
+#[forgetest_init]
+fn symbolic_fuzz_frontier_seeding_keeps_deploy_code_target_progress(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_keeps_deploy_code_target_progress because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzDeployCodeFrontier.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SymbolicDeployCodeVm {
+    function randomUint(uint256 min, uint256 max) external view returns (uint256);
+}
+
+contract DeployCodeFrontierCtor {
+    SymbolicDeployCodeVm constant VM =
+        SymbolicDeployCodeVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    event TargetHit();
+
+    constructor() {
+        uint256 value = VM.randomUint(0, 1000);
+        if (value < 777) {
+            emit TargetHit();
+        }
+    }
+}
+
+contract SymbolicFuzzDeployCodeFrontier is Test {
+    string constant TARGET = "test/SymbolicFuzzDeployCodeFrontier.t.sol";
+
+    function testFuzz_deployCode(uint256 marker) public {
+        marker;
+        vm.deployCode(string.concat(TARGET, ":DeployCodeFrontierCtor"));
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_deployCode",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let target_frontier = keep_only_matching_frontier(
+        &frontier_artifact_path(
+            prj.root(),
+            "SymbolicFuzzDeployCodeFrontier",
+            "testFuzz_deployCode",
+        ),
+        "deployCode constructor value < 777",
+        |frontier| {
+            frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x309"
+                    || frontier["operands"]["rhs"] == "0x309")
+        },
+    );
+    let frontier_calldata = target_frontier["sequence"][0]["calldata"].as_str().unwrap();
+    let frontier_marker = U256::from_be_slice(&hex::decode(&frontier_calldata[10..74]).unwrap());
+    assert_ne!(frontier_marker, U256::ZERO);
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_deployCode",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success();
+
+    let values = single_uint_corpus_values(
+        prj.root(),
+        "SymbolicFuzzDeployCodeFrontier",
+        "testFuzz_deployCode",
+        "testFuzz_deployCode(uint256)",
+    );
+    assert!(values.contains(&U256::ZERO), "target_frontier={target_frontier}, values={values:?}");
+}
+
+#[forgetest_init]
+fn symbolic_fuzz_frontier_seeding_keeps_callee_target_progress(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fuzz_frontier_seeding_keeps_callee_target_progress because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzCalleeFrontierSeed.t.sol",
+        r#"
+contract SymbolicFuzzCalleeTarget {
+    function crossed(uint256 value) external pure returns (bool) {
+        return value == 777;
+    }
+}
+
+contract SymbolicFuzzCalleeFrontierSeed {
+    SymbolicFuzzCalleeTarget target = new SymbolicFuzzCalleeTarget();
+
+    function testFuzz_callee(uint256 value) public view {
+        target.crossed(value);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_callee",
+            "--fuzz-runs",
+            "8",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_callee",
+            "--fuzz-runs",
+            "1",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "32",
+        ])
+        .assert_success();
+
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicFuzzCalleeFrontierSeed")
+        .join("testFuzz_callee")
+        .join("worker0")
+        .join("corpus");
+    let expected_selector = hex::encode(&keccak256(b"testFuzz_callee(uint256)")[..4]);
+    let mut found_branch_flipping_seed = false;
+    for entry in std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
+    {
+        let entry = entry.unwrap();
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        for tx in corpus.as_array().unwrap() {
+            let calldata = tx["calldata"].as_str().expect("seed calldata");
+            if !calldata.starts_with(&format!("0x{expected_selector}")) {
+                continue;
+            }
+            let value = U256::from_be_slice(&hex::decode(&calldata[10..74]).unwrap());
+            if value == U256::from(777) {
+                found_branch_flipping_seed = true;
+            }
+        }
+    }
+    assert!(found_branch_flipping_seed);
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_solves_stalled_handler_call(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_solves_stalled_handler_call because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantFrontierSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantFrontierTarget {
+    uint256 public phase;
+    bool public broken;
+
+    function advance(uint256 value) external {
+        if (phase == 0) {
+            phase = 1;
+        } else if (phase == 1) {
+            if (value >= 123456789) {
+                broken = true;
+            }
+            phase = 2;
+        }
+    }
+}
+
+contract SymbolicInvariantFrontierSeed is Test {
+    SymbolicInvariantFrontierTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantFrontierTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+
+    function invariant_alsoNotBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x5678",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "invariant_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_root = prj.root().join("invariant_frontiers");
+    let frontier_path = find_stateful_frontier_artifact(&frontier_root);
+    let frontier_relative = frontier_path.strip_prefix(&frontier_root).unwrap().to_path_buf();
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    assert_eq!(artifact["test"], "invariant_alsoNotBroken()");
+    let target_frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| {
+            frontier["call_index"] == 1
+                && frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x75bcd15"
+                    || frontier["operands"]["rhs"] == "0x75bcd15")
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("missing value >= 123456789 frontier in {artifact}"));
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+
+    let covered_frontier_path =
+        prj.root().join("covered_invariant_frontiers").join(&frontier_relative);
+    std::fs::create_dir_all(covered_frontier_path.parent().unwrap()).unwrap();
+    let mut covered_artifact = artifact.clone();
+    let mut opposite_frontier = target_frontier.clone();
+    let result = opposite_frontier["operands"]["result"].as_bool().unwrap();
+    opposite_frontier["id"] = Value::from(target_frontier["id"].as_u64().unwrap() + 1);
+    opposite_frontier["operands"]["result"] = Value::Bool(!result);
+    covered_artifact["frontiers"].as_array_mut().unwrap().push(opposite_frontier);
+    std::fs::write(&covered_frontier_path, serde_json::to_vec_pretty(&covered_artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", covered_frontier_path.display()));
+
+    let payable_frontier_path =
+        prj.root().join("payable_invariant_frontiers").join(&frontier_relative);
+    std::fs::create_dir_all(payable_frontier_path.parent().unwrap()).unwrap();
+    let mut payable_artifact = artifact.clone();
+    let sequence_index = target_frontier["sequence_index"].as_u64().unwrap() as usize;
+    let call_index = target_frontier["call_index"].as_u64().unwrap() as usize;
+    payable_artifact["sequences"][sequence_index][call_index]["value"] =
+        Value::String("0x1".to_string());
+    std::fs::write(&payable_frontier_path, serde_json::to_vec_pretty(&payable_artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", payable_frontier_path.display()));
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "covered_invariant_failures");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "covered_invariant_frontiers",
+        "--invariant-corpus-dir",
+        "covered_invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_failure();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "covered_invariant_corpus",
+        ])
+        .assert_failure();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "payable_invariant_frontiers",
+        "--invariant-corpus-dir",
+        "payable_invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+    let payable_corpus = prj
+        .root()
+        .join("payable_invariant_corpus")
+        .join("SymbolicInvariantFrontierSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        !payable_corpus.exists() || payable_corpus.read_dir().unwrap().next().is_none(),
+        "nonzero-value frontier unexpectedly produced a corpus seed"
+    );
+
+    for (frontier_dir, corpus_dir, forbidden_call_index) in [
+        ("forbidden_prefix_frontiers", "forbidden_prefix_corpus", 0),
+        ("forbidden_suffix_frontiers", "forbidden_suffix_corpus", call_index),
+    ] {
+        let forbidden_frontier_path = prj.root().join(frontier_dir).join(&frontier_relative);
+        std::fs::create_dir_all(forbidden_frontier_path.parent().unwrap()).unwrap();
+        let mut forbidden_artifact = artifact.clone();
+        forbidden_artifact["sequences"][sequence_index][forbidden_call_index]["sender"] =
+            Value::String("0x0000000000000000000000000000000000000000".to_string());
+        std::fs::write(
+            &forbidden_frontier_path,
+            serde_json::to_vec_pretty(&forbidden_artifact).unwrap(),
+        )
+        .unwrap_or_else(|err| {
+            panic!("failed to write {}: {err}", forbidden_frontier_path.display())
+        });
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        cmd.args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--invariant-depth",
+            "2",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            frontier_dir,
+            "--invariant-corpus-dir",
+            corpus_dir,
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success();
+        let corpus = prj
+            .root()
+            .join(corpus_dir)
+            .join("SymbolicInvariantFrontierSeed")
+            .join("worker0")
+            .join("corpus");
+        assert!(
+            !corpus.exists() || corpus.read_dir().unwrap().next().is_none(),
+            "forbidden-sender frontier unexpectedly produced a corpus seed"
+        );
+    }
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "invariant_failures");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "invariant_frontiers",
+        "--invariant-corpus-dir",
+        "invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+    ])
+    .assert_failure();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stdout.contains("[FAIL:") && stdout.contains("invariant_notBroken"),
+        "stdout={stdout}\nstderr={stderr}"
+    );
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "filtered_invariant_failures");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "invariant_frontiers",
+        "--invariant-corpus-dir",
+        "filtered_invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_failure();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "filtered_invariant_corpus",
+        ])
+        .assert_failure();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "alternate_anchor_failures");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--match-test",
+        "invariant_notBroken",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "invariant_frontiers",
+        "--invariant-corpus-dir",
+        "alternate_anchor_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_failure();
+    let alternate_anchor_corpus = prj
+        .root()
+        .join("alternate_anchor_corpus")
+        .join("SymbolicInvariantFrontierSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        alternate_anchor_corpus.is_dir()
+            && alternate_anchor_corpus.read_dir().unwrap().next().is_some(),
+        "alternate-anchor import did not seed the corpus"
+    );
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "alternate_anchor_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stdout.contains("[FAIL:") && stdout.contains("invariant_notBroken"),
+        "stdout={stdout}\nstderr={stderr}"
+    );
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_replays_reverted_prefix(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_replays_reverted_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantRevertedPrefix.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantRevertedPrefixTarget is Test {
+    bool public broken;
+
+    function advance(uint256 value) external {
+        if (block.timestamp < 1000) {
+            vm.warp(1000);
+            revert("advance timestamp");
+        }
+        if (value >= 123456789) {
+            broken = true;
+        }
+    }
+}
+
+contract SymbolicInvariantRevertedPrefixTest is Test {
+    SymbolicInvariantRevertedPrefixTarget target;
+
+    function setUp() public {
+        vm.warp(1);
+        target = new SymbolicInvariantRevertedPrefixTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantRevertedPrefixTest",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x4321",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "reverted_prefix_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path =
+        find_stateful_frontier_artifact(&prj.root().join("reverted_prefix_frontiers"));
+    keep_only_matching_frontier(&frontier_path, "value >= 123456789", |frontier| {
+        frontier["call_index"] == 1
+            && frontier["site"]["opcode_name"] == "LT"
+            && (frontier["operands"]["lhs"] == "0x75bcd15"
+                || frontier["operands"]["rhs"] == "0x75bcd15")
+    });
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantRevertedPrefixTest",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "reverted_prefix_frontiers",
+        "--invariant-corpus-dir",
+        "reverted_prefix_corpus",
+        "--symbolic-check-invariant-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+    ])
+    .assert_failure();
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantRevertedPrefixTest",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "reverted_prefix_corpus",
+        ])
+        .assert_failure();
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_keeps_fail_on_revert_branch(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_keeps_fail_on_revert_branch because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantRevertSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantRevertTarget {
+    uint256 sink;
+
+    function act(uint256 value) external {
+        if (value > 777) {
+            revert("target revert");
+        } else {
+            sink = value;
+        }
+    }
+}
+
+contract SymbolicInvariantRevertSeed is Test {
+    SymbolicInvariantRevertTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantRevertTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantRevertSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "revert_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("revert_frontiers"));
+    let target_frontier = keep_only_matching_frontier(&frontier_path, "value > 777", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "GT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0x309" || frontier["operands"]["rhs"] == "0x309")
+    });
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantRevertSeed",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "revert_frontiers",
+        "--invariant-corpus-dir",
+        "ignored_revert_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+    let ignored_corpus_dir = prj
+        .root()
+        .join("ignored_revert_corpus")
+        .join("SymbolicInvariantRevertSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        !ignored_corpus_dir.exists() || ignored_corpus_dir.read_dir().unwrap().next().is_none(),
+        "ordinary revert seed ignored by policy was persisted"
+    );
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_FAIL_ON_REVERT", "true");
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("RUST_LOG", "forge::runner=debug");
+    let output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantRevertSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "revert_frontiers",
+            "--invariant-corpus-dir",
+            "revert_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+
+    let corpus_dir = prj
+        .root()
+        .join("revert_corpus")
+        .join("SymbolicInvariantRevertSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        corpus_dir.exists() && corpus_dir.read_dir().unwrap().next().is_some(),
+        "missing replayable fail-on-revert corpus seed for {target_frontier}: stdout={} stderr={}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
+
+    let seed_path = corpus_dir.read_dir().unwrap().next().unwrap().unwrap().path();
+    let seed: Value = serde_json::from_slice(&std::fs::read(&seed_path).unwrap()).unwrap();
+    let calldata =
+        hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    assert!(U256::from_be_slice(&calldata[4..]) > U256::from(777));
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_prefers_assertion_candidate(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_prefers_assertion_candidate because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantAssertionSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantAssertionTarget {
+    uint256 sink;
+
+    function act(uint256 value, bool fail) external {
+        if (value > 777) {
+            if (fail) assert(false);
+            sink = value;
+        }
+    }
+}
+
+contract SymbolicInvariantAssertionSeed is Test {
+    SymbolicInvariantAssertionTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantAssertionTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantAssertionSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "assertion_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("assertion_frontiers"));
+    let target_frontier = keep_only_matching_frontier(&frontier_path, "value > 777", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "GT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0x309" || frontier["operands"]["rhs"] == "0x309")
+    });
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantAssertionSeed",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "assertion_frontiers",
+        "--invariant-corpus-dir",
+        "assertion_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+
+    let corpus_dir = prj
+        .root()
+        .join("assertion_corpus")
+        .join("SymbolicInvariantAssertionSeed")
+        .join("worker0")
+        .join("corpus");
+    let seed_path = corpus_dir.read_dir().unwrap().next().unwrap().unwrap().path();
+    let seed: Value = serde_json::from_slice(&std::fs::read(&seed_path).unwrap()).unwrap();
+    let calldata =
+        hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    assert!(U256::from_be_slice(&calldata[4..36]) > U256::from(777));
+    assert_eq!(U256::from_be_slice(&calldata[36..]), U256::ONE);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantAssertionSeed",
+            "--match-test",
+            "invariant_ok",
+            "--corpus-dir",
+            "assertion_corpus",
+        ])
+        .assert_failure();
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_retains_property_breaking_candidate(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_retains_property_breaking_candidate because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantCandidateSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantCandidateTarget {
+    bool public broken;
+
+    function act(uint256 value) external {
+        if (value < 10 && value == 7) broken = true;
+    }
+}
+
+contract SymbolicInvariantCandidateSeed is Test {
+    SymbolicInvariantCandidateTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantCandidateTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public view {
+        assertFalse(target.broken());
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+
+    function afterInvariant() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--dictionary-weight",
+            "0",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "candidate_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("candidate_frontiers"));
+    let target_frontier = keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "LT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0xa" || frontier["operands"]["rhs"] == "0xa")
+    });
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    let artifact: Value = serde_json::from_slice(&std::fs::read(&frontier_path).unwrap()).unwrap();
+
+    let failure_dir = prj.root().join("unwritable_failures");
+    std::fs::write(&failure_dir, b"not a directory").unwrap();
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", failure_dir);
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+    cmd.env("FOUNDRY_INVARIANT_CHECK_INTERVAL", "0");
+    let nonterminal_output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "nonterminal_candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let nonterminal_corpus = prj
+        .root()
+        .join("nonterminal_candidate_corpus")
+        .join("SymbolicInvariantCandidateSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        std::fs::read_dir(&nonterminal_corpus).is_ok_and(|mut entries| entries.next().is_some()),
+        "empty {}\nstdout={}\nstderr={}",
+        nonterminal_corpus.display(),
+        nonterminal_output.stdout_lossy(),
+        nonterminal_output.stderr_lossy()
+    );
+
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "1");
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--json",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_anchor()");
+    let failures = result["invariant_failures"].as_array().unwrap();
+    assert_eq!(failures[0]["name"], "invariant_anchor");
+    assert_eq!(failures[1]["name"], "invariant_notBroken");
+
+    let broken_worker = prj
+        .root()
+        .join("broken_candidate_corpus")
+        .join("SymbolicInvariantCandidateSeed")
+        .join("worker0");
+    std::fs::create_dir_all(broken_worker.parent().unwrap()).unwrap();
+    std::fs::write(&broken_worker, b"not a directory").unwrap();
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--json",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "broken_candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_anchor()");
+    let failures = result["invariant_failures"].as_array().unwrap();
+    assert_eq!(failures[0]["name"], "invariant_anchor");
+    assert_eq!(failures[1]["name"], "invariant_notBroken");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "candidate_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(
+        output.stdout_lossy().contains("invariant_notBroken"),
+        "stdout={}\nstderr={}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
+
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+    cmd.env("FOUNDRY_INVARIANT_DEPTH_MODE", "random");
+    cmd.env("FOUNDRY_INVARIANT_MIN_DEPTH", "1");
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--json",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "random_depth_candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_anchor()");
+    assert_eq!(result["invariant_failures"].as_array().unwrap().len(), 2);
+
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "0");
+    cmd.env("FOUNDRY_INVARIANT_MIN_DEPTH", "0");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "zero_depth_candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_failure();
+
+    cmd.env("FOUNDRY_INVARIANT_DEPTH", "2");
+    cmd.env("FOUNDRY_INVARIANT_DEPTH_MODE", "fixed");
+    let mut sequenced_artifact = artifact;
+    let second_call = sequenced_artifact["sequences"][0][0].clone();
+    sequenced_artifact["sequences"][0].as_array_mut().unwrap().push(second_call);
+    let mut terminal_frontier = target_frontier.clone();
+    terminal_frontier["id"] = Value::from(target_frontier["id"].as_u64().unwrap() + 1);
+    terminal_frontier["call_index"] = Value::from(1);
+    let terminal_frontier_id = terminal_frontier["id"].as_u64().unwrap().to_string();
+    sequenced_artifact["frontiers"].as_array_mut().unwrap().push(terminal_frontier);
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&sequenced_artifact).unwrap())
+        .unwrap();
+    let frontier_ids = format!("{target_frontier_id},{terminal_frontier_id}");
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantCandidateSeed",
+            "--json",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "candidate_frontiers",
+            "--invariant-corpus-dir",
+            "sequenced_candidate_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "2",
+            "--symbolic-frontier-ids",
+            &frontier_ids,
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_anchor()");
+    let failures = result["invariant_failures"].as_array().unwrap();
+    assert_eq!(failures[0]["name"], "invariant_anchor");
+    assert_eq!(failures[1]["name"], "invariant_notBroken");
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_checks_hook_after_objective_revert(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_checks_hook_after_objective_revert because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantOptimizationSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantOptimizationTarget {
+    uint256 public stored = 100;
+
+    function act(uint256 value) external {
+        if (value < 10) stored = value;
+    }
+}
+
+contract SymbolicInvariantOptimizationSeed is Test {
+    SymbolicInvariantOptimizationTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantOptimizationTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_objective() public view returns (int256) {
+        if (target.stored() < 10) revert("no objective");
+        return int256(target.stored());
+    }
+
+    function afterInvariant() public view {
+        require(target.stored() >= 10, "hook failure");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantOptimizationSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--dictionary-weight",
+            "0",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "optimization_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("optimization_frontiers"));
+    let target_frontier = keep_only_matching_frontier(&frontier_path, "value < 10", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "LT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0xa" || frontier["operands"]["rhs"] == "0xa")
+    });
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    let output = cmd
+        .args([
+            "test",
+            "--json",
+            "--match-contract",
+            "SymbolicInvariantOptimizationSeed",
+            "--invariant-depth",
+            "1",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "optimization_frontiers",
+            "--invariant-corpus-dir",
+            "optimization_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_objective()");
+    assert_eq!(result["invariant_failures"][0]["reason"], "hook failure");
+
+    let corpus_dir = prj
+        .root()
+        .join("optimization_corpus")
+        .join("SymbolicInvariantOptimizationSeed")
+        .join("invariant_objective")
+        .join("worker0")
+        .join("corpus");
+    assert!(std::fs::read_dir(corpus_dir).unwrap().next().is_some());
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_checks_property_from_prefix(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_checks_property_from_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.update_config(|config| config.assertions_revert = false);
+    prj.add_test(
+        "SymbolicInvariantPropertySeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantPropertyTarget {
+    uint256 public phase;
+    uint256 public stored;
+
+    function account(uint256 value) external {
+        if (phase == 0) {
+            phase = 1;
+            return;
+        }
+        stored = value;
+    }
+}
+
+contract SymbolicInvariantPropertySeed is Test {
+    SymbolicInvariantPropertyTarget target;
+    uint256 predicateTouches;
+
+    function setUp() public {
+        target = new SymbolicInvariantPropertyTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_aMutationDoesNotLeak() public {
+        predicateTouches++;
+        assertEq(predicateTouches, 1);
+    }
+
+    function invariant_bFirstStoredValue() public view {
+        assertEq(predicateTouches, 0);
+        assertNotEq(target.stored(), 123456789);
+    }
+
+    function invariant_cPartialOutcomeIsRetained() public view {
+        if (target.stored() != 555555555) {
+            if (target.stored() == 777777777) vm.lastCallGas();
+            return;
+        }
+        revert("partial candidate");
+    }
+
+    function invariant_dSecondStoredValue() public view {
+        assertEq(predicateTouches, 0);
+        assertNotEq(target.stored(), 987654321);
+    }
+
+    function invariant_eBooleanReturnIsIgnored() public pure returns (bool) {
+        return false;
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x9abc",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "property_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("property_frontiers"));
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let second_call = artifact["sequences"][0][0].clone();
+    artifact["sequences"][0].as_array_mut().unwrap().push(second_call);
+    let mut target_frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| {
+            frontier["call_index"] == 0
+                && frontier["site"]["opcode_name"] == "ISZERO"
+                && frontier["operands"]["lhs"] == "0x0"
+                && frontier["operands"]["rhs"] == "0x0"
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("missing phase frontier in {artifact}"));
+    target_frontier["call_index"] = Value::from(1);
+    target_frontier["operands"]["lhs"] = Value::from("0x1");
+    target_frontier["operands"]["result"] = Value::from(false);
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier];
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantPropertySeed",
+        "--invariant-depth",
+        "2",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "property_frontiers",
+        "--invariant-corpus-dir",
+        "branch_only_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--match-test",
+            "invariant_bFirstStoredValue",
+            "--corpus-dir",
+            "branch_only_corpus",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "property_failures");
+    cmd.env("RUST_LOG", "forge::runner=debug");
+    let output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--invariant-depth",
+            "2",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "property_frontiers",
+            "--invariant-corpus-dir",
+            "property_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("symbolic invariant frontier candidate search incomplete")
+            && stderr.contains("lastCallGas"),
+        "stdout={}\nstderr={}",
+        output.stdout_lossy(),
+        stderr
+    );
+
+    for invariant in [
+        "invariant_bFirstStoredValue",
+        "invariant_cPartialOutcomeIsRetained",
+        "invariant_dSecondStoredValue",
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantPropertySeed",
+                "--match-test",
+                invariant,
+                "--corpus-dir",
+                "property_corpus",
+            ])
+            .assert_failure()
+            .get_output()
+            .clone();
+        assert!(
+            output.stdout_lossy().contains(invariant),
+            "stdout={}\nstderr={}",
+            output.stdout_lossy(),
+            output.stderr_lossy()
+        );
+    }
+
+    for invariant in ["invariant_aMutationDoesNotLeak", "invariant_eBooleanReturnIsIgnored"] {
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantPropertySeed",
+                "--match-test",
+                invariant,
+                "--corpus-dir",
+                "property_corpus",
+            ])
+            .assert_success();
+    }
+
+    let symbolic_cmd = cmd.forge_fuse();
+    symbolic_cmd.env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", "symbolic_failures");
+    let output = symbolic_cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--match-test",
+            "invariant_cPartialOutcomeIsRetained",
+            "--symbolic-invariant-depth",
+            "2",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_cPartialOutcomeIsRetained()");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_defers_hook(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_defers_hook because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantHookSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantHookTarget {
+    uint256 public stored;
+
+    function set(uint256 value) external {
+        if (value == 42) return;
+        stored = value;
+    }
+}
+
+contract SymbolicInvariantHookSeed is Test {
+    SymbolicInvariantHookTarget target;
+    uint256 predicateTouches;
+
+    function setUp() public {
+        target = new SymbolicInvariantHookTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public returns (bool) {
+        predicateTouches++;
+        return false;
+    }
+
+    function afterInvariant() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "caller");
+        if (predicateTouches == 0) assert(target.stored() != 123456789);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantHookSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0xdef0",
+            "--threads",
+            "1",
+            "--sender",
+            "0x0000000000000000000000000000000000000002",
+            "--frontier-dir",
+            "hook_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("hook_frontiers"));
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| frontier["call_index"] == 0)
+        .cloned()
+        .unwrap_or_else(|| panic!("missing handler frontier in {artifact}"));
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![frontier];
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    let seed_output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantHookSeed",
+            "--sender",
+            "0x0000000000000000000000000000000000000002",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "hook_frontiers",
+            "--invariant-corpus-dir",
+            "hook_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let corpus_path = prj
+        .root()
+        .join("hook_corpus")
+        .join("SymbolicInvariantHookSeed")
+        .join("worker0")
+        .join("corpus");
+    let corpus_entries = std::fs::read_dir(&corpus_path).map_or(0, |entries| entries.count());
+    assert!(
+        corpus_entries > 0,
+        "empty {}\nstdout={}\nstderr={}",
+        corpus_path.display(),
+        seed_output.stdout_lossy(),
+        seed_output.stderr_lossy()
+    );
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantHookSeed",
+            "--match-test",
+            "invariant_anchor",
+            "--sender",
+            "0x0000000000000000000000000000000000000002",
+            "--corpus-dir",
+            "hook_corpus",
+        ])
+        .assert_failure();
+}
+
+#[forgetest_init]
+fn symbolic_invariant_frontier_seeding_tracks_checkpoint_failures(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_tracks_checkpoint_failures because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantCheckpointSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantCheckpointTarget {
+    uint256 public stored;
+    uint256 public marker;
+
+    function set(uint256 value) external {
+        stored = value;
+        if (value == 2) marker = 1;
+    }
+}
+
+contract SymbolicInvariantCheckpointSeed is Test {
+    SymbolicInvariantCheckpointTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantCheckpointTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public view {
+        require(target.stored() != 1, "predicate failure");
+    }
+
+    function afterInvariant() public view {
+        require(target.stored() != 2, "hook failure");
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantCheckpointSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--dictionary-weight",
+            "0",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "checkpoint_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = find_stateful_frontier_artifact(&prj.root().join("checkpoint_frontiers"));
+    let mut artifact: Value =
+        serde_json::from_slice(&std::fs::read(&frontier_path).unwrap()).unwrap();
+    let mut frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|frontier| frontier["call_index"] == 0 && frontier["site"]["opcode_name"] == "EQ")
+        .max_by_key(|frontier| frontier["site"]["pc"].as_u64())
+        .cloned()
+        .unwrap_or_else(|| panic!("missing target comparison frontier in {artifact}"));
+    frontier["call_index"] = Value::from(1);
+    let frontier_id = frontier["id"].as_u64().unwrap().to_string();
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![frontier.clone()];
+
+    let mut first_call = artifact["sequences"][0][0].clone();
+    let selector = &keccak256(b"set(uint256)")[..4];
+    first_call["calldata"] = Value::from(format!("{}{:064x}", hex::encode_prefixed(selector), 1));
+    artifact["sequences"][0].as_array_mut().unwrap().insert(0, first_call);
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("FOUNDRY_INVARIANT_CHECK_INTERVAL", "1");
+    let output = cmd
+        .args([
+            "test",
+            "--json",
+            "--match-contract",
+            "SymbolicInvariantCheckpointSeed",
+            "--invariant-depth",
+            "2",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "checkpoint_frontiers",
+            "--invariant-corpus-dir",
+            "checkpoint_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &frontier_id,
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(
+        !output.stdout.is_empty(),
+        "missing JSON output\nstdout={}\nstderr={}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
+    let result = json_test_result(&output.stdout, "invariant_anchor()");
+    assert_eq!(result["invariant_failures"][0]["reason"], "predicate failure");
+}
+
+#[forgetest_init]
+fn symbolic_import_fuzz_corpus_guides_bounded_symbolic_path(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_import_fuzz_corpus_guides_bounded_symbolic_path because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicImportFuzzCorpus.t.sol",
+        r#"
+contract SymbolicImportFuzzCorpus {
+    function testGuided(uint256 x) public pure {
+        if (x != 7) return;
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let empty_output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testGuided",
+            "--symbolic-use-fuzz-corpus",
+            "--fuzz-corpus-dir",
+            "empty_fuzz_corpus",
+            "--symbolic-width",
+            "1",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let empty_result = json_test_result(&empty_output, "testGuided(uint256)");
+    let empty_symbolic = &empty_result["symbolic"];
+    assert_eq!(empty_symbolic["status"], "incomplete");
+    assert_eq!(empty_symbolic["corpus_seeds"]["used"].as_array().unwrap().len(), 0);
+
+    let selector = &keccak256(b"testGuided(uint256)")[..4];
+    let calldata = format!("{}{:064x}", hex::encode_prefixed(selector), 7);
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicImportFuzzCorpus")
+        .join("testGuided")
+        .join("worker0")
+        .join("corpus");
+    std::fs::create_dir_all(&corpus_dir).unwrap();
+    let seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000001-1.json");
+    let seed = serde_json::json!([
+        {
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": calldata
+        }
+    ]);
+    std::fs::write(&seed_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testGuided",
+            "--symbolic-use-fuzz-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-width",
+            "1",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "testGuided(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "7");
+    assert_eq!(symbolic["corpus_seeds"]["loaded"], 1);
+    assert_eq!(symbolic["corpus_seeds"]["skipped"], 0);
+    let used = symbolic["corpus_seeds"]["used"].as_array().unwrap();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0]["calldata"], calldata);
+    assert_eq!(std::path::PathBuf::from(used[0]["path"].as_str().unwrap()), seed_path);
+}
+
+#[forgetest_init]
+fn symbolic_import_fuzz_corpus_prioritizes_seeded_calldata_variant(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_import_fuzz_corpus_prioritizes_seeded_calldata_variant because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicImportFuzzCorpusVariants.t.sol",
+        r#"
+contract SymbolicImportFuzzCorpusVariants {
+    /// forge-config: default.symbolic.default_bytes_lengths = [1, 2]
+    function testGuidedBytes(bytes memory data) public pure {
+        if (data.length == 1) {
+            if (data[0] == 0x11) return;
+            return;
+        }
+        if (data.length != 2) return;
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let selector = &keccak256(b"testGuidedBytes(bytes)")[..4];
+    let calldata = format!(
+        "{}{:064x}{:064x}{:0<64}",
+        hex::encode_prefixed(selector),
+        32,
+        2,
+        hex::encode([0xaa, 0xbb])
+    );
+    let unmodeled_calldata = format!(
+        "{}{:064x}{:064x}{:0<64}",
+        hex::encode_prefixed(selector),
+        32,
+        3,
+        hex::encode([0xcc, 0xdd, 0xee])
+    );
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicImportFuzzCorpusVariants")
+        .join("testGuidedBytes")
+        .join("worker0")
+        .join("corpus");
+    std::fs::create_dir_all(&corpus_dir).unwrap();
+    let seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000001-1.json");
+    let unmodeled_seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000002-1.json");
+    for (path, calldata) in
+        [(&seed_path, calldata.as_str()), (&unmodeled_seed_path, unmodeled_calldata.as_str())]
+    {
+        let seed = serde_json::json!([
+            {
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": calldata
+            }
+        ]);
+        std::fs::write(path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    }
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testGuidedBytes",
+            "--symbolic-use-fuzz-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-width",
+            "2",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "testGuidedBytes(bytes)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["corpus_seeds"]["loaded"], 2);
+    assert_eq!(symbolic["corpus_seeds"]["skipped"], 0);
+    let used = symbolic["corpus_seeds"]["used"].as_array().unwrap();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0]["calldata"], calldata);
+    assert_eq!(std::path::PathBuf::from(used[0]["path"].as_str().unwrap()), seed_path);
+}
+
+#[forgetest_init]
+fn symbolic_import_fuzz_corpus_honors_function_inline_config(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_import_fuzz_corpus_honors_function_inline_config because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInlineImportFuzzCorpus.t.sol",
+        r#"
+contract SymbolicInlineImportFuzzCorpus {
+    /// forge-config: default.symbolic.use_fuzz_corpus = true
+    function testFuzz_inline(uint256 x) public pure {
+        if (x != 7) return;
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let selector = &keccak256(b"testFuzz_inline(uint256)")[..4];
+    let calldata = format!("{}{:064x}", hex::encode_prefixed(selector), 7);
+    let corpus_dir = prj
+        .root()
+        .join("fuzz_corpus")
+        .join("SymbolicInlineImportFuzzCorpus")
+        .join("testFuzz_inline")
+        .join("worker0")
+        .join("corpus");
+    std::fs::create_dir_all(&corpus_dir).unwrap();
+    let seed_path = corpus_dir.join("00000000-0000-0000-0000-000000000001-1.json");
+    let seed = serde_json::json!([
+        {
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": calldata
+        }
+    ]);
+    std::fs::write(&seed_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_inline",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--symbolic-width",
+            "1",
+            "--json",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "testFuzz_inline(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "7");
+    assert_eq!(symbolic["corpus_seeds"]["loaded"], 1);
+    let used = symbolic["corpus_seeds"]["used"].as_array().unwrap();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0]["calldata"], calldata);
+}
+
+#[forgetest_init]
+fn symbolic_seed_corpus_warns_without_corpus_dir(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicFuzzCorpusNoDir.t.sol",
+        r#"
+contract SymbolicFuzzCorpusNoDir {
+    function testFuzz_noop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_noop",
+            "--symbolic-seed-corpus",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+
+    assert!(
+        stderr
+            .contains("`--symbolic-seed-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`"),
+        "{stderr}"
+    );
+}
+
+#[forgetest_init]
+fn symbolic_artifact_replay_uses_stored_fail_on_revert(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicArtifactFailOnRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactFailOnRevert is Test {
+    uint256 ignored;
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {
+        ignored = 1;
+        revert("boom");
+    }
+
+    function skip() external {
+        vm.assume(false);
+    }
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("fail-on-revert-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactFailOnRevert.t.sol:SymbolicArtifactFailOnRevert",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": "boom"
+        },
+        "replay_semantics": {
+            "fail_on_revert": true
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": "0x1d2aa5b3",
+                "value": null,
+                "contract_name": "SymbolicArtifactFailOnRevert",
+                "function_name": "skip",
+                "signature": "skip()",
+                "args": "",
+                "raw_args": ""
+            },
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "SymbolicArtifactFailOnRevert",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let mut bare_contract_artifact = artifact.clone();
+    bare_contract_artifact["test"]["contract"] = serde_json::json!("SymbolicArtifactFailOnRevert");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&bare_contract_artifact).unwrap())
+        .unwrap();
+    let stderr = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("test.contract must be `path:Contract`"), "{stderr}");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noop()");
+    assert_eq!(result["status"], "Failure");
+    assert!(result["kind"].get("Invariant").is_some(), "{result}");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 1);
+    assert!(result["kind"].get("Unit").is_none(), "{result}");
+
+    let fixed_artifact_path = prj.root().join("fixed-artifact.json");
+    let mut fixed_artifact = artifact;
+    fixed_artifact["replay_semantics"]["fail_on_revert"] = serde_json::json!(false);
+    std::fs::write(&fixed_artifact_path, serde_json::to_vec_pretty(&fixed_artifact).unwrap())
+        .unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--json",
+            "--replay-symbolic-artifact",
+            fixed_artifact_path.to_str().unwrap(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noop()");
+    assert_eq!(result["status"], "Success");
+    assert!(result["kind"].get("Invariant").is_some(), "{result}");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 1);
+    assert!(result["kind"].get("Unit").is_none(), "{result}");
+}
+
+#[forgetest_init]
+fn symbolic_artifact_replay_matches_bracketed_path(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicArtifact[Replay].t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactBracketPath is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {
+        revert("boom");
+    }
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("bracketed-path-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifact[Replay].t.sol:SymbolicArtifactBracketPath",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": "boom"
+        },
+        "replay_semantics": {
+            "fail_on_revert": true
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "SymbolicArtifactBracketPath",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("invariant_noop()"), "{stdout}");
+    assert!(stdout.contains("boom"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_artifact_replay_rejects_stale_sequence_target(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicArtifactStaleTarget.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactStaleTarget is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {}
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("stale-sequence-selector-artifact.json");
+    let mut artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactStaleTarget.t.sol:SymbolicArtifactStaleTarget",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xffffffff",
+            "value": null,
+            "contract_name": "SymbolicArtifactStaleTarget",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("targets unknown function"), "{stdout}");
+
+    let stale_target_artifact_path = prj.root().join("stale-sequence-target-artifact.json");
+    artifact["calls"][0]["target"] =
+        serde_json::json!("0x0000000000000000000000000000000000000000");
+    artifact["calls"][0]["calldata"] = serde_json::json!("0xe25fe175");
+    std::fs::write(&stale_target_artifact_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", stale_target_artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("targets unknown function"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_artifact_replay_rejects_forbidden_sequence_sender(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicArtifactForbiddenSender.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactForbiddenSender is Test {
+    bool drained;
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        targetContract(address(this));
+        excludeSender(BOB);
+    }
+
+    function step() external {
+        if (msg.sender == BOB) {
+            drained = true;
+        }
+    }
+
+    function invariant_notDrained() public view {
+        assert(!drained);
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("forbidden-sequence-sender-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactForbiddenSender.t.sol:SymbolicArtifactForbiddenSender",
+            "test": "invariant_notDrained()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x0000000000000000000000000000000000000b0b",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xe25fe175",
+            "value": null,
+            "contract_name": "SymbolicArtifactForbiddenSender",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("uses forbidden sender"), "{stdout}");
+
+    let zero_sender_artifact_path = prj.root().join("zero-sequence-sender-artifact.json");
+    let mut zero_sender_artifact = artifact;
+    zero_sender_artifact["calls"][0]["sender"] =
+        serde_json::json!("0x0000000000000000000000000000000000000000");
+    std::fs::write(
+        &zero_sender_artifact_path,
+        serde_json::to_vec_pretty(&zero_sender_artifact).unwrap(),
+    )
+    .unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", zero_sender_artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("uses forbidden sender"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_artifact_replay_accepts_created_sequence_target(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicArtifactCreatedTarget.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract CreatedTarget {
+    SymbolicArtifactCreatedTarget invariantTest;
+
+    constructor(SymbolicArtifactCreatedTarget _invariantTest) {
+        invariantTest = _invariantTest;
+    }
+
+    function step() external {
+        invariantTest.trip();
+    }
+}
+
+contract Spawner {
+    SymbolicArtifactCreatedTarget invariantTest;
+
+    constructor(SymbolicArtifactCreatedTarget _invariantTest) {
+        invariantTest = _invariantTest;
+    }
+
+    function step() external {
+        new CreatedTarget(invariantTest);
+    }
+}
+
+contract SymbolicArtifactCreatedTarget is Test {
+    bool tripped;
+
+    function setUp() public {
+        new Spawner(this);
+    }
+
+    function trip() external {
+        tripped = true;
+    }
+
+    function invariant_notTripped() public view {
+        assert(!tripped);
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("created-sequence-target-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactCreatedTarget.t.sol:SymbolicArtifactCreatedTarget",
+            "test": "invariant_notTripped()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 2,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x0000000000000000000000000000000000000b0b",
+                "target": "0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "Spawner",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            },
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x0000000000000000000000000000000000000b0b",
+                "target": "0x104fBc016F4bb334D775a19E8A6510109AC63E00",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "CreatedTarget",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("panic: assertion failed"), "{stdout}");
+    assert!(!stdout.contains("targets unknown function"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_artifact_replay_ignores_non_target_network_passes(prj: _, cmd: _) {
+    prj.add_test(
+        "SymbolicArtifactNetworkReplay.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactNetworkReplay is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {}
+
+    function invariant_noop() public pure {}
+
+    /// forge-config: default.networks.network = "tempo"
+    function test_tempo_marker() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("network-replay-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactNetworkReplay.t.sol:SymbolicArtifactNetworkReplay",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0,
+                "smt_input_bytes": 0,
+                "smt_max_query_bytes": 0,
+                "smt_build_time_ms": 0,
+                "smt_max_query_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xe25fe175",
+            "value": null,
+            "contract_name": "SymbolicArtifactNetworkReplay",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("[PASS] invariant_noop()"), "{stdout}");
+    assert!(!stdout.contains("was not found"), "{stdout}");
+}
+
+#[forgetest_init]
+fn symbolic_invariant_respects_sequence_depth(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_respects_sequence_depth because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantDepth.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDepthTarget {
+    uint256 public value;
+
+    function arm(uint256 x) external {
+        if (x == 1) {
+            value = 1;
+        }
+    }
+
+    function trip(uint256 x) external {
+        if (value == 1 && x == 2) {
+            value = 2;
+        }
+    }
+}
+
+contract SymbolicInvariantDepth is Test {
+    SymbolicDepthTarget target;
+
+    function setUp() public {
+        target = new SymbolicDepthTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_valueBelowTwo() public view {
+        assert(target.value() < 2);
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_valueBelowTwo"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantDepth.t.sol:SymbolicInvariantDepth
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=arm(uint256) args=[1]
+		[SENDER] [SENDER] calldata=trip(uint256) args=[2]
+ invariant_valueBelowTwo() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_invariant_uses_target_sender(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_uses_target_sender because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSender.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSenderTarget {
+    address public lastSender;
+
+    function touch(uint256 x) external {
+        if (x == 3) {
+            lastSender = msg.sender;
+        }
+    }
+}
+
+contract SymbolicInvariantSender is Test {
+    SymbolicSenderTarget target;
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        target = new SymbolicSenderTarget();
+        targetContract(address(target));
+        targetSender(BOB);
+    }
+
+    function invariant_senderIsNotBob() public view {
+        assert(target.lastSender() != BOB);
+    }
+}
+"#,
+    );
+
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_senderIsNotBob",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicInvariantSender.t.sol:SymbolicInvariantSender
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=touch(uint256) [ARGS]
+ invariant_senderIsNotBob() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
+
+    assert!(
+        stdout.to_lowercase().contains("sender=0x0000000000000000000000000000000000000b0b"),
+        "{stdout}"
+    );
+}
+#[forgetest_init]
+fn symbolic_soundness_hardening_regressions(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_soundness_hardening_regressions because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSoundnessHardening.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SvmDynamic {
+    function createUint(uint256 bits, string calldata name) external returns (uint256);
+    function createInt(uint256 bits, string calldata name) external returns (int256);
+}
+
+contract DelegateTarget {
+    function noop() external {}
+}
+
+contract SymbolicSoundnessHardening is Test {
+    address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+
+    mapping(uint256 => uint256) values;
+    DelegateTarget target;
+
+    function setUp() public {
+        target = new DelegateTarget();
+    }
+
+    function checkConstrainedStorageKeyUsesConcreteSlot(uint256 key) public {
+        values[7] = 0xbeef;
+        vm.assume(key == 7);
+        assertEq(values[key], 0xbeef);
+    }
+
+    function checkRandomUintRejectsOversizedBits() public {
+        vm.randomUint(257);
+    }
+
+    function checkCreateUintRejectsOversizedBits() public {
+        SvmDynamic(SVM_ADDRESS).createUint(257, "too-wide");
+    }
+
+    function checkCreateIntRejectsOversizedBits() public {
+        SvmDynamic(SVM_ADDRESS).createInt(300, "too-wide");
+    }
+
+    function checkPrankDelegatecallReportsUnsupported() public {
+        vm.prank(address(0xB0B));
+        (bool ok,) = address(target).delegatecall(abi.encodeWithSignature("noop()"));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicSoundnessHardening",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicSoundnessHardening.t.sol:SymbolicSoundnessHardening
+[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.create integer bits] checkCreateIntRejectsOversizedBits() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic svm.create integer bits] checkCreateUintRejectsOversizedBits() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic prank delegatecall] checkPrankDelegatecallReportsUnsupported() ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic randomUint bits] checkRandomUintRejectsOversizedBits() ([METRICS])
+Suite result: FAILED. 1 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_invalid_jumps_revert_current_frame(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invalid_jumps_revert_current_frame because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidJump.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvalidJump is Test {
+    address constant INVALID_JUMP = address(0x1000);
+    address constant INVALID_JUMPI = address(0x2000);
+    address constant SYMBOLIC_DESTINATION = address(0x3000);
+
+    function setUp() public {
+        vm.etch(INVALID_JUMP, hex"6001600055600856");
+        vm.etch(INVALID_JUMPI, hex"60003560085700");
+        vm.etch(SYMBOLIC_DESTINATION, hex"6020356000355700");
+    }
+
+    function checkInvalidJumpRevertsFrame(uint256) public {
+        (bool ok, bytes memory data) = INVALID_JUMP.call("");
+        assertFalse(ok);
+        assertEq(data.length, 0);
+        assertEq(vm.load(INVALID_JUMP, bytes32(0)), bytes32(0));
+    }
+
+    function checkUntakenInvalidJumpiFallsThrough(uint256) public {
+        (bool ok, bytes memory data) = INVALID_JUMPI.call(abi.encode(uint256(0)));
+        assertTrue(ok);
+        assertEq(data.length, 0);
+    }
+
+    function checkTakenInvalidJumpiRevertsFrame(uint256 condition) public {
+        vm.assume(condition != 0);
+        (bool ok, bytes memory data) = INVALID_JUMPI.call(abi.encode(condition));
+        assertFalse(ok);
+        assertEq(data.length, 0);
+    }
+
+    function checkSymbolicInvalidJumpiBranches(uint256 condition) public {
+        (bool ok, bytes memory data) = INVALID_JUMPI.call(abi.encode(condition));
+        assertEq(ok, condition == 0);
+        assertEq(data.length, 0);
+    }
+
+    function checkUntakenJumpiIgnoresSymbolicDestination(uint256 destination) public {
+        (bool ok, bytes memory data) =
+            SYMBOLIC_DESTINATION.call(abi.encode(destination, uint256(0)));
+        assertTrue(ok);
+        assertEq(data.length, 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicInvalidJump",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/SymbolicInvalidJump.t.sol:SymbolicInvalidJump
+[PASS] checkInvalidJumpRevertsFrame(uint256) ([METRICS])
+[PASS] checkSymbolicInvalidJumpiBranches(uint256) ([METRICS])
+[PASS] checkTakenInvalidJumpiRevertsFrame(uint256) ([METRICS])
+[PASS] checkUntakenInvalidJumpiFallsThrough(uint256) ([METRICS])
+[PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256) ([METRICS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_bounded_fixed_point_round_trip(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+interface Vm {
+    function assume(bool condition) external pure;
+    function prank(address sender) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
+    function store(address target, bytes32 slot, bytes32 value) external;
+}
+
+contract OptInTarget {
+    uint256 public cpt;
+    uint256 public rebasingCredits;
+    uint256 public nonRebasingSupply;
+    mapping(address => uint256) public credits;
+    mapping(address => uint256) public fixedCpt;
+    mapping(address => uint8) public state;
+    mapping(address => address) public yieldFrom;
+
+    function balanceOf(address account) public view returns (uint256) {
+        uint8 accountState = state[account];
+        require(accountState <= 4);
+        if (accountState == 3) return credits[account];
+        uint256 rate = fixedCpt[account];
+        uint256 balance = credits[account] * 1e18 / (rate == 0 ? cpt : rate);
+        if (accountState == 4) return balance - credits[yieldFrom[account]];
+        return balance;
+    }
+
+    function toInt(uint256 value) internal pure returns (int256) {
+        require(value <= uint256(type(int256).max));
+        return int256(value);
+    }
+
+    function toUint(int256 value) internal pure returns (uint256) {
+        require(value >= 0);
+        return uint256(value);
+    }
+
+    function optOut() external {
+        require(fixedCpt[msg.sender] == 0);
+        require(state[msg.sender] == 0 || state[msg.sender] == 2);
+        uint256 oldCredits = credits[msg.sender];
+        uint256 balance = balanceOf(msg.sender);
+        credits[msg.sender] = balance;
+        fixedCpt[msg.sender] = 1e18;
+        state[msg.sender] = 1;
+        int256 creditDiff = -toInt(oldCredits);
+        int256 supplyDiff = toInt(balance);
+        if (creditDiff != 0) rebasingCredits = toUint(toInt(rebasingCredits) + creditDiff);
+        if (supplyDiff != 0) nonRebasingSupply = toUint(toInt(nonRebasingSupply) + supplyDiff);
+    }
+
+    function optIn() external {
+        uint256 balance = balanceOf(msg.sender);
+        require(fixedCpt[msg.sender] > 0 || credits[msg.sender] == 0);
+        require(state[msg.sender] == 0 || state[msg.sender] == 1);
+        uint256 newCredits = (balance * cpt + 1e18 - 1) / 1e18;
+        credits[msg.sender] = newCredits;
+        fixedCpt[msg.sender] = 0;
+        state[msg.sender] = 2;
+        int256 creditDiff = toInt(newCredits);
+        int256 supplyDiff = -toInt(balance);
+        if (creditDiff != 0) rebasingCredits = toUint(toInt(rebasingCredits) + creditDiff);
+        if (supplyDiff != 0) nonRebasingSupply = toUint(toInt(nonRebasingSupply) + supplyDiff);
+    }
+}
+
+contract FixedPointRoundTripTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    OptInTarget target;
+
+    function setUp() public {
+        target = new OptInTarget();
+        vm.setArbitraryStorage(address(target), true);
+    }
+
+    function checkFullWidthRoundTrip(uint256 balance, uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        uint256 credits = (balance * cpt + 1e18 - 1) / 1e18;
+        assert(credits * 1e18 / cpt == balance);
+    }
+
+    function checkFullWidthOptIn(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 fixedCpt = target.fixedCpt(account);
+        vm.assume(fixedCpt == 0 || fixedCpt == 1e18);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optIn();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 0);
+        assert(target.state(account) == 2);
+    }
+
+    function checkFullWidthOptOut(address account) external {
+        vm.assume(target.cpt() >= 1e18);
+        uint256 balance = target.balanceOf(account);
+        vm.prank(account);
+        target.optOut();
+        assert(target.balanceOf(account) == balance);
+        assert(target.fixedCpt(account) == 1e18);
+        assert(target.state(account) == 1);
+    }
+
+    function testOptOutConcreteWitnessAtCreditLimit() external {
+        address account = address(0xB0B);
+        uint256 credits = type(uint256).max / 1e18;
+        uint256 rate = 1e18 + 1;
+        uint256 balance = credits * 1e18 / rate;
+        vm.store(address(target), bytes32(uint256(0)), bytes32(rate));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(credits));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(uint256(0)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(credits));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(0)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(2)));
+        this.checkFullWidthOptOut(account);
+        assert(target.credits(account) == balance);
+        assert(target.rebasingCredits() == 0);
+        assert(target.nonRebasingSupply() == balance);
+    }
+
+    function testOptInConcreteWitnessAboveUint128() external {
+        address account = address(0xB0B);
+        uint256 balance = uint256(type(uint128).max) + 1;
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(0)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(balance));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == balance);
+        assert(target.rebasingCredits() == balance);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkUncheckedRounding(uint256 cpt) external pure {
+        require(cpt >= 1e18);
+        unchecked {
+            uint256 credits = (cpt + 1e18 - 1) / 1e18;
+            assert(credits * 1e18 / cpt == 1);
+        }
+    }
+
+    function testOptInConcreteWitness() external {
+        address account = address(0xB0B);
+        vm.store(address(target), bytes32(uint256(0)), bytes32(uint256(1e18 + 1)));
+        vm.store(address(target), bytes32(uint256(1)), bytes32(uint256(100)));
+        vm.store(address(target), bytes32(uint256(2)), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(3))), bytes32(uint256(1)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(4))), bytes32(uint256(1e18)));
+        vm.store(address(target), keccak256(abi.encode(account, uint256(5))), bytes32(uint256(1)));
+        this.checkFullWidthOptIn(account);
+        assert(target.credits(account) == 2);
+        assert(target.rebasingCredits() == 102);
+        assert(target.nonRebasingSupply() == 0);
+    }
+
+    function checkLowRate(uint128 balance) external pure {
+        require(balance > 0 && balance < 100);
+        uint256 credits = (uint256(balance) * 1 + 2 - 1) / 2;
+        assert(credits * 2 / 1 == balance);
+    }
+
+    function checkUncheckedConstantProduct(uint256 value) external pure {
+        unchecked {
+            assert(value * 1e18 / 1e18 == value);
+        }
+    }
+
+    function checkWrapping(uint256 balance) external pure {
+        require(balance >= 1 << 255);
+        unchecked {
+            uint256 credits = (balance * 2 + 2 - 1) / 2;
+            assert(credits * 2 / 2 == balance);
+        }
+    }
+}
+"#,
+    );
+    for (test, signature) in [
+        ("checkFullWidthRoundTrip", "checkFullWidthRoundTrip(uint256,uint256)"),
+        ("checkFullWidthOptIn", "checkFullWidthOptIn(address)"),
+        ("checkFullWidthOptOut", "checkFullWidthOptOut(address)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+    }
+    cmd.forge_fuse()
+        .args(["test", "--optimize", "--match-test", "testOpt(In|Out)ConcreteWitness"])
+        .assert_success();
+
+    for (test, signature) in [
+        ("checkLowRate", "checkLowRate(uint128)"),
+        ("checkWrapping", "checkWrapping(uint256)"),
+        ("checkUncheckedRounding", "checkUncheckedRounding(uint256)"),
+        ("checkUncheckedConstantProduct", "checkUncheckedConstantProduct(uint256)"),
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--optimize",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                test,
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    }
+}
+
+#[forgetest_init]
+fn symbolic_independently_bounded_fixed_point_round_trip(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_independently_bounded_fixed_point_round_trip because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "FixedPointRoundTrip.t.sol",
+        r#"
+contract FixedPointRoundTripTest {
+    function checkRoundTrip(uint128 balance, uint256 rate) external pure {
+        require(balance > 0 && balance < type(uint128).max);
+        require(rate >= 1e18 && rate <= 1e27);
+        unchecked {
+            uint256 rounded = (uint256(balance) * rate + 1e18 - 1) / 1e18;
+            assert(rounded * 1e18 / rate == balance);
+        }
+    }
+
+}
+"#,
+    );
+
+    cmd.args(["test", "--symbolic", "--match-test", "checkRoundTrip"]).assert_success();
+}
+
+#[forgetest_init]
+fn symbolic_rounded_product_relations(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_rounded_product_relations because z3 is not available");
+        return;
+    }
+    prj.add_test(
+        "RoundedProduct.t.sol",
+        r#"
+contract RoundedProductTest {
+    function checkFloorError(uint256 value) external pure {
+        uint256 rounded = value / 37 * 37;
+        assert(rounded <= value);
+        assert(value - rounded < 37);
+    }
+
+    function checkDividendRelation(uint256 value) external pure {
+        require(value <= type(uint256).max - 36);
+        uint256 dividend = value + 36;
+        uint256 rounded = dividend / 37 * 37;
+        assert(rounded <= dividend);
+        assert(dividend - rounded < 37);
+    }
+
+    function checkWrappingDividendRelation(uint256 value) external pure {
+        unchecked {
+            uint256 dividend = value + 36;
+            uint256 rounded = dividend / 37 * 37;
+            assert(rounded <= dividend);
+            assert(dividend - rounded < 37);
+        }
+    }
+
+    function checkCeilingError(uint256 value) external pure {
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded >= value);
+        assert(rounded - value < 37);
+    }
+
+    function checkCeilingRoundTrip(uint128 value, uint128 rate) external pure {
+        require(rate >= 37);
+        uint256 rounded = (uint256(value) * rate + 36) / 37 * 37;
+        assert(rounded / rate == value);
+    }
+
+    function checkCeilingIsNotExact(uint256 value) external pure {
+        require(value < 100);
+        uint256 rounded = (value + 36) / 37 * 37;
+        assert(rounded == value);
+    }
+
+    function checkWrappingCeiling(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = (value + 36) / 37 * 37;
+            assert(rounded >= value);
+        }
+    }
+
+    function checkReversedFloorError(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = value / 37 * 37;
+            assert(rounded - value < 37);
+        }
+    }
+}
+"#,
+    );
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        cmd.forge_fuse().args([
+            "test",
+            "--symbolic",
+            "--symbolic-timeout",
+            "30",
+            "--match-test",
+            "check(FloorError|DividendRelation|WrappingDividendRelation|CeilingError|CeilingRoundTrip)",
+        ])
+        .assert_success();
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--symbolic-timeout",
+                "30",
+                "--match-test",
+                "check(CeilingIsNotExact|WrappingCeiling|ReversedFloorError)",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        for test in ["checkCeilingIsNotExact", "checkWrappingCeiling", "checkReversedFloorError"] {
+            let signature = format!("{test}(uint256)");
+            let result = json_test_result(&output, &signature);
+            assert_eq!(
+                result["symbolic"]["status"], "fail_counterexample",
+                "{test}, optimized={optimized}"
+            );
+        }
+    }
+}
+
+// Each property is falsifiable only on a wrapping, signed, or unbounded path, so a normalizer
+// rewrite that silently assumed the missing bound would turn the replay-confirmed counterexample
+// into a false PASS.
+#[forgetest_init]
+fn symbolic_normalizer_keeps_boundary_counterexamples(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_normalizer_keeps_boundary_counterexamples because z3 is not available"
+        );
+        return;
+    }
+    prj.add_test(
+        "NormalizerBoundaries.t.sol",
+        r#"
+contract NormalizerBoundariesTest {
+    function checkMaskOutsideBoundedBranch(uint256 value) external pure {
+        if (value < 1 << 160) {
+            assert(value & type(uint160).max == value);
+        }
+        assert(value & type(uint160).max == value);
+    }
+
+    function checkScaledQuotientOutsideBoundedBranch(uint256 numerator, uint256 threshold)
+        external
+        pure
+    {
+        if (threshold <= type(uint128).max) {
+            assert(numerator / 1e18 <= threshold || numerator >= (threshold + 1) * 1e18);
+        }
+        if (numerator / 1e18 <= threshold) {
+            unchecked {
+                assert(numerator <= threshold * 1e18 + (1e18 - 1));
+            }
+        }
+    }
+
+    function checkSymbolicDivisorCeilingWraps(uint256 value, uint256 divisor) external pure {
+        require(divisor == 37);
+        unchecked {
+            uint256 rounded = (value + 36) / divisor * divisor;
+            if (rounded <= 100) {
+                assert(value <= rounded);
+            }
+        }
+    }
+
+    function checkSignedCeilingOrder(uint256 value) external pure {
+        unchecked {
+            uint256 rounded = (value + 31) / 32 * 32;
+            assert(int256(rounded) >= int256(value));
+        }
+    }
+
+    function checkWrappedRoundedConversion(uint256 balance, uint256 rate) external pure {
+        require(rate == 2);
+        require(balance != 0);
+        unchecked {
+            require(balance * rate == 0);
+            assert((balance * rate + 1) / 2 * 2 / rate == balance);
+        }
+    }
+
+    function checkWrappedScaledDivision(uint256 value) external pure {
+        require(value != 0);
+        unchecked {
+            require(value * 2 == 0);
+            assert(value * 2 / 2 == value);
+        }
+    }
+
+    function checkWrappedRoundUpDivision(uint256 value) external pure {
+        require(value != 0);
+        unchecked {
+            require(value * 2 + 1 <= 1);
+            assert((value * 2 + 1) / 2 == value);
+        }
+    }
+
+    function checkRoundTripWithoutRateLowerBound(uint128 balance, uint256 rate) external pure {
+        require(rate != 0);
+        require(rate <= 1e27);
+        uint256 rounded = (uint256(balance) * rate + 1e18 - 1) / 1e18;
+        assert(rounded * 1e18 / rate == balance);
+    }
+
+    function checkNonnegativeSignedAdditionOverflows(int256 x, int256 y) external pure {
+        require(x >= 0 && y >= 0);
+        unchecked {
+            assert(x + y >= x);
+        }
+    }
+}
+"#,
+    );
+    let signatures = [
+        "checkMaskOutsideBoundedBranch(uint256)",
+        "checkScaledQuotientOutsideBoundedBranch(uint256,uint256)",
+        "checkSymbolicDivisorCeilingWraps(uint256,uint256)",
+        "checkSignedCeilingOrder(uint256)",
+        "checkWrappedRoundedConversion(uint256,uint256)",
+        "checkWrappedScaledDivision(uint256)",
+        "checkWrappedRoundUpDivision(uint256)",
+        "checkRoundTripWithoutRateLowerBound(uint128,uint256)",
+        "checkNonnegativeSignedAdditionOverflows(int256,int256)",
+    ];
+    for optimized in [false, true] {
+        prj.update_config(|config| config.optimizer = Some(optimized));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--symbolic", "--json", "--symbolic-timeout", "30"])
+            .args(["--match-contract", "NormalizerBoundariesTest"])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let statuses = signatures.map(|signature| {
+            (signature, json_test_result(&output, signature)["symbolic"]["status"].clone())
+        });
+        assert!(
+            statuses.iter().all(|(_, status)| status == "fail_counterexample"),
+            "optimized={optimized}: {statuses:?}"
+        );
+    }
+}

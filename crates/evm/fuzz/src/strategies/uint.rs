@@ -23,7 +23,7 @@ impl UintValueTree {
     /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
-    fn new(start: U256, fixed: bool) -> Self {
+    const fn new(start: U256, fixed: bool) -> Self {
         Self { lo: U256::ZERO, curr: start, hi: start, fixed }
     }
 
@@ -60,7 +60,7 @@ impl ValueTree for UintValueTree {
             return false;
         }
 
-        self.lo = self.curr + U256::from(1);
+        self.lo = self.curr + U256::ONE;
         self.reposition()
     }
 }
@@ -157,18 +157,13 @@ impl UintStrategy {
         };
 
         // init U256 from 2 randoms
-        let mut inner: [u64; 4] = [0; 4];
-        inner[0] = lower as u64;
-        inner[1] = (lower >> 64) as u64;
-        inner[2] = higher as u64;
-        inner[3] = (higher >> 64) as u64;
-        let start: U256 = U256::from_limbs(inner);
+        let start = (U256::from(higher) << 128) | U256::from(lower);
 
         Ok(UintValueTree::new(start, false))
     }
 
     fn type_max(&self) -> U256 {
-        if self.bits < 256 { (U256::from(1) << self.bits) - U256::from(1) } else { U256::MAX }
+        if self.bits < 256 { (U256::ONE << self.bits) - U256::ONE } else { U256::MAX }
     }
 }
 

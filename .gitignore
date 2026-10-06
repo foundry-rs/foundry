@@ -9,15 +9,16 @@ snapshots/
 
 # IDEs and extensions
 .idea
-.vscode
+**/.vscode/*
+!/.vscode/launch.json
+!/.vscode/tasks.json
+!/editors/vscode/.vscode/launch.json
+!/editors/vscode/.vscode/tasks.json
 .claude
 .zed
 
-# NPM
 .env
 node_modules
-npm/dist
-npm/bin
 _
 *.tgz
 .vercel

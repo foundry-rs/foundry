@@ -10,7 +10,7 @@ pub fn mean(values: &[u64]) -> u64 {
 }
 
 /// Returns the median of a _sorted_ slice.
-pub fn median_sorted(values: &[u64]) -> u64 {
+pub const fn median_sorted(values: &[u64]) -> u64 {
     if values.is_empty() {
         return 0;
     }

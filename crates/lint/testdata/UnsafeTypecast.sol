@@ -1,3 +1,5 @@
+//@compile-flags: --severity high med low info
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -191,252 +193,259 @@ contract UnsafeTypecast {
 
     function downcastUnsafeUint() public pure {
         uint256 a = type(uint256).max;
-        uint248 b = uint248(a); //~WARN: typecasts that can truncate values should be checked
-        uint240 c = uint240(b); //~WARN: typecasts that can truncate values should be checked
-        uint232 d = uint232(c); //~WARN: typecasts that can truncate values should be checked
-        uint224 e = uint224(d); //~WARN: typecasts that can truncate values should be checked
-        uint216 f = uint216(e); //~WARN: typecasts that can truncate values should be checked
-        uint208 g = uint208(f); //~WARN: typecasts that can truncate values should be checked
-        uint200 h = uint200(g); //~WARN: typecasts that can truncate values should be checked
-        uint192 i = uint192(h); //~WARN: typecasts that can truncate values should be checked
-        uint184 j = uint184(i); //~WARN: typecasts that can truncate values should be checked
-        uint176 k = uint176(j); //~WARN: typecasts that can truncate values should be checked
-        uint168 l = uint168(k); //~WARN: typecasts that can truncate values should be checked
-        uint160 m = uint160(l); //~WARN: typecasts that can truncate values should be checked
-        uint152 n = uint152(m); //~WARN: typecasts that can truncate values should be checked
-        uint144 o = uint144(n); //~WARN: typecasts that can truncate values should be checked
-        uint136 p = uint136(o); //~WARN: typecasts that can truncate values should be checked
-        uint128 q = uint128(p); //~WARN: typecasts that can truncate values should be checked
-        uint120 r = uint120(q); //~WARN: typecasts that can truncate values should be checked
-        uint112 s = uint112(r); //~WARN: typecasts that can truncate values should be checked
-        uint104 t = uint104(s); //~WARN: typecasts that can truncate values should be checked
-        uint96 u = uint96(t); //~WARN: typecasts that can truncate values should be checked
-        uint88 v = uint88(u); //~WARN: typecasts that can truncate values should be checked
-        uint80 w = uint80(v); //~WARN: typecasts that can truncate values should be checked
-        uint72 x = uint72(w); //~WARN: typecasts that can truncate values should be checked
-        uint64 y = uint64(x); //~WARN: typecasts that can truncate values should be checked
-        uint56 z = uint56(y); //~WARN: typecasts that can truncate values should be checked
-        uint48 A = uint48(z); //~WARN: typecasts that can truncate values should be checked
-        uint40 B = uint40(A); //~WARN: typecasts that can truncate values should be checked
-        uint32 C = uint32(B); //~WARN: typecasts that can truncate values should be checked
-        uint24 D = uint24(C); //~WARN: typecasts that can truncate values should be checked
-        uint16 E = uint16(D); //~WARN: typecasts that can truncate values should be checked
-        uint8 F = uint8(E); //~WARN: typecasts that can truncate values should be checked
+        uint248 b = uint248(a); //~WARN: typecast can truncate values
+        uint240 c = uint240(b); //~WARN: typecast can truncate values
+        uint232 d = uint232(c); //~WARN: typecast can truncate values
+        uint224 e = uint224(d); //~WARN: typecast can truncate values
+        uint216 f = uint216(e); //~WARN: typecast can truncate values
+        uint208 g = uint208(f); //~WARN: typecast can truncate values
+        uint200 h = uint200(g); //~WARN: typecast can truncate values
+        uint192 i = uint192(h); //~WARN: typecast can truncate values
+        uint184 j = uint184(i); //~WARN: typecast can truncate values
+        uint176 k = uint176(j); //~WARN: typecast can truncate values
+        uint168 l = uint168(k); //~WARN: typecast can truncate values
+        uint160 m = uint160(l); //~WARN: typecast can truncate values
+        uint152 n = uint152(m); //~WARN: typecast can truncate values
+        uint144 o = uint144(n); //~WARN: typecast can truncate values
+        uint136 p = uint136(o); //~WARN: typecast can truncate values
+        uint128 q = uint128(p); //~WARN: typecast can truncate values
+        uint120 r = uint120(q); //~WARN: typecast can truncate values
+        uint112 s = uint112(r); //~WARN: typecast can truncate values
+        uint104 t = uint104(s); //~WARN: typecast can truncate values
+        uint96 u = uint96(t); //~WARN: typecast can truncate values
+        uint88 v = uint88(u); //~WARN: typecast can truncate values
+        uint80 w = uint80(v); //~WARN: typecast can truncate values
+        uint72 x = uint72(w); //~WARN: typecast can truncate values
+        uint64 y = uint64(x); //~WARN: typecast can truncate values
+        uint56 z = uint56(y); //~WARN: typecast can truncate values
+        uint48 A = uint48(z); //~WARN: typecast can truncate values
+        uint40 B = uint40(A); //~WARN: typecast can truncate values
+        uint32 C = uint32(B); //~WARN: typecast can truncate values
+        uint24 D = uint24(C); //~WARN: typecast can truncate values
+        uint16 E = uint16(D); //~WARN: typecast can truncate values
+        uint8 F = uint8(E); //~WARN: typecast can truncate values
     }
 
     function downcastUnsafeInt() public pure {
         int256 a = type(int256).max;
-        int248 b = int248(a); //~WARN: typecasts that can truncate values should be checked
-        int240 c = int240(b); //~WARN: typecasts that can truncate values should be checked
-        int232 d = int232(c); //~WARN: typecasts that can truncate values should be checked
-        int224 e = int224(d); //~WARN: typecasts that can truncate values should be checked
-        int216 f = int216(e); //~WARN: typecasts that can truncate values should be checked
-        int208 g = int208(f); //~WARN: typecasts that can truncate values should be checked
-        int200 h = int200(g); //~WARN: typecasts that can truncate values should be checked
-        int192 i = int192(h); //~WARN: typecasts that can truncate values should be checked
-        int184 j = int184(i); //~WARN: typecasts that can truncate values should be checked
-        int176 k = int176(j); //~WARN: typecasts that can truncate values should be checked
-        int168 l = int168(k); //~WARN: typecasts that can truncate values should be checked
-        int160 m = int160(l); //~WARN: typecasts that can truncate values should be checked
-        int152 n = int152(m); //~WARN: typecasts that can truncate values should be checked
-        int144 o = int144(n); //~WARN: typecasts that can truncate values should be checked
-        int136 p = int136(o); //~WARN: typecasts that can truncate values should be checked
-        int128 q = int128(p); //~WARN: typecasts that can truncate values should be checked
-        int120 r = int120(q); //~WARN: typecasts that can truncate values should be checked
-        int112 s = int112(r); //~WARN: typecasts that can truncate values should be checked
-        int104 t = int104(s); //~WARN: typecasts that can truncate values should be checked
-        int96 u = int96(t); //~WARN: typecasts that can truncate values should be checked
-        int88 v = int88(u); //~WARN: typecasts that can truncate values should be checked
-        int80 w = int80(v); //~WARN: typecasts that can truncate values should be checked
-        int72 x = int72(w); //~WARN: typecasts that can truncate values should be checked
-        int64 y = int64(x); //~WARN: typecasts that can truncate values should be checked
-        int56 z = int56(y); //~WARN: typecasts that can truncate values should be checked
-        int48 A = int48(z); //~WARN: typecasts that can truncate values should be checked
-        int40 B = int40(A); //~WARN: typecasts that can truncate values should be checked
-        int32 C = int32(B); //~WARN: typecasts that can truncate values should be checked
-        int24 D = int24(C); //~WARN: typecasts that can truncate values should be checked
-        int16 E = int16(D); //~WARN: typecasts that can truncate values should be checked
-        int8 F = int8(E); //~WARN: typecasts that can truncate values should be checked
+        int248 b = int248(a); //~WARN: typecast can truncate values
+        int240 c = int240(b); //~WARN: typecast can truncate values
+        int232 d = int232(c); //~WARN: typecast can truncate values
+        int224 e = int224(d); //~WARN: typecast can truncate values
+        int216 f = int216(e); //~WARN: typecast can truncate values
+        int208 g = int208(f); //~WARN: typecast can truncate values
+        int200 h = int200(g); //~WARN: typecast can truncate values
+        int192 i = int192(h); //~WARN: typecast can truncate values
+        int184 j = int184(i); //~WARN: typecast can truncate values
+        int176 k = int176(j); //~WARN: typecast can truncate values
+        int168 l = int168(k); //~WARN: typecast can truncate values
+        int160 m = int160(l); //~WARN: typecast can truncate values
+        int152 n = int152(m); //~WARN: typecast can truncate values
+        int144 o = int144(n); //~WARN: typecast can truncate values
+        int136 p = int136(o); //~WARN: typecast can truncate values
+        int128 q = int128(p); //~WARN: typecast can truncate values
+        int120 r = int120(q); //~WARN: typecast can truncate values
+        int112 s = int112(r); //~WARN: typecast can truncate values
+        int104 t = int104(s); //~WARN: typecast can truncate values
+        int96 u = int96(t); //~WARN: typecast can truncate values
+        int88 v = int88(u); //~WARN: typecast can truncate values
+        int80 w = int80(v); //~WARN: typecast can truncate values
+        int72 x = int72(w); //~WARN: typecast can truncate values
+        int64 y = int64(x); //~WARN: typecast can truncate values
+        int56 z = int56(y); //~WARN: typecast can truncate values
+        int48 A = int48(z); //~WARN: typecast can truncate values
+        int40 B = int40(A); //~WARN: typecast can truncate values
+        int32 C = int32(B); //~WARN: typecast can truncate values
+        int24 D = int24(C); //~WARN: typecast can truncate values
+        int16 E = int16(D); //~WARN: typecast can truncate values
+        int8 F = int8(E); //~WARN: typecast can truncate values
     }
 
     function downcastUnsafeBytes() public pure {
         bytes32 a = bytes32(type(uint256).max);
-        bytes31 b = bytes31(a); //~WARN: typecasts that can truncate values should be checked
-        bytes30 c = bytes30(b); //~WARN: typecasts that can truncate values should be checked
-        bytes29 d = bytes29(c); //~WARN: typecasts that can truncate values should be checked
-        bytes28 e = bytes28(d); //~WARN: typecasts that can truncate values should be checked
-        bytes27 f = bytes27(e); //~WARN: typecasts that can truncate values should be checked
-        bytes26 g = bytes26(f); //~WARN: typecasts that can truncate values should be checked
-        bytes25 h = bytes25(g); //~WARN: typecasts that can truncate values should be checked
-        bytes24 i = bytes24(h); //~WARN: typecasts that can truncate values should be checked
-        bytes23 j = bytes23(i); //~WARN: typecasts that can truncate values should be checked
-        bytes22 k = bytes22(j); //~WARN: typecasts that can truncate values should be checked
-        bytes21 l = bytes21(k); //~WARN: typecasts that can truncate values should be checked
-        bytes20 m = bytes20(l); //~WARN: typecasts that can truncate values should be checked
-        bytes19 n = bytes19(m); //~WARN: typecasts that can truncate values should be checked
-        bytes18 o = bytes18(n); //~WARN: typecasts that can truncate values should be checked
-        bytes17 p = bytes17(o); //~WARN: typecasts that can truncate values should be checked
-        bytes16 q = bytes16(p); //~WARN: typecasts that can truncate values should be checked
-        bytes15 r = bytes15(q); //~WARN: typecasts that can truncate values should be checked
-        bytes14 s = bytes14(r); //~WARN: typecasts that can truncate values should be checked
-        bytes13 t = bytes13(s); //~WARN: typecasts that can truncate values should be checked
-        bytes12 u = bytes12(t); //~WARN: typecasts that can truncate values should be checked
-        bytes11 v = bytes11(u); //~WARN: typecasts that can truncate values should be checked
-        bytes10 w = bytes10(v); //~WARN: typecasts that can truncate values should be checked
-        bytes9 x = bytes9(w); //~WARN: typecasts that can truncate values should be checked
-        bytes8 y = bytes8(x); //~WARN: typecasts that can truncate values should be checked
-        bytes7 z = bytes7(y); //~WARN: typecasts that can truncate values should be checked
-        bytes6 A = bytes6(z); //~WARN: typecasts that can truncate values should be checked
-        bytes5 B = bytes5(A); //~WARN: typecasts that can truncate values should be checked
-        bytes4 C = bytes4(B); //~WARN: typecasts that can truncate values should be checked
-        bytes3 D = bytes3(C); //~WARN: typecasts that can truncate values should be checked
-        bytes2 E = bytes2(D); //~WARN: typecasts that can truncate values should be checked
-        bytes1 F = bytes1(E); //~WARN: typecasts that can truncate values should be checked
+        bytes31 b = bytes31(a); //~WARN: typecast can truncate values
+        bytes30 c = bytes30(b); //~WARN: typecast can truncate values
+        bytes29 d = bytes29(c); //~WARN: typecast can truncate values
+        bytes28 e = bytes28(d); //~WARN: typecast can truncate values
+        bytes27 f = bytes27(e); //~WARN: typecast can truncate values
+        bytes26 g = bytes26(f); //~WARN: typecast can truncate values
+        bytes25 h = bytes25(g); //~WARN: typecast can truncate values
+        bytes24 i = bytes24(h); //~WARN: typecast can truncate values
+        bytes23 j = bytes23(i); //~WARN: typecast can truncate values
+        bytes22 k = bytes22(j); //~WARN: typecast can truncate values
+        bytes21 l = bytes21(k); //~WARN: typecast can truncate values
+        bytes20 m = bytes20(l); //~WARN: typecast can truncate values
+        bytes19 n = bytes19(m); //~WARN: typecast can truncate values
+        bytes18 o = bytes18(n); //~WARN: typecast can truncate values
+        bytes17 p = bytes17(o); //~WARN: typecast can truncate values
+        bytes16 q = bytes16(p); //~WARN: typecast can truncate values
+        bytes15 r = bytes15(q); //~WARN: typecast can truncate values
+        bytes14 s = bytes14(r); //~WARN: typecast can truncate values
+        bytes13 t = bytes13(s); //~WARN: typecast can truncate values
+        bytes12 u = bytes12(t); //~WARN: typecast can truncate values
+        bytes11 v = bytes11(u); //~WARN: typecast can truncate values
+        bytes10 w = bytes10(v); //~WARN: typecast can truncate values
+        bytes9 x = bytes9(w); //~WARN: typecast can truncate values
+        bytes8 y = bytes8(x); //~WARN: typecast can truncate values
+        bytes7 z = bytes7(y); //~WARN: typecast can truncate values
+        bytes6 A = bytes6(z); //~WARN: typecast can truncate values
+        bytes5 B = bytes5(A); //~WARN: typecast can truncate values
+        bytes4 C = bytes4(B); //~WARN: typecast can truncate values
+        bytes3 D = bytes3(C); //~WARN: typecast can truncate values
+        bytes2 E = bytes2(D); //~WARN: typecast can truncate values
+        bytes1 F = bytes1(E); //~WARN: typecast can truncate values
     }
 
     function unsignedSignedUnsafe() public pure {
         uint256 a = type(uint256).max;
-        int256 b = int256(a); //~WARN: typecasts that can truncate values should be checked
+        int256 b = int256(a); //~WARN: typecast can truncate values
         uint248 c = type(uint248).max;
-        int248 d = int248(c); //~WARN: typecasts that can truncate values should be checked
+        int248 d = int248(c); //~WARN: typecast can truncate values
         uint240 e = type(uint240).max;
-        int240 f = int240(e); //~WARN: typecasts that can truncate values should be checked
+        int240 f = int240(e); //~WARN: typecast can truncate values
         uint232 g = type(uint232).max;
-        int232 h = int232(g); //~WARN: typecasts that can truncate values should be checked
+        int232 h = int232(g); //~WARN: typecast can truncate values
         uint224 i = type(uint224).max;
-        int224 j = int224(i); //~WARN: typecasts that can truncate values should be checked
+        int224 j = int224(i); //~WARN: typecast can truncate values
         uint216 k = type(uint216).max;
-        int216 l = int216(k); //~WARN: typecasts that can truncate values should be checked
+        int216 l = int216(k); //~WARN: typecast can truncate values
         uint208 m = type(uint208).max;
-        int208 n = int208(m); //~WARN: typecasts that can truncate values should be checked
+        int208 n = int208(m); //~WARN: typecast can truncate values
         uint200 o = type(uint200).max;
-        int200 p = int200(o); //~WARN: typecasts that can truncate values should be checked
+        int200 p = int200(o); //~WARN: typecast can truncate values
         uint192 q = type(uint192).max;
-        int192 r = int192(q); //~WARN: typecasts that can truncate values should be checked
+        int192 r = int192(q); //~WARN: typecast can truncate values
         uint184 s = type(uint184).max;
-        int184 t = int184(s); //~WARN: typecasts that can truncate values should be checked
+        int184 t = int184(s); //~WARN: typecast can truncate values
         uint176 u = type(uint176).max;
-        int176 v = int176(u); //~WARN: typecasts that can truncate values should be checked
+        int176 v = int176(u); //~WARN: typecast can truncate values
         uint168 w = type(uint168).max;
-        int168 x = int168(w); //~WARN: typecasts that can truncate values should be checked
+        int168 x = int168(w); //~WARN: typecast can truncate values
         uint160 y = type(uint160).max;
-        int160 z = int160(y); //~WARN: typecasts that can truncate values should be checked
+        int160 z = int160(y); //~WARN: typecast can truncate values
         uint152 A = type(uint152).max;
-        int152 B = int152(A); //~WARN: typecasts that can truncate values should be checked
+        int152 B = int152(A); //~WARN: typecast can truncate values
         uint144 C = type(uint144).max;
-        int144 D = int144(C); //~WARN: typecasts that can truncate values should be checked
+        int144 D = int144(C); //~WARN: typecast can truncate values
         uint136 E = type(uint136).max;
-        int136 F = int136(E); //~WARN: typecasts that can truncate values should be checked
+        int136 F = int136(E); //~WARN: typecast can truncate values
         uint128 G = type(uint128).max;
-        int128 H = int128(G); //~WARN: typecasts that can truncate values should be checked
+        int128 H = int128(G); //~WARN: typecast can truncate values
         uint120 I = type(uint120).max;
-        int120 J = int120(I); //~WARN: typecasts that can truncate values should be checked
+        int120 J = int120(I); //~WARN: typecast can truncate values
         uint112 K = type(uint112).max;
-        int112 L = int112(K); //~WARN: typecasts that can truncate values should be checked
+        int112 L = int112(K); //~WARN: typecast can truncate values
         uint104 M = type(uint104).max;
-        int104 N = int104(M); //~WARN: typecasts that can truncate values should be checked
+        int104 N = int104(M); //~WARN: typecast can truncate values
         uint96 O = type(uint96).max;
-        int96 P = int96(O); //~WARN: typecasts that can truncate values should be checked
+        int96 P = int96(O); //~WARN: typecast can truncate values
         uint88 Q = type(uint88).max;
-        int88 R = int88(Q); //~WARN: typecasts that can truncate values should be checked
+        int88 R = int88(Q); //~WARN: typecast can truncate values
         uint80 S = type(uint80).max;
-        int80 T = int80(S); //~WARN: typecasts that can truncate values should be checked
+        int80 T = int80(S); //~WARN: typecast can truncate values
         uint72 U = type(uint72).max;
-        int72 V = int72(U); //~WARN: typecasts that can truncate values should be checked
+        int72 V = int72(U); //~WARN: typecast can truncate values
         uint64 W = type(uint64).max;
-        int64 X = int64(W); //~WARN: typecasts that can truncate values should be checked
+        int64 X = int64(W); //~WARN: typecast can truncate values
         uint56 Y = type(uint56).max;
-        int56 Z = int56(Y); //~WARN: typecasts that can truncate values should be checked
+        int56 Z = int56(Y); //~WARN: typecast can truncate values
         uint48 AA = type(uint48).max;
-        int48 BB = int48(AA); //~WARN: typecasts that can truncate values should be checked
+        int48 BB = int48(AA); //~WARN: typecast can truncate values
         uint40 CC = type(uint40).max;
-        int40 DD = int40(CC); //~WARN: typecasts that can truncate values should be checked
+        int40 DD = int40(CC); //~WARN: typecast can truncate values
         uint32 EE = type(uint32).max;
-        int32 FF = int32(EE); //~WARN: typecasts that can truncate values should be checked
+        int32 FF = int32(EE); //~WARN: typecast can truncate values
         uint24 GG = type(uint24).max;
-        int24 HH = int24(GG); //~WARN: typecasts that can truncate values should be checked
+        int24 HH = int24(GG); //~WARN: typecast can truncate values
         uint16 II = type(uint16).max;
-        int16 JJ = int16(II); //~WARN: typecasts that can truncate values should be checked
+        int16 JJ = int16(II); //~WARN: typecast can truncate values
         uint8 KK = type(uint8).max;
-        int8 LL = int8(KK); //~WARN: typecasts that can truncate values should be checked
+        int8 LL = int8(KK); //~WARN: typecast can truncate values
     }
 
     function signedUnsignedUnsafe() public pure {
         int256 a = -1;
-        uint256 b = uint256(a); //~WARN: typecasts that can truncate values should be checked
+        uint256 b = uint256(a); //~WARN: typecast can truncate values
         int248 c = -1;
-        uint248 d = uint248(c); //~WARN: typecasts that can truncate values should be checked
+        uint248 d = uint248(c); //~WARN: typecast can truncate values
         int240 e = -1;
-        uint240 f = uint240(e); //~WARN: typecasts that can truncate values should be checked
+        uint240 f = uint240(e); //~WARN: typecast can truncate values
         int232 g = -1;
-        uint232 h = uint232(g); //~WARN: typecasts that can truncate values should be checked
+        uint232 h = uint232(g); //~WARN: typecast can truncate values
         int224 i = -1;
-        uint224 j = uint224(i); //~WARN: typecasts that can truncate values should be checked
+        uint224 j = uint224(i); //~WARN: typecast can truncate values
         int216 k = -1;
-        uint216 l = uint216(k); //~WARN: typecasts that can truncate values should be checked
+        uint216 l = uint216(k); //~WARN: typecast can truncate values
         int208 m = -1;
-        uint208 n = uint208(m); //~WARN: typecasts that can truncate values should be checked
+        uint208 n = uint208(m); //~WARN: typecast can truncate values
         int200 o = -1;
-        uint200 p = uint200(o); //~WARN: typecasts that can truncate values should be checked
+        uint200 p = uint200(o); //~WARN: typecast can truncate values
         int192 q = -1;
-        uint192 r = uint192(q); //~WARN: typecasts that can truncate values should be checked
+        uint192 r = uint192(q); //~WARN: typecast can truncate values
         int184 s = -1;
-        uint184 t = uint184(s); //~WARN: typecasts that can truncate values should be checked
+        uint184 t = uint184(s); //~WARN: typecast can truncate values
         int176 u = -1;
-        uint176 v = uint176(u); //~WARN: typecasts that can truncate values should be checked
+        uint176 v = uint176(u); //~WARN: typecast can truncate values
         int168 w = -1;
-        uint168 x = uint168(w); //~WARN: typecasts that can truncate values should be checked
+        uint168 x = uint168(w); //~WARN: typecast can truncate values
         int160 y = -1;
-        uint160 z = uint160(y); //~WARN: typecasts that can truncate values should be checked
+        uint160 z = uint160(y); //~WARN: typecast can truncate values
         int152 A = -1;
-        uint152 B = uint152(A); //~WARN: typecasts that can truncate values should be checked
+        uint152 B = uint152(A); //~WARN: typecast can truncate values
         int144 C = -1;
-        uint144 D = uint144(C); //~WARN: typecasts that can truncate values should be checked
+        uint144 D = uint144(C); //~WARN: typecast can truncate values
         int136 E = -1;
-        uint136 F = uint136(E); //~WARN: typecasts that can truncate values should be checked
+        uint136 F = uint136(E); //~WARN: typecast can truncate values
         int128 G = -1;
-        uint128 H = uint128(G); //~WARN: typecasts that can truncate values should be checked
+        uint128 H = uint128(G); //~WARN: typecast can truncate values
         int120 I = -1;
-        uint120 J = uint120(I); //~WARN: typecasts that can truncate values should be checked
+        uint120 J = uint120(I); //~WARN: typecast can truncate values
         int112 K = -1;
-        uint112 L = uint112(K); //~WARN: typecasts that can truncate values should be checked
+        uint112 L = uint112(K); //~WARN: typecast can truncate values
         int104 M = -1;
-        uint104 N = uint104(M); //~WARN: typecasts that can truncate values should be checked
+        uint104 N = uint104(M); //~WARN: typecast can truncate values
         int96 O = -1;
-        uint96 P = uint96(O); //~WARN: typecasts that can truncate values should be checked
+        uint96 P = uint96(O); //~WARN: typecast can truncate values
         int88 Q = -1;
-        uint88 R = uint88(Q); //~WARN: typecasts that can truncate values should be checked
+        uint88 R = uint88(Q); //~WARN: typecast can truncate values
         int80 S = -1;
-        uint80 T = uint80(S); //~WARN: typecasts that can truncate values should be checked
+        uint80 T = uint80(S); //~WARN: typecast can truncate values
         int72 U = -1;
-        uint72 V = uint72(U); //~WARN: typecasts that can truncate values should be checked
+        uint72 V = uint72(U); //~WARN: typecast can truncate values
         int64 W = -1;
-        uint64 X = uint64(W); //~WARN: typecasts that can truncate values should be checked
+        uint64 X = uint64(W); //~WARN: typecast can truncate values
         int56 Y = -1;
-        uint56 Z = uint56(Y); //~WARN: typecasts that can truncate values should be checked
+        uint56 Z = uint56(Y); //~WARN: typecast can truncate values
         int48 AA = -1;
-        uint48 BB = uint48(AA); //~WARN: typecasts that can truncate values should be checked
+        uint48 BB = uint48(AA); //~WARN: typecast can truncate values
         int40 CC = -1;
-        uint40 DD = uint40(CC); //~WARN: typecasts that can truncate values should be checked
+        uint40 DD = uint40(CC); //~WARN: typecast can truncate values
         int32 EE = -1;
-        uint32 FF = uint32(EE); //~WARN: typecasts that can truncate values should be checked
+        uint32 FF = uint32(EE); //~WARN: typecast can truncate values
         int24 GG = -1;
-        uint24 HH = uint24(GG); //~WARN: typecasts that can truncate values should be checked
+        uint24 HH = uint24(GG); //~WARN: typecast can truncate values
         int16 II = -1;
-        uint16 JJ = uint16(II); //~WARN: typecasts that can truncate values should be checked
+        uint16 JJ = uint16(II); //~WARN: typecast can truncate values
         int8 KK = -1;
-        uint8 LL = uint8(KK); //~WARN: typecasts that can truncate values should be checked
+        uint8 LL = uint8(KK); //~WARN: typecast can truncate values
     }
 
     function downcastDynamicUnsafe() public pure {
         bytes memory data = "hello world";
-        bytes32 dataSlice = bytes32(data); //~WARN: typecasts that can truncate values should be checked
+        bytes32 dataSlice = bytes32(data); //~WARN: typecast can truncate values
         string memory str = "hello world";
-        bytes32 strSlice = bytes32(bytes(str)); //~WARN: typecasts that can truncate values should be checked
+        bytes32 strSlice = bytes32(bytes(str)); //~WARN: typecast can truncate values
     }
 }
 
 contract Repros {
+    function downcastBoundedByMaskSafe(uint256 value, uint256 length) public pure {
+        uint8(value & 0xff);
+        uint8(0x7f & value);
+        uint8((0x80 + length) & 0xfe);
+        uint16(value & 0xffff);
+    }
+
     function longDynamicBytesDoNotPanic() public pure {
         bytes memory stringToBytes = bytes("Initializable: contract is already initialized");
     }
@@ -445,14 +454,14 @@ contract Repros {
         uint64 aAloneIsSafe = uint64(uint128(int128(uint128(a))));
 
         uint128 aPlusB = uint128(int128(uint128(a)) + b);
-        //~^WARN: typecasts that can truncate values should be checked
+        //~^WARN: typecast can truncate values
 
         uint64 unsafe = uint64(aPlusB);
-        //~^WARN: typecasts that can truncate values should be checked
+        //~^WARN: typecast can truncate values
 
         return uint64(uint128(int128(uint128(a)) + b));
-        //~^WARN: typecasts that can truncate values should be checked
-        //~|WARN: typecasts that can truncate values should be checked
+        //~^WARN: typecast can truncate values
+        //~|WARN: typecast can truncate values
     }
 }
 // forge-lint: disable-end(mixed-case-variable)

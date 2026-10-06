@@ -42,6 +42,27 @@ pub struct CompilerOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimizer_runs: Option<usize>,
 
+    /// Use the Yul intermediate representation compilation pipeline.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub via_ir: bool,
+
+    /// Turn on SSA CFG-based code generation via the IR (experimental).
+    ///
+    /// This passes `--via-ssa-cfg` to solc. Implies `--via-ir`. Requires `--experimental` to be
+    /// set (as of Solidity 0.8.35+). This is false by default.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub via_ssa_cfg: bool,
+
+    /// Enable Solidity's experimental mode.
+    ///
+    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
+    /// experimental features.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub experimental: bool,
+
     /// Extra output to include in the contract's artifact.
     ///
     /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
@@ -78,6 +99,18 @@ mod tests {
             args.extra_output,
             vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
         );
+    }
+
+    #[test]
+    fn can_parse_experimental() {
+        let args: CompilerOpts = CompilerOpts::parse_from(["foundry-cli", "--experimental"]);
+        assert!(args.experimental);
+    }
+
+    #[test]
+    fn can_parse_via_ssa_cfg() {
+        let args: CompilerOpts = CompilerOpts::parse_from(["foundry-cli", "--via-ssa-cfg"]);
+        assert!(args.via_ssa_cfg);
     }
 
     #[test]

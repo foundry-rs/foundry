@@ -35,7 +35,7 @@ impl FlattenArgs {
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build = BuildOpts { project_paths, ..Default::default() };
-        let config = build.load_config()?;
+        let config = build.load_config_with_dependencies()?;
         let project = config.ephemeral_project()?;
 
         let target_path = dunce::canonicalize(target_path)?;
@@ -45,7 +45,7 @@ impl FlattenArgs {
             Some(output) => {
                 fs::create_dir_all(output.parent().unwrap())?;
                 fs::write(&output, flattened)?;
-                sh_println!("Flattened file written at {}", output.display())?;
+                sh_status!("Flattened file written at {}", output.display())?;
             }
             None => sh_println!("{flattened}")?,
         };

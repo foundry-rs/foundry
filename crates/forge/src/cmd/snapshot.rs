@@ -3,7 +3,8 @@ use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use alloy_primitives::{U256, map::HashMap};
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use comfy_table::{
-    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
@@ -89,7 +90,7 @@ pub struct GasSnapshotArgs {
 
 impl GasSnapshotArgs {
     /// Returns whether `GasSnapshotArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
@@ -99,10 +100,24 @@ impl GasSnapshotArgs {
     }
 
     pub async fn run(mut self) -> Result<()> {
-        // Set fuzz seed so gas snapshots are deterministic
-        self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        // Default to a static fuzz seed so gas snapshots are deterministic,
+        // but allow the user to override it via `--fuzz-seed`.
+        if self.test.fuzz_seed.is_none() {
+            self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
 
         let outcome = self.test.compile_and_run().await?;
+        if !shell::is_quiet()
+            && !outcome.allow_failure
+            && self.diff.is_none()
+            && self.check.is_none()
+            && outcome.failed() > 0
+        {
+            sh_eprintln!(
+                "Error: gas snapshot file \"{}\" was not written because the test run failed",
+                self.snap.display()
+            )?;
+        }
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -113,11 +128,8 @@ impl GasSnapshotArgs {
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_gas_snapshot(snap)?;
-            if check(tests, snaps, self.tolerance) {
-                std::process::exit(0)
-            } else {
-                std::process::exit(1)
-            }
+            let code = if check(tests, snaps, self.tolerance) { 0 } else { 1 };
+            std::process::exit(code)
         } else {
             if matches!(self.format, Some(Format::Table)) {
                 let table = build_gas_snapshot_table(&tests);
@@ -181,7 +193,7 @@ enum DiffSortOrder {
 }
 
 impl GasSnapshotConfig {
-    fn is_in_gas_range(&self, gas_used: u64) -> bool {
+    const fn is_in_gas_range(&self, gas_used: u64) -> bool {
         if let Some(min) = self.min
             && gas_used < min
         {
@@ -199,6 +211,7 @@ impl GasSnapshotConfig {
         let mut tests = outcome
             .into_tests()
             .filter(|test| self.is_in_gas_range(test.gas_used()))
+            .flat_map(expand_invariant_snapshot_entries)
             .collect::<Vec<_>>();
 
         if self.asc {
@@ -209,6 +222,23 @@ impl GasSnapshotConfig {
 
         tests
     }
+}
+
+/// Expands merged invariant campaigns into per-predicate gas snapshot rows.
+fn expand_invariant_snapshot_entries(test: SuiteTestResult) -> Vec<SuiteTestResult> {
+    if !test.result.kind.is_invariant() || test.result.invariant_predicate_results.len() <= 1 {
+        return vec![test];
+    }
+
+    test.result
+        .invariant_predicate_results
+        .iter()
+        .map(|predicate| {
+            let mut expanded = test.clone();
+            expanded.signature = format!("{}()", predicate.name);
+            expanded
+        })
+        .collect()
 }
 
 /// A general entry in a gas snapshot file
@@ -268,7 +298,6 @@ impl FromStr for GasSnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         calls: calls.as_str().parse().unwrap(),
                                         reverts: reverts.as_str().parse().unwrap(),
-                                        metrics: HashMap::default(),
                                         failed_corpus_replays: 0,
                                         optimization_best_value: None,
                                     },
@@ -320,9 +349,9 @@ fn write_to_gas_snapshot_file(
 fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
 
     table.set_header(vec![
@@ -355,13 +384,22 @@ impl GasSnapshotDiff {
     ///
     /// `> 0` if the source used more gas
     /// `< 0` if the target used more gas
-    fn gas_change(&self) -> i128 {
+    const fn gas_change(&self) -> i128 {
         self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
     }
 
     /// Determines the percentage change
     fn gas_diff(&self) -> f64 {
-        self.gas_change() as f64 / self.target_gas_used.gas() as f64
+        let target_gas = self.target_gas_used.gas();
+        if target_gas > 0 {
+            self.gas_change() as f64 / target_gas as f64
+        } else if self.source_gas_used.gas() == 0 {
+            // No percentage change when both values are zero.
+            0.0
+        } else {
+            // Preserve an unbounded increase from zero.
+            f64::INFINITY
+        }
     }
 }
 
@@ -384,7 +422,7 @@ fn check(
         {
             let source_gas = test.result.kind.report();
             if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
-                let _ = sh_println!(
+                let _ = sh_eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.contract_name(),
                     test.signature,
@@ -394,7 +432,7 @@ fn check(
                 has_diff = true;
             }
         } else {
-            let _ = sh_println!(
+            let _ = sh_eprintln!(
                 "No matching snapshot entry found for \"{}::{}\" in snapshot file",
                 test.contract_name(),
                 test.signature
@@ -418,7 +456,7 @@ fn diff(
     let mut diffs = Vec::with_capacity(tests.len());
     let mut new_tests = Vec::new();
 
-    for test in tests.into_iter() {
+    for test in tests {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
@@ -496,14 +534,14 @@ fn diff(
 
     // Display new tests if any
     if !new_tests.is_empty() {
-        sh_println!("\n{}", "New tests:".yellow())?;
+        sh_eprintln!("\n{}", "New tests:".yellow())?;
         for test in new_tests {
-            sh_println!("  {} {}", "+".green(), test)?;
+            sh_eprintln!("  {} {}", "+".green(), test)?;
         }
     }
 
     // Summary separator
-    sh_println!("\n{}", "-".repeat(80))?;
+    sh_eprintln!("\n{}", "-".repeat(80))?;
 
     let overall_gas_diff = if overall_gas_used > 0 {
         overall_gas_change as f64 / overall_gas_used as f64
@@ -511,7 +549,7 @@ fn diff(
         0.0
     };
 
-    sh_println!(
+    sh_eprintln!(
         "Total tests: {}, {} {}, {} {}, {} {}",
         diffs.len(),
         "↑".red().to_string(),
@@ -521,7 +559,7 @@ fn diff(
         "━",
         unchanged
     )?;
-    sh_println!(
+    sh_eprintln!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
         fmt_pct_change(overall_gas_diff)
@@ -558,6 +596,10 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
+        if hi == 0 {
+            // No percentage difference when both values are zero.
+            return true;
+        }
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
         diff < tolerance as f64
     } else {
@@ -576,6 +618,7 @@ mod tests {
         assert!(!within_tolerance(100, 106, Some(5)));
         assert!(!within_tolerance(106, 100, Some(5)));
         assert!(within_tolerance(100, 100, None));
+        assert!(within_tolerance(0, 0, Some(5)));
     }
 
     #[test]
@@ -624,7 +667,6 @@ mod tests {
                     runs: 256,
                     calls: 100,
                     reverts: 200,
-                    metrics: HashMap::default(),
                     failed_corpus_replays: 0,
                     optimization_best_value: None,
                 }
@@ -645,7 +687,6 @@ mod tests {
                     runs: 256,
                     calls: 3840,
                     reverts: 2388,
-                    metrics: HashMap::default(),
                     failed_corpus_replays: 0,
                     optimization_best_value: None,
                 }

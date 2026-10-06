@@ -1,0 +1,840 @@
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badTransfer(address payable to, uint256 amt) external { to.transfer(amt);
+   │                                                                      ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         bool ok = to.send(amt);
+   │                   ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badCall(address to, uint256 amt, bytes calldata data) external returns (bool ok) { (ok,) = to.call{value: amt}(data);
+   │                                                                                                         ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badInterfaceCall(IThing t, uint256 amt) external { t.ping{value: amt}();
+   │                                                                 ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSelfDestruct(address payable to) external { selfdestruct(to);
+   │                                                             ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badPayMutableStorage(uint256 amt) external { payable(mutableOwner).transfer(amt);
+   │                                                           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badTernaryDest(address payable a, address payable b, bool flag, uint256 amt) external { (flag ? a : b).transfer(amt);
+   │                                                                                                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badArrayDest(uint256 i, uint256 amt) external { recipients[i].transfer(amt);
+   │                                                              ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badMappingDest(address k, uint256 amt) external { delegates[k].transfer(amt);
+   │                                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badStructDest(uint256 amt) external { cfg.beneficiary.transfer(amt);
+   │                                                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSendValueStatic(address payable to, uint256 amt) external { Address.sendValue(to, amt);
+   │                                                                             ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSendValueUsingFor(address payable to, uint256 amt) external { to.sendValue(amt);
+   │                                                                               ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSafeTransferETH(address to, uint256 amt) external { SafeTransferLib.safeTransferETH(to, amt);
+   │                                                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badForceSafeTransferETH(address to, uint256 amt) external { to.forceSafeTransferETH(amt);
+   │                                                                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSafeTransferAllETHUsingFor(address to) external { to.safeTransferAllETH();
+   │                                                                   ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSafeTransferAllETHStatic(address to) external { SafeTransferLib.safeTransferAllETH(to);
+   │                                                                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badForceSafeTransferAllETHWithGas(address to, uint256 gasStipend) external { to.forceSafeTransferAllETH(gasStipend);
+   │                                                                                           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …to, bytes calldata data, uint256 amt) external { to.functionCallWithValue(data, amt);
+   │                                                   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ … calldata data, uint256 amt) external { Address.functionCallWithValue(to, data, amt, "boom");
+   │                                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badFunctionPointer(function() external payable f, uint256 amt) external { f{value: amt}();
+   │                                                                                        ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │             to.transfer(amt);
+   │             ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function pausedButOpenBad(address payable to, uint256 amt) external whenNotPaused { to.transfer(amt);
+   │                                                                                         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function eoaOnlyBad(address payable to, uint256 amt) external onlyEOA { to.transfer(amt);
+   │                                                                             ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function nonZeroSenderBad(address payable to, uint256 amt) external nonZeroSender { to.transfer(amt);
+   │                                                                                         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …s payable other, uint256 amt) external checkSender(to) { other.transfer(amt);
+   │                                                           ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function maybeOwnerBad(address payable to, uint256 amt, bool b) external maybeOwner(b) { to.transfer(amt);
+   │                                                                                              ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function fakeGuardBad(address payable to, uint256 amt, Guard memory g) external fakeGuard(g) { to.transfer(amt);
+   │                                                                                                    ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function tautologicalSenderBad(address payable to, uint256 amt) external tautologicalSender { to.transfer(amt);
+   │                                                                                                   ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function txOriginOnlyBad(address payable to, uint256 amt) external txOriginOnly { to.transfer(amt);
+   │                                                                                       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ … to, uint256 amt) external tautologicalSenderMemberCall { to.transfer(amt);
+   │                                                            ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function txOriginHelperOnlyBad(address payable to, uint256 amt) external txOriginHelperOnly { to.transfer(amt);
+   │                                                                                                   ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function aliasIndexedAdminBad(address payable to, uint256 amt, uint256 i) external aliasIndexedAdmin(i) { to.transfer(amt);
+   │                                                                                                               ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function nestedSenderIndexedAdminBad(address payable to, uint256 amt) external nestedSenderIndexedAdmin { to.transfer(amt);
+   │                                                                                                               ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function hiddenSenderIndexedAdminBad(address payable to, uint256 amt) external hiddenSenderIndexedAdmin { to.transfer(amt);
+   │                                                                                                               ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function pureCalldataIndexedAdminBad(address payable to, uint256 amt) external pureCalldataIndexedAdmin { to.transfer(amt);
+   │                                                                                                               ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function calldataOwnerGuardBad(address payable to, uint256 amt) external calldataOwnerGuard { to.transfer(amt);
+   │                                                                                                   ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function assignedParamGuardBad(address payable to, uint256 amt) external assignedParamGuard(to) { to.transfer(amt);
+   │                                                                                                       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function assignedParamCondGuardBad(address payable to, uint256 amt) external assignedParamCondGuard(to) { to.transfer(amt);
+   │                                                                                                               ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function helperEarlyReturnBad(address payable to, uint256 amt, bool skip) external maybeChecked(skip) { to.transfer(amt);
+   │                                                                                                             ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function memberReturnTransferBad(IRegistry r, uint256 amt) external { r.recipient().transfer(amt);
+   │                                                                           ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function overloadedRecipientBad(IOverloaded r, uint256 amt) external { r.recipient().transfer(amt);
+   │                                                                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         r.recipient(who).transfer(amt);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …     consumeArg(_consume(to.send(amt)))
+   │                           ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …6 amt, uint256 gasStipend) external { SafeTransferLib.forceSafeTransferETH(to, amt, gasStipend);
+   │                                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …, uint256 amt, uint256 gasStipend) external { to.forceSafeTransferETH(amt, gasStipend);
+   │                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …ic(address to, uint256 amt) external { SafeTransferLib.safeTransferETH({amount: amt, to: to});
+   │                                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …ta data, uint256 amt) external { Address.functionCallWithValue({value: amt, target: to, data: data});
+   │                                   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …to, uint256 amt, uint256 gas_) external { SafeTransferLib.trySafeTransferETH(to, amt, gas_);
+   │                                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badTrySafeTransferETHUsingFor(address to, uint256 amt, uint256 gas_) external { to.trySafeTransferETH(amt, gas_);
+   │                                                                                              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badTrySafeTransferAllETHStatic(address to, uint256 gas_) external { SafeTransferLib.trySafeTransferAllETH(to, gas_);
+   │                                                                                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badTrySafeTransferAllETHUsingFor(address to, uint256 gas_) external { to.trySafeTransferAllETH(gas_);
+   │                                                                                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSafeMoveETHStatic(address to, uint256 amt) external { SafeTransferLib.safeMoveETH(to, amt);
+   │                                                                       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function badSafeMoveETHUsingFor(address to, uint256 amt) external { to.safeMoveETH(amt);
+   │                                                                         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function inheritedRecipientBad(IChildRecipient r, uint256 amt) external { r.recipient().transfer(amt);
+   │                                                                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function selfRestrictedBad(address payable to, uint256 amount) external onlySelf { to.transfer(amount);
+   │                                                                                        ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function self2RestrictedBad(address payable to, uint256 amount) external onlySelf2 { to.transfer(amount);
+   │                                                                                          ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dInline(address payable to, uint256 a) external { require(msg.sender == SELF_INLINE); to.transfer(a);
+   │                                                                                                    ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dImmutable(address payable to, uint256 a) external { require(msg.sender == SELF_IMMUTABLE); to.transfer(a);
+   │                                                                                                          ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dChain(address payable to, uint256 a) external { require(msg.sender == SELF_CHAIN); to.transfer(a);
+   │                                                                                                  ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dStruct(address payable to, uint256 a) external { require(msg.sender == cfg.self); to.transfer(a);
+   │                                                                                                 ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dMapping(address payable to, uint256 a) external { require(msg.sender == principals[0]); to.transfer(a);
+   │                                                                                                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dTuple(address payable to, uint256 a) external { require(msg.sender == tupleSelf); to.transfer(a);
+   │                                                                                                 ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dDeep(address payable to, uint256 a) external { require(msg.sender == dA); to.transfer(a);
+   │                                                                                         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dFiveHop(address payable to, uint256 a) external { require(msg.sender == fA); to.transfer(a);
+   │                                                                                            ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dCtorHelper(address payable to, uint256 a) external { require(msg.sender == SELF_HELPER); to.transfer(a);
+   │                                                                                                        ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dStructLit(address payable to, uint256 a) external { require(msg.sender == cfgLit.self); to.transfer(a);
+   │                                                                                                       ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dCtorLocal(address payable to, uint256 a) external { require(msg.sender == SELF_LOCAL); to.transfer(a);
+   │                                                                                                      ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dNestedHelper(address payable to, uint256 a) external { require(msg.sender == SELF_NESTED); to.transfer(a);
+   │                                                                                                          ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dTernary(address payable to, uint256 a) external { require(msg.sender == SELF_TERNARY); to.transfer(a);
+   │                                                                                                      ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function dPush(address payable to, uint256 a) external { require(msg.sender == pushArr[0]); to.transfer(a);
+   │                                                                                                 ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function fireBad(uint256 i) external payable { callbacks[i]{value: msg.value}();
+   │                                                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function fireMappingBad(bytes4 sel) external payable { handlers[sel]{value: msg.value}();
+   │                                                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function _send(address payable to, uint256 amount) internal { to.transfer(amount);
+   │                                                                   ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …s calldata data, uint256 amt) external { payable(abi.decode(data, (address))).transfer(amt);
+   │                                           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …amt) external returns (bool ok) { (ok,) = abi.decode(data, (address)).call{value: amt}("");
+   │                                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function notRestrictedBad(address payable to, uint256 amt, bool b) external maybePlaceholderThenGuard(b) { to.transfer(amt);
+   │                                                                                                                ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │ …able to, uint256 amount) external checkOuterAssign(to) { to.transfer(amount);
+   │                                                           ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amt);
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │     function assignmentReceiverBad(address payable to, address payable other, uint256 amt) external { (to = other).transfer(amt);
+   │                                                                                                       ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(a);
+   │         ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         to.transfer(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         cb{value: amt}();
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+

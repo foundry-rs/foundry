@@ -1,0 +1,88 @@
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     uint256 public limit = 100;
+   │                    ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     uint256 internal sum = 1 + 2;
+   │                      ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     bytes32 internal salt = keccak256("foundry");
+   │                      ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     string internal greeting = "hi";
+   │                     ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     bytes internal payloadPrefix = hex"0a0b";
+   │                    ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     uint256 internal derived = ALREADY_CONST + 1;
+   │                      ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     IToken internal token = IToken(address(0xCAFE));
+   │                     ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     address internal nestedCast = address(uint160(0xCAFE));
+   │                      ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     uint256 internal maxUint = type(uint256).max;
+   │                      ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     int256 internal minInt = type(int256).min;
+   │                     ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared `constant`
+   ╭▸ ROOT/testdata/CouldBeConstant.sol:LL:CC
+   │
+LL │     bytes4 internal iid = type(IToken).interfaceId;
+   │                     ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+

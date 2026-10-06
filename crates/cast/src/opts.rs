@@ -1,10 +1,39 @@
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
-    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
-    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, erc20::Erc20Subcommand,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    access_list::AccessListArgs,
+    artifact::ArtifactArgs,
+    b2e_payload::B2EPayloadArgs,
+    bal::BalArgs,
+    batch_mktx::BatchMakeTxArgs,
+    batch_send::BatchSendArgs,
+    bind::BindArgs,
+    call::CallArgs,
+    call_overrides::CallOverrideOpts,
+    constructor_args::ConstructorArgsArgs,
+    create2::Create2Args,
+    creation_code::CreationCodeArgs,
+    erc20::Erc20Subcommand,
+    erc4626::Erc4626Subcommand,
+    estimate::EstimateArgs,
+    events::EventsArgs,
+    find_block::FindBlockArgs,
+    interface::InterfaceArgs,
+    keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
+    logs::LogsArgs,
+    mktx::MakeTxArgs,
+    receive_policy::ReceivePolicySubcommand,
+    rpc::RpcArgs,
+    run::RunArgs,
+    safe::SafeSubcommand,
+    send::SendTxArgs,
+    storage::StorageArgs,
+    storage_credits::StorageCreditsSubcommand,
+    tempo::TempoArgs,
+    tip20::Tip20Subcommand,
+    tip403::Tip403Subcommand,
+    trace::TraceArgs,
+    txpool::TxPoolSubcommands,
+    vaddr::VaddrSubcommand,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -13,7 +42,12 @@ use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_evm_networks::NetworkVariant;
 use std::{path::PathBuf, str::FromStr};
+
+#[cfg(any(feature = "base", feature = "optimism"))]
+use crate::cmd::da_estimate::DAEstimateArgs;
+
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
@@ -32,8 +66,33 @@ pub struct Cast {
     pub cmd: CastSubcommand,
 }
 
+/// The `cast` subcommands.
+///
+/// Subcommands are declared across several flattened enums because clap's derive generates one
+/// `augment_subcommands` function per enum, and in debug builds a single enum holding every
+/// subcommand produced a stack frame that overflowed the 2 MiB stack of test threads.
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant, reason = "parsed once per process")]
 pub enum CastSubcommand {
+    #[command(flatten)]
+    Conversion(ConversionSubcommand),
+
+    #[command(flatten)]
+    Transaction(TransactionSubcommand),
+
+    #[command(flatten)]
+    Abi(AbiSubcommand),
+
+    #[command(flatten)]
+    Query(QuerySubcommand),
+
+    #[command(flatten)]
+    Misc(MiscSubcommand),
+}
+
+/// Constant and conversion subcommands.
+#[derive(Subcommand)]
+pub enum ConversionSubcommand {
     /// Prints the maximum value of the given integer type.
     #[command(visible_aliases = &["--max-int", "maxi"])]
     MaxInt {
@@ -151,6 +210,16 @@ pub enum CastSubcommand {
         bytes: Option<String>,
     },
 
+    /// Convert hex data to the word-aligned layout of a Solidity `bytes memory` value.
+    ///
+    /// The output contains a 32-byte length prefix followed by the data, right-padded with zeros
+    /// to a whole number of 32-byte words.
+    #[command(visible_alias = "tbm")]
+    ToBytesMemory {
+        /// The hex data to convert.
+        data: Option<String>,
+    },
+
     /// Pads hex data to a specified length.
     #[command(visible_aliases = &["pd"])]
     Pad {
@@ -195,43 +264,7 @@ pub enum CastSubcommand {
         value: Option<String>,
     },
 
-    /// Perform a left shifting operation
-    #[command(name = "shl")]
-    LeftShift {
-        /// The value to shift.
-        value: String,
-
-        /// The number of bits to shift.
-        bits: String,
-
-        /// The input base.
-        #[arg(long)]
-        base_in: Option<String>,
-
-        /// The output base.
-        #[arg(long, default_value = "16")]
-        base_out: String,
-    },
-
-    /// Perform a right shifting operation
-    #[command(name = "shr")]
-    RightShift {
-        /// The value to shift.
-        value: String,
-
-        /// The number of bits to shift.
-        bits: String,
-
-        /// The input base,
-        #[arg(long)]
-        base_in: Option<String>,
-
-        /// The output base,
-        #[arg(long, default_value = "16")]
-        base_out: String,
-    },
-
-    /// Convert an ETH amount into another unit (ether, gwei or wei).
+    /// Convert an ETH amount into another unit (ether, gwei or wei)
     ///
     /// Examples:
     /// - 1ether wei
@@ -239,7 +272,7 @@ pub enum CastSubcommand {
     /// - 1ether
     /// - 1 gwei
     /// - 1gwei ether
-    #[command(visible_aliases = &["--to-unit", "tun", "2un"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--to-unit", "tun", "2un"])]
     ToUnit {
         /// The value to convert.
         value: Option<String>,
@@ -249,13 +282,13 @@ pub enum CastSubcommand {
         unit: String,
     },
 
-    /// Convert a number from decimal to smallest unit with arbitrary decimals.
+    /// Convert a number from decimal to smallest unit with arbitrary decimals
     ///
     /// Examples:
     /// - 1.0 6    (for USDC, result: 1000000)
     /// - 2.5 12   (for 12 decimals token, result: 2500000000000)
     /// - 1.23 3   (for 3 decimals token, result: 1230)
-    #[command(visible_aliases = &["--parse-units", "pun"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--parse-units", "pun"])]
     ParseUnits {
         /// The value to convert.
         value: Option<String>,
@@ -265,13 +298,13 @@ pub enum CastSubcommand {
         unit: u8,
     },
 
-    /// Format a number from smallest unit to decimal with arbitrary decimals.
+    /// Format a number from smallest unit to decimal with arbitrary decimals
     ///
     /// Examples:
     /// - 1000000 6       (for USDC, result: 1.0)
     /// - 2500000000000 12 (for 12 decimals, result: 2.5)
     /// - 1230 3          (for 3 decimals, result: 1.23)
-    #[command(visible_aliases = &["--format-units", "fun"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--format-units", "fun"])]
     FormatUnits {
         /// The value to format.
         value: Option<String>,
@@ -309,7 +342,7 @@ pub enum CastSubcommand {
         unit: String,
     },
 
-    /// RLP encodes hex data, or an array of hex data.
+    /// RLP encodes hex data, or an array of hex data
     ///
     /// Accepts a hex-encoded string, or an array of hex-encoded strings.
     /// Can be arbitrarily recursive.
@@ -319,7 +352,7 @@ pub enum CastSubcommand {
     /// - `cast to-rlp "0x22"` -> `0x22`
     /// - `cast to-rlp "[\"0x61\"]"` -> `0xc161`
     /// - `cast to-rlp "[\"0xf1\", \"f2\"]"` -> `0xc481f181f2`
-    #[command(visible_aliases = &["--to-rlp"])]
+    #[command(verbatim_doc_comment, visible_aliases = &["--to-rlp"])]
     ToRlp {
         /// The value to convert.
         ///
@@ -363,14 +396,420 @@ pub enum CastSubcommand {
         #[arg(value_name = "BASE")]
         base_out: Option<String>,
     },
-    /// Create an access list for a transaction.
-    #[command(visible_aliases = &["ac", "acl"])]
+
+    /// Formats a string into bytes32 encoding.
+    #[command(name = "format-bytes32-string", visible_aliases = &["--format-bytes32-string"])]
+    FormatBytes32String {
+        /// The string to format.
+        string: Option<String>,
+    },
+
+    /// Parses a string from bytes32 encoding.
+    #[command(name = "parse-bytes32-string", visible_aliases = &["--parse-bytes32-string"])]
+    ParseBytes32String {
+        /// The string to parse.
+        bytes: Option<String>,
+    },
+
+    #[command(name = "parse-bytes32-address", visible_aliases = &["--parse-bytes32-address"])]
+    #[command(about = "Parses a checksummed address from bytes32 encoding.")]
+    ParseBytes32Address {
+        #[arg(value_name = "BYTES")]
+        bytes: Option<String>,
+    },
+}
+
+/// Call and transaction subcommands.
+#[derive(Subcommand)]
+pub enum TransactionSubcommand {
+    /// Perform a call on an account without publishing a transaction
+    ///
+    /// Examples:
+    /// - cast call $TOKEN "balanceOf(address)(uint256)" vitalik.eth
+    /// - cast call $TOKEN "transfer(address,uint256)" vitalik.eth 100 --trace
+    #[command(verbatim_doc_comment, visible_alias = "c")]
+    Call(CallArgs),
+
+    /// Build and sign a transaction
+    ///
+    /// Examples:
+    /// - cast mktx vitalik.eth --value 0.1ether --private-key $PK
+    /// - cast mktx $TOKEN "transfer(address,uint256)" vitalik.eth 100 --account dev
+    #[command(verbatim_doc_comment, name = "mktx", visible_alias = "m")]
+    MakeTx(MakeTxArgs),
+
+    /// Classify a raw transaction as Tempo T5 payment/general lane.
+    Classify {
+        /// The raw signed transaction.
+        raw_tx: Option<String>,
+    },
+
+    /// Get information about a transaction
+    ///
+    /// Examples:
+    /// - cast tx $TX_HASH
+    /// - cast tx $TX_HASH blockNumber (only print the blockNumber field)
+    /// - cast tx $TX_HASH --raw
+    #[command(verbatim_doc_comment, visible_alias = "t")]
+    Tx {
+        /// The transaction hash.
+        tx_hash: Option<String>,
+
+        /// The sender of the transaction.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        from: Option<NameOrAddress>,
+
+        /// Nonce of the transaction.
+        #[arg(long)]
+        nonce: Option<u64>,
+
+        /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
+        /// transaction will be printed.
+        field: Option<String>,
+
+        /// Print the raw RLP encoded transaction.
+        #[arg(long, conflicts_with = "field")]
+        raw: bool,
+
+        /// Classify the transaction as Tempo T5 payment/general lane.
+        #[arg(long, conflicts_with_all = ["field", "raw", "to_request"])]
+        lane: bool,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+
+        /// If specified, the transaction will be converted to a TransactionRequest JSON format.
+        #[arg(long)]
+        to_request: bool,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
+    },
+
+    /// Get the transaction receipt for a transaction
+    ///
+    /// Examples:
+    /// - cast receipt $TX_HASH
+    /// - cast receipt $TX_HASH status (only print the status field)
+    #[command(verbatim_doc_comment, visible_alias = "re")]
+    Receipt {
+        /// The transaction hash.
+        tx_hash: String,
+
+        /// If specified, only get the given field of the transaction.
+        field: Option<String>,
+
+        /// The number of confirmations until the receipt is fetched
+        #[arg(long, default_value = "1")]
+        confirmations: u64,
+
+        /// Exit immediately if the transaction was not found.
+        #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
+        cast_async: bool,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Sign and publish a transaction
+    ///
+    /// Examples:
+    /// - cast send vitalik.eth --value 0.1ether --private-key $PK (transfer ETH)
+    /// - cast send $TOKEN "transfer(address,uint256)" vitalik.eth 100 --account dev
+    /// - cast send --private-key $PK --create $BYTECODE (deploy a contract)
+    #[command(verbatim_doc_comment, name = "send", visible_alias = "s")]
+    SendTx(SendTxArgs),
+
+    /// Build and sign a batch transaction (Tempo).
+    #[command(name = "batch-mktx", visible_alias = "bm")]
+    BatchMakeTx(BatchMakeTxArgs),
+
+    /// Sign and publish a batch transaction (Tempo).
+    #[command(name = "batch-send", visible_alias = "bs")]
+    BatchSend(BatchSendArgs),
+
+    /// Publish a raw transaction to the network.
+    #[command(name = "publish", visible_alias = "p")]
+    PublishTx {
+        /// The raw transaction
+        raw_tx: String,
+
+        /// Only print the transaction hash and exit immediately.
+        #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
+        cast_async: bool,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Estimate the gas cost of a transaction
+    ///
+    /// Examples:
+    /// - cast estimate vitalik.eth --value 0.1ether
+    /// - cast estimate $CONTRACT "deposit()" --value 1ether
+    #[command(verbatim_doc_comment, visible_alias = "e")]
+    Estimate(EstimateArgs),
+
+    /// Runs a published transaction in a local environment and prints the trace
+    ///
+    /// If the node serves an EIP-7928 block access list (BAL) for the transaction's block, the
+    /// transaction's prestate is read from it instead of replaying the earlier transactions of
+    /// the block. Pass `--no-bal` to always replay the block.
+    ///
+    /// Examples:
+    /// - cast run $TX_HASH
+    /// - cast run $TX_HASH --quick (only use the state from the previous block)
+    /// - cast run $TX_HASH --debug (open the transaction in the debugger)
+    #[command(verbatim_doc_comment, visible_alias = "r")]
+    Run(RunArgs),
+}
+
+/// ABI encoding and decoding, selector and contract artifact subcommands.
+#[derive(Subcommand)]
+pub enum AbiSubcommand {
+    /// ABI-encode a function with arguments.
+    #[command(name = "calldata", visible_alias = "cd")]
+    CalldataEncode {
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`
+        sig: String,
+
+        /// The arguments to encode.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+
+        // Path to file containing arguments to encode.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
+
+    /// Decode ABI-encoded input data
+    ///
+    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`.
+    ///
+    /// Examples:
+    /// - cast decode-calldata "transfer(address,uint256)" $CALLDATA
+    /// - cast decode-calldata --json "transfer(address,uint256)" $CALLDATA
+    #[command(verbatim_doc_comment, visible_aliases = &["calldata-decode", "--calldata-decode", "cdd"])]
+    DecodeCalldata {
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
+        sig: String,
+
+        /// The ABI-encoded calldata.
+        #[arg(required_unless_present = "file", index = 2)]
+        calldata: Option<String>,
+
+        /// Load ABI-encoded calldata from a file instead.
+        #[arg(long = "file", short = 'f', conflicts_with = "calldata")]
+        file: Option<PathBuf>,
+    },
+
+    /// Decode ABI-encoded string.
+    ///
+    /// Similar to `calldata-decode --input`, but the function argument is a `string`
+    #[command(visible_aliases = &["string-decode", "--string-decode", "sd"])]
+    DecodeString {
+        /// The ABI-encoded string.
+        data: String,
+    },
+
+    /// Decode event data
+    ///
+    /// Parameters marked `indexed` in the supplied signature are emitted as log topics rather than
+    /// data, so they are ignored when decoding. With `--sig`, DATA must contain only the encoded
+    /// non-indexed event data, without topics.
+    ///
+    /// Examples:
+    /// - cast decode-event --sig "Transfer(address indexed from, address indexed to, uint256
+    ///   value)" $DATA
+    /// - cast decode-event $DATA (topic0-prefixed data; looks up the signature)
+    #[command(verbatim_doc_comment, visible_aliases = &["event-decode", "--event-decode", "ed"])]
+    DecodeEvent {
+        /// The event signature. If none provided then tries to decode from local cache or <https://4byte.sourcify.dev>.
+        #[arg(long, visible_alias = "event-sig")]
+        sig: Option<String>,
+        /// The event data to decode.
+        data: String,
+    },
+
+    /// Decode custom error data.
+    #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
+    DecodeError {
+        /// The error signature. If none provided then tries to decode from local cache or <https://4byte.sourcify.dev>.
+        #[arg(long, visible_alias = "error-sig")]
+        sig: Option<String>,
+        /// The error data to decode.
+        data: String,
+    },
+
+    /// Decode ABI-encoded input or output data
+    ///
+    /// Defaults to decoding output data. To decode input data pass --input.
+    ///
+    /// When passing `--input`, function selector must NOT be prefixed in `calldata` string.
+    ///
+    /// Examples:
+    /// - cast decode-abi "balanceOf(address)(uint256)" $DATA
+    /// - cast decode-abi --input "transfer(address,uint256)" $CALLDATA
+    #[command(verbatim_doc_comment, name = "decode-abi", visible_aliases = &["abi-decode", "--abi-decode", "ad"])]
+    DecodeAbi {
+        /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
+        sig: String,
+
+        /// The ABI-encoded calldata.
+        calldata: String,
+
+        /// Whether to decode the input or output data.
+        #[arg(long, short, help_heading = "Decode input data instead of output data")]
+        input: bool,
+    },
+
+    /// ABI encode the given function argument, excluding the selector
+    ///
+    /// Examples:
+    /// - cast abi-encode "transfer(address,uint256)" $ADDRESS 100
+    /// - cast abi-encode --packed "f(string,uint64)" hello 100
+    #[command(verbatim_doc_comment, visible_alias = "ae")]
+    AbiEncode {
+        /// The function signature.
+        sig: String,
+
+        /// Whether to use packed encoding.
+        #[arg(long)]
+        packed: bool,
+
+        /// The arguments of the function.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// ABI encode an event and its arguments to generate topics and data.
+    #[command(visible_alias = "aee")]
+    AbiEncodeEvent {
+        /// The event signature.
+        sig: String,
+
+        /// The arguments of the event.
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Get the function signatures for the given selector from <https://4byte.sourcify.dev>.
+    #[command(name = "4byte", visible_aliases = &["4", "4b"])]
+    FourByte {
+        /// The function selector.
+        selector: Option<Selector>,
+    },
+
+    /// Decode ABI-encoded calldata using <https://4byte.sourcify.dev>.
+    #[command(name = "4byte-calldata", aliases = &["4byte-decode", "4d", "4bd"], visible_aliases = &["4c", "4bc"])]
+    FourByteCalldata {
+        /// The ABI-encoded calldata.
+        calldata: Option<String>,
+    },
+
+    /// Get the event signature for a given topic 0 from <https://4byte.sourcify.dev>.
+    #[command(name = "4byte-event", visible_aliases = &["4e", "4be", "topic0-event", "t0e"])]
+    FourByteEvent {
+        /// Topic 0
+        #[arg(value_name = "TOPIC_0")]
+        topic: Option<B256>,
+    },
+
+    /// Upload the given signatures to <https://4byte.sourcify.dev>.
+    ///
+    /// Example inputs:
+    /// - "transfer(address,uint256)"
+    /// - "function transfer(address,uint256)"
+    /// - "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
+    /// - "./out/Contract.sol/Contract.json"
+    #[command(visible_aliases = &["ups"])]
+    UploadSignature {
+        /// The signatures to upload.
+        ///
+        /// Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given.
+        /// Can also take paths to contract artifact JSON.
+        signatures: Vec<String>,
+    },
+
+    /// Pretty print calldata.
+    ///
+    /// Tries to decode the calldata using <https://4byte.sourcify.dev> unless --offline is passed.
+    #[command(visible_alias = "pc")]
+    PrettyCalldata {
+        /// The calldata.
+        calldata: Option<String>,
+
+        /// Skip the <https://4byte.sourcify.dev> lookup.
+        #[arg(long, short)]
+        offline: bool,
+    },
+
+    /// Download a contract creation code from Etherscan and RPC.
+    #[command(visible_alias = "cc")]
+    CreationCode(CreationCodeArgs),
+
+    /// Generate an artifact file, that can be used to deploy a contract locally.
+    #[command(visible_alias = "ar")]
+    Artifact(ArtifactArgs),
+
+    /// Display constructor arguments used for the contract initialization.
+    #[command(visible_alias = "cra")]
+    ConstructorArgs(ConstructorArgsArgs),
+
+    /// Generate a Solidity interface from a given ABI
+    ///
+    /// Currently does not support ABI encoder v2.
+    ///
+    /// Examples:
+    /// - cast interface $TOKEN --etherscan-api-key $KEY (fetch the ABI from Etherscan)
+    /// - cast interface ./out/Counter.sol/Counter.json (load a local ABI file)
+    #[command(verbatim_doc_comment, visible_alias = "i")]
+    Interface(InterfaceArgs),
+
+    /// Generate a rust binding from a given ABI.
+    #[command(visible_alias = "bi")]
+    Bind(BindArgs),
+
+    /// Convert Beacon payload to execution payload.
+    #[command(visible_alias = "b2e")]
+    B2EPayload(B2EPayloadArgs),
+
+    /// Get the selector for a function
+    ///
+    /// Examples:
+    /// - cast sig "transfer(address,uint256)"
+    /// - cast sig "deposit(uint256)" 2 (optimize for 2 leading zero bytes)
+    #[command(verbatim_doc_comment, visible_alias = "si")]
+    Sig {
+        /// The function signature, e.g. transfer(address,uint256).
+        sig: Option<String>,
+
+        /// Optimize signature to contain provided amount of leading zeroes in selector.
+        #[arg(conflicts_with = "json")]
+        optimize: Option<usize>,
+    },
+}
+
+/// Blockchain, RPC and ENS query subcommands.
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant, reason = "parsed once per process")]
+pub enum QuerySubcommand {
+    /// Create an access list for a transaction
+    ///
+    /// Examples:
+    /// - cast access-list vitalik.eth --value 0.1ether
+    /// - cast access-list $TOKEN "transfer(address,uint256)" vitalik.eth 100
+    #[command(verbatim_doc_comment, visible_aliases = &["ac", "acl"])]
     AccessList(AccessListArgs),
-    /// Get logs by signature or topic.
-    #[command(visible_alias = "l")]
-    Logs(LogsArgs),
-    /// Get information about a block.
-    #[command(visible_alias = "bl")]
+
+    /// Get information about a block
+    ///
+    /// Examples:
+    /// - cast block latest
+    /// - cast block 21000000 --field timestamp
+    /// - cast block latest --json
+    #[command(verbatim_doc_comment, visible_alias = "bl")]
     Block {
         /// The block height to query at.
         ///
@@ -390,6 +829,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
     },
 
     /// Get the latest block number.
@@ -401,24 +844,13 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Perform a call on an account without publishing a transaction.
-    #[command(visible_alias = "c")]
-    Call(CallArgs),
-
-    /// ABI-encode a function with arguments.
-    #[command(name = "calldata", visible_alias = "cd")]
-    CalldataEncode {
-        /// The function signature in the format `<name>(<in-types>)(<out-types>)`
-        sig: String,
-
-        /// The arguments to encode.
-        #[arg(allow_hyphen_values = true)]
-        args: Vec<String>,
-
-        // Path to file containing arguments to encode.
-        #[arg(long, value_name = "PATH")]
-        file: Option<PathBuf>,
-    },
+    /// Get the EIP-7928 block access list of a block
+    ///
+    /// Examples:
+    /// - cast bal latest
+    /// - cast bal 21000000 --raw
+    #[command(verbatim_doc_comment, visible_alias = "block-access-list")]
+    Bal(BalArgs),
 
     /// Get the symbolic name of the current chain.
     Chain {
@@ -483,177 +915,9 @@ pub enum CastSubcommand {
         bytecode: Option<String>,
     },
 
-    /// Build and sign a transaction.
-    #[command(name = "mktx", visible_alias = "m")]
-    MakeTx(MakeTxArgs),
-
     /// Calculate the ENS namehash of a name.
     #[command(visible_aliases = &["na", "nh"])]
     Namehash { name: Option<String> },
-
-    /// Get information about a transaction.
-    #[command(visible_alias = "t")]
-    Tx {
-        /// The transaction hash.
-        tx_hash: Option<String>,
-
-        /// The sender of the transaction.
-        #[arg(long, value_parser = NameOrAddress::from_str)]
-        from: Option<NameOrAddress>,
-
-        /// Nonce of the transaction.
-        #[arg(long)]
-        nonce: Option<u64>,
-
-        /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
-        /// transaction will be printed.
-        field: Option<String>,
-
-        /// Print the raw RLP encoded transaction.
-        #[arg(long, conflicts_with = "field")]
-        raw: bool,
-
-        #[command(flatten)]
-        rpc: RpcOpts,
-
-        /// If specified, the transaction will be converted to a TransactionRequest JSON format.
-        #[arg(long)]
-        to_request: bool,
-    },
-
-    /// Get the transaction receipt for a transaction.
-    #[command(visible_alias = "re")]
-    Receipt {
-        /// The transaction hash.
-        tx_hash: String,
-
-        /// If specified, only get the given field of the transaction.
-        field: Option<String>,
-
-        /// The number of confirmations until the receipt is fetched
-        #[arg(long, default_value = "1")]
-        confirmations: u64,
-
-        /// Exit immediately if the transaction was not found.
-        #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
-        cast_async: bool,
-
-        #[command(flatten)]
-        rpc: RpcOpts,
-    },
-
-    /// Sign and publish a transaction.
-    #[command(name = "send", visible_alias = "s")]
-    SendTx(SendTxArgs),
-
-    /// Publish a raw transaction to the network.
-    #[command(name = "publish", visible_alias = "p")]
-    PublishTx {
-        /// The raw transaction
-        raw_tx: String,
-
-        /// Only print the transaction hash and exit immediately.
-        #[arg(id = "async", long = "async", env = "CAST_ASYNC", alias = "cast-async")]
-        cast_async: bool,
-
-        #[command(flatten)]
-        rpc: RpcOpts,
-    },
-
-    /// Estimate the gas cost of a transaction.
-    #[command(visible_alias = "e")]
-    Estimate(EstimateArgs),
-
-    /// Decode ABI-encoded input data.
-    ///
-    /// Similar to `abi-decode --input`, but function selector MUST be prefixed in `calldata`
-    /// string
-    #[command(visible_aliases = &["calldata-decode", "--calldata-decode", "cdd"])]
-    DecodeCalldata {
-        /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
-        sig: String,
-
-        /// The ABI-encoded calldata.
-        #[arg(required_unless_present = "file", index = 2)]
-        calldata: Option<String>,
-
-        /// Load ABI-encoded calldata from a file instead.
-        #[arg(long = "file", short = 'f', conflicts_with = "calldata")]
-        file: Option<PathBuf>,
-    },
-
-    /// Decode ABI-encoded string.
-    ///
-    /// Similar to `calldata-decode --input`, but the function argument is a `string`
-    #[command(visible_aliases = &["string-decode", "--string-decode", "sd"])]
-    DecodeString {
-        /// The ABI-encoded string.
-        data: String,
-    },
-
-    /// Decode event data.
-    #[command(visible_aliases = &["event-decode", "--event-decode", "ed"])]
-    DecodeEvent {
-        /// The event signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
-        #[arg(long, visible_alias = "event-sig")]
-        sig: Option<String>,
-        /// The event data to decode.
-        data: String,
-    },
-
-    /// Decode custom error data.
-    #[command(visible_aliases = &["error-decode", "--error-decode", "erd"])]
-    DecodeError {
-        /// The error signature. If none provided then tries to decode from local cache or <https://api.openchain.xyz>.
-        #[arg(long, visible_alias = "error-sig")]
-        sig: Option<String>,
-        /// The error data to decode.
-        data: String,
-    },
-
-    /// Decode ABI-encoded input or output data.
-    ///
-    /// Defaults to decoding output data. To decode input data pass --input.
-    ///
-    /// When passing `--input`, function selector must NOT be prefixed in `calldata` string
-    #[command(name = "decode-abi", visible_aliases = &["abi-decode", "--abi-decode", "ad"])]
-    DecodeAbi {
-        /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
-        sig: String,
-
-        /// The ABI-encoded calldata.
-        calldata: String,
-
-        /// Whether to decode the input or output data.
-        #[arg(long, short, help_heading = "Decode input data instead of output data")]
-        input: bool,
-    },
-
-    /// ABI encode the given function argument, excluding the selector.
-    #[command(visible_alias = "ae")]
-    AbiEncode {
-        /// The function signature.
-        sig: String,
-
-        /// Whether to use packed encoding.
-        #[arg(long)]
-        packed: bool,
-
-        /// The arguments of the function.
-        #[arg(allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// ABI encode an event and its arguments to generate topics and data.
-    #[command(visible_alias = "aee")]
-    AbiEncodeEvent {
-        /// The event signature.
-        sig: String,
-
-        /// The arguments of the event.
-        #[arg(allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
 
     /// Compute the storage slot for an entry in a mapping.
     #[command(visible_alias = "in")]
@@ -719,57 +983,6 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the function signatures for the given selector from <https://openchain.xyz>.
-    #[command(name = "4byte", visible_aliases = &["4", "4b"])]
-    FourByte {
-        /// The function selector.
-        selector: Option<Selector>,
-    },
-
-    /// Decode ABI-encoded calldata using <https://openchain.xyz>.
-    #[command(name = "4byte-calldata", aliases = &["4byte-decode", "4d", "4bd"], visible_aliases = &["4c", "4bc"])]
-    FourByteCalldata {
-        /// The ABI-encoded calldata.
-        calldata: Option<String>,
-    },
-
-    /// Get the event signature for a given topic 0 from <https://openchain.xyz>.
-    #[command(name = "4byte-event", visible_aliases = &["4e", "4be", "topic0-event", "t0e"])]
-    FourByteEvent {
-        /// Topic 0
-        #[arg(value_name = "TOPIC_0")]
-        topic: Option<B256>,
-    },
-
-    /// Upload the given signatures to <https://openchain.xyz>.
-    ///
-    /// Example inputs:
-    /// - "transfer(address,uint256)"
-    /// - "function transfer(address,uint256)"
-    /// - "function transfer(address,uint256)" "event Transfer(address,address,uint256)"
-    /// - "./out/Contract.sol/Contract.json"
-    #[command(visible_aliases = &["ups"])]
-    UploadSignature {
-        /// The signatures to upload.
-        ///
-        /// Prefix with 'function', 'event', or 'error'. Defaults to function if no prefix given.
-        /// Can also take paths to contract artifact JSON.
-        signatures: Vec<String>,
-    },
-
-    /// Pretty print calldata.
-    ///
-    /// Tries to decode the calldata using <https://openchain.xyz> unless --offline is passed.
-    #[command(visible_alias = "pc")]
-    PrettyCalldata {
-        /// The calldata.
-        calldata: Option<String>,
-
-        /// Skip the <https://openchain.xyz> lookup.
-        #[arg(long, short)]
-        offline: bool,
-    },
-
     /// Get the timestamp of a block.
     #[command(visible_alias = "a")]
     Age {
@@ -782,8 +995,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the balance of an account in wei.
-    #[command(visible_alias = "b")]
+    /// Get the balance of an account in wei
+    ///
+    /// Examples:
+    /// - cast balance vitalik.eth --ether
+    /// - cast balance vitalik.eth --erc20 0x6B175474E89094C44Da98b954EedeAC495271d0F
+    #[command(verbatim_doc_comment, visible_alias = "b")]
     Balance {
         /// The block height to query at.
         ///
@@ -806,6 +1023,9 @@ pub enum CastSubcommand {
         /// with '--erc721'
         #[arg(long, alias = "erc721")]
         erc20: Option<Address>,
+
+        #[command(flatten)]
+        overrides: CallOverrideOpts,
     },
 
     /// Get the basefee of a block.
@@ -820,8 +1040,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the runtime bytecode of a contract.
-    #[command(visible_alias = "co")]
+    /// Get the runtime bytecode of a contract
+    ///
+    /// Examples:
+    /// - cast code 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+    /// - cast code 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 --disassemble
+    #[command(verbatim_doc_comment, visible_alias = "co")]
     Code {
         /// The block height to query at.
         ///
@@ -865,27 +1089,6 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Generate event signatures from event string.
-    #[command(visible_alias = "se")]
-    SigEvent {
-        /// The event string.
-        event_string: Option<String>,
-    },
-
-    /// Hash arbitrary data using Keccak-256.
-    #[command(visible_aliases = &["k", "keccak256"])]
-    Keccak {
-        /// The data to hash.
-        data: Option<String>,
-    },
-
-    /// Hash a message according to EIP-191.
-    #[command(visible_aliases = &["--hash-message", "hm"])]
-    HashMessage {
-        /// The message to hash.
-        message: Option<String>,
-    },
-
     /// Perform an ENS lookup.
     #[command(visible_alias = "rn")]
     ResolveName {
@@ -914,8 +1117,12 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Get the raw value of a contract's storage slot.
-    #[command(visible_alias = "st")]
+    /// Get the raw value of a contract's storage slot
+    ///
+    /// Examples:
+    /// - cast storage 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 0
+    /// - cast storage $TOKEN --etherscan-api-key $KEY (decode the full storage layout)
+    #[command(verbatim_doc_comment, visible_alias = "st")]
     Storage(StorageArgs),
 
     /// Generate a storage proof for a given storage slot.
@@ -998,6 +1205,164 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
+    /// Compute a Tempo TIP-20 channel reserve channel ID.
+    #[command(name = "channel-id")]
+    ChannelId {
+        /// Channel payer address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payer: NameOrAddress,
+
+        /// Channel payee address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payee: NameOrAddress,
+
+        /// TIP-20 token address locked by the channel.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// User-supplied channel salt.
+        salt: B256,
+
+        /// Optional relayer allowed to submit settlements for the payee.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        operator: Option<NameOrAddress>,
+
+        /// Optional voucher signer. Defaults to the zero address, meaning the payer signs.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        authorized_signer: Option<NameOrAddress>,
+
+        /// Transaction-derived expiring nonce hash from ChannelOpened.
+        #[arg(long, default_value_t = B256::ZERO)]
+        expiring_nonce_hash: B256,
+
+        /// Channel reserve precompile address.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        reserve: Option<NameOrAddress>,
+
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Get the block number closest to the provided timestamp.
+    #[command(visible_alias = "f")]
+    FindBlock(FindBlockArgs),
+
+    /// Perform a raw JSON-RPC request
+    ///
+    /// Examples:
+    /// - cast rpc eth_blockNumber
+    /// - cast rpc eth_getBlockByNumber 0x123 false
+    /// - cast rpc eth_getBlockByNumber '["0x123", false]' --raw
+    #[command(verbatim_doc_comment, visible_alias = "rp")]
+    Rpc(RpcArgs),
+
+    /// Extracts function selectors and arguments from bytecode
+    #[command(visible_alias = "sel")]
+    Selectors {
+        /// The hex-encoded bytecode.
+        bytecode: Option<String>,
+
+        /// Resolve the function signatures for the extracted selectors using <https://4byte.sourcify.dev>
+        #[arg(long, short)]
+        resolve: bool,
+    },
+}
+
+/// Miscellaneous subcommands.
+#[derive(Subcommand)]
+pub enum MiscSubcommand {
+    /// Perform a left shifting operation
+    #[command(name = "shl")]
+    LeftShift {
+        /// The value to shift.
+        value: String,
+
+        /// The number of bits to shift.
+        bits: String,
+
+        /// The input base.
+        #[arg(long)]
+        base_in: Option<String>,
+
+        /// The output base.
+        #[arg(long, default_value = "16")]
+        base_out: String,
+    },
+
+    /// Perform a right shifting operation
+    #[command(name = "shr")]
+    RightShift {
+        /// The value to shift.
+        value: String,
+
+        /// The number of bits to shift.
+        bits: String,
+
+        /// The input base,
+        #[arg(long)]
+        base_in: Option<String>,
+
+        /// The output base,
+        #[arg(long, default_value = "16")]
+        base_out: String,
+    },
+
+    /// Get logs by signature or topic
+    ///
+    /// Event declarations decode matching logs in text output. Indexed parameters must be marked
+    /// `indexed` in the declaration. JSON output remains raw.
+    ///
+    /// Examples:
+    /// - cast logs "Transfer(address indexed from, address indexed to, uint256 value)"
+    /// - cast logs --address $TOKEN --from-block 21000000 --to-block latest $TOPIC_0
+    #[command(verbatim_doc_comment, visible_alias = "l")]
+    Logs(LogsArgs),
+
+    /// Fetch and decode events from a transaction receipt or log filter.
+    ///
+    /// Examples:
+    /// - cast events $TX_HASH
+    /// - cast events --tx-hash $TX_HASH
+    /// - cast events --address $TOKEN --from-block 21000000 --to-block latest
+    /// - cast events --address $TOKEN "Transfer(address indexed,address indexed,uint256)"
+    ///
+    /// A lone 32-byte positional value is treated as a transaction hash. Qualify a raw topic with
+    /// an address, block range, additional topic, or query size.
+    #[command(verbatim_doc_comment, visible_alias = "ev")]
+    Events(EventsArgs),
+
+    /// Generate event signatures from event string.
+    #[command(visible_alias = "se")]
+    SigEvent {
+        /// The event string.
+        event_string: Option<String>,
+    },
+
+    /// Hash arbitrary data using Keccak-256
+    ///
+    /// Examples:
+    /// - cast keccak "hello world"
+    /// - cast keccak 0xdeadbeef
+    /// - echo -n "some data" | cast keccak (hash data from stdin)
+    #[command(verbatim_doc_comment, visible_aliases = &["k", "keccak256"])]
+    Keccak {
+        /// The data to hash.
+        data: Option<String>,
+    },
+
+    /// Hash a message according to EIP-191.
+    #[command(visible_aliases = &["--hash-message", "hm"])]
+    HashMessage {
+        /// The message to hash.
+        message: Option<String>,
+    },
+
     /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
     Source {
@@ -1032,49 +1397,15 @@ pub enum CastSubcommand {
         command: WalletSubcommands,
     },
 
-    /// Download a contract creation code from Etherscan and RPC.
-    #[command(visible_alias = "cc")]
-    CreationCode(CreationCodeArgs),
-
-    /// Generate an artifact file, that can be used to deploy a contract locally.
-    #[command(visible_alias = "ar")]
-    Artifact(ArtifactArgs),
-
-    /// Display constructor arguments used for the contract initialization.
-    #[command(visible_alias = "cra")]
-    ConstructorArgs(ConstructorArgsArgs),
-
-    /// Generate a Solidity interface from a given ABI.
-    ///
-    /// Currently does not support ABI encoder v2.
-    #[command(visible_alias = "i")]
-    Interface(InterfaceArgs),
-
-    /// Generate a rust binding from a given ABI.
-    #[command(visible_alias = "bi")]
-    Bind(BindArgs),
-
-    /// Convert Beacon payload to execution payload.
-    #[command(visible_alias = "b2e")]
-    B2EPayload(B2EPayloadArgs),
-
-    /// Get the selector for a function.
-    #[command(visible_alias = "si")]
-    Sig {
-        /// The function signature, e.g. transfer(address,uint256).
-        sig: Option<String>,
-
-        /// Optimize signature to contain provided amount of leading zeroes in selector.
-        optimize: Option<usize>,
+    /// Create, propose, and sign Safe transactions.
+    Safe {
+        #[command(subcommand)]
+        command: SafeSubcommand,
     },
 
     /// Generate a deterministic contract address using CREATE2.
     #[command(visible_alias = "c2")]
     Create2(Create2Args),
-
-    /// Get the block number closest to the provided timestamp.
-    #[command(visible_alias = "f")]
-    FindBlock(FindBlockArgs),
 
     /// Generate shell completions script.
     #[command(visible_alias = "com")]
@@ -1083,52 +1414,23 @@ pub enum CastSubcommand {
         shell: foundry_cli::clap::Shell,
     },
 
-    /// Runs a published transaction in a local environment and prints the trace.
-    #[command(visible_alias = "r")]
-    Run(RunArgs),
-
-    /// Perform a raw JSON-RPC request.
-    #[command(visible_alias = "rp")]
-    Rpc(RpcArgs),
-
-    /// Formats a string into bytes32 encoding.
-    #[command(name = "format-bytes32-string", visible_aliases = &["--format-bytes32-string"])]
-    FormatBytes32String {
-        /// The string to format.
-        string: Option<String>,
-    },
-
-    /// Parses a string from bytes32 encoding.
-    #[command(name = "parse-bytes32-string", visible_aliases = &["--parse-bytes32-string"])]
-    ParseBytes32String {
-        /// The string to parse.
-        bytes: Option<String>,
-    },
-    #[command(name = "parse-bytes32-address", visible_aliases = &["--parse-bytes32-address"])]
-    #[command(about = "Parses a checksummed address from bytes32 encoding.")]
-    ParseBytes32Address {
-        #[arg(value_name = "BYTES")]
-        bytes: Option<String>,
-    },
-
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
-    DecodeTransaction { tx: Option<String> },
+    DecodeTransaction {
+        /// Encoded transaction
+        tx: Option<String>,
+
+        /// Override the network used to decode the transaction.
+        ///
+        /// By default, cast decodes with Foundry's transaction envelope, which recognizes
+        /// standard Ethereum txs and Foundry-supported network-specific tx types such as Tempo.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
+    },
 
     /// Recovery an EIP-7702 authority from a Authorization JSON string.
     #[command(visible_aliases = &["decode-auth"])]
     RecoverAuthority { auth: String },
-
-    /// Extracts function selectors and arguments from bytecode
-    #[command(visible_alias = "sel")]
-    Selectors {
-        /// The hex-encoded bytecode.
-        bytecode: Option<String>,
-
-        /// Resolve the function signatures for the extracted selectors using <https://openchain.xyz>
-        #[arg(long, short)]
-        resolve: bool,
-    },
 
     /// Inspect the TxPool of a node.
     #[command(visible_alias = "tp")]
@@ -1136,7 +1438,9 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: TxPoolSubcommands,
     },
+
     /// Estimates the data availability size of a given opstack block.
+    #[cfg(any(feature = "base", feature = "optimism"))]
     #[command(name = "da-estimate")]
     DAEstimate(DAEstimateArgs),
 
@@ -1146,6 +1450,66 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: Erc20Subcommand,
     },
+
+    /// ERC-4626 tokenized vault operations.
+    #[command(name = "erc4626", visible_alias = "vault")]
+    Erc4626 {
+        #[command(subcommand)]
+        command: Erc4626Subcommand,
+    },
+
+    /// TIP-20 token operations (Tempo).
+    #[command(visible_alias = "tip20")]
+    Tip20Token {
+        #[command(subcommand)]
+        command: Tip20Subcommand,
+    },
+
+    /// Account-level receive policy operations (Tempo).
+    #[command(name = "receive-policy")]
+    ReceivePolicy {
+        #[command(subcommand)]
+        command: ReceivePolicySubcommand,
+    },
+
+    /// TIP-403 policy registry operations (Tempo).
+    #[command(name = "tip403")]
+    Tip403 {
+        #[command(subcommand)]
+        command: Tip403Subcommand,
+    },
+
+    /// T7 storage credits operations (Tempo).
+    #[command(name = "storage-credits", visible_alias = "sc")]
+    StorageCredits {
+        #[command(subcommand)]
+        command: StorageCreditsSubcommand,
+    },
+
+    /// Tempo keychain (access key) management.
+    #[command(visible_alias = "kc")]
+    Keychain {
+        #[command(subcommand)]
+        command: KeychainSubcommand,
+    },
+
+    /// Tempo key authorization RLP helpers.
+    #[command(name = "key-authorization", visible_alias = "key-auth")]
+    KeyAuthorization {
+        #[command(subcommand)]
+        command: KeyAuthorizationSubcommand,
+    },
+
+    /// Tempo wallet and zone operations.
+    Tempo(TempoArgs),
+
+    /// TIP-1022 virtual address registry operations (Tempo).
+    #[command(visible_alias = "vaddr")]
+    VirtualAddress {
+        #[command(subcommand)]
+        command: VaddrSubcommand,
+    },
+
     #[command(name = "trace")]
     Trace(TraceArgs),
 }
@@ -1170,8 +1534,6 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SimpleCast;
-    use alloy_rpc_types::{BlockNumberOrTag, RpcBlockHash};
     use clap::CommandFactory;
 
     #[test]
@@ -1192,15 +1554,15 @@ mod tests {
             "0x01",
         ]);
         match args.cmd {
-            CastSubcommand::Proof { slots, .. } => {
+            CastSubcommand::Query(QuerySubcommand::Proof { slots, .. }) => {
                 assert_eq!(
                     slots,
                     vec![
                         B256::ZERO,
-                        U256::from(1).into(),
+                        U256::ONE.into(),
                         B256::ZERO,
-                        U256::from(1).into(),
-                        U256::from(1).into()
+                        U256::ONE.into(),
+                        U256::ONE.into()
                     ]
                 );
             }
@@ -1218,7 +1580,7 @@ mod tests {
             "2",
         ]);
         match args.cmd {
-            CastSubcommand::CalldataEncode { args, .. } => {
+            CastSubcommand::Abi(AbiSubcommand::CalldataEncode { args, .. }) => {
                 assert_eq!(
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
@@ -1232,7 +1594,7 @@ mod tests {
     fn parse_call_data_with_file() {
         let args: Cast = Cast::parse_from(["foundry-cli", "calldata", "f()", "--file", "test.txt"]);
         match args.cmd {
-            CastSubcommand::CalldataEncode { sig, file, args } => {
+            CastSubcommand::Abi(AbiSubcommand::CalldataEncode { sig, file, args }) => {
                 assert_eq!(sig, "f()".to_string());
                 assert_eq!(file, Some(PathBuf::from("test.txt")));
                 assert!(args.is_empty());
@@ -1250,64 +1612,17 @@ mod tests {
             "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)",
         ]);
         match args.cmd {
-            CastSubcommand::Sig { sig, .. } => {
+            CastSubcommand::Abi(AbiSubcommand::Sig { sig, .. }) => {
                 let sig = sig.unwrap();
                 assert_eq!(
                     sig,
                     "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)".to_string()
                 );
 
-                let selector = SimpleCast::get_selector(&sig, 0).unwrap();
-                assert_eq!(selector.0, "0x23b872dd".to_string());
+                let selector = foundry_common::abi::get_func(&sig).unwrap().selector();
+                assert_eq!(selector.to_string(), "0x23b872dd");
             }
             _ => unreachable!(),
         };
-    }
-
-    #[test]
-    fn parse_block_ids() {
-        struct TestCase {
-            input: String,
-            expect: BlockId,
-        }
-
-        let test_cases = [
-            TestCase {
-                input: "0".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Number(0u64)),
-            },
-            TestCase {
-                input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
-                    .to_string(),
-                expect: BlockId::Hash(RpcBlockHash::from_hash(
-                    "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
-                        .parse()
-                        .unwrap(),
-                    None,
-                )),
-            },
-            TestCase {
-                input: "latest".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Latest),
-            },
-            TestCase {
-                input: "earliest".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Earliest),
-            },
-            TestCase {
-                input: "pending".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Pending),
-            },
-            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumberOrTag::Safe) },
-            TestCase {
-                input: "finalized".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Finalized),
-            },
-        ];
-
-        for test in test_cases {
-            let result: BlockId = test.input.parse().unwrap();
-            assert_eq!(result, test.expect);
-        }
     }
 }

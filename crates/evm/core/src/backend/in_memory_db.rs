@@ -7,7 +7,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     database::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::HashMap as Map,
+    primitives::AddressMap,
     state::{Account, AccountInfo},
 };
 
@@ -73,7 +73,7 @@ impl Database for MemDb {
 }
 
 impl DatabaseCommit for MemDb {
-    fn commit(&mut self, changes: Map<Address, Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         DatabaseCommit::commit(&mut self.inner, changes)
     }
 }
@@ -122,13 +122,14 @@ impl DatabaseRef for EmptyDBWrapper {
 mod tests {
     use super::*;
     use alloy_primitives::b256;
+    use revm::database::InMemoryDB;
 
     /// Ensures the `Database(Ref)` implementation for `revm::CacheDB` works as expected
     ///
     /// Demonstrates how calling `Database::basic` works if an account does not exist
     #[test]
     fn cache_db_insert_basic_non_existing() {
-        let mut db = CacheDB::new(EmptyDB::default());
+        let mut db = InMemoryDB::default();
         let address = Address::random();
         // call `basic` on a non-existing account
         let info = Database::basic(&mut db, address).unwrap();
@@ -148,7 +149,7 @@ mod tests {
     /// Demonstrates how to insert a new account but not mark it as non-existing
     #[test]
     fn cache_db_insert_basic_default() {
-        let mut db = CacheDB::new(EmptyDB::default());
+        let mut db = InMemoryDB::default();
         let address = Address::random();
 
         // We use `basic_ref` here to ensure that the account is not marked as `NotExisting`.

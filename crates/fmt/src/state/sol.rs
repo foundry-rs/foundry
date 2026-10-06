@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::{
-    CommentConfig, Separator, State,
+    ChainedNamedCall, CommentConfig, Separator, State,
     common::{BlockFormat, ListFormat},
 };
 use crate::{
@@ -88,12 +88,24 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
+        // Never isolate items within a `disable-start`/`disable-end` region, where the source
+        // layout is preserved verbatim. The cursor sits right past the line break that follows the
+        // previous item, so check the byte that was last copied from the source. Line-based
+        // directives such as `disable-line` only opt out of formatting that line's contents, so
+        // they keep the isolation break.
+        if self.cursor.pos > BytePos(0)
+            && self
+                .inline_config
+                .is_disabled_block(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
+        {
+            return;
+        }
         let span = next_item.span;
 
         let cmnts = self
             .comments
             .iter()
-            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .filter_map(|c| (c.pos() < span.lo()).then_some(c.style))
             .collect::<Vec<_>>();
 
         if let Some(first) = cmnts.first()
@@ -120,24 +132,22 @@ impl<'ast> State<'_, 'ast> {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
 
-        if self.handle_span(item.span, skip_ws) {
+        // The comments preceding the item are printed before checking whether it is disabled,
+        // because printing a disabled item copies the source verbatim and drops every comment
+        // that ends before it.
+        let cmnt = self.print_comments(
+            span.lo(),
+            if skip_ws { CommentConfig::skip_leading_ws(false) } else { CommentConfig::default() },
+        );
+
+        if self.print_span_if_disabled(span) {
             if !self.print_trailing_comment(span.hi(), None) {
                 self.print_sep(Separator::Hardbreak);
             }
             return;
         }
 
-        if self
-            .print_comments(
-                span.lo(),
-                if skip_ws {
-                    CommentConfig::skip_leading_ws(false)
-                } else {
-                    CommentConfig::default()
-                },
-            )
-            .is_some_and(|cmnt| cmnt.is_mixed())
-        {
+        if cmnt.is_some_and(|cmnt| cmnt.is_mixed()) {
             self.zerobreak();
         }
 
@@ -159,7 +169,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
-        self.cursor.next_line(self.is_at_crlf());
+        self.cursor_next_line();
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -314,6 +324,17 @@ impl<'ast> State<'_, 'ast> {
         self.contract = Some(c);
         self.cursor.advance_to(span.lo(), true);
 
+        // Position of the body's opening brace, needed to identify the comments that belong to
+        // the contract header. The `is` and `layout` clauses can appear in either order, so the
+        // header ends at whichever clause ends last.
+        let header_hi = bases
+            .last()
+            .map(|base| base.span().hi())
+            .max(layout.as_ref().map(|layout| layout.span.hi()))
+            .unwrap_or(name.span.hi());
+        let body_lo = body.first().map_or(span.hi(), |item| item.span.lo());
+        let brace = self.find_opening_brace(Span::new(header_hi, body_lo));
+
         self.s.cbox(self.ind);
         self.ibox(0);
         self.cbox(0);
@@ -326,7 +347,8 @@ impl<'ast> State<'_, 'ast> {
         {
             self.word("layout at ");
             self.print_expr(layout.slot);
-            self.print_sep(Separator::Space);
+            let breaks = !bases.is_empty() || !self.peek_mixed_comment_before(brace);
+            self.print_sep(Separator::SpaceOrNbsp(breaks));
         }
 
         if let Some(first) = bases.first().map(|base| base.span())
@@ -355,16 +377,41 @@ impl<'ast> State<'_, 'ast> {
                     }
                 }
             }
-            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+            if self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                self.s.offset(-self.ind);
+            } else if self.peek_mixed_comment_before(brace) {
+                self.nbsp();
+            } else {
                 self.space();
+                self.s.offset(-self.ind);
             }
-            self.s.offset(-self.ind);
+        }
+
+        // Print the comments preceding the opening brace, otherwise they get relocated into the
+        // contract body. They are glued to both the header and the brace, as breaking them apart
+        // turns them into trailing comments, which are relocated again on the next run.
+        while self.peek_mixed_comment_before(brace) {
+            let cmnt = self.next_comment().unwrap();
+            if let Some(cmnt) = self.handle_comment(cmnt, true) {
+                self.print_comment(cmnt, CommentConfig::skip_ws().mixed_no_break());
+            }
+            self.nbsp();
         }
         self.end();
 
         self.print_word("{");
         self.end();
-        if !body.is_empty() {
+        if body.is_empty() {
+            match self.print_comments(span.hi(), CommentConfig::empty_block()) {
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                Some(_) if self.last_token_is_break() => self.s.offset(-self.ind),
+                Some(_) => {}
+                None if self.config.bracket_spacing => self.nbsp(),
+                None => {}
+            }
+            self.end();
+        } else {
             // update block depth
             self.block_depth += 1;
 
@@ -391,34 +438,50 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws())
-                && self.config.contract_new_lines
-                && !cmnt.is_blank()
-            {
-                self.print_sep(Separator::Hardbreak);
+            let cmnt = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws());
+            let mut glued = false;
+            if self.last_token_is_break() {
+                if self.config.contract_new_lines && cmnt.is_some_and(|cmnt| !cmnt.is_blank()) {
+                    self.print_sep(Separator::Hardbreak);
+                }
+                self.s.offset(-self.ind);
+            } else {
+                glued = self.glue_brace_to_trailing_comments(cmnt.is_some());
             }
-            self.s.offset(-self.ind);
             self.end();
-            if self.config.contract_new_lines {
+            if self.config.contract_new_lines && !glued {
                 self.hardbreak_if_nonempty();
             }
 
             // restore block depth
             self.block_depth -= 1;
-        } else {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                // Adjust the offset of the trailing break from comment printing
-                // so the closing brace is not indented
-                self.s.offset(-self.ind);
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
-            self.end();
         }
-        self.print_word("}");
+        // The cursor is updated with the actual span; a disabled trailing comment of the last item
+        // may have already consumed source beyond the closing brace.
+        self.word("}");
 
         self.cursor.advance_to(span.hi(), true);
         self.contract = None;
+    }
+
+    /// Glues the closing brace of an item body to a trailing run of mixed comments.
+    ///
+    /// A trailing run of mixed comments ends in a string token; a break in between would
+    /// reclassify the last comment on the next run, so the brace is glued with a hard space.
+    /// Bodies that end with a pending break (the caller adjusts its offset instead), an existing
+    /// space, or verbatim source that already broke the line are left unchanged.
+    ///
+    /// Returns `true` if the brace was glued.
+    fn glue_brace_to_trailing_comments(&mut self, printed: bool) -> bool {
+        if printed
+            && !self.last_token_is_break()
+            && !self.last_token_is_space()
+            && !self.is_beginning_of_line()
+        {
+            self.nbsp();
+            return true;
+        }
+        false
     }
 
     fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
@@ -439,9 +502,15 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        if ind == 0 {
-            self.s.offset(-self.ind);
+        let cmnt_config =
+            if fields.is_empty() { CommentConfig::empty_block() } else { CommentConfig::skip_ws() };
+        let printed = self.print_comments(span.hi(), cmnt_config).is_some();
+        if self.last_token_is_break() {
+            if ind == 0 {
+                self.s.offset(-self.ind);
+            }
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
         }
         self.end();
         self.end();
@@ -455,18 +524,26 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.word(" {");
         self.hardbreak_if_nonempty();
+        let mut printed = false;
         for (pos, ident) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
                 self.word(",");
             }
-            if !self.print_trailing_comment(ident.span.hi(), None) {
+            printed = self.print_trailing_comment(ident.span.hi(), None);
+            if !printed {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        self.s.offset(-self.ind);
+        if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            printed = true;
+        }
+        if self.last_token_is_break() {
+            self.s.offset(-self.ind);
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
+        }
         self.end();
         self.word("}");
     }
@@ -687,28 +764,42 @@ impl<'ast> State<'_, 'ast> {
     ) {
         match map.remove(&span.lo()) {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
-                // Print preceding comments.
+                // Print preceding comments. The separator before the attribute is printed below,
+                // so a mixed comment must not add one of its own or the two become a blank line.
+                let mut previous_mixed = false;
                 for cmnt in pre_cmnts {
+                    // A line comment after a mixed comment becomes isolated once the header wraps.
+                    if previous_mixed
+                        && cmnt.style.is_trailing()
+                        && matches!(cmnt.kind, ast::CommentKind::Line)
+                    {
+                        self.hardbreak_if_not_bol();
+                    }
+                    previous_mixed = cmnt.style.is_mixed();
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
-                    self.print_comment(cmnt, CommentConfig::default());
+                    self.print_comment(
+                        cmnt,
+                        CommentConfig::default().mixed_no_break_post().mixed_prev_space(),
+                    );
                 }
                 // Push the inner comments back to the queue, so that they are printed in their
                 // intended place.
                 for cmnt in inner_cmnts.into_iter().rev() {
                     self.comments.push_front(cmnt);
                 }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
+                let enabled = if self.handle_span(span, false) {
+                    false
+                } else {
                     if !self.is_bol_or_only_ind() {
                         self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
                     self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
+                    true
+                };
                 // Print subsequent comments.
                 for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
@@ -806,7 +897,19 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = self.estimate_size(rhs.span);
+        let rhs_size = if is_binary_expr(&rhs.kind)
+            && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
+        {
+            self.estimate_binary_size(rhs)
+        } else if assignment_member_depth(rhs) >= 2
+            && self.peek_comment_before(rhs.span.lo()).is_none()
+        {
+            // These chains can break before a member after collapsing their terminal delimiters.
+            // Size that collapsed form before choosing the assignment break instead.
+            self.estimate_assignment_size(rhs.span)
+        } else {
+            self.estimate_size(rhs.span)
+        };
         let overflows = lhs_size + rhs_size >= space_left;
         let fits_alone = rhs_size + self.config.tab_width < space_left;
         let fits_alone_no_cmnts =
@@ -877,7 +980,7 @@ impl<'ast> State<'_, 'ast> {
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
                         // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                        if is_call(&lhs.kind) {
                             self.s.ibox(-self.ind);
                             print_inline(self);
                             self.end();
@@ -1023,6 +1126,9 @@ impl<'ast> State<'_, 'ast> {
 
             self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
+            if override_.is_some() {
+                self.end();
+            }
             self.end();
         }
         self.end();
@@ -1073,10 +1179,6 @@ impl<'ast> State<'_, 'ast> {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
     }
 
-    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
-        self.print_lit_inner(lit, false);
-    }
-
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
         if self.handle_span(ty.span, false) {
             return;
@@ -1112,6 +1214,13 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::TypeKind::Array(ast::TypeArray { element, size }) => {
                 self.print_ty(element);
+                let open_bracket = self
+                    .find_uncommented_char(Span::new(element.span.hi(), ty.span.hi()), '[')
+                    .unwrap();
+                self.print_comments(
+                    open_bracket,
+                    CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+                );
                 if let Some(size) = size {
                     self.word("[");
                     self.print_expr(size);
@@ -1172,9 +1281,9 @@ impl<'ast> State<'_, 'ast> {
                 // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
                 // To be more conservative, we use 18 to decide whether to force a break or not.
                 else if 18
-                    + self.estimate_size(key.span)
+                    + self.estimate_type_size(key)
                     + key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0)
-                    + self.estimate_size(value.span)
+                    + self.estimate_type_size(value)
                     + value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0)
                     >= self.space_left()
                 {
@@ -1203,12 +1312,11 @@ impl<'ast> State<'_, 'ast> {
                 // consumes "comment6" of which should be printed after the `=>`
                 self.print_comments(
                     value.span.lo(),
-                    CommentConfig::skip_ws()
-                        .trailing_no_break()
-                        .mixed_no_break()
-                        .mixed_prev_space(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 );
-                self.space();
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
                 self.s.offset(self.ind);
                 self.word("=> ");
                 self.s.ibox(self.ind);
@@ -1299,26 +1407,78 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Binary(lhs, op, rhs) => self.print_bin_expr(lhs, op, rhs, false),
             ast::ExprKind::Call(call_expr, call_args) => {
                 let cache = self.call_with_opts_and_args;
+                let chained_named_call_cache = self.chained_named_call;
+                // Keep calls within a chained callee inline when they fit, so a multiline named
+                // argument list does not force an earlier break inside the callee.
+                let keep_inline = chained_named_call_cache
+                    .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span))
+                    && !self.has_comments_between_elements(call_args.span, call_args.exprs());
                 self.call_with_opts_and_args = is_call_with_opts_and_args(&expr.kind);
+                let named_args_size = if call_args.is_empty() {
+                    4 + usize::from(self.config.bracket_spacing)
+                } else {
+                    2
+                };
+                self.chained_named_call = (matches!(call_args.kind, ast::CallArgsKind::Named(_))
+                    && is_call_chain(&call_expr.kind, true))
+                .then(|| ChainedNamedCall {
+                    callee: call_expr.span,
+                    keep_inline: !call_chain_contains_options(call_expr)
+                        && !self.has_comment_between(call_expr.span.lo(), call_expr.span.hi())
+                        && self
+                            .estimate_call_chain_size(call_expr)
+                            .is_some_and(|size| size + named_args_size <= self.space_left()),
+                })
+                .or_else(|| {
+                    chained_named_call_cache.filter(|call| call.callee.contains(expr.span))
+                });
+                let list_format = if keep_inline {
+                    ListFormat::inline()
+                } else {
+                    ListFormat::compact().break_cmnts().break_single(true)
+                };
+                let terminal_callee = call_expr.peel_parens();
+                let callee_has_breakable_comment = self
+                    .has_breakable_comment_between(call_expr.span.lo(), terminal_callee.span.lo())
+                    || self.has_breakable_comment_between(
+                        terminal_callee.span.hi(),
+                        call_expr.span.hi(),
+                    )
+                    || if let ast::ExprKind::Member(member_expr, ident) = &terminal_callee.kind {
+                        self.has_breakable_comment_between(member_expr.span.hi(), ident.span.lo())
+                    } else {
+                        false
+                    };
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
-                        self.estimate_size(call_args.span),
+                        self.estimate_call_args_size(call_args.span),
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {
+                        let callee_suffix_can_break = callee_has_breakable_comment
+                            || match &terminal_callee.kind {
+                                ast::ExprKind::Member(member_expr, _) => {
+                                    s.member_suffix_emits_break(terminal_callee, member_expr)
+                                }
+                                ast::ExprKind::Index(..) => !s.skip_index_break,
+                                _ => false,
+                            };
                         s.print_call_args(
                             call_args,
-                            ListFormat::compact()
-                                .break_cmnts()
-                                .break_single(true)
-                                .without_ind(s.return_bin_expr)
-                                .with_delimiters(!s.call_with_opts_and_args),
+                            list_format.without_ind(s.return_bin_expr).with_delimiters(
+                                !s.call_with_opts_and_args
+                                    || s.call_stack
+                                        .last()
+                                        .is_some_and(|call| call.is_chained() && call.has_indent),
+                            ),
                             get_callee_head_size(call_expr),
+                            callee_suffix_can_break,
                         );
                     },
                 );
                 self.call_with_opts_and_args = cache;
+                self.chained_named_call = chained_named_call_cache;
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 // the flag is only meant to be used to format the call args
@@ -1326,7 +1486,7 @@ impl<'ast> State<'_, 'ast> {
                 self.call_with_opts_and_args = false;
 
                 self.print_expr(expr);
-                self.print_named_args(named_args, span.hi());
+                self.print_named_args(named_args, span.hi(), false);
 
                 // restore cached value
                 self.call_with_opts_and_args = cache;
@@ -1338,7 +1498,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Ident(ident) => self.print_ident(ident),
             ast::ExprKind::Index(expr, kind) => self.print_index_expr(span, expr, kind),
             ast::ExprKind::Lit(lit, unit) => {
-                self.print_lit(lit);
+                self.print_lit_inner(lit, false);
                 if let Some(unit) = unit {
                     self.nbsp();
                     self.word(unit.to_str());
@@ -1349,16 +1509,23 @@ impl<'ast> State<'_, 'ast> {
                     member_expr,
                     MemberOrCallArgs::Member(self.estimate_size(ident.span)),
                     |s| {
-                        s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        match member_expr.kind {
-                            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
-                            ast::ExprKind::Index(..) if s.skip_index_break => (),
-                            // Don't add break when accessing a field after a call with named args.
-                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
-                            // on the same line as the closing `})`.
-                            // See: https://github.com/foundry-rs/foundry/issues/12399
-                            _ if is_call_with_named_args(&member_expr.kind) => (),
-                            _ => s.zerobreak(),
+                        let has_mixed_comment = s
+                            .peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                            .is_some_and(|comment| comment.style.is_mixed());
+                        let break_before_suffix = if has_mixed_comment {
+                            s.print_comments(
+                                ident.span.lo(),
+                                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            );
+                            true
+                        } else {
+                            !s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()))
+                                && s.peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                                    .is_none()
+                                && s.member_suffix_emits_break(expr, member_expr)
+                        };
+                        if break_before_suffix {
+                            s.zerobreak();
                         }
                         s.word(".");
                         s.print_ident(ident);
@@ -1371,7 +1538,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Payable(args) => {
                 self.word("payable");
-                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7);
+                self.print_call_args(args, ListFormat::compact().break_cmnts(), 7, false);
             }
             ast::ExprKind::Ternary(cond, then, els) => self.print_ternary_expr(cond, then, els),
             ast::ExprKind::Tuple(exprs) => self.print_tuple(
@@ -1381,7 +1548,10 @@ impl<'ast> State<'_, 'ast> {
                 |this, expr| match expr.as_ref() {
                     SpannedOption::Some(expr) => this.print_expr(expr),
                     SpannedOption::None(span) => {
-                        this.print_comments(span.hi(), CommentConfig::skip_ws().no_breaks());
+                        this.print_comments(
+                            span.hi(),
+                            CommentConfig::skip_ws().mixed_no_break_post(),
+                        );
                     }
                 },
                 |expr| match expr.as_ref() {
@@ -1415,6 +1585,7 @@ impl<'ast> State<'_, 'ast> {
                     self.word(op);
                 }
             }
+            ast::ExprKind::Err(_) => self.print_span(span),
         }
         self.cursor.advance_to(span.hi(), true);
     }
@@ -1426,6 +1597,16 @@ impl<'ast> State<'_, 'ast> {
 
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
+        // Normalize only indexes that the existing layout keeps together. Longer indexes keep
+        // their own breaks, so their source delimiter padding remains relevant to that layout.
+        let lhs_size = if matches!(lhs.kind, ast::ExprKind::Index(..))
+            && lhs_size + 2 <= space_left
+            && !self.has_comment_between(lhs.span.lo(), rhs.span.lo())
+        {
+            self.estimate_assignment_size(lhs.span)
+        } else {
+            lhs_size
+        };
         self.print_expr(lhs);
         self.word(" =");
         self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
@@ -1566,14 +1747,15 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 // Trailing comment handling.
-                let mut is_trailing = false;
-                if let Some(style) = self.print_comments(
+                let is_trailing = if let Some(style) = self.print_comments(
                     span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 ) {
                     skip_break = true;
-                    is_trailing = style.is_trailing();
-                }
+                    style.is_trailing()
+                } else {
+                    false
+                };
 
                 // Adjust indentation and line breaks.
                 match (skip_break, end.is_some()) {
@@ -1663,7 +1845,27 @@ impl<'ast> State<'_, 'ast> {
                 arguments,
                 ListFormat::compact().break_cmnts(),
                 name.to_string().len(),
+                false,
             );
+        }
+    }
+
+    fn member_suffix_emits_break(&self, expr: &ast::Expr<'_>, member_expr: &ast::Expr<'_>) -> bool {
+        match member_expr.kind {
+            ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => false,
+            ast::ExprKind::Index(..) if self.skip_index_break => false,
+            _ if self
+                .chained_named_call
+                .is_some_and(|call| call.keep_inline && call.callee.contains(expr.span)) =>
+            {
+                false
+            }
+            // Don't add a break when accessing a field after a call with named args.
+            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+            // on the same line as the closing `})`.
+            // See: https://github.com/foundry-rs/foundry/issues/12399
+            _ if is_call_with_named_args(&member_expr.kind) => false,
+            _ => true,
         }
     }
 
@@ -1695,30 +1897,34 @@ impl<'ast> State<'_, 'ast> {
             let no_cmnt_or_mixed =
                 self.peek_comment_before(child_expr.span.hi()).is_none_or(|c| c.style.is_mixed());
 
-            // If call with options, add an extra box to prioritize breaking the call args
+            // If call with options, add an extra box to prioritize breaking the call args.
             if self.call_with_opts_and_args {
                 self.cbox(0);
                 extra_box = true;
             }
 
             // Determine if this chain will add its own indentation
-            let chain_has_indent = is_call_chain(&child_expr.kind, true)
-                || !(no_cmnt_or_mixed
-                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                || !callee_fits_line
-                || (member_depth(0, child_expr) >= 2
-                    && (!total_fits_line || member_or_args.has_comments()));
+            let keep_chain_inline = self
+                .chained_named_call
+                .is_some_and(|call| call.keep_inline && call.callee.contains(child_expr.span));
+            let chain_has_indent = !keep_chain_inline
+                && (is_call_chain(&child_expr.kind, true)
+                    || !(no_cmnt_or_mixed
+                        || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                    || !callee_fits_line
+                    || (member_depth(0, child_expr) >= 2
+                        && (!total_fits_line || member_or_args.has_comments())));
 
             // Start a new chain if needed
             if is_call_chain(&child_expr.kind, false) {
                 self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
             }
 
-            if !chain_has_indent {
+            if chain_has_indent {
+                self.s.cbox(self.ind);
+            } else {
                 self.skip_index_break = true;
                 self.cbox(0);
-            } else {
-                self.s.ibox(self.ind);
             }
         }
 
@@ -1752,6 +1958,7 @@ impl<'ast> State<'_, 'ast> {
         args: &'ast ast::CallArgs<'ast>,
         format: ListFormat,
         callee_size: usize,
+        callee_suffix_can_break: bool,
     ) {
         let ast::CallArgs { span, ref kind } = *args;
         if self.handle_span(span, true) {
@@ -1775,7 +1982,11 @@ impl<'ast> State<'_, 'ast> {
                 );
             }
             ast::CallArgsKind::Named(named_args) => {
-                self.print_inside_parens(|state| state.print_named_args(named_args, span.hi()));
+                let without_ind =
+                    self.call_stack.has_indented_parent_chain() && !callee_suffix_can_break;
+                self.print_inside_parens(|state| {
+                    state.print_named_args(named_args, span.hi(), without_ind)
+                });
             }
         }
 
@@ -1784,7 +1995,12 @@ impl<'ast> State<'_, 'ast> {
         self.call_stack.pop();
     }
 
-    fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
+    fn print_named_args(
+        &mut self,
+        args: &'ast [ast::NamedArg<'ast>],
+        pos_hi: BytePos,
+        without_ind: bool,
+    ) {
         let list_format = match (self.config.bracket_spacing, self.config.prefer_compact.calls()) {
             (false, true) => ListFormat::compact(),
             (false, false) => ListFormat::consistent(),
@@ -1821,7 +2037,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.has_chain_with_indent())
+                    .without_ind(without_ind)
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -1834,12 +2050,17 @@ impl<'ast> State<'_, 'ast> {
     /// Prints the given statement in the source code, handling formatting, inline documentation,
     /// trailing comments and layout logic for various statement kinds.
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
+        self.print_stmt_bound(stmt, None);
+    }
+
+    /// Prints a statement with a bounded trailing-comment scan.
+    fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
         // Handle disabled statements.
         if self.handle_span(span, false) {
-            self.print_trailing_comment_no_break(stmt.span.hi(), None);
+            self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
             return;
         }
 
@@ -1881,7 +2102,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::While(cond, stmt) => {
                 // Check if blocks should be inlined and update cache if necessary
-                let inline = self.is_single_line_block(cond, stmt, None);
+                let inline = self.is_single_line_block(span.lo(), cond, stmt, None);
                 if !inline.is_cached && self.single_line_stmt.is_none() {
                     self.single_line_stmt = Some(inline.outcome);
                 }
@@ -1904,11 +2125,26 @@ impl<'ast> State<'_, 'ast> {
             self.cursor.advance_to(span.hi(), true);
         }
         // print comments without breaks, as those are handled by the caller.
+        let ends_with_line_comment = self
+            .comments
+            .iter()
+            .take_while(|cmnt| cmnt.pos() < stmt.span.hi())
+            .filter(|cmnt| !cmnt.style.is_blank())
+            .last()
+            .is_some_and(|cmnt| {
+                cmnt.style.is_trailing() && matches!(cmnt.kind, ast::CommentKind::Line)
+            });
         self.print_comments(
             stmt.span.hi(),
-            CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
+            CommentConfig::skip_trailing_ws()
+                .trailing_no_break()
+                .mixed_no_break()
+                .mixed_prev_space(),
         );
-        self.print_trailing_comment_no_break(stmt.span.hi(), None);
+        if ends_with_line_comment && self.peek_comment().is_some() {
+            self.hardbreak_if_not_bol();
+        }
+        self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
     /// Prints an `assembly` statement, including optional dialect and flags,
@@ -2002,19 +2238,51 @@ impl<'ast> State<'_, 'ast> {
     ) {
         self.cbox(0);
         self.s.ibox(self.ind);
-        self.print_word("for (");
-        self.zerobreak();
+        let open_paren = self.find_uncommented_char(span, '(').unwrap();
+        self.print_word("for");
+        if self
+            .print_comments(
+                open_paren,
+                CommentConfig::skip_ws().mixed_prev_space().mixed_post_nbsp(),
+            )
+            .is_none()
+        {
+            self.nbsp();
+        }
+        self.cursor.advance_to(open_paren, true);
+        self.print_word("(");
+        let init_has_leading_comment =
+            init.as_ref().is_some_and(|stmt| self.peek_comment_before(stmt.span.lo()).is_some());
+        if !init_has_leading_comment {
+            self.zerobreak();
+        }
 
         // Print init.
         self.s.cbox(0);
-        match init {
-            Some(init_stmt) => self.print_stmt(init_stmt),
-            None => self.print_word(";"),
-        }
+        let init_trailing_comment = match init {
+            Some(init_stmt) => {
+                let has_trailing_comment = cond.as_ref().is_some_and(|cond| {
+                    self.comments
+                        .iter()
+                        .skip_while(|cmnt| cmnt.pos() < init_stmt.span.hi())
+                        .take_while(|cmnt| cmnt.pos() < cond.span.lo())
+                        .any(|cmnt| cmnt.style.is_trailing())
+                });
+                self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+                has_trailing_comment
+            }
+            None => {
+                self.print_word(";");
+                false
+            }
+        };
 
         // Print condition.
         match cond {
             Some(cond_expr) => {
+                if init_trailing_comment {
+                    self.hardbreak_if_not_bol();
+                }
                 self.print_sep(Separator::Space);
                 self.print_expr(cond_expr);
             }
@@ -2054,7 +2322,7 @@ impl<'ast> State<'_, 'ast> {
         els_opt: &'ast Option<&mut ast::Stmt<'ast>>,
     ) {
         // Check if blocks should be inlined and update cache if necessary
-        let inline = self.is_single_line_block(cond, then, els_opt.as_ref());
+        let inline = self.is_single_line_block(span.lo(), cond, then, els_opt.as_ref());
         let set_inline_cache = !inline.is_cached && self.single_line_stmt.is_none();
         if set_inline_cache {
             self.single_line_stmt = Some(inline.outcome);
@@ -2142,7 +2410,7 @@ impl<'ast> State<'_, 'ast> {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
             let allow_break = overflows && fits_alone;
 
-            self.return_bin_expr = matches!(expr.kind, ast::ExprKind::Binary(..));
+            self.return_bin_expr = is_binary_expr(&expr.kind);
             self.s.ibox(if is_simple || allow_break { self.ind } else { 0 });
 
             self.print_word("return");
@@ -2151,7 +2419,7 @@ impl<'ast> State<'_, 'ast> {
                 expr.span.lo(),
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
             ) {
-                Some(cmnt) if cmnt.is_trailing() && !is_simple => self.s.offset(self.ind),
+                Some(_) if !is_simple => self.s.offset(self.ind),
                 None => self.print_sep(Separator::SpaceOrNbsp(allow_break)),
                 _ => {}
             }
@@ -2190,7 +2458,9 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
             }
 
-            if !args.is_empty() {
+            if args.is_empty() {
+                self.end();
+            } else {
                 self.print_word("returns ");
                 self.print_word("(");
                 self.zerobreak();
@@ -2206,8 +2476,6 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.print_word(")");
                 self.nbsp();
-            } else {
-                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2232,15 +2500,17 @@ impl<'ast> State<'_, 'ast> {
                 skip_ind = true;
             };
 
-            let mut prev_block_multiline = self.is_multiline_block(block, false);
+            let mut prev_block_multiline = self.is_multiline_block(block, false, true);
 
             // Handle 'catch' clauses
             for (pos, ast::TryCatchClause { name, args, block, span: catch_span }) in
                 other.iter().delimited()
             {
-                let current_block_multiline = self.is_multiline_block(block, false);
+                let current_block_multiline = self.is_multiline_block(block, false, true);
                 if !pos.is_first || !skip_ind {
-                    if prev_block_multiline && (current_block_multiline || pos.is_last) {
+                    if (pos.is_first && block.is_empty() && is_call_with_named_args(&expr.kind))
+                        || (prev_block_multiline && (current_block_multiline || pos.is_last))
+                    {
                         self.nbsp();
                     } else {
                         self.space();
@@ -2303,6 +2573,16 @@ impl<'ast> State<'_, 'ast> {
             {
                 self.neverbreak();
                 self.print_sep(Separator::Nbsp);
+            } else if inline
+                && is_call(&cond.kind)
+                && matches!(
+                    self.config.single_line_statement_blocks,
+                    config::SingleLineBlockStyle::Preserve
+                )
+            {
+                // Keep the body beside a wrapped call condition so Preserve sees the same
+                // layout on the next pass.
+                self.print_sep(Separator::Nbsp);
             } else {
                 self.print_sep(Separator::Space);
             }
@@ -2349,7 +2629,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             ListFormat::consistent()
         };
-        self.print_call_args(args, format.break_cmnts(), path.to_string().len());
+        self.print_call_args(args, format.break_cmnts(), path.to_string().len(), false);
         self.emit_or_revert = false;
         self.end();
     }
@@ -2391,7 +2671,7 @@ impl<'ast> State<'_, 'ast> {
             std::slice::from_ref(stmt)
         };
 
-        if inline && !stmts.is_empty() {
+        if inline && stmts.len() == 1 {
             self.neverbreak();
             self.print_block_without_braces(stmts, pos_hi, None);
         } else {
@@ -2417,10 +2697,17 @@ impl<'ast> State<'_, 'ast> {
     /// preventing the caller from clearing a cache value that was never set.
     fn is_single_line_block(
         &mut self,
+        stmt_span_lo: BytePos,
         cond: &'ast ast::Expr<'ast>,
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> Decision {
+        // Dangling-else guard runs before the cache check so an inlined parent can't
+        // coerce this `if` into dropping braces and rebinding its `else`.
+        if Self::then_block_can_capture_trailing_else(then, els_opt.is_some()) {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If a decision is already cached from a parent, use it directly.
         if let Some(cached_decision) = self.single_line_stmt {
             return Decision { outcome: cached_decision, is_cached: true };
@@ -2431,21 +2718,27 @@ impl<'ast> State<'_, 'ast> {
             return Decision { outcome: false, is_cached: false };
         }
 
+        // Comments near cond can break single-line layouts. Print as blocks in this case
+        if self.peek_comment_between(stmt_span_lo, then.span.lo()).is_some() {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve
-                if self.is_stmt_in_new_line(cond, then)
-                    || self.is_multiline_block_stmt(then, true) =>
-            {
-                return Decision { outcome: false, is_cached: false };
+            config::SingleLineBlockStyle::Preserve => {
+                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
+                {
+                    return Decision { outcome: false, is_cached: false };
+                }
             }
-            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
-                return Decision { outcome: false, is_cached: false };
+            config::SingleLineBlockStyle::Single => {
+                if self.is_multiline_block_stmt(then, true) {
+                    return Decision { outcome: false, is_cached: false };
+                }
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
-            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.
@@ -2455,9 +2748,25 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // If the parent would fit, check all of its children.
+        if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &then.kind {
+            let child_decision = self.is_single_line_block(
+                then.span.lo(),
+                child_cond,
+                child_then,
+                child_els_opt.as_ref(),
+            );
+            if !child_decision.outcome {
+                return child_decision;
+            }
+        }
         if let Some(stmt) = els_opt {
             if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &stmt.kind {
-                return self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
+                return self.is_single_line_block(
+                    stmt.span.lo(),
+                    child_cond,
+                    child_then,
+                    child_els_opt.as_ref(),
+                );
             } else if self.is_multiline_block_stmt(stmt, true) {
                 return Decision { outcome: false, is_cached: false };
             }
@@ -2470,7 +2779,7 @@ impl<'ast> State<'_, 'ast> {
     fn is_inline_stmt(&self, stmt: &'ast ast::Stmt<'ast>, cond_len: usize) -> bool {
         if let ast::StmtKind::If(cond, then, els_opt) = &stmt.kind {
             let if_span = cond.span.to(then.span);
-            if self.sm.is_multiline(if_span)
+            if !self.same_source_line(if_span.lo(), if_span.hi())
                 && matches!(
                     self.config.single_line_statement_blocks,
                     config::SingleLineBlockStyle::Preserve
@@ -2490,7 +2799,7 @@ impl<'ast> State<'_, 'ast> {
             if matches!(
                 self.config.single_line_statement_blocks,
                 config::SingleLineBlockStyle::Preserve
-            ) && self.sm.is_multiline(stmt.span)
+            ) && !self.same_source_line(stmt.span.lo(), stmt.span.hi())
             {
                 return false;
             }
@@ -2508,7 +2817,7 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
     ) -> bool {
         let span_between = cond.span.between(then.span);
-        if let Ok(snip) = self.sm.span_to_snippet(span_between) {
+        if let Some(snip) = self.snippet(span_between) {
             // Check for newlines after the closing parenthesis of the `if (...)`.
             if let Some((_, after_paren)) = snip.split_once(')') {
                 return after_paren.lines().count() > 1;
@@ -2517,21 +2826,77 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
+    /// Returns true if eliding the braces of `then` would expose an inner `if` to a
+    /// trailing `else` or change the AST shape on round-trip.
+    fn then_block_can_capture_trailing_else(
+        then: &'ast ast::Stmt<'ast>,
+        has_outer_else: bool,
+    ) -> bool {
+        let ast::StmtKind::Block(block) = &then.kind else { return false };
+        if block.stmts.len() != 1 {
+            return false;
+        }
+        match &block.stmts[0].kind {
+            ast::StmtKind::If(_, _, inner_else) => has_outer_else || inner_else.is_some(),
+            ast::StmtKind::While(..) | ast::StmtKind::For { .. } => has_outer_else,
+            _ => false,
+        }
+    }
+
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.
     fn is_multiline_block_stmt(
-        &self,
+        &mut self,
         stmt: &'ast ast::Stmt<'ast>,
         empty_as_multiline: bool,
     ) -> bool {
-        if let ast::StmtKind::Block(block) = &stmt.kind {
-            return self.is_multiline_block(block, empty_as_multiline);
+        match &stmt.kind {
+            ast::StmtKind::Block(block) => {
+                self.is_multiline_block(block, empty_as_multiline, false)
+            }
+            ast::StmtKind::While(cond, body) => {
+                !self.is_single_line_block(stmt.span.lo(), cond, body, None).outcome
+            }
+            ast::StmtKind::For { body, .. } => {
+                // In `print_for_stmt`, `print_stmt_as_block(body, span.hi(), false)` is called with
+                // `inline = false`. So only empty can be single-line.
+                if let ast::StmtKind::Block(block) = &body.kind {
+                    self.is_multiline_block(block, empty_as_multiline, true)
+                } else {
+                    true
+                }
+            }
+
+            ast::StmtKind::If(_, _, Some(_)) => true,
+            ast::StmtKind::If(_, then, None) => {
+                self.is_multiline_block_stmt(then, empty_as_multiline)
+            }
+
+            // these ones always has an inner block, so we mark them as multiline
+            ast::StmtKind::Assembly(_)
+            | ast::StmtKind::DoWhile(_, _)
+            | ast::StmtKind::Try(_)
+            | ast::StmtKind::UncheckedBlock(_) => true,
+
+            ast::StmtKind::Break
+            | ast::StmtKind::Continue
+            | ast::StmtKind::DeclMulti(_, _)
+            | ast::StmtKind::DeclSingle(_)
+            | ast::StmtKind::Emit(_, _)
+            | ast::StmtKind::Expr(_)
+            | ast::StmtKind::Return(_)
+            | ast::StmtKind::Revert(_, _)
+            | ast::StmtKind::Placeholder => false,
         }
-        false
     }
 
     /// Checks if a block statement `{ ... }` should be treated as multiline,
     /// either because it spans multiple lines or contains multiple statements.
-    fn is_multiline_block(&self, block: &'ast ast::Block<'ast>, empty_as_multiline: bool) -> bool {
+    fn is_multiline_block(
+        &mut self,
+        block: &'ast ast::Block<'ast>,
+        empty_as_multiline: bool,
+        force_single_as_multiline: bool,
+    ) -> bool {
         if block.stmts.is_empty() {
             return empty_as_multiline;
         }
@@ -2540,8 +2905,15 @@ impl<'ast> State<'_, 'ast> {
         if block.stmts.len() > 1 {
             return true;
         }
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+
+        if force_single_as_multiline {
+            return true;
+        }
+
+        // Check for multiline block.span first.
+        // Block can spans multipline because of comments.
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
@@ -2552,9 +2924,20 @@ impl<'ast> State<'_, 'ast> {
                     !trimmed.is_empty()
                 }
             });
-            return code_lines.count() > 1;
+            if code_lines.count() > 1 {
+                return true;
+            }
         }
-        false
+
+        let stmt = &block.stmts[0];
+
+        // Comments can break single-line layout. Mark block as multiline if there is a comment at
+        // the beginning.
+        if self.peek_comment_between(block.span.lo(), stmt.span.lo()).is_some() {
+            return true;
+        }
+
+        self.is_multiline_block_stmt(stmt, empty_as_multiline)
     }
 
     /// Performs a size estimation to see if the if/else can fit on one line.
@@ -2640,12 +3023,78 @@ impl<'ast> State<'_, 'ast> {
         kw + header.name.map_or(0, |name| self.estimate_size(name.span)) + std::cmp::max(2, params)
     }
 
+    /// Estimates a comment-free binary expression using the printed operator spacing.
+    fn estimate_binary_size(&self, expr: &ast::Expr<'_>) -> usize {
+        match &expr.kind {
+            ast::ExprKind::Binary(lhs, op, rhs) => {
+                let spaces = if self.config.pow_no_space && matches!(op.kind, ast::BinOpKind::Pow) {
+                    0
+                } else {
+                    2
+                };
+                self.estimate_binary_size(lhs)
+                    + op.kind.to_str().len()
+                    + spaces
+                    + self.estimate_binary_size(rhs)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(inner)] = exprs.as_ref() => {
+                self.estimate_binary_size(inner) + 2
+            }
+            _ => self.estimate_size(expr.span),
+        }
+    }
+
     fn estimate_lhs_size(&self, expr: &ast::Expr<'_>, parent_op: &ast::BinOp) -> usize {
         match &expr.kind {
             ast::ExprKind::Binary(lhs, op, _) if op.kind.group() == parent_op.kind.group() => {
                 self.estimate_lhs_size(lhs, op)
             }
             _ => self.estimate_size(expr.span),
+        }
+    }
+
+    fn estimate_call_chain_size(&self, expr: &ast::Expr<'_>) -> Option<usize> {
+        match &expr.kind {
+            ast::ExprKind::Call(callee, args) => {
+                let ast::CallArgsKind::Unnamed(args) = &args.kind else { return None };
+                let mut size = self.estimate_call_chain_size(callee)? + 2;
+                for arg in args.iter() {
+                    size += self.estimate_call_chain_size(arg)?;
+                }
+                Some(size + args.len().saturating_sub(1) * 2)
+            }
+            ast::ExprKind::Ident(ident) => Some(ident.to_string().len()),
+            ast::ExprKind::Index(expr, kind) => {
+                let index_size = match kind {
+                    ast::IndexKind::Index(Some(index)) => self.estimate_call_chain_size(index)?,
+                    ast::IndexKind::Index(None) => 0,
+                    ast::IndexKind::Range(start, end) => {
+                        let start = match start {
+                            Some(start) => self.estimate_call_chain_size(start)?,
+                            None => 0,
+                        };
+                        let end = match end {
+                            Some(end) => self.estimate_call_chain_size(end)?,
+                            None => 0,
+                        };
+                        start + end + 1
+                    }
+                };
+                Some(self.estimate_call_chain_size(expr)? + index_size + 2)
+            }
+            // Zero is invariant under all number underscore configurations.
+            ast::ExprKind::Lit(lit, None)
+                if matches!(lit.kind, ast::LitKind::Number(_)) && lit.symbol.as_str() == "0" =>
+            {
+                Some(1)
+            }
+            ast::ExprKind::Member(expr, ident) => {
+                Some(self.estimate_call_chain_size(expr)? + ident.to_string().len() + 1)
+            }
+            ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(expr)] = exprs.as_ref() => {
+                Some(self.estimate_call_chain_size(expr)? + 2)
+            }
+            _ => None,
         }
     }
 
@@ -2661,11 +3110,7 @@ impl<'ast> State<'_, 'ast> {
             last_span_end = expr.span.hi();
         }
 
-        if self.has_comment_between(last_span_end, limits.hi()) {
-            return true;
-        }
-
-        false
+        self.has_comment_between(last_span_end, limits.hi())
     }
 }
 
@@ -2678,20 +3123,20 @@ enum MemberOrCallArgs {
 }
 
 impl MemberOrCallArgs {
-    fn size(&self) -> usize {
+    const fn size(&self) -> usize {
         match self {
             Self::CallArgs(size, ..) | Self::Member(size) => *size,
         }
     }
 
-    fn member_size(&self) -> usize {
+    const fn member_size(&self) -> usize {
         match self {
             Self::CallArgs(..) => 0,
             Self::Member(size) => *size,
         }
     }
 
-    fn has_comments(&self) -> bool {
+    const fn has_comments(&self) -> bool {
         matches!(self, Self::CallArgs(.., true))
     }
 }
@@ -2737,7 +3182,9 @@ impl<'ast> AttributeCommentMapper<'ast> {
         header: &'ast ast::FunctionHeader<'ast>,
     ) -> (AttributeCommentMap, Vec<AttributeInfo<'ast>>, BytePos) {
         let first_attr = self.collect_attributes(header);
-        self.cache_comments(state);
+        if !self.attributes.is_empty() {
+            self.cache_comments(state);
+        }
         (self.map(), self.attributes, first_attr)
     }
 
@@ -2750,7 +3197,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
             let before_limit = self.attributes[a].span.lo();
             let inner_limit = self.attributes[a].span.hi();
             let after_limit =
-                if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
+                if is_last { self.limit_pos } else { self.attributes[a + 1].span.lo() };
 
             let mut c = 0;
             while c < self.comments.len() {
@@ -2834,7 +3281,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 }
 
-fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+const fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. }
         | ast::StmtKind::Block { .. }
@@ -2879,7 +3326,7 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
     }
 }
 
-fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
@@ -2899,7 +3346,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     }
 }
 
-fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
 }
 
@@ -2907,7 +3354,7 @@ fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
 /// Used to determine if `.field` after such a call should avoid breaking.
 /// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
 /// E.g., `someFunc(a, b).field` → false (positional args)
-fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
     if let ast::ExprKind::Call(_, args) = expr_kind {
         matches!(args.kind, ast::CallArgsKind::Named(_))
     } else {
@@ -2916,10 +3363,24 @@ fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {
-    if let ast::ExprKind::Member(child, ..) = expr_kind {
-        is_call_chain(&child.kind, false)
-    } else {
-        !must_have_child && is_call(expr_kind)
+    match expr_kind {
+        ast::ExprKind::Index(child, ..) | ast::ExprKind::Member(child, ..) => {
+            is_call_chain(&child.kind, false)
+        }
+        ast::ExprKind::Tuple(exprs) if let [SpannedOption::Some(child)] = exprs.as_ref() => {
+            is_call_chain(&child.kind, must_have_child)
+        }
+        _ => !must_have_child && is_call(expr_kind),
+    }
+}
+
+fn call_chain_contains_options(expr: &ast::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ast::ExprKind::CallOptions(..) => true,
+        ast::ExprKind::Call(expr, ..)
+        | ast::ExprKind::Index(expr, ..)
+        | ast::ExprKind::Member(expr, ..) => call_chain_contains_options(expr),
+        _ => false,
     }
 }
 
@@ -2997,9 +3458,7 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 }
 
                 // Chainned calls are not traversed, and instead just the member identifier is used
-                ast::ExprKind::Member(child, ..)
-                    if !matches!(&child.kind, ast::ExprKind::Call(..)) =>
-                {
+                ast::ExprKind::Member(child, ..) if !is_call(&child.kind) => {
                     get_callee_head_size(base) + 1 + member_ident.as_str().len()
                 }
                 _ => member_ident.as_str().len(),
@@ -3008,6 +3467,17 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
+        _ => 0,
+    }
+}
+
+/// Counts member links in an assignment RHS, through calls and indexes.
+fn assignment_member_depth(expr: &ast::Expr<'_>) -> usize {
+    match &expr.kind {
+        ast::ExprKind::Member(child, _) => 1 + assignment_member_depth(child),
+        ast::ExprKind::Call(child, _) | ast::ExprKind::Index(child, _) => {
+            assignment_member_depth(child)
+        }
         _ => 0,
     }
 }
@@ -3055,7 +3525,7 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+                let mut state = State::new(&source_obj.file, config, inline_config, comments);
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

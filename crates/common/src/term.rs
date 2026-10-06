@@ -39,8 +39,11 @@ pub struct TermSettings {
 
 impl TermSettings {
     /// Returns a new [`TermSettings`], configured from the current environment.
+    ///
+    /// Progress is written to stderr (see [`Spinner::tick`]), so it is enabled only
+    /// when stderr is a terminal.
     pub fn from_env() -> Self {
-        Self { indicate_progress: std::io::stdout().is_terminal() }
+        Self { indicate_progress: std::io::stderr().is_terminal() }
     }
 }
 
@@ -74,8 +77,10 @@ impl Spinner {
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        let _ = sh_print!("\r\x1B[2K\r{indicator} {}", self.message);
-        io::stdout().flush().unwrap();
+        // Progress is a diagnostic, not data: write to stderr so stdout stays clean
+        // for machine-readable output.
+        let _ = sh_eprint!("\r\x1B[2K\r{indicator} {}", self.message);
+        io::stderr().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
     }
@@ -95,6 +100,8 @@ pub struct SpinnerReporter {
     sender: mpsc::Sender<SpinnerMsg>,
     /// The project root path for trimming file paths in verbose output.
     project_root: Option<PathBuf>,
+    /// Whether to print the resolved settings for each compiler invocation.
+    print_compiler_settings: bool,
 }
 
 impl SpinnerReporter {
@@ -110,17 +117,27 @@ impl SpinnerReporter {
             .name("spinner".into())
             .spawn(move || {
                 let mut spinner = Spinner::new("Compiling...");
+                // Only emit the trailing newline (so past messages aren't overwritten by
+                // future ticks) when the spinner is actually painting to stderr. When
+                // `no_progress` is set the spinner is a no-op, so we shouldn't pollute
+                // stderr with blank lines either.
+                let emits_progress = !spinner.no_progress;
                 loop {
                     spinner.tick();
                     match rx.try_recv() {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
-                            // new line so past messages are not overwritten
-                            let _ = sh_println!();
+                            if emits_progress {
+                                // new line so past messages are not overwritten
+                                // (matches the spinner channel: stderr)
+                                let _ = sh_eprintln!();
+                            }
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
-                            // end with a newline
-                            let _ = sh_println!();
+                            if emits_progress {
+                                // end with a newline (matches the spinner channel: stderr)
+                                let _ = sh_eprintln!();
+                            }
                             let _ = ack.send(());
                             break;
                         }
@@ -131,7 +148,13 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        Self { sender, project_root }
+        Self { sender, project_root, print_compiler_settings: false }
+    }
+
+    /// Sets whether resolved compiler settings are included in progress output.
+    pub const fn with_compiler_settings(mut self, yes: bool) -> Self {
+        self.print_compiler_settings = yes;
+        self
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -183,6 +206,21 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
+    }
+
+    fn on_compiler_settings(
+        &self,
+        compiler_name: &str,
+        version: &Version,
+        profile: &str,
+        settings: &str,
+    ) {
+        if self.print_compiler_settings {
+            self.send_msg(format!(
+                "Compiler settings for {compiler_name} {}.{}.{} (profile: {profile}): {settings}",
+                version.major, version.minor, version.patch
+            ));
+        }
     }
 
     fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {

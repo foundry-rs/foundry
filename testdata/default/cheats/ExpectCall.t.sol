@@ -202,6 +202,22 @@ contract ExpectCallTest is Test {
         vm.expectCall(address(simpleCall), abi.encodeWithSignature("call()"));
         proxyWithDelegateCall.delegateCall(simpleCall);
     }
+
+    function testExpectDelegateCall() public {
+        ProxyWithDelegateCall proxyWithDelegateCall = new ProxyWithDelegateCall();
+        SimpleCall simpleCall = new SimpleCall();
+        vm.expectDelegateCall(address(simpleCall), abi.encodeWithSignature("call()"));
+        proxyWithDelegateCall.delegateCall(simpleCall);
+    }
+
+    function testExpectCallAndDelegateCallForSameCalldata() public {
+        ProxyWithDelegateCall proxyWithDelegateCall = new ProxyWithDelegateCall();
+        SimpleCall simpleCall = new SimpleCall();
+        bytes memory data = abi.encodeWithSignature("call()");
+        vm.expectCall(address(simpleCall), data);
+        vm.expectDelegateCall(address(simpleCall), data);
+        proxyWithDelegateCall.delegateCall(simpleCall);
+    }
 }
 
 contract ExpectCallCountTest is Test {

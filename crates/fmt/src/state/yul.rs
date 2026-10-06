@@ -29,8 +29,14 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false, 0),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
-                self.word(" := ");
+                self.word(" :=");
                 self.neverbreak();
+                if self
+                    .print_comments(expr.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
+                    .is_none()
+                {
+                    self.nbsp();
+                }
                 self.cursor.advance_to(expr.span.lo(), self.cursor.enabled);
                 self.print_yul_expr(expr);
             }
@@ -212,7 +218,10 @@ impl<'ast> State<'_, 'ast> {
             self.print_word("{");
         }
 
-        let can_inline_block = if block.len() <= 1 && !self.is_multiline_yul_block(block) {
+        let can_inline_block = if block.len() <= 1
+            && !self.is_multiline_yul_block(block)
+            && !self.yul_block_breaks(block)
+        {
             if self.max_space_left(prefix_len) == 0 {
                 self.estimate_size(block.span) + self.config.tab_width < self.space_left()
             } else {
@@ -253,7 +262,9 @@ impl<'ast> State<'_, 'ast> {
                 |s, stmt| {
                     s.print_yul_stmt(stmt);
                     s.print_comments(stmt.span.hi(), CommentConfig::default());
-                    if i != n_args {
+                    if i == n_args {
+                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
+                    } else {
                         let next_span = block[i + 1].span;
                         s.print_trailing_comment(stmt.span.hi(), Some(next_span.lo()));
                         if !s.is_bol_or_only_ind() && !s.inline_config.is_disabled(stmt.span) {
@@ -270,8 +281,6 @@ impl<'ast> State<'_, 'ast> {
                             }
                         }
                         i += 1;
-                    } else {
-                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
                     }
                 },
                 |b| b.span,
@@ -287,8 +296,8 @@ impl<'ast> State<'_, 'ast> {
         if block.stmts.is_empty() {
             return false;
         }
-        if self.sm.is_multiline(block.span)
-            && let Ok(snip) = self.sm.span_to_snippet(block.span)
+        if !self.same_source_line(block.span.lo(), block.span.hi())
+            && let Some(snip) = self.snippet(block.span)
         {
             let code_lines = snip.lines().filter(|line| {
                 let trimmed = line.trim();
@@ -298,6 +307,30 @@ impl<'ast> State<'_, 'ast> {
             return code_lines.count() > 1;
         }
         false
+    }
+
+    /// Whether printing `stmt` always emits a line break. A block whose only statement breaks
+    /// cannot be kept on one line however short its source was, so `can_inline_block` has to know.
+    fn yul_stmt_breaks(&self, stmt: &'ast yul::Stmt<'ast>) -> bool {
+        match &stmt.kind {
+            // Each case is printed after a hardbreak.
+            yul::StmtKind::Switch(..) => true,
+            yul::StmtKind::Block(block) => self.yul_block_breaks(block),
+            yul::StmtKind::If(_, block) => self.yul_block_breaks(block),
+            yul::StmtKind::For(yul::StmtFor { init, step, body, .. }) => {
+                self.yul_block_breaks(init)
+                    || self.yul_block_breaks(step)
+                    || self.yul_block_breaks(body)
+            }
+            yul::StmtKind::FunctionDef(yul::Function { body, .. }) => self.yul_block_breaks(body),
+            _ => false,
+        }
+    }
+
+    /// Whether printing `block` always emits a line break. Blocks with more than one statement
+    /// are never inlined, so they always do.
+    fn yul_block_breaks(&self, block: &'ast yul::Block<'ast>) -> bool {
+        block.len() > 1 || block.stmts.iter().any(|stmt| self.yul_stmt_breaks(stmt))
     }
 
     fn estimate_yul_header_params_size(&mut self, func: &yul::Function<'_>) -> usize {

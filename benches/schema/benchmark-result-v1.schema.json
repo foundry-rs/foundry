@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/foundry-rs/foundry/benches/schema/benchmark-result-v1.schema.json",
+  "title": "Benchmark result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "repo", "commit", "runner", "benchmarks"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "repo": { "$ref": "#/$defs/nonEmptyString" },
+    "commit": { "$ref": "#/$defs/nonEmptyString" },
+    "pr": { "type": "integer", "minimum": 1 },
+    "runner": { "$ref": "#/$defs/runner" },
+    "benchmarks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/benchmark" }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch"],
+      "properties": {
+        "os": { "$ref": "#/$defs/nonEmptyString" },
+        "arch": { "$ref": "#/$defs/nonEmptyString" },
+        "image": { "$ref": "#/$defs/nonEmptyString" },
+        "cpu": { "$ref": "#/$defs/nonEmptyString" },
+        "logical_cpus": { "type": "integer", "minimum": 1 },
+        "total_memory_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "benchmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "wall_time"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "wall_time": { "$ref": "#/$defs/metric" },
+        "memory": { "$ref": "#/$defs/metric" },
+        "counters": { "$ref": "#/$defs/metricMap" },
+        "gas": { "$ref": "#/$defs/metricMap" },
+        "solver": { "$ref": "#/$defs/metricMap" },
+        "compiler": { "$ref": "#/$defs/metricMap" }
+      }
+    },
+    "metricMap": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/metric" }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit", "statistic"],
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "$ref": "#/$defs/nonEmptyString" },
+        "statistic": { "enum": ["mean", "median", "min", "max", "total", "point"] }
+      }
+    }
+  }
+}

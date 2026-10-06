@@ -215,7 +215,7 @@ impl Printer {
     {
         for i in self.buf.index_range().rev() {
             let token = &self.buf[i].token;
-            if let Token::End = token {
+            if matches!(token, Token::End) {
                 // It's safe to skip the end of a box.
                 continue;
             }
@@ -299,10 +299,15 @@ impl Printer {
 
     #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
+        // Verbatim-printed source can leave a string (or a flushed buffer) where a break is
+        // normally expected; there is no break to adjust in that case.
+        if self.buf.is_empty() {
+            return;
+        }
         match &mut self.buf.last_mut().token {
             Token::Break(token) => token.offset += offset,
-            Token::Begin(_) => {}
-            Token::String(_) | Token::End => unreachable!(),
+            Token::Begin(_) | Token::String(_) => {}
+            Token::End => unreachable!(),
         }
     }
 
@@ -410,6 +415,7 @@ impl Printer {
                 IndentStyle::Block { offset } => {
                     usize::try_from(self.indent as isize + offset).unwrap()
                 }
+                IndentStyle::Visual if self.out.ends_with('\n') => self.pending_indentation,
                 IndentStyle::Visual => (self.margin - self.space) as usize,
             };
         } else {
@@ -459,9 +465,7 @@ impl Printer {
             self.pending_indentation = usize::try_from(indent).expect("negative indentation");
             self.space = cmp::max(self.margin - indent, MIN_SPACE);
             if let Some(post_break) = token.post_break {
-                self.print_indent();
-                self.out.push_str(post_break);
-                self.space -= post_break.len() as isize;
+                self.print_string(post_break);
             }
         }
     }

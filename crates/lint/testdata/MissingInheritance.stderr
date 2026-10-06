@@ -1,0 +1,56 @@
+note[missing-inheritance]: contract `Something` has all selectors of interface `ISomething` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract Something {
+   │          ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+
+note[missing-inheritance]: contract `SomethingBase` has all selectors of interface `ISomething` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ abstract contract SomethingBase {
+   │                   ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+
+note[missing-inheritance]: contract `Token` has all selectors of interface `IERC20LikeMetadata` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract Token {
+   │          ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+
+note[missing-inheritance]: contract `Foo` has all selectors of interface `IFooLike` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract Foo {
+   │          ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+
+note[missing-inheritance]: contract `MultiNoInherit` has all selectors of interface `ISomething` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract MultiNoInherit {
+   │          ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+
+note[missing-inheritance]: contract `MultiNoInherit` has all selectors of interface `IExtra` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract MultiNoInherit {
+   │          ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+
+note[missing-inheritance]: contract `External` has all selectors of interface `IExternalThing` but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract External {
+   │          ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+

@@ -302,7 +302,7 @@ impl<'a> Backtrace<'a> {
     }
 
     /// Returns true if the backtrace is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 }
@@ -346,7 +346,7 @@ struct BacktraceFrame {
 
 impl BacktraceFrame {
     /// Creates a new backtrace frame.
-    fn new(contract_address: Address) -> Self {
+    const fn new(contract_address: Address) -> Self {
         Self {
             contract_address,
             contract_name: None,
@@ -379,7 +379,7 @@ impl BacktraceFrame {
     }
 
     /// Sets the byte offset.
-    fn with_byte_offset(mut self, offset: usize) -> Self {
+    const fn with_byte_offset(mut self, offset: usize) -> Self {
         self.byte_offset = Some(offset);
         self
     }

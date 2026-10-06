@@ -1,0 +1,53 @@
+# Uninitialized local variable
+
+**Severity**: `Med`
+**ID**: `uninitialized-local`
+
+## What it does
+
+Reports local variables that can be read before being assigned. Parameters and state variables
+are excluded.
+
+Unsigned counters declared in a `for` initializer may intentionally start at zero, as in
+`for (uint256 i; i < n; ++i)`. The lint exempts these counters when the condition compares
+them against an upper bound and the header update uses `++i` or `i++`. Other uninitialized
+locals read by the condition or body still produce warnings. Counters declared outside the
+header or incremented inside the body are not exempt.
+
+## Why is this bad?
+
+Reading an uninitialized variable means the code silently depends on a language-level zero-default rather than an explicit value chosen by the developer. Common consequences include:
+
+- Sending ETH to `address(0)` and burning it permanently (`address payable to; to.transfer(...)`).
+- Arithmetic operating on an implicit `0` that bypasses guards or produces unexpected results.
+- Returning a meaningless zero from a function whose caller assumes a real value.
+
+## Example
+
+```solidity
+// `to` is never assigned, defaults to address(0), burning all ETH.
+function withdraw() public {
+    address payable to;
+    to.transfer(address(this).balance);
+}
+
+// `amount` is never assigned, silently returns 0.
+function getAmount() public pure returns (uint256) {
+    uint256 amount;
+    return amount;
+}
+```
+
+Use instead:
+
+```solidity
+function withdraw(address payable recipient) public {
+    address payable to = recipient;
+    to.transfer(address(this).balance);
+}
+
+function getAmount(uint256 value) public pure returns (uint256) {
+    uint256 amount = value;
+    return amount;
+}
+```

@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 #[tokio::test(flavor = "multi_thread")]
 async fn erigon_get_header_by_number() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let res0 = api.erigon_get_header_by_number(0.into()).await.unwrap().unwrap();
     assert_eq!(res0.header.number, 0);
@@ -49,7 +49,7 @@ async fn ots_get_internal_operations_contract_deploy() {
             r#type: OperationType::OpCreate,
             from: sender,
             to: contract_receipt.contract_address.unwrap(),
-            value: U256::from(0)
+            value: U256::ZERO
         }],
     );
 }
@@ -108,7 +108,7 @@ async fn ots_get_internal_operations_contract_create2() {
             r#type: OperationType::OpCreate2,
             from: address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"),
             to: address!("0x347bcdad821abc09b8c275881b368de36476b62c"),
-            value: U256::from(0),
+            value: U256::ZERO,
         }],
     );
 }
@@ -167,7 +167,7 @@ async fn ots_has_code() {
     let provider = handle.http_provider();
     let sender = handle.dev_accounts().next().unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let contract_address = sender.create(0);
 
@@ -364,7 +364,7 @@ async fn ots_get_block_transactions() {
         hashes.push_back(*pending_receipt.tx_hash());
     }
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let page_size = 3;
     for page in 0..4 {
@@ -373,7 +373,7 @@ async fn ots_get_block_transactions() {
         assert!(result.receipts.len() <= page_size);
         let len = result.receipts.len();
         assert!(len <= page_size);
-        assert!(result.fullblock.transaction_count == result.receipts.len());
+        assert_eq!(result.fullblock.transaction_count, 10);
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();
@@ -480,9 +480,9 @@ async fn ots_get_transaction_by_sender_and_nonce() {
     let receipt2 = provider.send_transaction(tx2).await.unwrap().get_receipt().await.unwrap();
 
     let result1 =
-        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(0)).await.unwrap().unwrap();
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::ZERO).await.unwrap().unwrap();
     let result2 =
-        api.ots_get_transaction_by_sender_and_nonce(sender, U256::from(1)).await.unwrap().unwrap();
+        api.ots_get_transaction_by_sender_and_nonce(sender, U256::ONE).await.unwrap().unwrap();
 
     assert_eq!(result1, receipt1.transaction_hash);
     assert_eq!(result2, receipt2.transaction_hash);
