@@ -124,6 +124,9 @@ pub fn rebase_config_paths(config: &Config, temp_path: &Path) -> Config {
         temp_config.fuzz.corpus.frontier_dir =
             Some(rebase_mutable_project_path(config, temp_path, path));
     }
+    if let Some(path) = &config.fuzz.guidance {
+        temp_config.fuzz.guidance = Some(config.root.join(path));
+    }
     if let Some(path) = &config.invariant.failure_persist_dir {
         temp_config.invariant.failure_persist_dir =
             Some(rebase_mutable_project_path(config, temp_path, path));

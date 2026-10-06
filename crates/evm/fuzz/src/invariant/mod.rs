@@ -151,7 +151,7 @@ impl FuzzRunIdentifiedContracts {
         {
             artifact_filters.get_targeted_functions(artifact, &contract_data.abi)?.map(
                 |targeted_functions| CachedTargetContract {
-                    identifier: artifact.name.clone(),
+                    identifier: artifact.identifier(),
                     abi: contract_data.abi.clone(),
                     targeted_functions,
                     storage_layout: contract_data.storage_layout.as_ref().map(Arc::clone),
@@ -305,7 +305,7 @@ impl std::ops::DerefMut for TargetedContracts {
 /// A contract identified as target for invariant testing.
 #[derive(Clone, Debug)]
 pub struct TargetedContract {
-    /// The contract identifier. This is only used in error messages.
+    /// The `path:Name` artifact identifier used in metrics, errors, and external guidance.
     pub identifier: String,
     /// The contract's ABI.
     pub abi: JsonAbi,
@@ -319,6 +319,7 @@ pub struct TargetedContract {
     pub event_lookup: Arc<TargetedContractEvents>,
     functions_by_selector: FunctionLookup,
     fuzzed_functions_by_selector: FunctionLookup,
+    function_identifiers: HashMap<Selector, String>,
 }
 
 impl TargetedContract {
@@ -336,6 +337,8 @@ impl TargetedContract {
         storage_layout: Option<Arc<StorageLayout>>,
         event_lookup: Arc<TargetedContractEvents>,
     ) -> Self {
+        let function_identifiers =
+            abi.functions().map(|function| (function.selector(), identifier.clone())).collect();
         let mut contract = Self {
             identifier,
             abi,
@@ -345,6 +348,7 @@ impl TargetedContract {
             event_lookup,
             functions_by_selector: FunctionLookup::default(),
             fuzzed_functions_by_selector: FunctionLookup::default(),
+            function_identifiers,
         };
         contract.rebuild_function_lookups();
         contract
@@ -398,6 +402,33 @@ impl TargetedContract {
         );
         self.functions_by_selector = functions_by_selector;
         self.fuzzed_functions_by_selector = fuzzed_functions_by_selector;
+    }
+
+    /// Extends this target with another interface while retaining each function's artifact.
+    pub fn extend_interface(
+        &mut self,
+        identifier: String,
+        abi: &JsonAbi,
+        storage_layout: Option<Arc<StorageLayout>>,
+    ) {
+        for function in abi.functions() {
+            self.function_identifiers
+                .entry(function.selector())
+                .or_insert_with(|| identifier.clone());
+        }
+        self.abi.functions.extend(abi.functions.clone());
+        if self.storage_layout.is_none() {
+            self.storage_layout = storage_layout;
+        }
+        self.rebuild_function_lookups();
+    }
+
+    /// Returns the artifact identifier that supplied `function`.
+    pub fn identifier_for_function(&self, function: &Function) -> &str {
+        self.function_identifiers
+            .get(&function.selector())
+            .map(String::as_str)
+            .unwrap_or(&self.identifier)
     }
 
     /// Returns any ABI function for the given selector.
@@ -885,8 +916,8 @@ mod tests {
         created_contracts.sort_unstable();
         assert_eq!(created_contracts, vec![existing, created]);
         let targets = identified.targets();
-        assert_eq!(targets[&existing].identifier, "DynamicTarget");
-        assert_eq!(targets[&created].identifier, "DynamicTarget");
+        assert_eq!(targets[&existing].identifier, "DynamicTarget.sol:DynamicTarget");
+        assert_eq!(targets[&created].identifier, "DynamicTarget.sol:DynamicTarget");
         assert_eq!(targets[&setup].identifier, "AlreadyTargeted");
         assert_eq!(targets[&untouched].identifier, "AlreadyTargeted");
         drop(targets);

@@ -9465,4 +9465,34 @@ mod tests {
         let config = Config::with_root(root);
         assert!(config.coverage_cache_path().is_none());
     }
+
+    #[test]
+    fn fuzz_guidance_is_configurable() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                guidance = "guidance.json"
+
+                [profile.ci.fuzz]
+                guidance = "ci-guidance.json"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.fuzz.guidance, Some(PathBuf::from("guidance.json")));
+
+            jail.set_env("FOUNDRY_FUZZ_GUIDANCE", "env-guidance.json");
+            let config = Config::load().unwrap();
+            assert_eq!(config.fuzz.guidance, Some(PathBuf::from("env-guidance.json")));
+
+            jail.clear_env();
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert_eq!(config.fuzz.guidance, Some(PathBuf::from("ci-guidance.json")));
+
+            Ok(())
+        });
+    }
 }

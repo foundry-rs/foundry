@@ -6173,6 +6173,373 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 }
 
+#[forgetest_init]
+fn fuzz_guidance_dictionary_finds_magic_value(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzGuidance.t.sol",
+        r#"
+contract FuzzGuidanceTest {
+    // keccak256(abi.encode(uint256(0xdeadbeefcafe1234))), so the magic value is not a literal.
+    bytes32 constant MAGIC_HASH =
+        0xbb99c66306f201effa2f94df8e07fb28f41aa450530f91a5bb0a8d0611f9217d;
+
+    function testFuzz_magic(uint256 x) public pure {
+        require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
+    }
+
+    /// forge-config: default.fuzz.guidance = "guidance.json"
+    function testFuzz_inline(uint256 x) public pure {
+        require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
+    }
+}
+   "#,
+    );
+    prj.create_file("guidance.json", r#"{ "version": 1, "dictionary": ["0xdeadbeefcafe1234"] }"#);
+
+    let args = [
+        "test",
+        "--mc",
+        "FuzzGuidanceTest",
+        "--mt",
+        "testFuzz_magic",
+        "--fuzz-seed",
+        "1",
+        "--fuzz-runs",
+        "64",
+        "-j1",
+    ];
+    cmd.args(args).assert_success().stdout_eq(str![[r#"
+...
+[PASS] testFuzz_magic(uint256) (runs: 64, [AVG_GAS])
+...
+"#]]);
+
+    cmd.forge_fuse().args(args).args(["--fuzz-guidance", "guidance.json"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: magic value found; counterexample: calldata=0xb6755d45000000000000000000000000000000000000000000000000deadbeefcafe1234 args=[16045690984503054900 [1.604e19]]] testFuzz_magic(uint256) (runs: 9, [AVG_GAS])
+...
+"#]],
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "FuzzGuidanceTest",
+            "--mt",
+            "testFuzz_inline",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-runs",
+            "64",
+            "-j1",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: magic value found; counterexample: calldata=[..] args=[16045690984503054900 [1.604e19]]] testFuzz_inline(uint256) (runs: 9, [AVG_GAS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn fuzz_guidance_hex_dictionary_finds_fixed_bytes(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzGuidanceFixedBytes.t.sol",
+        r#"
+contract FuzzGuidanceFixedBytesTest {
+    // keccak256(abi.encode(bytes4(0xdeadbeef))), so the preimage is not a source literal.
+    bytes32 constant MAGIC_HASH =
+        0x10d1d7cbb06a29b1ee7e1f7f37e7ea0b1f460d29077feacf2d1f5886e2ba233d;
+
+    function testFuzz_magic(bytes4 x) public pure {
+        require(keccak256(abi.encode(x)) != MAGIC_HASH, "magic value found");
+    }
+}
+   "#,
+    );
+    prj.create_file("guidance.json", r#"{ "version": 1, "dictionary": ["0xdeadbeef"] }"#);
+
+    cmd.args([
+        "test",
+        "--mc",
+        "FuzzGuidanceFixedBytesTest",
+        "--fuzz-guidance",
+        "guidance.json",
+        "--fuzz-seed",
+        "1",
+        "--fuzz-runs",
+        "64",
+        "-j1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+...
+[FAIL: magic value found; counterexample: calldata=0x521b44cddeadbeef[..] args=[0xdeadbeef]] testFuzz_magic(bytes4) (runs: [..], [AVG_GAS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn fuzz_guidance_zero_selector_weight_excludes_function(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzGuidanceSelectors.t.sol",
+        r#"
+interface GuidedSafeInterface {
+    function safe(uint256) external;
+}
+
+interface GuidedPokeInterface {
+    function poke() external;
+}
+
+contract GuidedTarget is GuidedSafeInterface, GuidedPokeInterface {
+    bool public poked;
+
+    function safe(uint256) public {}
+
+    function poke() public {
+        poked = true;
+    }
+}
+
+contract FuzzGuidanceSelectorsTest {
+    struct FuzzInterface {
+        address addr;
+        string[] artifacts;
+    }
+
+    GuidedTarget target;
+
+    function setUp() public {
+        target = new GuidedTarget();
+    }
+
+    function targetInterfaces() public view returns (FuzzInterface[] memory interfaces) {
+        interfaces = new FuzzInterface[](2);
+        string[] memory safe = new string[](1);
+        safe[0] = "GuidedSafeInterface";
+        interfaces[0] = FuzzInterface(address(target), safe);
+        string[] memory poke = new string[](1);
+        poke[0] = "GuidedPokeInterface";
+        interfaces[1] = FuzzInterface(address(target), poke);
+    }
+
+    function invariant_notPoked() public view {
+        require(!target.poked(), "poked");
+    }
+}
+   "#,
+    );
+    prj.create_file(
+        "guidance.json",
+        r#"{
+            "version": 1,
+            "selector_weights": {
+                "test/FuzzGuidanceSelectors.t.sol:GuidedPokeInterface.poke()": 0
+            }
+        }"#,
+    );
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 10;
+        config.invariant.show_metrics = false;
+    });
+
+    // Run the guided campaign first so the unguided failure is not persisted and replayed.
+    let args = ["test", "--mc", "FuzzGuidanceSelectorsTest", "--fuzz-seed", "1"];
+    cmd.args(args).args(["--fuzz-guidance", "guidance.json"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_notPoked() (runs: 10, calls: 100, reverts: 0)
+...
+"#
+    ]]);
+
+    cmd.forge_fuse().args(args).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: poked]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[test/FuzzGuidanceSelectors.t.sol:GuidedTarget][..] calldata=poke() args=[]
+ invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn fuzz_guidance_applies_to_call_overrides(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzGuidanceCallOverride.t.sol",
+        r#"
+contract GuidedExternalCall {
+    function ping() public {}
+}
+
+contract GuidedReentrantTarget {
+    bool public entered;
+    bool public poked;
+    GuidedExternalCall externalCall;
+
+    constructor() {
+        externalCall = new GuidedExternalCall();
+    }
+
+    function enter() public {
+        entered = true;
+        externalCall.ping();
+        entered = false;
+    }
+
+    function poke() public {
+        require(entered, "not entered");
+        poked = true;
+    }
+}
+
+contract FuzzGuidanceCallOverrideTest {
+    GuidedReentrantTarget target;
+
+    function setUp() public {
+        target = new GuidedReentrantTarget();
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(target);
+    }
+
+    function invariant_notPoked() public view {
+        require(!target.poked(), "poked");
+    }
+}
+   "#,
+    );
+    prj.create_file(
+        "guidance.json",
+        r#"{
+            "version": 1,
+            "selector_weights": { "GuidedReentrantTarget.poke()": 0 }
+        }"#,
+    );
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 20;
+        config.invariant.call_override = true;
+        config.invariant.show_metrics = false;
+    });
+
+    cmd.args([
+        "test",
+        "--mc",
+        "FuzzGuidanceCallOverrideTest",
+        "--fuzz-guidance",
+        "guidance.json",
+        "--fuzz-seed",
+        "1",
+        "-j1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+[PASS] invariant_notPoked() (runs: 20, calls: 400, reverts: [..])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn fuzz_guidance_keeps_dynamic_target_identity(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzGuidanceDynamic.t.sol",
+        r#"
+contract GuidedDynamicTarget {
+    bool public poked;
+
+    function safe() public {}
+
+    function poke() public {
+        poked = true;
+    }
+}
+
+contract GuidedDynamicFactory {
+    GuidedDynamicTarget public latest;
+
+    function create() public {
+        latest = new GuidedDynamicTarget();
+    }
+}
+
+contract FuzzGuidanceDynamicTest {
+    GuidedDynamicFactory factory;
+
+    function setUp() public {
+        factory = new GuidedDynamicFactory();
+    }
+
+    function invariant_notPoked() public view {
+        GuidedDynamicTarget latest = factory.latest();
+        require(address(latest) == address(0) || !latest.poked(), "poked");
+    }
+}
+   "#,
+    );
+    prj.create_file(
+        "guidance.json",
+        r#"{
+            "version": 1,
+            "selector_weights": {
+                "GuidedDynamicFactory.create()": 10,
+                "test/FuzzGuidanceDynamic.t.sol:GuidedDynamicTarget.poke()": 0
+            }
+        }"#,
+    );
+    prj.update_config(|config| {
+        config.invariant.runs = 20;
+        config.invariant.depth = 50;
+        config.invariant.show_metrics = false;
+    });
+
+    let args = ["test", "--mc", "FuzzGuidanceDynamicTest", "--fuzz-seed", "1", "-j1"];
+    cmd.args(args).args(["--fuzz-guidance", "guidance.json"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_notPoked() (runs: 20, calls: 1000, reverts: 0)
+...
+"#
+    ]]);
+
+    cmd.forge_fuse().args(args).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: poked]
+	[Sequence] (original: [..], shrunk: 2)
+...
+ invariant_notPoked() (runs: [..], calls: [..], reverts: 0)
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn fuzz_guidance_rejects_unsupported_version(prj: _, cmd: _) {
+    prj.add_test(
+        "FuzzGuidanceVersion.t.sol",
+        r#"
+contract FuzzGuidanceVersionTest {
+    function testFuzz_value(uint256) public pure {}
+}
+   "#,
+    );
+    prj.create_file("guidance.json", r#"{ "version": 2 }"#);
+
+    cmd.args(["test", "--fuzz-guidance", "guidance.json"]).assert_failure().stderr_eq(str![[r#"
+Error: invalid fuzz guidance file [..]guidance.json
+
+Context:
+- unsupported fuzz guidance version 2, expected 1
+
+"#]]);
+}
+
 fn random_failure_reason(stdout: &str) -> String {
     Regex::new(r"\[FAIL: (Random\([^)]+\))")
         .unwrap()

@@ -36,6 +36,10 @@ pub struct FuzzConfig {
     pub show_logs: bool,
     /// Optional timeout (in seconds) for each property test
     pub timeout: Option<u32>,
+    /// Optional path to a JSON guidance file applied to fuzz and invariant campaigns.
+    ///
+    /// Relative paths are resolved against the project root.
+    pub guidance: Option<PathBuf>,
 }
 
 impl Default for FuzzConfig {
@@ -53,6 +57,7 @@ impl Default for FuzzConfig {
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
+            guidance: None,
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    BasicTxDetails, Fuzzer,
+    BasicTxDetails, FuzzGuidance, Fuzzer,
     invariant::{
         FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent, TargetedContracts,
     },
@@ -128,6 +128,14 @@ impl EvmFuzzState {
     #[cfg(test)]
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
         Arc::make_mut(&mut self.inner).seed_literals(map);
+    }
+
+    /// Attaches external campaign guidance.
+    ///
+    /// Guidance is kept for the lifetime of the state and is not affected by
+    /// [`FuzzState::revert`].
+    pub fn set_guidance(&mut self, guidance: Arc<FuzzGuidance>) {
+        Arc::make_mut(&mut self.inner).guidance = guidance;
     }
 }
 
@@ -300,6 +308,8 @@ pub struct FuzzDictionary {
     slot_identifiers: HashMap<usize, SlotIdentifier>,
     /// Cached non-mapping storage slot identification keyed by layout allocation and slot.
     slot_info_cache: HashMap<(usize, B256), Option<SlotInfo>>,
+    /// External campaign guidance. Not reverted between runs.
+    guidance: Arc<FuzzGuidance>,
 
     misses: usize,
     hits: usize,
@@ -339,6 +349,7 @@ impl FuzzDictionary {
             persistent_values: Default::default(),
             slot_identifiers: Default::default(),
             slot_info_cache: Default::default(),
+            guidance: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
         };
@@ -808,6 +819,18 @@ impl FuzzDictionary {
     #[inline]
     pub const fn addresses(&self) -> &AddressIndexSet {
         &self.addresses
+    }
+
+    /// Returns the external campaign guidance.
+    #[inline]
+    pub const fn guidance(&self) -> &Arc<FuzzGuidance> {
+        &self.guidance
+    }
+
+    /// Returns external dictionary values when state-based dictionary sampling is enabled.
+    pub fn guidance_values(&self, param: &DynSolType) -> Option<&B256IndexSet> {
+        (self.config.dictionary_weight > 0 && self.guidance.has_dictionary())
+            .then(|| self.guidance.dictionary_for(param))
     }
 
     /// Revert values and addresses collected during the run by truncating to initial db len.
