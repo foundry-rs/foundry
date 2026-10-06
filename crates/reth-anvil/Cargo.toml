@@ -1,0 +1,46 @@
+[package]
+name = "reth-anvil"
+description = "Local ethereum node built on the reth SDK"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reth-anvil"
+path = "bin/main.rs"
+
+[dependencies]
+# reth
+reth-ethereum = { workspace = true, features = ["node", "node-api"] }
+reth-rpc-eth-api.workspace = true
+
+# alloy
+alloy-consensus.workspace = true
+alloy-dyn-abi.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil"] }
+alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-signer.workspace = true
+
+# misc
+eyre.workspace = true
+futures.workspace = true
+jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+parking_lot.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+jsonrpsee = { version = "0.26", features = ["http-client"] }
+serde_json.workspace = true
