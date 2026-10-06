@@ -614,11 +614,16 @@ impl<
                                         debug!(target: "backend::fork", "ignoring fork BAL for a different cache identity");
                                         bal = None;
                                     }
-                                    // Share the remote cache and RPC client while retaining
-                                    // this consumer's selector, execution environment, and BAL
-                                    // policy.
+                                    // Share the remote cache, RPC client, and block while
+                                    // retaining this consumer's selector, execution environment,
+                                    // and BAL policy. The fork ID includes the block hash, so the
+                                    // cached block is the same block.
                                     cached.opts = fork.opts;
-                                    cached.fork = Fork { client: cached.fork.client, ..fork.fork };
+                                    cached.fork = Fork {
+                                        client: cached.fork.client,
+                                        block: cached.fork.block,
+                                        ..fork.fork
+                                    };
                                     cached.evm_env = fork.evm_env;
                                     (cached.inc_senders(fork_id), cached)
                                 } else {
@@ -1375,6 +1380,7 @@ mod tests {
             assert_ne!(first.id, second.id);
             assert!(Arc::ptr_eq(&first.backend.data(), &second.backend.data()));
             assert!(Arc::ptr_eq(first.fork.client.inner(), second.fork.client.inner()));
+            assert!(Arc::ptr_eq(&first.fork.block, &second.fork.block));
             assert_eq!(manager.forks[&first.id].opts.evm_opts.no_fork_bal, first_policy);
             assert_eq!(manager.forks[&second.id].opts.evm_opts.no_fork_bal, second_policy);
             assert!(bal_requests.lock().unwrap().is_empty());

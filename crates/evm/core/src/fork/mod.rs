@@ -60,7 +60,7 @@ impl Fork {
         Self {
             source_id: source_id(
                 opts.fork_url.as_deref().unwrap_or_default(),
-                opts.fork_headers.as_deref().or(opts.rpc_headers.as_deref()),
+                opts.fork_source_headers(),
                 opts.rpc_jwt.as_deref(),
             ),
             client,
@@ -76,11 +76,7 @@ impl Fork {
         opts.fork_url.as_deref().is_some_and(|url| {
             self.selector == opts.fork_block_number
                 && self.state_by_number == opts.fork_state_by_number
-                && self.matches_source(
-                    url,
-                    opts.fork_headers.as_deref().or(opts.rpc_headers.as_deref()),
-                    opts.rpc_jwt.as_deref(),
-                )
+                && self.matches_source(url, opts.fork_source_headers(), opts.rpc_jwt.as_deref())
         })
     }
 

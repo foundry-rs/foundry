@@ -420,6 +420,23 @@ impl EvmOpts {
         Ok(())
     }
 
+    /// Rejects an inferred network whose endpoint now reports a different execution profile.
+    fn ensure_inferred_execution_profile(
+        &self,
+        identity: &ForkEndpointIdentity,
+    ) -> eyre::Result<()> {
+        eyre::ensure!(
+            !self.fork_network_is_inferred
+                || self.networks.has_same_execution_profile(&identity.network_profile),
+            "fork endpoint {} changed execution profile from `{}` to `{}`; rebuild the EVM for \
+             the new network",
+            fork_endpoint_description(&identity.endpoint),
+            self.networks.execution_profile_name(),
+            identity.network_profile.execution_profile_name()
+        );
+        Ok(())
+    }
+
     pub(crate) fn chain_id_override(&self) -> Option<ChainId> {
         (!self.fork_chain_id_is_inferred).then_some(self.env.chain_id).flatten()
     }
@@ -466,7 +483,7 @@ impl EvmOpts {
             .map(|identity| identity.execution_chain_id)
     }
 
-    fn fork_source_headers(&self) -> Option<&[String]> {
+    pub(crate) fn fork_source_headers(&self) -> Option<&[String]> {
         self.fork_headers.as_deref().or(self.rpc_headers.as_deref())
     }
 
@@ -571,14 +588,7 @@ impl EvmOpts {
             )
             .await?;
         self.ensure_expected_fork_endpoint(&identity)?;
-        eyre::ensure!(
-            !self.fork_network_is_inferred
-                || self.networks.has_same_execution_profile(&identity.network_profile),
-            "fork endpoint {} changed execution profile from `{}` to `{}`; rebuild the EVM for the new network",
-            fork_endpoint_description(&identity.endpoint),
-            self.networks.execution_profile_name(),
-            identity.network_profile.execution_profile_name()
-        );
+        self.ensure_inferred_execution_profile(&identity)?;
         eyre::ensure!(
             fork.context().matches_identity(&identity),
             "fork endpoint {} changed after its block and execution context were resolved",
@@ -1044,17 +1054,7 @@ impl EvmOpts {
             )
         })?;
         self.ensure_expected_fork_endpoint(&identity)?;
-        if self.fork_network_is_inferred
-            && !self.networks.has_same_execution_profile(&identity.network_profile)
-        {
-            eyre::bail!(
-                "fork endpoint {} changed execution profile from `{}` to `{}`; rebuild the EVM \
-                 for the new network",
-                fork_endpoint_description(endpoint),
-                self.networks.execution_profile_name(),
-                identity.network_profile.execution_profile_name()
-            );
-        }
+        self.ensure_inferred_execution_profile(&identity)?;
 
         let block = if let Some(block) = block {
             block
@@ -1194,6 +1194,10 @@ impl EvmOpts {
     /// real chain block number, not a remapped value. On some L2s (e.g., Arbitrum)
     /// `block_env.number` is remapped to the L1 block number, so callers must pass the
     /// block number in the context returned by [`EvmOpts::env_with_fork_context`] instead.
+    ///
+    /// RPC storage caching uses the source chain ID of the discovered fork endpoint. Discover the
+    /// endpoint first, for example with [`EvmOpts::infer_network_from_fork`]. Without it,
+    /// `chain_id` decides caching.
     pub fn get_fork(
         &self,
         config: &Config,

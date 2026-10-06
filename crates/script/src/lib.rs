@@ -56,7 +56,7 @@ use foundry_evm::{
         CheatsConfig,
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
-    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
+    opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
@@ -1072,26 +1072,48 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 
     async fn select_backend(&mut self) -> Result<()> {
-        let current = self.backend.fork()?;
         if self.evm_opts.fork_url.is_none() {
-            if current.is_some() {
+            if self.backend.fork()?.is_some() {
                 self.backend.replace_fork(None)?;
             }
             return Ok(());
         }
-        if let Some(fork) = &current {
-            if fork.matches_request(&self.evm_opts) {
-                return Ok(());
-            }
-            self.evm_opts.invalidate_fork_endpoint_if_source_changed(fork);
+        if !self.prepare_requested_source().await? {
+            return Ok(());
         }
-        let active_networks = self.config.networks;
-        prepare_script_source(&mut self.config, &mut self.evm_opts, Some(active_networks)).await?;
         self.backend.replace_fork(self.evm_opts.get_fork(
             &self.config,
             self.evm_opts.env.chain_id.unwrap_or_default(),
             None,
         ))
+    }
+
+    /// Prepares the requested RPC source. Returns `false` if the backend already serves it.
+    async fn prepare_requested_source(&mut self) -> Result<bool> {
+        if let Some(fork) = self.backend.fork()? {
+            if fork.matches_request(&self.evm_opts) {
+                return Ok(false);
+            }
+            self.evm_opts.invalidate_fork_endpoint_if_source_changed(&fork);
+        }
+        let active_networks = self.config.networks;
+        prepare_script_source(&mut self.config, &mut self.evm_opts, Some(active_networks)).await?;
+        Ok(true)
+    }
+
+    /// Resolves the execution spec for `fork_url` without a backend for that RPC.
+    ///
+    /// Trace decoders only need the source chain and hardfork, so they do not open a fork cache.
+    async fn resolve_rpc_execution_spec(&mut self, fork_url: String) -> Result<()> {
+        self.evm_opts.set_fork_url(fork_url);
+        if !self.prepare_requested_source().await? {
+            self.resolve_execution_env().await?;
+            return Ok(());
+        }
+        let (mut evm_env, _, fork_context) =
+            self.evm_opts.env_with_fork_context::<_, _, TxEnvFor<FEN>>().await?;
+        self.apply_execution_spec(&mut evm_env, fork_context);
+        Ok(())
     }
 
     pub(crate) async fn update_tempo_session_sender(
@@ -1192,17 +1214,26 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     async fn resolve_execution_env(&mut self) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>)> {
         let (mut evm_env, tx_env) = self.backend.env(&self.evm_opts).await?;
         let fork_context = self.backend.fork()?.as_ref().map(|fork| fork.context());
+        self.apply_execution_spec(&mut evm_env, fork_context);
+        Ok((evm_env, tx_env))
+    }
+
+    /// Records the source chain and resolves the execution spec for `fork_context`.
+    fn apply_execution_spec(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        fork_context: Option<ForkContext>,
+    ) {
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.source_chain_id = fork_chain_id;
         self.hardfork = resolve_execution_spec(
             self.config.evm_version,
             self.config.hardfork,
-            &mut evm_env,
+            evm_env,
             ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
             None,
         );
-        Ok((evm_env, tx_env))
     }
 }
 

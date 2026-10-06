@@ -182,6 +182,8 @@ fn fuzz_minimize_pass<FEN: FoundryEvmNetwork>(
     let target_count = count_fuzz_minimize_targets(&runner, filter);
     let replay = move |filter: &ProjectPathsAwareFilter, fuzz_minimize| -> Result<()> {
         let mut runner = runner.clone();
+        // Release forks that this replay creates when the replay ends.
+        runner.backend = runner.backend.clone_with_fork_scope()?;
         runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
         for (suite, suite_result) in runner.test_collect(filter)? {
             for (test, test_result) in suite_result.test_results {
