@@ -9,12 +9,19 @@ use std::{
 };
 
 use alloy_primitives::keccak256;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_common::fs::normalize_path;
 use foundry_compilers::{
     Graph,
-    artifacts::remappings::{RelativeRemapping, Remapping},
-    compilers::multi::{MultiCompilerLanguage, MultiCompilerParser},
+    artifacts::{
+        Source,
+        remappings::{RelativeRemapping, Remapping},
+    },
+    compilers::{
+        Language,
+        multi::{MultiCompilerLanguage, MultiCompilerParser},
+    },
+    utils::source_files_iter,
 };
 use foundry_config::{
     Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
@@ -396,26 +403,32 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     }
 
     // Tests can import project files outside the directories above, for example from `scripts/`
-    // when the script directory is the default `script/`. Copy the remaining project-local sources
-    // in the import graph so the workspace compiles like the project.
-    if let Ok(graph) =
-        Graph::<MultiCompilerParser>::resolve(&config.project_paths::<MultiCompilerLanguage>())
-    {
-        for source in graph.files().keys() {
-            if source
-                .strip_prefix(&config.root)
-                .is_ok_and(|rel| is_covered_by_handled_root(rel, &handled_extra_roots))
-            {
-                continue;
-            }
-            copy_extra_project_path(
-                &config.root,
-                temp_dir,
-                source,
-                &handled_extra_roots,
-                "imported source",
-            )?;
+    // when the script directory is the default `script/`. Resolve the import graph from the roots
+    // that `forge test` compiles, and copy each project-local import that is still missing.
+    let paths = config.project_paths::<MultiCompilerLanguage>();
+    let roots = source_files_iter(&paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+        .chain(source_files_iter(&paths.tests, MultiCompilerLanguage::FILE_EXTENSIONS));
+    let graph = Graph::<MultiCompilerParser>::resolve_sources(&paths, Source::read_all(roots)?)
+        .wrap_err("failed to resolve the project import graph")?;
+    for source in graph.files().keys() {
+        let Ok(rel) = source.strip_prefix(&paths.root) else { continue };
+        // Remappings and include or allow paths can copy the same file earlier.
+        let target = temp_dir.join(rel);
+        if target.is_file() {
+            continue;
         }
+        eyre::ensure!(
+            !target.exists(),
+            "imported source {} conflicts with a directory in the temporary workspace",
+            rel.display()
+        );
+        // Keep the import spelling for the destination, so imports through a symlinked directory
+        // still resolve. Only the containment check follows symlinks.
+        ensure_within_root(&paths.root, source, "imported source", source)?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, &target)?;
     }
 
     let foundry_toml = config.root.join("foundry.toml");
@@ -1287,6 +1300,8 @@ mod tests {
         );
         fs::create_dir_all(root.join("test")).unwrap();
         fs::write(root.join("test/Deploy.t.sol"), "import \"../scripts/Deploy.s.sol\";\n").unwrap();
+        // `forge test` does not compile this script, so its broken import must not matter.
+        fs::write(root.join("scripts/Broken.s.sol"), "import \"./Missing.sol\";\n").unwrap();
 
         let config = Config {
             root: root.clone(),
@@ -1299,7 +1314,57 @@ mod tests {
         copy_project(&config, &workspace).unwrap();
 
         assert!(workspace.join("scripts/Deploy.s.sol").exists());
+        assert!(!workspace.join("scripts/Broken.s.sol").exists());
         assert!(!workspace.join("docs/Unused.sol").exists());
+    }
+
+    #[test]
+    fn test_copy_project_skips_imported_sources_copied_by_remappings() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        create_test_dir_structure(&root, &["src/Target.sol", "shared/Lib.sol"]);
+        fs::create_dir_all(root.join("test")).unwrap();
+        fs::write(root.join("test/Lib.t.sol"), "import \"../shared/Lib.sol\";\n").unwrap();
+        let lib = root.join("shared/Lib.sol");
+        let mut permissions = fs::metadata(&lib).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&lib, permissions).unwrap();
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            remappings: vec![Remapping::from_str("shared/=shared/").unwrap().into()],
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+
+        assert!(workspace.join("shared/Lib.sol").is_file());
+    }
+
+    #[test]
+    fn test_copy_project_keeps_import_spelling_through_symlinked_dirs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        create_test_dir_structure(&root, &["src/Target.sol", "shared/Deploy.s.sol"]);
+        symlink_dir(&root.join("shared"), &root.join("scripts")).unwrap();
+        fs::create_dir_all(root.join("test")).unwrap();
+        fs::write(root.join("test/Deploy.t.sol"), "import \"../scripts/Deploy.s.sol\";\n").unwrap();
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            script: root.join("script"),
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+
+        assert!(workspace.join("scripts/Deploy.s.sol").is_file());
     }
 
     #[test]
