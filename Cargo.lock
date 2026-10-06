@@ -6076,6 +6076,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "crossterm",
+ "dialoguer",
  "eyre",
  "foundry-common",
  "foundry-compilers",
@@ -6085,6 +6086,13 @@ dependencies = [
  "ratatui",
  "revm",
  "serde",
+ "serde_json",
+ "soldb-core",
+ "soldb-debugger",
+ "soldb-ethdebug",
+ "soldb-repl",
+ "soldb-tui",
+ "tempfile",
  "tracing",
 ]
 
@@ -12282,7 +12290,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "normalize-path",
  "once_map",
  "rayon",
@@ -12293,7 +12301,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -12328,7 +12336,7 @@ dependencies = [
  "solar-interface",
  "solar-parse",
  "solar-sema",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "toml_edit",
@@ -12354,7 +12362,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint 0.5.1",
  "num-rational",
@@ -12394,6 +12402,63 @@ dependencies = [
  "strum 0.28.0",
  "thread_local",
  "tracing",
+]
+
+[[package]]
+name = "soldb-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e995fd33f1fcb163d7686fe93e773eefbcac294f21aae5a77d1637322719b119"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "soldb-debugger"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6d92e89767cc7dcbff84ec8df94136b98f41e1f597900d2791c3f9148a18775"
+dependencies = [
+ "serde",
+ "serde_json",
+ "soldb-core",
+ "soldb-ethdebug",
+]
+
+[[package]]
+name = "soldb-ethdebug"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6d76430b89b0f0b3cb34a09bec76ac22348daa03120600cb5b4e487c523d485"
+dependencies = [
+ "serde",
+ "serde_json",
+ "soldb-core",
+]
+
+[[package]]
+name = "soldb-repl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01294d8f931bbe58408fec3ac21a2170543622285850b53baf45f3e7848078d1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "soldb-core",
+ "soldb-debugger",
+]
+
+[[package]]
+name = "soldb-tui"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "187e48b83e70b2a8be3319af9f0991a40a92c5cfedca30d3fe49409c064627ad"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "soldb-debugger",
+ "soldb-repl",
 ]
 
 [[package]]

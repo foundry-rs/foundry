@@ -1,22 +1,28 @@
 //! Debugger builder.
 
 use crate::{
-    Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace_with_precompiles,
+    Debugger, DebuggerFrontend, DebuggerLayout, debugger::DebuggerStats,
+    node::flatten_call_trace_with_precompiles,
 };
 use alloy_primitives::{
     Address, Bytes,
     map::{AddressHashMap, HashMap},
 };
+use eyre::Result;
 use foundry_common::{ContractsByArtifact, get_contract_name, slot_identifier::SlotIdentifier};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
     CallTraceArena, CallTraceDecoder, CallTraceNode, Traces,
     debug::{ContractSources, DebugTraceIdentifier},
 };
+use std::path::Path;
+
+#[cfg(feature = "soldb")]
+use crate::soldb::{SoldbDebugger, select_call, write_bundle};
 
 /// Debugger builder.
 #[derive(Debug, Default)]
-#[must_use = "builders do nothing unless you call `build` on them"]
+#[must_use = "builders do nothing unless you call `build` or `run` on them"]
 pub struct DebuggerBuilder {
     /// Debug traces returned from the EVM execution.
     trace_arenas: Vec<CallTraceArena>,
@@ -36,6 +42,8 @@ pub struct DebuggerBuilder {
     breakpoints: Breakpoints,
     /// TUI layout selection.
     layout: DebuggerLayout,
+    /// Frontend that [`Self::run`] opens.
+    frontend: DebuggerFrontend,
 }
 
 impl DebuggerBuilder {
@@ -129,7 +137,14 @@ impl DebuggerBuilder {
         self
     }
 
-    /// Builds the debugger.
+    /// Sets the frontend that [`Self::run`] opens.
+    #[inline]
+    pub const fn frontend(mut self, frontend: DebuggerFrontend) -> Self {
+        self.frontend = frontend;
+        self
+    }
+
+    /// Builds the built-in debugger, whatever the selected frontend.
     #[inline]
     pub fn build(self) -> Debugger {
         let Self {
@@ -142,6 +157,7 @@ impl DebuggerBuilder {
             sources,
             breakpoints,
             layout,
+            frontend: _,
         } = self;
         let slot_identifiers = contract_identifiers
             .into_iter()
@@ -185,10 +201,63 @@ impl DebuggerBuilder {
             layout,
         )
     }
+
+    /// Opens the selected frontend, or writes its data to `dump` instead.
+    ///
+    /// soldb debugs one call, so with several trace arenas the user selects one, and its dump is
+    /// a directory that soldb's own tools read.
+    pub fn run(self, dump: Option<&Path>) -> Result<()> {
+        match self.frontend {
+            DebuggerFrontend::Foundry => {
+                let mut debugger = self.build();
+                match dump {
+                    Some(path) => debugger.dump_to_file(path),
+                    None => debugger.try_run_tui().map(drop),
+                }
+            }
+            #[cfg(feature = "soldb")]
+            DebuggerFrontend::Soldb => {
+                let Self {
+                    trace_arenas,
+                    identified_contracts,
+                    known_contracts,
+                    sources,
+                    breakpoints,
+                    ..
+                } = self;
+                let arena = select_call(trace_arenas)?;
+                let mut identified_code = HashMap::default();
+                let contract_names = arena
+                    .nodes()
+                    .iter()
+                    .map(|node| {
+                        node_contract_name(
+                            node,
+                            &known_contracts,
+                            &identified_contracts,
+                            &mut identified_code,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                match dump {
+                    Some(dir) => {
+                        write_bundle(dir, arena, &contract_names, &sources, &known_contracts)
+                    }
+                    None => SoldbDebugger::new(
+                        arena,
+                        &contract_names,
+                        &sources,
+                        &known_contracts,
+                        &breakpoints,
+                    )
+                    .try_run(),
+                }
+            }
+        }
+    }
 }
 
-/// Identifies the contract executed by `node` from its recorded bytecode, since an address can
-/// execute different code over time (e.g. after `vm.etch`), and decodes its internal calls.
+/// Identifies the contract executed by `node` and decodes its internal calls.
 fn identify_node(
     node: &mut CallTraceNode,
     known_contracts: &ContractsByArtifact,
@@ -196,15 +265,9 @@ fn identify_node(
     sources: &ContractSources,
     identified_code: &mut HashMap<(Address, Bytes), Option<String>>,
 ) -> Option<String> {
-    let address = node.trace.address;
-    let address_name = identified_contracts.get(&address);
-    let contract_name = match &node.trace.bytecode {
-        Some(code) if !code.is_empty() && !node.trace.kind.is_any_create() => identified_code
-            .entry((address, code.clone()))
-            .or_insert_with(|| identify_code(known_contracts, address_name, code))
-            .clone(),
-        _ => address_name.cloned(),
-    };
+    let address_name = identified_contracts.get(&node.trace.address);
+    let contract_name =
+        node_contract_name(node, known_contracts, identified_contracts, identified_code);
     if contract_name.as_ref() != address_name
         && let Some(decoded) = node.trace.decoded.as_mut()
         && decoded.label.as_ref() == address_name
@@ -217,6 +280,25 @@ fn identify_node(
         DebugTraceIdentifier::identify_node_steps_with_sources(node, sources, contract_name);
     }
     contract_name
+}
+
+/// Identifies the contract executed by `node` from its recorded bytecode, since an address can
+/// execute different code over time (e.g. after `vm.etch`).
+fn node_contract_name(
+    node: &CallTraceNode,
+    known_contracts: &ContractsByArtifact,
+    identified_contracts: &AddressHashMap<String>,
+    identified_code: &mut HashMap<(Address, Bytes), Option<String>>,
+) -> Option<String> {
+    let address = node.trace.address;
+    let address_name = identified_contracts.get(&address);
+    match &node.trace.bytecode {
+        Some(code) if !code.is_empty() && !node.trace.kind.is_any_create() => identified_code
+            .entry((address, code.clone()))
+            .or_insert_with(|| identify_code(known_contracts, address_name, code))
+            .clone(),
+        _ => address_name.cloned(),
+    }
 }
 
 /// Identifies `code` by an exact match against local artifacts. Identities that aren't local

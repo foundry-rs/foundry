@@ -44,7 +44,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-use foundry_debugger::DebuggerLayout;
+use foundry_debugger::{DebuggerFrontend, DebuggerLayout};
 use foundry_evm::{
     backend::Backend,
     core::{
@@ -240,7 +240,16 @@ pub struct ScriptArgs {
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
     pub debug_layout: Option<DebuggerLayout>,
 
+    /// Debugger frontend to use.
+    ///
+    /// The `soldb` frontend needs forge built with the `soldb` feature.
+    #[arg(long, requires = "debug", value_enum)]
+    pub debugger: Option<DebuggerFrontend>,
+
     /// Dumps all debugger steps to file.
+    ///
+    /// With `--debugger soldb`, writes a directory that soldb's own tools read, e.g.
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
@@ -403,8 +412,13 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
-        if args.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if args.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in scripts.
+            config.build_info = true;
         }
 
         let script_config = ScriptConfig::new(

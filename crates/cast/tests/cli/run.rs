@@ -738,3 +738,48 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
             ));
     }
 }
+
+// Opens a replayed transaction in soldb and checks a source stop with its variables.
+#[forgetest]
+#[cfg(feature = "soldb")]
+async fn cast_run_debug_soldb(prj: _, cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "run",
+            format!("{tx_hash}").as_str(),
+            "--rpc-url",
+            &endpoint,
+            "--debug",
+            "--debugger",
+            "soldb",
+            "--with-local-artifacts",
+        ])
+        .stdin("break src/Counter.sol:8\ncontinue\nvars\nbacktrace\nquit\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Loaded trace with 118 steps.
+Sources loaded for: Counter (0x5fbdb2315678afecb367f032d93f642f64180aa3)
+src/Counter.sol:4  (step 0/117, pc 0, PUSH1, gas 22492)
+    4 | contract Counter {
+Breakpoint #1 set at src/Counter.sol:8
+Breakpoint #1 hit at step 108, src/Counter.sol:8
+src/Counter.sol:8 in setNumber  (step 108/117, pc 136, DUP1, gas 22124)
+    8 |         number = newNumber;
+warning: local variables are inferred from the legacy source map and the stack layout of solc's legacy code generator, not from compiler-reported variable locations
+uint256 newNumber = 111 [stack+2]
+State:
+uint256 number = <unknown: slot 0x0 has not been read or written yet> [slot 0x0]
+#0  setNumber at src/Counter.sol:8  step 108, PC 136
+#1  Counter at src/Counter.sol:4  step 23, PC 40
+Exiting debugger.
+
+"#]]);
+}

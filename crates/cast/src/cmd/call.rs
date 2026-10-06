@@ -50,6 +50,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+use foundry_debugger::DebuggerFrontend;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
@@ -152,6 +153,12 @@ pub struct CallArgs {
     /// Can only be used with `--trace`.
     #[arg(long, requires = "trace")]
     debug: bool,
+
+    /// Debugger frontend to use.
+    ///
+    /// The `soldb` frontend needs cast built with the `soldb` feature.
+    #[arg(long, requires = "debug", value_enum)]
+    debugger: Option<DebuggerFrontend>,
 
     #[command(flatten)]
     tracing: TracingArgs,
@@ -426,6 +433,7 @@ impl CallArgs {
             debug_trace_call,
             evm_version,
             debug,
+            debugger,
             data,
             with_local_artifacts,
             wallet,
@@ -625,7 +633,7 @@ impl CallArgs {
                 &contracts_bytecode,
                 &tracing,
                 with_local_artifacts,
-                false,
+                None,
             )
             .await;
         }
@@ -723,7 +731,7 @@ impl CallArgs {
                 &contracts_bytecode,
                 &tracing,
                 with_local_artifacts,
-                debug,
+                debug.then(|| debugger.unwrap_or_default()),
             )
             .await;
         }

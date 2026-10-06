@@ -30,6 +30,18 @@ revm.workspace = true
 tracing.workspace = true
 serde.workspace = true
 
+# soldb
+dialoguer = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+soldb-core = { workspace = true, optional = true }
+soldb-debugger = { workspace = true, optional = true }
+soldb-ethdebug = { workspace = true, optional = true }
+soldb-repl = { workspace = true, optional = true }
+soldb-tui = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 default = ["optimism"]
 base = [
@@ -41,4 +53,13 @@ optimism = [
     "foundry-common/optimism",
     "foundry-evm-core/optimism",
     "foundry-evm-traces/optimism",
+]
+soldb = [
+    "dep:dialoguer",
+    "dep:serde_json",
+    "dep:soldb-core",
+    "dep:soldb-debugger",
+    "dep:soldb-ethdebug",
+    "dep:soldb-repl",
+    "dep:soldb-tui",
 ]

@@ -1818,6 +1818,7 @@ mod tests {
                 pc_ic_map_runtime: Some(PcIcMap::new(&[0x00, 0x00, 0x00])),
                 build_id,
                 file_id: 0,
+                via_ir: None,
             }],
         );
         context
