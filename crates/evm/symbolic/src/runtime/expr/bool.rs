@@ -53,7 +53,7 @@ impl SymBoolExpr {
             Self::constant(cx, op.eval(word, value))
         } else {
             let value = SymExpr::constant(cx, value);
-            Self::cmp(cx, op, word.clone(), value)
+            Self::cmp_word_expr(cx, op, word, value)
         }
     }
 
@@ -758,7 +758,7 @@ impl SymBoolExpr {
                 Self::and(cx, values)
             }
             SymBoolExprKind::Cmp(op, left, right) => {
-                Self::cmp(cx, *op, left.clone(), right.clone())
+                Self::cmp_word_expr(cx, *op, left, right.clone())
             }
         };
         let expr = folder(cx, expr);

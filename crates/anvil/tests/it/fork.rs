@@ -2041,7 +2041,7 @@ async fn can_reset_properly() {
 // Ref: <https://github.com/foundry-rs/foundry/issues/8684>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_fork_to_new_fork() {
-    let eth_rpc_url = next_rpc_endpoint(NamedChain::Mainnet);
+    let eth_rpc_url = next_http_rpc_endpoint();
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
     let provider = handle.http_provider();
 

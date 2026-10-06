@@ -106,15 +106,7 @@ fn bal_commit_preserves_target_and_untouched_code() {
     }
     runtime.push(0x00);
     let runtime = Bytecode::new_legacy(runtime.into());
-    backend.insert_account_info(
-        delegate,
-        AccountInfo {
-            nonce: 1,
-            code_hash: runtime.hash_slow(),
-            code: Some(runtime),
-            ..Default::default()
-        },
-    );
+    backend.insert_account_info(delegate, AccountInfo::from_bytecode(runtime));
     let prefix_code = bytes!("600100");
     let bal = Bal::try_from_alloy(vec![
         AccountChanges::new(Address::ZERO),

@@ -892,7 +892,7 @@ mod tests {
 
         dictionary.collect_push_bytes(&[0x60, 0x01, 0x60, 0x03]);
 
-        assert_eq!(dictionary.state_values.len(), 3);
+        assert_eq!(dictionary.len(), 3);
         assert!(dictionary.state_values.contains(&B256::ZERO));
         assert!(dictionary.state_values.contains(&B256::with_last_byte(1)));
         assert!(dictionary.state_values.contains(&B256::with_last_byte(2)));
