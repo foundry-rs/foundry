@@ -11,7 +11,7 @@ use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
-use foundry_compilers::artifacts::EvmVersion;
+use foundry_compilers::{PathStyle, artifacts::EvmVersion};
 use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
@@ -21,7 +21,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestProject},
 };
 use regex::Regex;
 use serde_json::Value;
@@ -7009,4 +7009,167 @@ fn script_unlocked_conflicts_with_remote_signers(cmd: _) {
                  For more information, try '--help'.\n"
             ));
     }
+}
+
+// Another operator resumes from a fresh checkout that received only the authoritative recovery
+// snapshot, without the broadcast and cache exports, build artifacts, or signing credentials.
+#[forgetest_init]
+async fn resume_hands_off_recovery_snapshot_to_fresh_checkout(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "HandoffResume.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract HandoffResumeTarget {}
+
+contract HandoffResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new HandoffResumeTarget();
+        new HandoffResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    // The first submission is accepted but its response is lost; the second is recorded.
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendRawTransaction",
+        true,
+    )
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = handle.dev_accounts().next().unwrap();
+    let provider = handle.http_provider();
+    let broadcast = "broadcast/HandoffResume.s.sol/31337/run-latest.json";
+    let sensitive = "cache/HandoffResume.s.sol/31337/run-latest.json";
+    let snapshot = "cache/HandoffResume.s.sol/31337/run-latest.json.recovery.json";
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "HandoffResume",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the first transaction");
+    let hashes = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let submitted = submissions.lock().unwrap().clone();
+            if submitted.len() == 2 {
+                break submitted
+                    .iter()
+                    .map(|params| keccak256(hex::decode(params[0].as_str().unwrap()).unwrap()))
+                    .collect::<Vec<_>>();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not submit the second transaction");
+    for hash in &hashes {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while provider.get_transaction_receipt(*hash).await.unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a submitted transaction was not mined");
+    }
+    // Mining does not guarantee Forge has finished checkpointing the second submission.
+    let (recovery, planned) = tokio::time::timeout(Duration::from_secs(30), async {
+        let second_hash = serde_json::to_value(hashes[1]).unwrap();
+        loop {
+            if let Ok(recovery) =
+                foundry_common::fs::read_json_file::<Value>(&prj.root().join(snapshot))
+                && recovery["data"]["sequence"]["transactions"][1]["hash"] == second_hash
+                && let Ok(planned) =
+                    foundry_common::fs::read_json_file::<Value>(&prj.root().join(broadcast))
+                && planned["transactions"][1]["hash"] == second_hash
+                && !prj.root().join(snapshot).with_extension("pending").exists()
+            {
+                break (recovery, planned);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("second submission was not checkpointed in the snapshot and broadcast export");
+    assert!(child.is_running(), "forge exited before it could be interrupted");
+    drop(child.kill_and_wait());
+    release.notify_one();
+
+    // Both operations have durable signed attempts, so resuming needs no signer.
+    let attempts = recovery["deployments"][0]["attempts"].as_array().unwrap();
+    assert_eq!(attempts.len(), 2);
+    assert!(attempts.iter().all(|attempt| attempt["kind"]["kind"] == "signed"));
+    assert!(!prj.root().join(snapshot).with_extension("pending").exists());
+    let planned_addresses = planned["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tx| tx["contractAddress"].as_str().unwrap().parse::<Address>().unwrap())
+        .collect::<Vec<_>>();
+
+    // The fresh checkout has sources only, plus the transferred snapshot.
+    let fresh = TestProject::new("handoff-fresh-checkout", PathStyle::Dapptools);
+    prj.copy_to(fresh.root());
+    assert!(!fresh.root().join(broadcast).exists());
+    assert!(!fresh.root().join(sensitive).exists());
+    fs::create_dir_all(fresh.root().join(snapshot).parent().unwrap()).unwrap();
+    fs::copy(prj.root().join(snapshot), fresh.root().join(snapshot)).unwrap();
+
+    let mut cmd = fresh.forge_command();
+    cmd.arg("script").arg(fresh.root().join("script/HandoffResume.s.sol")).args([
+        "--tc",
+        "HandoffResume",
+        "--rpc-url",
+        &rpc,
+        "--resume",
+    ]);
+    for var in ["ETH_FROM", "ETH_KEYSTORE", "ETH_KEYSTORE_ACCOUNT", "ETH_PASSWORD"] {
+        cmd.unset_env(var);
+    }
+    cmd.assert_success();
+
+    // Both mined attempts are reconciled without sending anything, and the exports are rebuilt in
+    // the fresh checkout with the original identities.
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let sequence: Value =
+        foundry_common::fs::read_json_file(&fresh.root().join(broadcast)).unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let transactions = sequence["transactions"].as_array().unwrap();
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(transactions.len(), 2);
+    assert_eq!(receipts.len(), 2);
+    for (index, transaction) in transactions.iter().enumerate() {
+        for field in ["from", "nonce", "input", "value", "gas", "chainId"] {
+            assert_eq!(
+                transaction["transaction"][field],
+                planned["transactions"][index]["transaction"][field],
+                "{field}"
+            );
+        }
+        let address = transaction["contractAddress"].as_str().unwrap().parse::<Address>().unwrap();
+        assert_eq!(address, planned_addresses[index]);
+        assert!(!provider.get_code_at(address).await.unwrap().is_empty());
+    }
+    let mut receipt_hashes = receipts
+        .iter()
+        .map(|receipt| receipt["transactionHash"].as_str().unwrap().parse::<B256>().unwrap())
+        .collect::<Vec<_>>();
+    receipt_hashes.sort();
+    let mut expected = hashes.clone();
+    expected.sort();
+    assert_eq!(receipt_hashes, expected);
+    assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
+    assert!(fresh.root().join(sensitive).exists());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
 }
