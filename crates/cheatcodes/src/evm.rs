@@ -25,7 +25,7 @@ use foundry_common::{
 };
 use foundry_evm_core::{
     FoundryBlock, FoundryChain, FoundryTransaction,
-    backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
+    backend::{DatabaseError, DatabaseExt, JournaledState, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     eip2935::{
         HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
@@ -1303,7 +1303,9 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
         let from = sender;
 
-        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        without_snapshot_tracking(ccx, |ccx| {
+            executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)
+        })?;
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
 
@@ -1414,13 +1416,9 @@ impl Cheatcode for executeTransactionCall {
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = prepare_child_state(ccx.ecx.journal_inner());
 
-        // A fresh transaction owns an independent journal. Do not let snapshot bookkeeping from an
-        // enclosing isolated call cross into it or vice versa.
-        let track_isolated_snapshots = ccx.state.track_isolated_snapshots;
-        ccx.state.track_isolated_snapshots = false;
         let mut res = None;
         let mut cold_state = Some(cold_state);
-        let nested_evm_env = {
+        let nested_evm_env = without_snapshot_tracking(ccx, |ccx| {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
             executor.with_fresh_nested_evm(
                 ccx.state,
@@ -1436,8 +1434,7 @@ impl Cheatcode for executeTransactionCall {
                     Ok(())
                 },
             )
-        };
-        ccx.state.track_isolated_snapshots = track_isolated_snapshots;
+        });
         let mut nested_evm_env = nested_evm_env?;
         let res = res.unwrap();
 
@@ -1658,6 +1655,38 @@ fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt
     ccx.ecx.chain_mut().clear_transaction_fee_cache();
 }
 
+/// Records the journal replaced by a snapshot restoration so that a failing enclosing frame can
+/// reinstate it and unwind the restoration together with its own writes.
+fn track_snapshot_restore<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    journaled_state: JournaledState,
+    restored: &JournaledState,
+) {
+    if !ccx.state.track_isolated_snapshots {
+        return;
+    }
+    if std::mem::take(&mut ccx.state.capture_isolated_snapshot_restore) {
+        ccx.state.isolated_snapshot_restores.push(journaled_state);
+    }
+    // The suspended parent of an isolated call adopts the restored journal on success.
+    if ccx.state.in_isolation_context {
+        ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
+    }
+}
+
+/// Runs a fresh nested transaction with snapshot restoration tracking suspended. Its journal is
+/// independent of the enclosing one, so restorations made inside it must neither be unwound by
+/// nor adopted into enclosing frames.
+fn without_snapshot_tracking<FEN: FoundryEvmNetwork, R>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    f: impl FnOnce(&mut CheatsCtxt<'_, '_, FEN>) -> R,
+) -> R {
+    let track_isolated_snapshots = std::mem::take(&mut ccx.state.track_isolated_snapshots);
+    let res = f(ccx);
+    ccx.state.track_isolated_snapshots = track_isolated_snapshots;
+    res
+}
+
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
@@ -1672,10 +1701,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        if ccx.state.track_isolated_snapshots {
-            ccx.state.isolated_snapshot_restores.push(journaled_state);
-            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
-        }
+        track_snapshot_restore(ccx, journaled_state, &restored);
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {
@@ -1719,10 +1745,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        if ccx.state.track_isolated_snapshots {
-            ccx.state.isolated_snapshot_restores.push(journaled_state);
-            ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
-        }
+        track_snapshot_restore(ccx, journaled_state, &restored);
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         {

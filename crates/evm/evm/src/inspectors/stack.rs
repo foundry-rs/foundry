@@ -486,7 +486,8 @@ pub struct InspectorStackInner {
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
     /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
     pending_call_traces: Vec<PendingCallTrace>,
-    /// LIFO stack used to unwind snapshot restoration across reverted isolated frames.
+    /// LIFO stack used to unwind snapshot restoration across reverted frames of the tracked
+    /// transaction: an isolated call, or the top-level transaction when isolation is disabled.
     isolated_frame_checkpoints: Vec<IsolatedFrameCheckpoint>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
@@ -526,12 +527,26 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> Result<(), EVMError<DatabaseError>> {
         let previous = self.synthetic_create_depth;
         let create2_redirects = self.pending_create2_redirects.len();
+        let snapshot_checkpoints = self.isolated_frame_checkpoints.len();
+        let snapshot_restores = cheats.isolated_snapshot_restores.len();
+        let pending_snapshot_journal = cheats
+            .track_isolated_snapshots
+            .then(|| cheats.pending_isolated_snapshot_journal.clone());
+        let capture_snapshot_restore = cheats.capture_isolated_snapshot_restore;
         self.synthetic_create_depth = (ecx.journal().depth() == 1).then_some(2);
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let result = with_inherited_evm::<FEN::EvmFactory, _>(ecx, &mut inspector, f);
         self.synthetic_create_depth = previous;
         // Drop redirects left behind if nested execution aborted before their frames ended.
         self.pending_create2_redirects.truncate(create2_redirects);
+        if result.is_err()
+            && let Some(pending_snapshot_journal) = pending_snapshot_journal
+        {
+            self.isolated_frame_checkpoints.truncate(snapshot_checkpoints);
+            cheats.isolated_snapshot_restores.truncate(snapshot_restores);
+            cheats.pending_isolated_snapshot_journal = pending_snapshot_journal;
+            cheats.capture_isolated_snapshot_restore = capture_snapshot_restore;
+        }
         result
     }
 
@@ -1460,6 +1475,31 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
+    /// Starts tracking snapshot restorations for a top-level transaction when isolation is
+    /// disabled, so that a failing frame unwinds them as it does inside an isolated call.
+    fn start_top_level_snapshot_tracking(&mut self, ecx: &FoundryContextFor<'_, FEN>) {
+        if self.enable_isolation || self.in_inner_context || ecx.journal().depth() != 0 {
+            return;
+        }
+        let Some(cheats) = self.cheatcodes.as_deref_mut() else { return };
+        cheats.pending_isolated_snapshot_journal = None;
+        cheats.track_isolated_snapshots = true;
+        cheats.isolated_snapshot_restores.clear();
+        self.inner.isolated_frame_checkpoints.clear();
+    }
+
+    /// Stops tracking snapshot restorations at the end of a non-isolated top-level transaction.
+    fn finish_top_level_snapshot_tracking(&mut self) {
+        if self.enable_isolation {
+            return;
+        }
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.track_isolated_snapshots = false;
+            cheats.isolated_snapshot_restores.clear();
+        }
+        self.inner.isolated_frame_checkpoints.clear();
+    }
+
     fn finish_isolated_snapshot_frame(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         let Some(frame) = self.inner.isolated_frame_checkpoints.pop() else { return };
 
@@ -1467,13 +1507,22 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && let Some(cheats) = self.cheatcodes.as_deref_mut()
             && cheats.isolated_snapshot_restores.len() > frame.restore_len
         {
-            let mut reverted = cheats.isolated_snapshot_restores.split_off(frame.restore_len);
-            let mut journal = reverted.remove(0);
+            cheats.isolated_snapshot_restores.truncate(frame.restore_len + 1);
+            let mut journal = cheats.isolated_snapshot_restores.pop().unwrap();
             journal.checkpoint_revert(frame.checkpoint);
             journal.depth = frame.return_depth;
-            cheats.pending_isolated_snapshot_journal =
-                (!cheats.isolated_snapshot_restores.is_empty()).then(|| journal.journal.clone());
+            if cheats.isolated_snapshot_restores.is_empty() {
+                cheats.pending_isolated_snapshot_journal = None;
+            }
             ecx.set_journal_inner(journal);
+        }
+
+        // The caller only needs the first restoration made since it started, so drop the ones a
+        // finished call captured after it. This bounds the retained journals by the call depth.
+        if let Some(caller) = self.inner.isolated_frame_checkpoints.last()
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+        {
+            cheats.isolated_snapshot_restores.truncate(caller.restore_len + 1);
         }
 
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
@@ -1575,18 +1624,27 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         frame_input: &mut FrameInput,
     ) -> Option<FrameResult> {
-        if self.cheatcodes.as_deref().is_some_and(|cheats| cheats.track_isolated_snapshots) {
+        self.start_top_level_snapshot_tracking(ecx);
+        if let Some(cheats) = self.cheatcodes.as_deref_mut()
+            && cheats.track_isolated_snapshots
+        {
             let journal = ecx.journal_inner();
+            let restore_len = cheats.isolated_snapshot_restores.len();
+            // Unwinding a frame only needs the first restoration made inside it, so a restoration
+            // requested by this call is captured only if none was captured since its caller
+            // started.
+            cheats.capture_isolated_snapshot_restore = self
+                .inner
+                .isolated_frame_checkpoints
+                .last()
+                .is_none_or(|caller| caller.restore_len == restore_len);
             self.inner.isolated_frame_checkpoints.push(IsolatedFrameCheckpoint {
                 checkpoint: JournalCheckpoint {
                     log_i: journal.logs.len(),
                     journal_i: journal.journal.len(),
                     selfdestructed_i: journal.selfdestructed_addresses.len(),
                 },
-                restore_len: self
-                    .cheatcodes
-                    .as_deref()
-                    .map_or(0, |cheats| cheats.isolated_snapshot_restores.len()),
+                restore_len,
                 return_depth: journal.depth,
                 is_create: matches!(frame_input, FrameInput::Create(_)),
                 failed: false,
@@ -1687,6 +1745,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let failed = std::mem::take(&mut self.inner.top_level_frame_failed_before_rewrite)
                 || !result.is_ok();
             self.top_level_frame_end(ecx, failed);
+            self.finish_top_level_snapshot_tracking();
         }
     }
 
