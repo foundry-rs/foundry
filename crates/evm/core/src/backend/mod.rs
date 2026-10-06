@@ -3634,14 +3634,7 @@ mod tests {
                 sender,
                 AccountInfo { balance: U256::from(10).pow(U256::from(18)), ..Default::default() },
             );
-            fork.db.insert_account_info(
-                recorder,
-                AccountInfo {
-                    code_hash: code.hash_slow(),
-                    code: Some(code.clone()),
-                    ..Default::default()
-                },
-            );
+            fork.db.insert_account_info(recorder, AccountInfo::default().with_code(code.clone()));
             for address in base_code_sentinel_addresses(BaseUpgrade::Beryl).chain([
                 Address::ZERO,
                 Predeploys::L1_BLOCK_INFO,
@@ -4187,33 +4180,12 @@ mod tests {
         let mut fork = fork_with_closed_backend();
         fork.db.insert_account_info(deposit_sender, AccountInfo::default());
         fork.db.insert_account_info(sender, AccountInfo::default());
-        fork.db.insert_account_info(
-            destroyer,
-            AccountInfo {
-                code_hash: destroyer_code.hash_slow(),
-                code: Some(destroyer_code),
-                ..Default::default()
-            },
-        );
-        fork.db.insert_account_info(
-            recorder,
-            AccountInfo {
-                code_hash: recorder_code.hash_slow(),
-                code: Some(recorder_code),
-                ..Default::default()
-            },
-        );
+        fork.db.insert_account_info(destroyer, AccountInfo::default().with_code(destroyer_code));
+        fork.db.insert_account_info(recorder, AccountInfo::default().with_code(recorder_code));
         let sentinel = revm::bytecode::Bytecode::new_legacy(Bytes::from_static(
             crate::constants::SYSTEM_PRECOMPILE_STUB,
         ));
-        fork.db.insert_account_info(
-            registry,
-            AccountInfo {
-                code_hash: sentinel.hash_slow(),
-                code: Some(sentinel),
-                ..Default::default()
-            },
-        );
+        fork.db.insert_account_info(registry, AccountInfo::default().with_code(sentinel));
         for address in base_code_sentinel_addresses(BaseUpgrade::Beryl).chain([
             Address::ZERO,
             Predeploys::L1_BLOCK_INFO,
