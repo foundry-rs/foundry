@@ -6496,3 +6496,88 @@ accepted candidate: cache/fuzz-improve/0x86baaa33c9eb6ccc1a31ef1518b82d78f1d0db2
     assert!(candidate.contains("ArithmeticLowerTest"));
     assert!(candidate.contains("ArithmeticUpperTest"));
 }
+
+#[cfg(unix)]
+#[forgetest_init]
+fn fuzz_improve_keeps_end_of_long_generator_stderr(prj: _, cmd: _) {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    const GENERATOR: &str = r#"#!/bin/sh
+i=0
+while [ "$i" -lt 100 ]; do
+    echo "banner line $i padded to push the decisive error past the first characters" >&2
+    i=$((i + 1))
+done
+echo "decisive-error-marker" >&2
+exit 1
+"#;
+
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "fuzz",
+        "improve",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+    ]);
+    cmd.assert_success().stdout_eq(str![[r#"
+no candidate reproducibly resolved a mutation survivor
+
+"#]]);
+
+    let rounds: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(prj.root().join("cache/fuzz-improve/rounds.json")).unwrap(),
+    )
+    .unwrap();
+    let reason = rounds[0]["reasons"][0].as_str().unwrap();
+    assert!(reason.starts_with("generator failed: banner line 0 "), "{reason}");
+    assert!(reason.ends_with("decisive-error-marker"), "{reason}");
+}

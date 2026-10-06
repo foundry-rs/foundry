@@ -1039,6 +1039,17 @@ fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path)
     }
 }
 
+/// Returns stderr, keeping both ends when it is long: tools often print banners or warnings before
+/// the decisive error, while compilers print the first error at the start.
 fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).trim().chars().take(2_000).collect()
+    const HALF: usize = 1_000;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    let chars = stderr.chars().count();
+    if chars <= 2 * HALF {
+        return stderr.to_string();
+    }
+    let head = stderr.chars().take(HALF).collect::<String>();
+    let tail = stderr.chars().skip(chars - HALF).collect::<String>();
+    format!("{head}\n[...]\n{tail}")
 }
