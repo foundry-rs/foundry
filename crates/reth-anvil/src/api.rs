@@ -236,6 +236,14 @@ pub trait AnvilApi {
         value: B256,
     ) -> RpcResult<bool>;
 
+    /// Makes every transaction carrying `signature` recover to `address`.
+    #[method(name = "impersonateSignature")]
+    async fn anvil_impersonate_signature(
+        &self,
+        signature: Bytes,
+        address: Address,
+    ) -> RpcResult<()>;
+
     /// Returns the state of the chain as gzipped JSON.
     #[method(name = "dumpState")]
     async fn anvil_dump_state(&self, preserve_historical_states: Option<bool>) -> RpcResult<Bytes>;
@@ -251,6 +259,22 @@ pub trait EvmApi {
     /// Mines blocks and returns `"0x0"`, as Hardhat does.
     #[method(name = "mine")]
     async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String>;
+}
+
+/// The `eth_*` methods anvil adds on top of the standard namespace.
+#[rpc(server, namespace = "eth")]
+pub trait EthExtApi {
+    /// Sends a transaction from `from` without a signature, as if the account were impersonated.
+    #[method(name = "sendUnsignedTransaction")]
+    async fn eth_send_unsigned_transaction(&self, request: TransactionRequest) -> RpcResult<B256>;
+}
+
+/// The `personal_*` namespace.
+#[rpc(server, namespace = "personal")]
+pub trait PersonalApi {
+    /// Signs `message` with `address`, like `eth_sign` with the parameters swapped.
+    #[method(name = "sign")]
+    async fn personal_sign(&self, message: Bytes, address: Address) -> RpcResult<Bytes>;
 }
 
 /// Implementation of the `anvil_*` RPC namespace.
@@ -884,6 +908,18 @@ where
         Ok(true)
     }
 
+    async fn anvil_impersonate_signature(
+        &self,
+        signature: Bytes,
+        address: Address,
+    ) -> RpcResult<()> {
+        if signature.len() != 65 {
+            return Err(invalid_params("signature must be 65 bytes"));
+        }
+        self.impersonation.add_signature_override(signature, address);
+        Ok(())
+    }
+
     async fn anvil_dump_state(
         &self,
         _preserve_historical_states: Option<bool>,
@@ -982,6 +1018,39 @@ where
     async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String> {
         self.anvil_mine_detailed(opts).await?;
         Ok("0x0".to_string())
+    }
+}
+
+#[async_trait]
+impl<Pool, Provider, Eth> EthExtApiServer for AnvilRpc<Pool, Provider, Eth>
+where
+    Pool: Send + Sync + 'static,
+    Provider: Send + Sync + 'static,
+    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+{
+    async fn eth_send_unsigned_transaction(&self, request: TransactionRequest) -> RpcResult<B256> {
+        let from = request.from.ok_or_else(|| invalid_params("missing `from` address"))?;
+        let impersonated = self.impersonation.is_impersonated(&from);
+        if !impersonated {
+            self.impersonation.impersonate(from);
+        }
+        let result = EthApiServer::send_transaction(&self.eth, request).await;
+        if !impersonated {
+            self.impersonation.stop_impersonating(from);
+        }
+        result
+    }
+}
+
+#[async_trait]
+impl<Pool, Provider, Eth> PersonalApiServer for AnvilRpc<Pool, Provider, Eth>
+where
+    Pool: Send + Sync + 'static,
+    Provider: Send + Sync + 'static,
+    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+{
+    async fn personal_sign(&self, message: Bytes, address: Address) -> RpcResult<Bytes> {
+        EthApiServer::sign(&self.eth, address, message).await
     }
 }
 

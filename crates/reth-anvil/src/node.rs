@@ -1,5 +1,5 @@
 use crate::{
-    api::{AnvilApiServer, AnvilRpc, EvmApiServer},
+    api::{AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, PersonalApiServer},
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     eth_api::EthApi,
@@ -170,10 +170,12 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
             http_addr: address.ip(),
             http_port: address.port(),
             http_corsdomain: Some("*".to_string()),
+            http_api: Some(RpcModuleSelection::All),
             ws: true,
             ws_addr: address.ip(),
             ws_port: address.port(),
             ws_allowed_origins: Some("*".to_string()),
+            ws_api: Some(RpcModuleSelection::All),
             ipcdisable: true,
             disable_auth_server: true,
             ..Default::default()
@@ -260,16 +262,22 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
                     eth_api,
                 );
                 let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
-                let evm_module = EvmApiServer::into_rpc(rpc);
+                let evm_module = EvmApiServer::into_rpc(rpc.clone());
+                let eth_module = EthExtApiServer::into_rpc(rpc.clone());
+                let personal_module = PersonalApiServer::into_rpc(rpc);
 
                 // The in-process API calls the same handlers the servers do.
                 let mut module = ctx.registry.module_for(&RpcModuleSelection::All);
                 module.merge(anvil_module.clone())?;
                 module.merge(evm_module.clone())?;
+                module.merge(eth_module.clone())?;
+                module.merge(personal_module.clone())?;
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
                 ctx.modules.merge_configured(anvil_module)?;
                 ctx.modules.merge_configured(evm_module)?;
+                ctx.modules.merge_configured(eth_module)?;
+                ctx.modules.merge_configured(personal_module)?;
                 Ok(())
             }
         });

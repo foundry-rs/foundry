@@ -1401,3 +1401,114 @@ async fn estimate_gas_charges_account_creation_state_gas_on_amsterdam() -> Resul
 
     Ok(())
 }
+
+#[tokio::test]
+async fn eth_send_unsigned_transaction_sends_from_any_account() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let sender = Address::with_last_byte(0xa1);
+        let recipient = Address::with_last_byte(0xa2);
+
+        // Fund the sender, which the node does not hold a key for.
+        let mut funding = transfer(funder, sender, gas_price);
+        funding.value = Some(U256::from(10u64).pow(U256::from(18)));
+        let funding_tx: B256 = client.request("eth_sendTransaction", rpc_params![funding]).await?;
+        wait_for_receipt(&client, funding_tx).await?;
+
+        let tx_hash: B256 = client
+            .request(
+                "eth_sendUnsignedTransaction",
+                rpc_params![transfer(sender, recipient, gas_price)],
+            )
+            .await?;
+        let receipt = wait_for_receipt(&client, tx_hash).await?;
+        assert_eq!(receipt["status"], "0x1");
+        assert_eq!(
+            receipt["from"].as_str().map(str::to_lowercase),
+            Some(sender.to_string().to_lowercase())
+        );
+        assert_eq!(balance(&client, recipient, "latest").await?, U256::from(1));
+
+        // The account is not left impersonated.
+        let err = client
+            .request::<B256, _>(
+                "eth_sendTransaction",
+                rpc_params![transfer(sender, recipient, gas_price)],
+            )
+            .await
+            .expect_err("the sender is not impersonated after the unsigned send");
+        assert!(!err.to_string().is_empty());
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn impersonate_signature_attributes_raw_transactions() -> Result<()> {
+    use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::Signature;
+
+    with_test_client(|client| async move {
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let sender = Address::with_last_byte(0xb1);
+        let recipient = Address::with_last_byte(0xb2);
+        let mut funding = transfer(funder, sender, gas_price);
+        funding.value = Some(U256::from(10u64).pow(U256::from(18)));
+        let funding_tx: B256 = client.request("eth_sendTransaction", rpc_params![funding]).await?;
+        wait_for_receipt(&client, funding_tx).await?;
+
+        let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
+        let tx = TxEip1559 {
+            chain_id: chain_id.to(),
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: gas_price,
+            max_priority_fee_per_gas: 1,
+            to: recipient.into(),
+            value: U256::from(1),
+            ..Default::default()
+        };
+        // Any well-formed signature does: the override decides the sender.
+        let signature = Signature::new(U256::from(1), U256::from(2), false);
+        client
+            .request::<(), _>(
+                "anvil_impersonateSignature",
+                rpc_params![Bytes::from(signature.as_bytes().to_vec()), sender],
+            )
+            .await?;
+        let envelope: TxEnvelope = tx.into_signed(signature).into();
+        let raw = Bytes::from(envelope.encoded_2718());
+        let tx_hash: B256 = client.request("eth_sendRawTransaction", rpc_params![raw]).await?;
+        let receipt = wait_for_receipt(&client, tx_hash).await?;
+        assert_eq!(receipt["status"], "0x1");
+        assert_eq!(
+            receipt["from"].as_str().map(str::to_lowercase),
+            Some(sender.to_string().to_lowercase())
+        );
+        assert_eq!(balance(&client, recipient, "latest").await?, U256::from(1));
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn personal_sign_and_erigon_header_match_eth_namespace() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, _) = funder_and_gas_price(&client).await?;
+        let message = Bytes::from_static(b"reth-anvil");
+        let eth_sign: Bytes =
+            client.request("eth_sign", rpc_params![funder, message.clone()]).await?;
+        let personal: Bytes = client.request("personal_sign", rpc_params![message, funder]).await?;
+        assert_eq!(eth_sign, personal);
+
+        let eth_header: Value =
+            client.request("eth_getHeaderByNumber", rpc_params!["latest"]).await?;
+        let erigon_header: Value =
+            client.request("erigon_getHeaderByNumber", rpc_params!["latest"]).await?;
+        assert_eq!(eth_header, erigon_header);
+        assert_eq!(erigon_header["number"], "0x0");
+        Ok(())
+    })
+    .await
+}

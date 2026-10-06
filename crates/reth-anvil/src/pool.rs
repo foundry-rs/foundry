@@ -20,7 +20,7 @@ use reth_ethereum::{
         error::{InvalidPoolTransactionError, PoolTransactionError},
         validate::ValidTransaction,
     },
-    primitives::{BlockBody, SealedBlock},
+    primitives::{BlockBody, Recovered, SealedBlock},
 };
 use std::{
     any::Any,
@@ -43,7 +43,7 @@ impl<V: Debug> Debug for AnvilValidator<V> {
 impl<V> TransactionValidator for AnvilValidator<V>
 where
     V: TransactionValidator,
-    V::Transaction: PoolTransaction,
+    V::Transaction: PoolTransaction<Consensus = TransactionSigned>,
 {
     type Transaction = V::Transaction;
     type Block = V::Block;
@@ -58,6 +58,32 @@ where
                 transaction,
                 InvalidPoolTransactionError::Other(Box::new(RevertedTransaction)),
             );
+        }
+        // A signature override attributes the transaction to the chosen sender. The pool keeps
+        // the recovered sender for ordering; execution and lookups use the override.
+        let signature_sender = if self.state.has_signature_overrides() {
+            self.state.signature_override(transaction.clone_into_consensus().signature())
+        } else {
+            None
+        };
+        if let Some(sender) = signature_sender {
+            self.state.remember_tx_sender(*transaction.hash(), sender);
+            // Rebuild the pool transaction with the chosen sender, so the block builder executes
+            // it from that account.
+            let (tx, _) = transaction.clone_into_consensus().into_parts();
+            let transaction =
+                match Self::Transaction::try_from_consensus(Recovered::new_unchecked(tx, sender)) {
+                    Ok(rebuilt) => rebuilt,
+                    Err(_) => transaction,
+                };
+            return TransactionValidationOutcome::Valid {
+                balance: U256::MAX,
+                state_nonce: transaction.nonce(),
+                bytecode_hash: None,
+                transaction: ValidTransaction::Valid(transaction),
+                propagate: true,
+                authorities: None,
+            };
         }
         if self.state.is_impersonated(&transaction.sender()) {
             self.state.remember_tx_sender(*transaction.hash(), transaction.sender());

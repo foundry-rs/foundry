@@ -1,7 +1,7 @@
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, B256, Signature};
+use alloy_primitives::{Address, B256, Bytes, Signature};
 use alloy_signer::Result as SignerResult;
 use jsonrpsee::core::async_trait;
 use parking_lot::RwLock;
@@ -30,9 +30,30 @@ struct Inner {
     /// Transactions that a revert removed from the chain. The pool rejects them so a reorg does
     /// not bring them back.
     dropped_txs: HashSet<B256>,
+    /// Signatures that recover to a chosen sender, set by `anvil_impersonateSignature`.
+    signature_overrides: HashMap<Bytes, Address>,
 }
 
 impl ImpersonationState {
+    /// Makes every transaction carrying `signature` recover to `address`.
+    pub fn add_signature_override(&self, signature: Bytes, address: Address) {
+        self.inner.write().signature_overrides.insert(signature, address);
+    }
+
+    /// Returns whether any signature overrides are set.
+    pub fn has_signature_overrides(&self) -> bool {
+        !self.inner.read().signature_overrides.is_empty()
+    }
+
+    /// Returns the sender a signature override assigns to `signature`, if any.
+    pub fn signature_override(&self, signature: &Signature) -> Option<Address> {
+        let inner = self.inner.read();
+        if inner.signature_overrides.is_empty() {
+            return None;
+        }
+        inner.signature_overrides.get(signature.as_bytes().as_slice()).copied()
+    }
+
     /// Marks transactions that a revert removed from the chain.
     pub fn drop_txs(&self, hashes: impl IntoIterator<Item = B256>) {
         self.inner.write().dropped_txs.extend(hashes);
