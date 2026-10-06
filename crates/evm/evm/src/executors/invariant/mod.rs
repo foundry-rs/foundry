@@ -383,7 +383,7 @@ fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
         seed
     } else {
         let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        U256::from_be_bytes(keccak256(seed_data).0)
+        keccak256(seed_data).into()
     }
 }
 

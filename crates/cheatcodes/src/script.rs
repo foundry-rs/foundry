@@ -107,12 +107,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
     let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.chain_id()) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
-    let signed_auth = SignedAuthorization::new_unchecked(
-        auth,
-        *v,
-        U256::from_be_bytes(r.0),
-        U256::from_be_bytes(s.0),
-    );
+    let signed_auth = SignedAuthorization::new_unchecked(auth, *v, (*r).into(), (*s).into());
     write_delegation(ccx, signed_auth.clone())?;
     ccx.state.add_delegation(signed_auth);
     Ok(Default::default())

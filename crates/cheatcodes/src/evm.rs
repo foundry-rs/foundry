@@ -1264,7 +1264,7 @@ impl Cheatcode for getStorageSlotsCall {
                     let length = usize::try_from(length)
                         .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
                     let num_data_slots = length.div_ceil(32);
-                    let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
+                    let data_start = Into::<U256>::into(keccak256(B256::from(slot).0));
 
                     for i in 0..num_data_slots {
                         slots.push(data_start + U256::from(i));
@@ -2122,7 +2122,7 @@ fn encode_short_string(bytes: &[u8]) -> U256 {
 }
 
 fn solidity_dynamic_data_slot(base_slot: U256) -> U256 {
-    U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
+    Into::<U256>::into(keccak256(base_slot.to_be_bytes::<32>()))
 }
 
 const fn is_long_string(slot_value: U256) -> bool {
