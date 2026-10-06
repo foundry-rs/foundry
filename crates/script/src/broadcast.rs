@@ -3,7 +3,7 @@ use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
-    progress::ScriptProgress,
+    progress::{PredecessorOperation, ScriptProgress},
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{ScriptSequenceKind, completed_transaction_prefix},
     session::{
@@ -21,7 +21,7 @@ use alloy_network::{
     TransactionResponse,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, TxHash, TxKind, U256, keccak256,
+    Address, Bytes, TxHash, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressHashSet, HashMap},
     utils::format_units,
 };
@@ -462,7 +462,7 @@ where
         .collect()
 }
 
-/// Returns the operation hashes used to detect transactions queued behind a missing predecessor.
+/// Returns unreceipted operations across sequences sharing the RPC endpoint.
 ///
 /// Tempo nonce keys and expiring nonces do not follow the sequential account nonce, so detection is
 /// disabled there.
@@ -470,11 +470,34 @@ pub(crate) fn predecessor_hashes<N: Network>(
     sequence: &ScriptSequenceKind<N>,
     sequence_index: usize,
     tempo: bool,
-) -> Vec<Option<B256>>
+) -> Vec<PredecessorOperation>
 where
     N::TxEnvelope: for<'de> serde::Deserialize<'de> + serde::Serialize,
 {
-    if tempo { Vec::new() } else { sequence.operation_hashes(sequence_index) }
+    if tempo {
+        return Vec::new();
+    }
+    let rpc = sequence.sequences()[sequence_index].rpc_url();
+    sequence
+        .sequences()
+        .iter()
+        .enumerate()
+        .filter(|(_, deployment)| deployment.rpc_url() == rpc)
+        .flat_map(|(index, deployment)| {
+            deployment.transactions.iter().enumerate().filter_map(
+                move |(operation, transaction)| {
+                    let hash = sequence.operation_hash(index, operation);
+                    if hash.is_some_and(|hash| {
+                        deployment.receipts.iter().any(|receipt| receipt.transaction_hash() == hash)
+                    }) {
+                        return None;
+                    }
+                    let tx = transaction.tx();
+                    Some((tx.from()?, tx.nonce()?, hash))
+                },
+            )
+        })
+        .collect()
 }
 
 fn remaining_sender_addresses<N: Network>(sequence: &ScriptSequenceKind<N>) -> AddressHashSet
@@ -1812,10 +1835,11 @@ fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::multi_sequence::MultiChainSequence;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_eips::BlockId;
     use alloy_network::Ethereum;
-    use alloy_primitives::{Bloom, address, hex};
+    use alloy_primitives::{B256, Bloom, address, hex};
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
@@ -2263,5 +2287,47 @@ mod tests {
             to: None,
             contract_address: None,
         }
+    }
+
+    #[test]
+    fn predecessor_hashes_span_matching_rpc_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let sender = Address::repeat_byte(0x11);
+        let other = Address::repeat_byte(0x22);
+        let hashes = [B256::repeat_byte(1), B256::repeat_byte(2), B256::repeat_byte(3)];
+        let deployments = ["rpc-a", "rpc-b", "rpc-a"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, rpc)| {
+                let mut tx = TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(
+                    TransactionRequest::default()
+                        .from(if index == 1 { other } else { sender })
+                        .nonce(index as u64),
+                ));
+                tx.rpc = rpc.into();
+                tx.hash = Some(hashes[index]);
+                ScriptSequence::<Ethereum> {
+                    chain: 1,
+                    transactions: [tx].into(),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let sequence = ScriptSequenceKind::new_multi(
+            MultiChainSequence {
+                deployments,
+                path: dir.path().join("broadcast.json"),
+                sensitive_path: dir.path().join("cache.json"),
+                timestamp: 0,
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            predecessor_hashes(&sequence, 2, false),
+            vec![(sender, 0, Some(hashes[0])), (sender, 2, Some(hashes[2]))]
+        );
+        assert_eq!(predecessor_hashes(&sequence, 1, false), vec![(other, 1, Some(hashes[1]))]);
+        assert!(predecessor_hashes(&sequence, 2, true).is_empty());
     }
 }
