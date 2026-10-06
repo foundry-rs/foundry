@@ -1485,7 +1485,13 @@ contract Root {
         }];
     });
 
-    cmd.args(["test", "--match-path", "test/RootTest.sol"]).assert_success();
+    cmd.args(["test", "--match-path", "test/RootTest.sol"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RootTest.sol:RootTest
+[PASS] testFoo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -3943,7 +3949,16 @@ Ran 4 tests for test/Options.t.sol:OptionsTest
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-        cmd.forge_fuse().args(["test", "--force"]).assert_failure();
+        cmd.forge_fuse().args(["test", "--force"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 4 tests for test/Options.t.sol:OptionsTest
+[FAIL: changed arguments] test_arguments() ([GAS])
+[FAIL: changed salt] test_salt() ([GAS])
+[FAIL: changed try value] test_try() ([GAS])
+[FAIL: changed value] test_value() ([GAS])
+Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     }
 }
 
@@ -4007,7 +4022,14 @@ Ran 2 tests for test/Parameters.t.sol:ParametersTest
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-        cmd.forge_fuse().args(["test", "--force"]).assert_failure();
+        cmd.forge_fuse().args(["test", "--force"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Parameters.t.sol:ParametersTest
+[FAIL: changed named] test_named() ([GAS])
+[FAIL: changed positional] test_positional() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     }
 }
 

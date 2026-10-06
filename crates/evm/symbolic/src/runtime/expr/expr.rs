@@ -1366,7 +1366,7 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
+        self.visit_bool(|expr| expr.is_raw_gasleft())
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
@@ -1750,7 +1750,7 @@ impl SymExpr {
         context: &[SymBoolExpr],
     ) -> Option<U256> {
         let mask = masked_expr_matches(self.kind(), expr)?;
-        if value & !mask != U256::ZERO || !context_forces_masked_expr(context, expr, mask) {
+        if !(value & !mask).is_zero() || !context_forces_masked_expr(context, expr, mask) {
             return None;
         }
         Some(value)

@@ -10,9 +10,9 @@ pub struct StateSnapshots<T> {
 }
 
 impl<T> StateSnapshots<T> {
-    fn next_id(&mut self) -> U256 {
+    const fn next_id(&mut self) -> U256 {
         let id = self.id;
-        self.id = id.saturating_add(U256::from(1));
+        self.id = id.saturating_add(U256::ONE);
         id
     }
 
@@ -34,10 +34,10 @@ impl<T> StateSnapshots<T> {
         let snapshot_state = self.state_snapshots.remove(&id);
 
         // Revert all state snapshots taken after the state snapshot with the `id`
-        let mut to_revert = id + U256::from(1);
+        let mut to_revert = id + U256::ONE;
         while to_revert < self.id {
             self.state_snapshots.remove(&to_revert);
-            to_revert += U256::from(1);
+            to_revert += U256::ONE;
         }
 
         snapshot_state

@@ -10,7 +10,7 @@ use alloy_eips::{
 use alloy_network::{
     ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse, TxSignerSync,
 };
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, hex};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, address, bytes, hex};
 use alloy_provider::{
     Provider,
     ext::{DebugApi, TraceApi},
@@ -133,8 +133,8 @@ async fn monad_ten_applies_mip8_storage_gas() {
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_ten_deduplicates_access_list_storage_pages() {
     let one = B256::from(U256::ONE.to_be_bytes::<32>());
-    let two = B256::from(U256::from(2).to_be_bytes::<32>());
-    let page_one = B256::from(U256::from(129).to_be_bytes::<32>());
+    let two = B256::from(B256::with_last_byte(2).0);
+    let page_one = B256::from(B256::with_last_byte(129).0);
 
     for (config, expected_same_page_keys, gas_delta) in [
         (
@@ -404,7 +404,7 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
     // Calls dippedIntoReserve(), then stores the returned bool at the calldata-provided slot.
     api.anvil_set_code(
         RESERVE_PROBE_ADDRESS,
-        Bytes::from(hex!("633a61584e5f5260205f6004601c5f6110015af1505f515f355500")),
+        bytes!("633a61584e5f5260205f6004601c5f6110015af1505f515f355500"),
     )
     .await
     .unwrap();
@@ -431,10 +431,7 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
         .get_receipt()
         .await
         .unwrap();
-    assert_eq!(
-        provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::from(1)).await.unwrap(),
-        U256::ONE
-    );
+    assert_eq!(provider.get_storage_at(RESERVE_PROBE_ADDRESS, U256::ONE).await.unwrap(), U256::ONE);
 
     provider
         .send_transaction(reserve_probe_tx(grandparent_sender, 0, 2, first_value).into())
@@ -488,7 +485,7 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
         )
         .await
         .unwrap();
-    let slot = B256::from(U256::from(5).to_be_bytes::<32>());
+    let slot = B256::from(B256::with_last_byte(5).0);
     let state_diff = replay.state_diff.unwrap();
     let delta = &state_diff.get(&RESERVE_PROBE_ADDRESS).unwrap().storage[&slot];
     let replayed_value =
@@ -498,8 +495,8 @@ async fn monad_mining_tracks_current_and_ancestor_senders() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_reorg_replays_protocol_system_envelopes() {
-    const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
-    const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
+    const BLOCK_AUTHOR: Address = Address::repeat_byte(0x11);
+    const VALIDATOR_AUTH: Address = Address::repeat_byte(0x22);
     const VALIDATOR_ID: u64 = 7;
     const SYSTEM_NONCE: u64 = 11;
 
@@ -788,7 +785,7 @@ async fn monad_reorg_replays_raw_protocol_envelope_with_unrecoverable_signature(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_reorg_rolls_back_failed_protocol_prestate() {
-    const UNKNOWN_AUTHOR: Address = address!("0x3333333333333333333333333333333333333333");
+    const UNKNOWN_AUTHOR: Address = Address::repeat_byte(0x33);
     const SYSTEM_NONCE: u64 = 7;
 
     let (api, handle) = spawn(monad_nine_config()).await;
@@ -992,8 +989,8 @@ async fn monad_reorg_rejects_malformed_and_non_replay_system_envelopes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target() {
-    const BLOCK_AUTHOR: Address = address!("0x1111111111111111111111111111111111111111");
-    const VALIDATOR_AUTH: Address = address!("0x2222222222222222222222222222222222222222");
+    const BLOCK_AUTHOR: Address = Address::repeat_byte(0x11);
+    const VALIDATOR_AUTH: Address = Address::repeat_byte(0x22);
     const VALIDATOR_ID: u64 = 7;
 
     let origin_config = NodeConfig::test()
@@ -1013,21 +1010,15 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
     origin_api.anvil_set_nonce(SYSTEM_ADDRESS, U256::from(11)).await.unwrap();
     origin_api.anvil_set_balance(SYSTEM_ADDRESS, initial_system_balance).await.unwrap();
     origin_api.anvil_set_balance(STAKING_ADDRESS, initial_staking_balance).await.unwrap();
-    origin_api
-        .anvil_set_code(RESERVE_PROBE_ADDRESS, Bytes::from(hex!("60015f355500")))
-        .await
-        .unwrap();
+    origin_api.anvil_set_code(RESERVE_PROBE_ADDRESS, bytes!("60015f355500")).await.unwrap();
     origin_api
         .anvil_set_code(
             BALANCE_PROBE_ADDRESS,
-            Bytes::from(hex!("730000000000000000000000000000000000001000315f5260205ff3")),
+            bytes!("730000000000000000000000000000000000001000315f5260205ff3"),
         )
         .await
         .unwrap();
-    origin_api
-        .anvil_set_code(CHAIN_ID_PROBE_ADDRESS, Bytes::from(hex!("465f5260205ff3")))
-        .await
-        .unwrap();
+    origin_api.anvil_set_code(CHAIN_ID_PROBE_ADDRESS, bytes!("465f5260205ff3")).await.unwrap();
     origin_api
         .anvil_set_storage_at(
             STAKING_ADDRESS,
@@ -1307,10 +1298,7 @@ async fn monad_fork_transaction_hash_replays_protocol_system_prefix_and_target()
     let mut state_overrides = StateOverride::default();
     state_overrides.insert(
         CLZ_PROBE_ADDRESS,
-        AccountOverride {
-            code: Some(Bytes::from(hex!("60011e60005260206000f3"))),
-            ..Default::default()
-        },
+        AccountOverride { code: Some(bytes!("60011e60005260206000f3")), ..Default::default() },
     );
     let clz_trace = loaded_provider
         .debug_trace_call(
@@ -1511,7 +1499,7 @@ async fn monad_mining_tracks_eip7702_authorities() {
 
     api.anvil_set_code(
         RESERVE_PROBE_ADDRESS,
-        Bytes::from(hex!("633a61584e5f5260205f6004601c5f6110015af1505f515f355500")),
+        bytes!("633a61584e5f5260205f6004601c5f6110015af1505f515f355500"),
     )
     .await
     .unwrap();
@@ -1547,7 +1535,7 @@ async fn monad_mining_tracks_eip7702_authorities() {
         max_priority_fee_per_gas: 1_000_000_000,
         to: TxKind::Call(RESERVE_PROBE_ADDRESS),
         value: U256::from(3_000_000_000_000_000_000u128),
-        input: Bytes::copy_from_slice(&U256::from(6).to_be_bytes::<32>()),
+        input: Bytes::copy_from_slice(B256::with_last_byte(6).as_slice()),
         ..Default::default()
     };
     let signature = wallets[0].sign_transaction_sync(&mut probe).unwrap();
@@ -1579,7 +1567,7 @@ async fn monad_mining_tracks_eip7702_authorities() {
         .request("trace_replayTransaction", (probe_hash, vec![TraceType::StateDiff]))
         .await
         .unwrap();
-    let slot = B256::from(U256::from(6).to_be_bytes::<32>());
+    let slot = B256::from(B256::with_last_byte(6).0);
     let state_diff = replay.state_diff.unwrap();
     let delta = &state_diff.get(&RESERVE_PROBE_ADDRESS).unwrap().storage[&slot];
     let replayed_value =
@@ -1676,7 +1664,7 @@ async fn monad_allows_tx_gas_limit_above_eip7825_cap() {
     let tx = TransactionRequest::default()
         .with_from(accounts[0])
         .with_to(accounts[1])
-        .with_value(U256::from(1))
+        .with_value(U256::ONE)
         .with_gas_limit(gas_limit);
     let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
 
@@ -1693,7 +1681,7 @@ async fn monad_rejects_tx_gas_limit_above_monad_cap() {
     let tx = TransactionRequest::default()
         .with_from(accounts[0])
         .with_to(accounts[1])
-        .with_value(U256::from(1))
+        .with_value(U256::ONE)
         .with_gas_limit(MONAD_TX_GAS_LIMIT_CAP + 1);
     let err = provider.send_transaction(tx.into()).await.unwrap_err().to_string();
 
@@ -1707,8 +1695,7 @@ async fn monad_omitted_gas_fallback_uses_resolved_tx_gas_cap() {
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
 
-    let tx =
-        TransactionRequest::default().with_from(from).with_input(Bytes::from(hex!("60006000fd")));
+    let tx = TransactionRequest::default().with_from(from).with_input(bytes!("60006000fd"));
     let pending = provider.send_transaction(tx.into()).await.unwrap();
     let sent = provider.get_transaction_by_hash(*pending.tx_hash()).await.unwrap().unwrap();
 
@@ -2231,7 +2218,7 @@ async fn plain_anvil_rejects_reset_to_monad_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn plain_anvil_rejects_monad_reset_hidden_by_fork_chain_id() {
     let (_origin_api, origin_handle) = spawn(monad_nine_config()).await;
-    let (api, handle) = spawn(NodeConfig::test().with_fork_chain_id(Some(U256::from(1u64)))).await;
+    let (api, handle) = spawn(NodeConfig::test().with_fork_chain_id(Some(U256::ONE))).await;
     let provider = handle.http_provider();
     let marker = Address::random();
     let balance = U256::from(123_456u64);
@@ -2304,14 +2291,13 @@ async fn monad_safe_and_finalized_block_tags_use_configured_epoch_slots() {
     let latest = provider.get_block_number().await.unwrap();
     assert_eq!(latest, 8);
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, latest - slots_in_an_epoch);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, latest - slots_in_an_epoch * 2);
 
-    let fee_history = api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    let fee_history = api.fee_history(U256::ONE, BlockNumberOrTag::Safe, vec![]).await.unwrap();
     assert_eq!(fee_history.oldest_block, latest - slots_in_an_epoch);
 }
 
@@ -2324,17 +2310,16 @@ async fn monad_safe_and_finalized_block_tags_fall_back_to_genesis_before_epoch()
     api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
 
-    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    let safe = provider.get_block(BlockId::safe()).await.unwrap().unwrap();
     assert_eq!(safe.header.number, genesis.header.number);
     assert_eq!(safe.header.hash, genesis.header.hash);
 
-    let finalized =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    let finalized = provider.get_block(BlockId::finalized()).await.unwrap().unwrap();
     assert_eq!(finalized.header.number, genesis.header.number);
     assert_eq!(finalized.header.hash, genesis.header.hash);
 
     let fee_history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+        api.fee_history(U256::ONE, BlockNumberOrTag::Finalized, vec![]).await.unwrap();
     assert_eq!(fee_history.oldest_block, genesis.header.number);
 }
 

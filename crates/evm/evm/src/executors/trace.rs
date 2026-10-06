@@ -166,6 +166,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     ) -> eyre::Result<TracingFork<FEN>> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
+        // Tracing replays a specific chain history and must keep hash-addressed state.
+        evm_opts.fork_state_by_number = false;
         evm_opts.infer_network_from_fork().await?;
         let networks = evm_opts.networks;
         let (evm_env, tx_env, resolved) =

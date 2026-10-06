@@ -483,7 +483,7 @@ pub enum EthRequest {
 
     /// Trace get endpoint for parity's `trace_get`.
     #[serde(rename = "trace_get")]
-    TraceGet(B256, Vec<Index>),
+    TraceGet(B256, #[serde(deserialize_with = "trace_address::deserialize")] Vec<Index>),
 
     /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
     #[serde(rename = "trace_replayBlockTransactions")]
@@ -2082,9 +2082,19 @@ true}]}"#;
 
     #[test]
     fn test_serde_trace_get() {
-        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", [0]]}"#;
-        let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let s = r#"{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", ["0x6", "0xa0"]]}"#;
+        let req = serde_json::from_str::<EthRequest>(s).unwrap();
+        let EthRequest::TraceGet(_, indices) = req else { panic!("unexpected request {req:?}") };
+        assert_eq!(indices.into_iter().map(usize::from).collect::<Vec<_>>(), [6, 160]);
+
+        for indices in
+            [r#"[6, 0]"#, r#"["6"]"#, r#"["0x00"]"#, r#"["0x06"]"#, r#"["0xA"]"#, r#"["0x"]"#]
+        {
+            let s = format!(
+                r#"{{"method": "trace_get", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {indices}]}}"#
+            );
+            serde_json::from_str::<EthRequest>(&s).unwrap_err();
+        }
     }
 
     #[test]

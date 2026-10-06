@@ -125,11 +125,7 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         api.config().unwrap().current.precompiles.values().find(|&&address| address == P256_VERIFY),
         Some(&P256_VERIFY)
     );
-    for block in [
-        BlockId::Number(BlockNumberOrTag::Latest),
-        BlockId::Number(0_u64.into()),
-        BlockId::pending(),
-    ] {
+    for block in [BlockId::latest(), BlockId::number(0_u64), BlockId::pending()] {
         let output = provider.call(tx.clone().into()).block(block).await.unwrap();
         assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
     }
@@ -152,7 +148,7 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         .await
         .unwrap();
     assert!(receipt.status());
-    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::from(1));
+    assert_eq!(provider.get_storage_at(caller, U256::ZERO).await.unwrap(), U256::ONE);
 }
 
 #[tokio::test(flavor = "multi_thread")]

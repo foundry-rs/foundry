@@ -87,7 +87,7 @@ impl StateRootCache {
 
         for (address, account) in accounts {
             let dirty = self.dirty.entry(*address).or_default();
-            if account.account_state == AccountState::StorageCleared {
+            if account.account_state.is_storage_cleared() {
                 dirty.reset_storage = true;
             } else {
                 dirty.storage.extend(account.storage.keys().copied());
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn canonical_roots_omit_zero_storage_and_non_existing_accounts() {
         let mut storage = U256Map::default();
-        storage.insert(U256::from(1), U256::ZERO);
+        storage.insert(U256::ONE, U256::ZERO);
         assert_eq!(storage_root(&storage), EMPTY_ROOT_HASH);
 
         let mut accounts = AddressMap::default();
@@ -636,7 +636,7 @@ mod tests {
             )]);
             // Retain every overlay key when losing StorageCleared: the newly exposed base slot
             // still requires a rebuild. NotExisting likewise has no keys to lose.
-            let storage = if account_state == AccountState::StorageCleared {
+            let storage = if account_state.is_storage_cleared() {
                 previous[&address].storage.clone()
             } else {
                 U256Map::default()

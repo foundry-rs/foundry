@@ -351,7 +351,7 @@ async fn test_sub_transaction_receipts() {
     let tx = TransactionRequest::default()
         .with_from(from)
         .with_to(to)
-        .with_value(U256::from(1))
+        .with_value(U256::ONE)
         .with_nonce(0);
     let first = http_provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
 

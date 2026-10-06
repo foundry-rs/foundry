@@ -489,7 +489,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
                 accounts.remove(address);
                 continue;
             }
-            if overlay.account_state == AccountState::StorageCleared {
+            if overlay.account_state.is_storage_cleared() {
                 accounts.insert(*address, overlay.clone());
                 continue;
             }
@@ -1010,17 +1010,17 @@ mod test {
         let updated = Address::with_last_byte(2);
         let deleted = Address::with_last_byte(3);
         let cleared = Address::with_last_byte(4);
-        let deleted_slot = U256::from(1);
+        let deleted_slot = U256::ONE;
         let updated_slot = U256::from(2);
 
         let mut base = MemDb::default();
-        base.insert_account(preserved, AccountInfo::from_balance(U256::from(1)));
+        base.insert_account(preserved, AccountInfo::from_balance(U256::ONE));
         base.insert_account(updated, AccountInfo::from_balance(U256::from(2)));
-        base.set_storage_at(updated, deleted_slot.into(), B256::from(U256::from(10))).unwrap();
-        base.set_storage_at(updated, updated_slot.into(), B256::from(U256::from(11))).unwrap();
+        base.set_storage_at(updated, deleted_slot.into(), B256::with_last_byte(10)).unwrap();
+        base.set_storage_at(updated, updated_slot.into(), B256::with_last_byte(11)).unwrap();
         base.insert_account(deleted, AccountInfo::from_balance(U256::from(3)));
         base.insert_account(cleared, AccountInfo::from_balance(U256::from(4)));
-        base.set_storage_at(cleared, deleted_slot.into(), B256::from(U256::from(11))).unwrap();
+        base.set_storage_at(cleared, deleted_slot.into(), B256::with_last_byte(11)).unwrap();
 
         let mut cache = CacheDB::new(base);
         cache.insert_account_info(updated, AccountInfo::from_balance(U256::from(20)));
@@ -1040,7 +1040,7 @@ mod test {
         );
 
         let accounts = cache.maybe_full_db().unwrap();
-        assert_eq!(accounts[&preserved].info.balance, U256::from(1));
+        assert_eq!(accounts[&preserved].info.balance, U256::ONE);
         assert_eq!(accounts[&updated].info.balance, U256::from(20));
         assert_eq!(accounts[&updated].storage[&deleted_slot], U256::ZERO);
         assert_eq!(accounts[&updated].storage[&updated_slot], U256::from(12));

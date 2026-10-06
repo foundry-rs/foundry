@@ -63,7 +63,7 @@ pub async fn probe_evm_version<N: Network, P: Provider<N>>(
         return None;
     };
     let mask = U256::from_be_bytes(word);
-    if mask >> PROBES.len() != U256::ZERO {
+    if !(mask >> PROBES.len()).is_zero() {
         trace!(%mask, "unexpected EVM version probe mask");
         return None;
     }
@@ -138,6 +138,7 @@ fn deploy_code(runtime: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_primitives::TxKind;
     use revm::{

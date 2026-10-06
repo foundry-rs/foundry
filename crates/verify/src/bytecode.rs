@@ -159,22 +159,14 @@ impl figment::Provider for VerifyBytecodeArgs {
 }
 
 impl VerifyBytecodeArgs {
-    fn configured_network(
-        cli_network: Option<NetworkVariant>,
-        config: &Config,
-    ) -> Option<NetworkVariant> {
-        cli_network.or_else(|| {
-            config.networks.has_network_selection().then(|| config.networks.execution_network())
-        })
-    }
-
-    async fn endpoint_identity(config: &Config) -> Result<Option<ForkEndpointIdentity>> {
+    async fn resolve_evm_opts(config: &Config) -> Result<EvmOpts> {
         let (_, mut evm_opts) = load_fork_config_and_evm_opts(config)?;
+        evm_opts.networks = config.networks;
         if evm_opts.fork_url.is_none() {
             evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         }
         evm_opts.infer_network_from_fork().await?;
-        Ok(evm_opts.fork_endpoint)
+        Ok(evm_opts)
     }
 
     async fn ensure_endpoint_identity_unchanged(
@@ -182,7 +174,7 @@ impl VerifyBytecodeArgs {
         expected: Option<&ForkEndpointIdentity>,
     ) -> Result<()> {
         let Some(expected) = expected else { return Ok(()) };
-        let current = Self::endpoint_identity(config).await?.ok_or_else(|| {
+        let current = Self::resolve_evm_opts(config).await?.fork_endpoint.ok_or_else(|| {
             eyre::eyre!("RPC endpoint identity disappeared while verify-bytecode was running")
         })?;
         Self::validate_endpoint_identity(expected, &current)
@@ -211,31 +203,6 @@ impl VerifyBytecodeArgs {
         }
     }
 
-    fn effective_network(
-        configured: Option<NetworkVariant>,
-        endpoint_identity: Option<&ForkEndpointIdentity>,
-    ) -> NetworkVariant {
-        configured
-            .or_else(|| endpoint_identity.map(|identity| identity.network))
-            .unwrap_or(NetworkVariant::Ethereum)
-    }
-
-    fn materialize_execution_network(
-        config: &mut Config,
-        endpoint_identity: Option<&ForkEndpointIdentity>,
-    ) -> NetworkVariant {
-        let configured = Self::configured_network(None, config);
-        let network = Self::effective_network(configured, endpoint_identity);
-        if configured.is_none() {
-            config.networks = if let Some(identity) = endpoint_identity {
-                config.networks.with_rpc_profile(identity.network_profile)
-            } else {
-                network.into()
-            };
-        }
-        network
-    }
-
     fn explorer_chain(
         configured: Option<Chain>,
         endpoint_identity: Option<&ForkEndpointIdentity>,
@@ -252,11 +219,12 @@ impl VerifyBytecodeArgs {
         if let Some(network) = self.network {
             config.networks = network.into();
         }
-        let network_was_inferred = Self::configured_network(None, &config).is_none();
-        let endpoint_identity = Self::endpoint_identity(&config).await?;
-        let network = Self::materialize_execution_network(&mut config, endpoint_identity.as_ref());
+        let evm_opts = Self::resolve_evm_opts(&config).await?;
+        let network_was_inferred = evm_opts.fork_network_is_inferred;
+        let endpoint_identity = evm_opts.fork_endpoint;
+        config.networks = evm_opts.networks;
 
-        match network {
+        match config.networks.execution_network() {
             NetworkVariant::Ethereum => {
                 self.run_with_network::<EthEvmNetwork>(
                     config,
@@ -1132,6 +1100,11 @@ mod tests {
     use super::*;
     use alloy_network::{AnyHeader, AnyRpcHeader};
     use foundry_evm::core::backend::Backend;
+    use foundry_evm_networks::NetworkConfigs;
+    use foundry_test_utils::rpc::{
+        spawn_rpc_proxy_canned_method, spawn_rpc_proxy_method_not_found_before,
+    };
+    use std::sync::atomic::Ordering;
 
     fn replay_block(transactions: Vec<AnyRpcTransaction>) -> AnyRpcBlock {
         AnyRpcBlock::new(
@@ -1243,47 +1216,47 @@ mod tests {
         assert_eq!(args.network, Some(NetworkVariant::Monad));
     }
 
-    #[test]
-    fn configured_network_uses_tempo_config_network() {
-        let config = Config { networks: NetworkVariant::Tempo.into(), ..Default::default() };
+    #[tokio::test]
+    async fn fork_resolution_preserves_configured_profiles_and_revalidates() {
+        for networks in [
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+            #[cfg(feature = "base")]
+            NetworkConfigs::with_base(),
+            #[cfg(feature = "monad")]
+            NetworkConfigs::with_monad(),
+            #[cfg(feature = "optimism")]
+            NetworkConfigs::with_optimism(),
+        ] {
+            let (endpoint, chain_requests) = spawn_rpc_proxy_canned_method(
+                String::new(),
+                "eth_chainId",
+                serde_json::json!("0x7a69"),
+            )
+            .await;
+            let endpoint =
+                spawn_rpc_proxy_method_not_found_before(endpoint, "anvil_nodeInfo", usize::MAX)
+                    .await;
+            let config = Config { eth_rpc_url: Some(endpoint), networks, ..Default::default() };
+            let opts = VerifyBytecodeArgs::resolve_evm_opts(&config).await.unwrap();
+            assert_eq!(opts.networks.execution_network(), networks.execution_network());
+            assert_eq!(opts.networks.is_celo(), networks.is_celo());
+            assert_eq!(opts.fork_network_is_inferred, !networks.has_network_selection());
+            assert_eq!(opts.fork_endpoint.as_ref().unwrap().source_chain_id, 31337);
+            assert_eq!(chain_requests.load(Ordering::Relaxed), 1);
 
-        assert_eq!(
-            VerifyBytecodeArgs::configured_network(None, &config),
-            Some(NetworkVariant::Tempo)
-        );
-    }
+            let config = Config { networks: opts.networks, ..config };
 
-    #[test]
-    fn configured_network_preserves_celo_execution_profile() {
-        let mut config = Config {
-            networks: foundry_evm_networks::NetworkConfigs::with_celo(),
-            ..Default::default()
-        };
-        let endpoint_identity = ForkEndpointIdentity {
-            endpoint: "http://localhost:8545".to_string(),
-            execution_chain_id: 1,
-            source_chain_id: 1,
-            network: NetworkVariant::Tempo,
-            network_profile: NetworkVariant::Tempo.into(),
-            reported_hardfork: None,
-            hardfork: None,
-            instance_id: None,
-            source_fork_block_number: None,
-            source_fork_block_hash: None,
-        };
-
-        assert_eq!(
-            VerifyBytecodeArgs::configured_network(None, &config),
-            Some(NetworkVariant::Ethereum)
-        );
-        assert_eq!(
-            VerifyBytecodeArgs::materialize_execution_network(
-                &mut config,
-                Some(&endpoint_identity)
-            ),
-            NetworkVariant::Ethereum
-        );
-        assert!(config.networks.is_celo());
+            VerifyBytecodeArgs::ensure_endpoint_identity_unchanged(
+                &config,
+                opts.fork_endpoint.as_ref(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(chain_requests.load(Ordering::Relaxed), 2);
+        }
     }
 
     #[test]
@@ -1321,28 +1294,6 @@ mod tests {
 
     #[test]
     #[cfg(feature = "monad")]
-    fn configured_network_uses_monad_config_network() {
-        let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
-
-        assert_eq!(
-            VerifyBytecodeArgs::configured_network(None, &config),
-            Some(NetworkVariant::Monad)
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn configured_network_prefers_cli_network() {
-        let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
-
-        assert_eq!(
-            VerifyBytecodeArgs::configured_network(Some(NetworkVariant::Ethereum), &config),
-            Some(NetworkVariant::Ethereum)
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
     fn nested_endpoint_separates_execution_family_from_explorer_chain() {
         let identity = ForkEndpointIdentity {
             endpoint: "http://localhost:8545".to_string(),
@@ -1357,26 +1308,12 @@ mod tests {
             source_fork_block_hash: None,
         };
 
-        assert_eq!(
-            VerifyBytecodeArgs::effective_network(None, Some(&identity)),
-            NetworkVariant::Monad
-        );
         assert_eq!(VerifyBytecodeArgs::explorer_chain(None, Some(&identity)).unwrap().id(), 143);
         assert_eq!(
             VerifyBytecodeArgs::explorer_chain(Some(Chain::from_id(1)), Some(&identity))
                 .unwrap()
                 .id(),
             1
-        );
-    }
-
-    #[cfg(feature = "base")]
-    #[test]
-    fn configured_network_preserves_base() {
-        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
-        assert_eq!(
-            VerifyBytecodeArgs::configured_network(None, &config),
-            Some(NetworkVariant::Base)
         );
     }
 }
