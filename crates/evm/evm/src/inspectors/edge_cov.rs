@@ -3,6 +3,7 @@ use alloy_primitives::{
     map::{Entry, HashMap},
 };
 use core::fmt;
+use evm2::{EvmTypesHost, Inspector as Evm2Inspector, interpreter::Interpreter as Evm2Interpreter};
 use revm::{
     Inspector,
     bytecode::opcode,
@@ -336,67 +337,65 @@ impl EdgeCovInspector {
         }
     }
 
-    #[cold]
-    fn do_step<CTX>(&mut self, interp: &mut Interpreter, context: &mut CTX)
-    where
-        CTX: ContextTr,
-    {
-        let address = interp.input.target_address();
-        let depth = context.journal_ref().depth();
-        let current_pc = interp.bytecode.pc();
+    /// Returns whether `op` produces an edge hit or a comparison observation.
+    #[inline]
+    const fn observes(&self, op: u8) -> bool {
+        (self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI))
+            || (self.cmp_log.is_some()
+                && matches!(
+                    op,
+                    opcode::EQ
+                        | opcode::LT
+                        | opcode::GT
+                        | opcode::SLT
+                        | opcode::SGT
+                        | opcode::ISZERO
+                ))
+    }
 
-        match interp.bytecode.opcode() {
+    /// Records the edge or comparison of the instruction `op` about to execute at `pc`, given
+    /// the two topmost stack words.
+    ///
+    /// `depth` is the journal depth, which is 1 in the outermost frame.
+    #[cold]
+    fn observe_step(
+        &mut self,
+        address: Address,
+        depth: usize,
+        pc: usize,
+        op: u8,
+        top: Option<U256>,
+        second: Option<U256>,
+    ) {
+        match op {
             opcode::JUMP => {
                 // unconditional jump
-                if let Ok(jump_dest) = interp.stack.peek(0) {
-                    self.store_hit(address, depth, current_pc, jump_dest);
+                if let Some(jump_dest) = top {
+                    self.store_hit(address, depth, pc, jump_dest);
                 }
             }
             opcode::JUMPI => {
-                if let Ok(stack_value) = interp.stack.peek(1) {
-                    let jump_dest = if stack_value.is_zero() {
+                if let Some(condition) = second {
+                    let jump_dest = if condition.is_zero() {
                         // fall through
-                        Ok(U256::from(current_pc + 1))
+                        Some(U256::from(pc + 1))
                     } else {
                         // branch taken
-                        interp.stack.peek(0)
+                        top
                     };
-
-                    if let Ok(jump_dest) = jump_dest {
-                        self.store_hit(address, depth, current_pc, jump_dest);
+                    if let Some(jump_dest) = jump_dest {
+                        self.store_hit(address, depth, pc, jump_dest);
                     }
                 }
             }
-            _ => {
-                // no-op
-            }
-        }
-    }
-
-    #[cold]
-    fn do_cmp_step(&mut self, interp: &mut Interpreter) {
-        if self.cmp_log.is_none() {
-            return;
-        }
-
-        let address = interp.input.target_address();
-        let current_pc = interp.bytecode.pc();
-
-        match interp.bytecode.opcode() {
-            op @ (opcode::EQ | opcode::LT | opcode::SLT | opcode::GT | opcode::SGT) => {
-                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(CmpOperands { op1, op2, pc: current_pc, address, opcode: op });
+            opcode::EQ | opcode::LT | opcode::SLT | opcode::GT | opcode::SGT => {
+                if let (Some(op1), Some(op2)) = (top, second) {
+                    self.store_cmp(CmpOperands { op1, op2, pc, address, opcode: op });
                 }
             }
-            op @ opcode::ISZERO => {
-                if let Ok(op1) = interp.stack.peek(0) {
-                    self.store_cmp(CmpOperands {
-                        op1,
-                        op2: U256::ZERO,
-                        pc: current_pc,
-                        address,
-                        opcode: op,
-                    });
+            opcode::ISZERO => {
+                if let Some(op1) = top {
+                    self.store_cmp(CmpOperands { op1, op2: U256::ZERO, pc, address, opcode: op });
                 }
             }
             _ => {}
@@ -436,16 +435,35 @@ where
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let op = interp.bytecode.opcode();
-        if self.collect_edges && matches!(op, opcode::JUMP | opcode::JUMPI) {
-            self.do_step(interp, context);
-        }
-        if self.cmp_log.is_some()
-            && matches!(
+        if self.observes(op) {
+            self.observe_step(
+                interp.input.target_address(),
+                context.journal_ref().depth(),
+                interp.bytecode.pc(),
                 op,
-                opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
-            )
-        {
-            self.do_cmp_step(interp);
+                interp.stack.peek(0).ok(),
+                interp.stack.peek(1).ok(),
+            );
+        }
+    }
+}
+
+impl<T: EvmTypesHost> Evm2Inspector<T> for EdgeCovInspector {
+    #[inline]
+    fn step(&mut self, interp: &mut Evm2Interpreter<'_, '_, T>) {
+        let op = interp.opcode();
+        if self.observes(op) {
+            let message = interp.message();
+            let stack = interp.stack();
+            // evm2 counts the outermost frame as depth 0; REVM's journal counts it as 1.
+            self.observe_step(
+                message.destination,
+                usize::from(message.depth) + 1,
+                interp.pc(),
+                op,
+                stack.peek(0),
+                stack.peek(1),
+            );
         }
     }
 }
@@ -476,9 +494,113 @@ fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ethereum::EthereumExecutor, executors::ExecutorBuilder};
+    use alloy_primitives::Bytes;
+    use evm2::{SpecId, evm::AccountInfo};
+    use foundry_evm_core::{
+        backend::Backend,
+        ethereum::{EthereumEnv, LocalState},
+        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+        opts::EvmOpts,
+    };
+
+    const CALLER: Address = Address::repeat_byte(0xaa);
+    const OUTER: Address = Address::repeat_byte(0xbb);
+    const INNER: Address = Address::repeat_byte(0xcc);
 
     fn dense_counts(inspector: &EdgeCovInspector) -> Vec<u8> {
         inspector.dense_hits().into_iter().map(|hit| hit.count).collect()
+    }
+
+    /// Compares `calldata[0..32]` with 42 (EQ), branches on the result (JUMPI), and when taken
+    /// calls `INNER` (depth 2) and checks the call status (ISZERO).
+    fn outer_code() -> Bytes {
+        let mut code = vec![0x60, 0x2a, 0x5f, 0x35, 0x14, 0x60, 0x09, 0x57, 0x00, 0x5b];
+        code.extend([0x5f; 5]);
+        code.push(0x73);
+        code.extend_from_slice(INNER.as_slice());
+        code.extend([0x5a, 0xf1, 0x15, 0x50, 0x00]);
+        code.into()
+    }
+
+    /// Jumps over nothing (JUMP) and stops.
+    fn inner_code() -> Bytes {
+        Bytes::from_static(&[0x60, 0x03, 0x56, 0x5b, 0x00])
+    }
+
+    fn sorted(coverage: EdgeCoverage) -> EdgeCoverage {
+        match coverage {
+            EdgeCoverage::CollisionFree(mut hits) => {
+                hits.sort_by_key(|hit| hit.edge);
+                EdgeCoverage::CollisionFree(hits)
+            }
+            hash => hash,
+        }
+    }
+
+    fn revm_observations(
+        config: EdgeCovConfig,
+        calldata: &Bytes,
+    ) -> (EdgeCoverage, Vec<CmpOperands>) {
+        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            Default::default(),
+        );
+        executor.inspector_mut().collect_edge_coverage_with_edge_config(config);
+        executor.inspector_mut().collect_evm_cmp_log(true);
+        executor.set_code(OUTER, revm::bytecode::Bytecode::new_raw(outer_code())).unwrap();
+        executor.set_code(INNER, revm::bytecode::Bytecode::new_raw(inner_code())).unwrap();
+        let result = executor.call_raw(CALLER, OUTER, calldata.clone(), U256::ZERO).unwrap();
+        assert!(!result.reverted);
+        (sorted(result.edge_coverage.unwrap()), result.evm_cmp_values.unwrap())
+    }
+
+    fn evm2_observations(
+        config: EdgeCovConfig,
+        calldata: &Bytes,
+    ) -> (EdgeCoverage, Vec<CmpOperands>) {
+        let mut state = LocalState::default();
+        for (address, code) in [(OUTER, outer_code()), (INNER, inner_code())] {
+            state.database_mut().insert_account_info(
+                &address,
+                AccountInfo::default().with_code(evm2::bytecode::Bytecode::new_legacy(code)),
+            );
+        }
+        let mut opts = EvmOpts::default();
+        opts.env.gas_limit = (1u64 << 24).into();
+        opts.memory_limit = 1 << 20;
+        let mut inspector = EdgeCovInspector::with_config(config);
+        inspector.enable_cmp_log(true);
+        let executor = EthereumExecutor::with_inspector(
+            EthereumEnv::local(SpecId::CANCUN, &opts),
+            state,
+            inspector,
+        );
+        let (result, inspector) =
+            executor.inspect_raw(CALLER, OUTER, calldata.clone(), U256::ZERO).unwrap();
+        assert!(result.status);
+        let (coverage, cmp_log) = inspector.into_parts();
+        (sorted(coverage), cmp_log)
+    }
+
+    #[test]
+    fn evm2_observations_match_revm() {
+        let configs = [
+            EdgeCovConfig::default(),
+            EdgeCovConfig::new(EdgeCovKind::CollisionFree, true),
+            EdgeCovConfig::legacy_hash_ids(),
+            EdgeCovConfig::new(EdgeCovKind::Hash, true),
+        ];
+        for config in configs {
+            for input in [42u64, 7] {
+                let calldata = Bytes::from(U256::from(input).to_be_bytes_vec());
+                let revm = revm_observations(config, &calldata);
+                assert!(!revm.0.is_empty() && !revm.1.is_empty());
+                assert_eq!(evm2_observations(config, &calldata), revm, "{config:?}, {input}");
+            }
+        }
     }
 
     #[test]
