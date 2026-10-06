@@ -539,7 +539,7 @@ impl<N: Network> EthApi<N> {
                     let config = fork.config.read();
 
                     NodeForkConfig {
-                        fork_url: config.eth_rpc_url().map(|s| s.to_string()),
+                        fork_url: config.eth_rpc_url().map(redact_url),
                         fork_block_number: Some(config.block_number),
                         fork_retry_backoff: Some(config.backoff.as_millis()),
                     }

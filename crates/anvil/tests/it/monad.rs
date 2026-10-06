@@ -43,6 +43,7 @@ use anvil_core::{
     eth::transaction::PendingTransaction,
     types::{ReorgOptions, TransactionData},
 };
+use foundry_common::provider::redact_url;
 use foundry_evm::{
     hardfork::{FoundryHardfork, MonadHardfork},
     utils::get_blob_params,
@@ -2264,7 +2265,7 @@ async fn monad_anvil_rejects_reset_to_default_and_custom_ethereum_forks() {
 
         let node_info = api.anvil_node_info().await.unwrap();
         assert_eq!(node_info.network, Some("monad".to_string()));
-        assert_eq!(node_info.fork_config.fork_url, Some(monad_origin.http_endpoint()));
+        assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&monad_origin.http_endpoint())));
         assert_eq!(api.anvil_metadata().await.unwrap().instance_id, instance_id);
         assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
     }
