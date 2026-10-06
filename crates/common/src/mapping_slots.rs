@@ -87,15 +87,26 @@ pub struct PendingMappingHash {
 
 /// Captures a 64-byte Keccak operation before execution.
 pub fn capture_hash(interpreter: &Interpreter) -> Option<PendingMappingHash> {
-    if interpreter.bytecode.opcode() != opcode::KECCAK256
-        || interpreter.stack.peek(1).ok()? != U256::from(0x40)
-    {
+    capture_hash_parts(
+        interpreter.bytecode.opcode(),
+        interpreter.input.target_address,
+        interpreter.stack.peek(0).ok(),
+        interpreter.stack.peek(1).ok(),
+    )
+}
+
+/// Captures a 64-byte Keccak operation from the instruction `opcode` about to execute in
+/// `address`, given its `offset` and `size` stack operands.
+pub fn capture_hash_parts(
+    opcode: u8,
+    address: Address,
+    offset: Option<U256>,
+    size: Option<U256>,
+) -> Option<PendingMappingHash> {
+    if opcode != opcode::KECCAK256 || size? != U256::from(0x40) {
         return None;
     }
-    Some(PendingMappingHash {
-        address: interpreter.input.target_address,
-        offset: interpreter.stack.peek(0).ok()?.try_into().ok()?,
-    })
+    Some(PendingMappingHash { address, offset: offset?.try_into().ok()? })
 }
 
 /// Records a successfully executed 64-byte Keccak operation after memory expansion.
@@ -105,18 +116,50 @@ pub fn record_hash(
     pending: PendingMappingHash,
 ) {
     let Ok(result) = interpreter.stack.peek(0) else { return };
-    let data = interpreter.memory.slice_len(pending.offset, 0x40);
-    let key = B256::from_slice(&data[..0x20]);
-    let parent = B256::from_slice(&data[0x20..]);
+    record_hash_parts(
+        mapping_slots,
+        result,
+        interpreter.memory.slice_len(pending.offset, 0x40).as_ref(),
+        pending,
+    );
+}
+
+/// Records a successfully executed 64-byte Keccak operation from its `result` and the 64-byte
+/// `preimage` read at `pending.offset`.
+pub fn record_hash_parts(
+    mapping_slots: &mut AddressHashMap<MappingSlots>,
+    result: U256,
+    preimage: &[u8],
+    pending: PendingMappingHash,
+) {
+    let key = B256::from_slice(&preimage[..0x20]);
+    let parent = B256::from_slice(&preimage[0x20..0x40]);
     mapping_slots.entry(pending.address).or_default().record_hash(result.into(), key, parent);
 }
 
 /// Function to be used in `Inspector::step` to record mapping slots.
 #[cold]
 pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    if interpreter.bytecode.opcode() == opcode::SSTORE
-        && let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
-        && let Ok(slot) = interpreter.stack.peek(0)
+    step_parts(
+        mapping_slots,
+        interpreter.bytecode.opcode(),
+        interpreter.input.target_address,
+        interpreter.stack.peek(0).ok(),
+    );
+}
+
+/// Records the mapping slot written by the instruction `opcode` about to execute in `address`,
+/// given its `slot` stack operand.
+#[cold]
+pub fn step_parts(
+    mapping_slots: &mut AddressHashMap<MappingSlots>,
+    opcode: u8,
+    address: Address,
+    slot: Option<U256>,
+) {
+    if opcode == opcode::SSTORE
+        && let Some(mapping_slots) = mapping_slots.get_mut(&address)
+        && let Some(slot) = slot
     {
         mapping_slots.insert(slot.into());
     }

@@ -32,6 +32,7 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
     "map-indexmap",
 ] }
+evm2.workspace = true
 revm = { workspace = true, features = [
     "std",
     "serde",

@@ -6209,6 +6209,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-primitives",
+ "evm2",
  "eyre",
  "foundry-common",
  "foundry-compilers",
