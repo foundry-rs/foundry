@@ -4,7 +4,7 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
-    LocalSigner, MnemonicBuilder, PrivateKeySigner,
+    MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
@@ -166,7 +166,7 @@ impl Cheatcode for rememberKeys_1Call {
 
 fn inject_wallet<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
-    wallet: LocalSigner<SigningKey>,
+    wallet: PrivateKeySigner,
 ) -> Address {
     let address = wallet.address();
     state.wallets().add_local_signer(wallet);
@@ -579,18 +579,18 @@ fn encode_affine_point(point: ProjectivePoint) -> Result {
 
 fn encode_projective_point(point: ProjectivePoint) -> Result {
     if bool::from(point.is_identity()) {
-        return Ok((U256::ZERO, U256::from(1), U256::ZERO).abi_encode());
+        return Ok((U256::ZERO, U256::ONE, U256::ZERO).abi_encode());
     }
 
     let encoded = point.to_affine().to_encoded_point(false);
     let x = U256::from_be_slice(encoded.x().expect("non-identity point has x coordinate"));
     let y = U256::from_be_slice(encoded.y().expect("non-identity point has y coordinate"));
 
-    Ok((x, y, U256::from(1)).abi_encode())
+    Ok((x, y, U256::ONE).abi_encode())
 }
 
 fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
-    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    ensure!(!private_key.is_zero(), "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
         *private_key < order,
@@ -693,7 +693,7 @@ fn derive_wallets_str(
     path: &str,
     language: &str,
     count: u32,
-) -> Result<Vec<LocalSigner<SigningKey>>> {
+) -> Result<Vec<PrivateKeySigner>> {
     match language {
         "chinese_simplified" => derive_wallets::<ChineseSimplified>(mnemonic, path, count),
         "chinese_traditional" => derive_wallets::<ChineseTraditional>(mnemonic, path, count),
@@ -713,7 +713,7 @@ fn derive_wallets<W: Wordlist>(
     mnemonic: &str,
     path: &str,
     count: u32,
-) -> Result<Vec<LocalSigner<SigningKey>>> {
+) -> Result<Vec<PrivateKeySigner>> {
     foundry_common::wallet::validate_bip32_path(path).map_err(|e| fmt_err!("{e}"))?;
 
     let mut wallets = Vec::with_capacity(count as usize);
@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn test_sign_with_nonce_varies_and_recovers() {
         // Given a fixed private key and digest
-        let pk_u256: U256 = U256::from(1u64);
+        let pk_u256: U256 = U256::ONE;
         let digest = FixedBytes::from_hex(
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         )
@@ -822,7 +822,7 @@ mod tests {
     #[test]
     fn test_sign_with_nonce_zero_nonce_errors() {
         // nonce = 0 should be rejected
-        let pk_u256: U256 = U256::from(1u64);
+        let pk_u256: U256 = U256::ONE;
         let digest = FixedBytes::from_hex(
             "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         )
@@ -841,7 +841,7 @@ mod tests {
         // Curve order n as U256
         let n_u256 = U256::from_be_slice(&Secp256k1::ORDER.to_be_byte_array());
 
-        let pk_u256: U256 = U256::from(1u64);
+        let pk_u256: U256 = U256::ONE;
         let digest = FixedBytes::from_hex(
             "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         )
@@ -857,7 +857,7 @@ mod tests {
     fn test_sign_keychain_encodes_v2_signature_for_account() {
         let private_key = U256::from(0xB0Bu64);
         let account = Address::repeat_byte(0x11);
-        let digest = B256::from([0x22; 32]);
+        let digest = B256::repeat_byte(0x22);
         let mut state = Cheatcodes::default();
 
         let result = sign_keychain(&mut state, &private_key, &account, &digest).unwrap();
@@ -908,8 +908,8 @@ mod tests {
         let revoked_key = parse_wallet(&revoked_pk).unwrap().address();
         let expired_key = parse_wallet(&expired_pk).unwrap().address();
 
-        let hash = B256::from([0x44; 32]);
-        let admin_hash = B256::from([0x66; 32]);
+        let hash = B256::repeat_byte(0x44);
+        let admin_hash = B256::repeat_byte(0x66);
 
         let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T6);
         storage.set_timestamp(U256::from(1_000u64));
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_create_ed25519_key_determinism() {
-        let salt = B256::from([1u8; 32]);
+        let salt = B256::repeat_byte(1u8);
         let result1 = create_ed25519_key(&salt).unwrap();
         let result2 = create_ed25519_key(&salt).unwrap();
         assert_eq!(result1, result2, "same salt should produce same keys");
@@ -1036,8 +1036,8 @@ mod tests {
 
     #[test]
     fn test_create_ed25519_key_different_salts() {
-        let salt1 = B256::from([1u8; 32]);
-        let salt2 = B256::from([2u8; 32]);
+        let salt1 = B256::repeat_byte(1u8);
+        let salt2 = B256::repeat_byte(2u8);
         let result1 = create_ed25519_key(&salt1).unwrap();
         let result2 = create_ed25519_key(&salt2).unwrap();
         assert_ne!(result1, result2, "different salts should produce different keys");
@@ -1045,7 +1045,7 @@ mod tests {
 
     #[test]
     fn test_public_key_ed25519_consistency() {
-        let salt = B256::from([42u8; 32]);
+        let salt = B256::repeat_byte(42u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (expected_public, private): (B256, B256) =
             <(B256, B256)>::abi_decode(&create_result).unwrap();
@@ -1058,7 +1058,7 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_ed25519_valid() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, private_key): (B256, B256) =
             <(B256, B256)>::abi_decode(&create_result).unwrap();
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_verify_ed25519_invalid_signature() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, _): (B256, B256) = <(B256, B256)>::abi_decode(&create_result).unwrap();
 
@@ -1092,7 +1092,7 @@ mod tests {
 
     #[test]
     fn test_verify_ed25519_namespace_separation() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, private_key): (B256, B256) =
             <(B256, B256)>::abi_decode(&create_result).unwrap();
@@ -1114,7 +1114,7 @@ mod tests {
 
     #[test]
     fn test_verify_ed25519_invalid_signature_length() {
-        let salt = B256::from([123u8; 32]);
+        let salt = B256::repeat_byte(123u8);
         let create_result = create_ed25519_key(&salt).unwrap();
         let (public_key, _): (B256, B256) = <(B256, B256)>::abi_decode(&create_result).unwrap();
 

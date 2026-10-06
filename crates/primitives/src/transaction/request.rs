@@ -826,7 +826,7 @@ mod tests {
             let request: FoundryTransactionRequest = serde_json::from_value(value.clone())
                 .unwrap_or_else(|err| panic!("{value}: {err}"));
             assert_eq!(request.preferred_type(), expected_type, "{value}");
-            if expected_type == FoundryTxType::Eip8130 {
+            if expected_type.is_eip8130() {
                 assert!(request.is_base(), "{value}");
                 assert!(!request.can_build(), "{value}");
             }
@@ -857,7 +857,7 @@ mod tests {
 
         let request = FoundryTransactionRequest::try_from(request).unwrap();
 
-        assert!(matches!(request, FoundryTransactionRequest::Ethereum(_)));
+        assert!(request.is_ethereum());
         assert!(matches!(request.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
     }
 

@@ -2673,18 +2673,18 @@ interface Vm {
     // NOTE: Please read https://book.getfoundry.sh/cheatcodes/parse-json to understand the
     // limitations and caveats of the JSON parsing cheats.
 
-    /// Checks if `key` exists in a JSON object
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
     #[cheatcode(group = Json, status = Deprecated(Some("replaced by `keyExistsJson`")))]
     function keyExists(string calldata json, string calldata key) external view returns (bool);
-    /// Checks if `key` exists in a JSON object.
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     #[cheatcode(group = Json)]
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
     /// ABI-encodes a JSON object.
     #[cheatcode(group = Json)]
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
-    /// ABI-encodes a JSON object at `key`.
+    /// ABI-encodes a JSON object at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     #[cheatcode(group = Json)]
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
 
@@ -2694,121 +2694,121 @@ interface Vm {
     // Type coercion works ONLY for discrete values or arrays. That means that the key must return a value or array, not
     // a JSON object.
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`.
     #[cheatcode(group = Json)]
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`.
     #[cheatcode(group = Json)]
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue)
         external
         pure
         returns (uint256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `int256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`.
     #[cheatcode(group = Json)]
     function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
-    /// Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`.
     #[cheatcode(group = Json)]
     function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue)
         external
         pure
         returns (int256[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bool`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`.
     #[cheatcode(group = Json)]
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
-    /// Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`.
     #[cheatcode(group = Json)]
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue)
         external
         pure
         returns (bool[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `address`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`.
     #[cheatcode(group = Json)]
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
-    /// Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`.
     #[cheatcode(group = Json)]
     function parseJsonAddressArray(string calldata json, string calldata key)
         external
         pure
         returns (address[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue)
         external
         pure
         returns (address[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`.
     #[cheatcode(group = Json)]
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonString(string calldata json, string calldata key, string calldata defaultValue)
         external
         pure
         returns (string memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue)
         external
         pure
         returns (string[] memory);
-    /// Returns the length of the JSON array at `key`.
+    /// Returns the length of the JSON array at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     #[cheatcode(group = Json)]
     function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue)
         external
         pure
         returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue)
         external
         pure
         returns (bytes[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32Array(string calldata json, string calldata key)
         external
         pure
         returns (bytes32[] memory);
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
     #[cheatcode(group = Json)]
     function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue)
         external
@@ -2818,10 +2818,10 @@ interface Vm {
     /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonType(string calldata json, string calldata key, string calldata typeDescription) external pure returns (bytes memory);
-    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type array corresponding to `typeDescription`.
     #[cheatcode(group = Json)]
     function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
         external

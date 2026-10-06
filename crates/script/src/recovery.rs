@@ -873,23 +873,9 @@ where
     transaction.rpc.clear();
     let transaction =
         serde_json::from_value::<TransactionWithMetadata<N>>(serde_json::to_value(transaction)?)?;
-    Ok(keccak256(serde_json::to_vec(&canonicalize(serde_json::to_value(transaction)?))?))
-}
-
-fn canonicalize(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.into_iter().map(canonicalize).collect())
-        }
-        serde_json::Value::Object(values) => {
-            let mut values = values.into_iter().collect::<Vec<_>>();
-            values.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-            serde_json::Value::Object(
-                values.into_iter().map(|(key, value)| (key, canonicalize(value))).collect(),
-            )
-        }
-        value => value,
-    }
+    let mut value = serde_json::to_value(transaction)?;
+    value.sort_all_objects();
+    Ok(keccak256(serde_json::to_vec(&value)?))
 }
 
 fn load_plan<N: Network>(path: &Path) -> Result<RecoveryPlan<N>>
@@ -1173,10 +1159,8 @@ mod tests {
         request: TempoTransactionRequest,
         from: Address,
     ) -> RpcTransaction<TempoTxEnvelope> {
-        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-            request.build_aa().unwrap(),
-            TempoSignature::default(),
-        ));
+        let envelope =
+            TempoTxEnvelope::AA(request.build_aa().unwrap().into_signed(TempoSignature::default()));
         RpcTransaction {
             inner: Recovered::new_unchecked(envelope, from),
             block_hash: None,
@@ -1368,8 +1352,8 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.to_vec().into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into()).is_err());
             hash
         };
 
@@ -1384,8 +1368,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.to_vec().into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.to_vec().into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into()).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into()).is_err());
     }
 
     #[test]
@@ -1444,7 +1428,7 @@ mod tests {
             calls: vec![
                 Call {
                     to: TxKind::Call(Address::repeat_byte(0x22)),
-                    value: U256::from(1),
+                    value: U256::ONE,
                     input: Bytes::from_static(&[0x12]),
                 },
                 Call {
@@ -1596,10 +1580,8 @@ mod tests {
         let request = TransactionRequest::default();
         {
             let mut store = RecoveryStore::create(data, true).unwrap();
-            store
-                .persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.to_vec().into())
-                .unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.to_vec().into()).is_err());
+            store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into()).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1624,7 +1606,7 @@ mod tests {
                         0,
                         0,
                         TransactionRequest::default(),
-                        SIGNED_TX.to_vec().into(),
+                        SIGNED_TX.into(),
                     )
                     .unwrap();
                 let deployment = &mut store.data_mut().sequences_mut()[0];

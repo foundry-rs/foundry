@@ -12,7 +12,7 @@ pub(super) const COMPATIBILITY_FALLBACK_HANDLER_V1_4_1: Address =
     address!("fd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99");
 pub(super) const SIMULATE_TX_ACCESSOR_V1_4_1: Address =
     address!("3d4BA2E0884aa488718476ca2FB8Efc291A46199");
-pub(super) const SENTINEL_OWNER: Address = address!("0000000000000000000000000000000000000001");
+pub(super) const SENTINEL_OWNER: Address = Address::with_last_byte(1);
 pub(super) const PREDETERMINED_SALT_NONCE: &str =
     "0xb1073742015cbcf5a3a4d9d1ae33ecf619439710b89475f92e2abd2117e90f90";
 

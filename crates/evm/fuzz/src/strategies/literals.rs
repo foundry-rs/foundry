@@ -348,7 +348,7 @@ impl LiteralsCollector {
         match &expr.kind {
             ast::ExprKind::Lit(lit, _) => match &lit.kind {
                 // Sub-denominations (e.g. `ether`, `days`) are already folded into the value.
-                ast::LitKind::Number(n) => Some(Num::untyped(U256::from(*n))),
+                ast::LitKind::Number(n) => Some(Num::untyped(*n)),
                 _ => None,
             },
             ast::ExprKind::Unary(op, inner) => {
@@ -406,7 +406,7 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
         match &expr.kind {
             // Handle plain literals.
             ast::ExprKind::Lit(lit, _) => match &lit.kind {
-                ast::LitKind::Number(n) => self.seed_uint(U256::from(*n)),
+                ast::LitKind::Number(n) => self.seed_uint(*n),
                 ast::LitKind::Address(addr) => {
                     self.insert_word(DynSolType::Address, addr.into_word())
                 }
@@ -680,7 +680,7 @@ fn type_min_max(ty: ast::ElementaryType, member: &str) -> Option<Num> {
         }
         (ast::ElementaryType::Int(size), "min") => {
             let bits = size.bits() as usize;
-            Some(Num::int(U256::from(1).wrapping_shl(bits - 1), true, Some(bits)))
+            Some(Num::int(U256::ONE.wrapping_shl(bits - 1), true, Some(bits)))
         }
         _ => None,
     }
@@ -723,7 +723,7 @@ fn cast_to_bytes(value: Num, n: usize) -> Num {
 
 /// Returns the low `bits` of `value`, zeroing everything above.
 fn low_bits(value: U256, bits: usize) -> U256 {
-    if bits >= 256 { value } else { value & (U256::from(1).wrapping_shl(bits) - U256::from(1)) }
+    if bits >= 256 { value } else { value & (U256::ONE.wrapping_shl(bits) - U256::ONE) }
 }
 
 /// Sign-extends the low `width` bits of `raw` to a full 256-bit two's-complement value.
@@ -754,7 +754,7 @@ fn lit_bytes<'a>(expr: &'a ast::Expr<'_>) -> Option<&'a [u8]> {
 /// Checks if a signed integer value can fit in intN type.
 fn can_fit_int(value: I256, bits: usize) -> bool {
     // Calculate the maximum positive value for intN: 2^(N-1) - 1
-    let max_val = I256::try_from((U256::from(1) << (bits - 1)) - U256::from(1))
+    let max_val = I256::try_from((U256::ONE << (bits - 1)) - U256::ONE)
         .expect("max value should fit in I256");
     // Calculate the minimum negative value for intN: -2^(N-1)
     let min_val = -max_val - I256::ONE;
@@ -768,7 +768,7 @@ fn can_fit_uint(value: U256, bits: usize) -> bool {
         return true;
     }
     // Calculate the maximum value for uintN: 2^N - 1
-    let max_val = (U256::from(1) << bits) - U256::from(1);
+    let max_val = (U256::ONE << bits) - U256::ONE;
     value <= max_val
 }
 
@@ -820,7 +820,7 @@ mod tests {
         // -- folded constant expressions --
 
         // `uint(-2)` folds to `2**256 - 2`.
-        let neg_cast = B256::from(U256::MAX - U256::from(1));
+        let neg_cast = B256::from(U256::MAX - U256::ONE);
         assert_word(&map, DynSolType::Uint(256), neg_cast, "Expected uint(-2) to be folded");
 
         // `2 * 2 ether` folds to `4e18`.
@@ -830,7 +830,7 @@ mod tests {
         // `bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)` folds to the
         // well-known EIP-1967 implementation slot.
         let slot = B256::from(
-            U256::from_be_bytes(keccak256("eip1967.proxy.implementation").0) - U256::from(1),
+            U256::from_be_bytes(keccak256("eip1967.proxy.implementation").0) - U256::ONE,
         );
         assert_word(
             &map,
@@ -905,8 +905,8 @@ mod tests {
         let map = process_source_literals(source);
 
         let neg_one = B256::from(I256::try_from(-1).unwrap().into_raw());
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(254)), "uint8(-2) -> 254");
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(1)), "uint8(257) -> 1");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(254), "uint8(-2) -> 254");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(1), "uint8(257) -> 1");
         assert_word(&map, DynSolType::Int(8), neg_one, "int8(255) -> -1");
         assert_word(&map, DynSolType::Int(256), neg_one, "int256(1) - 2 -> -1");
         assert_word(&map, DynSolType::Int(256), neg_one, "~int256(0) -> -1");
@@ -914,7 +914,7 @@ mod tests {
         assert_word(
             &map,
             DynSolType::Int(16),
-            B256::from(U256::from(255)),
+            B256::with_last_byte(255),
             "int16(uint8(255)) -> 255",
         );
         assert_word(
@@ -950,24 +950,14 @@ mod tests {
         }"#;
         let map = process_source_literals(source);
 
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(255)), "~uint8(0) -> 255");
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::ZERO), "uint8(_) << {8,256} -> 0");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(255), "~uint8(0) -> 255");
+        assert_word(&map, DynSolType::Uint(8), B256::ZERO, "uint8(_) << {8,256} -> 0");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(255), "uint8(250) + 5 -> 255");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(100), "uint8(10) ** 2 -> 100");
         assert_word(
             &map,
             DynSolType::Uint(8),
-            B256::from(U256::from(255)),
-            "uint8(250) + 5 -> 255",
-        );
-        assert_word(
-            &map,
-            DynSolType::Uint(8),
-            B256::from(U256::from(100)),
-            "uint8(10) ** 2 -> 100",
-        );
-        assert_word(
-            &map,
-            DynSolType::Uint(8),
-            B256::from(U256::from(128)),
+            B256::with_last_byte(128),
             "uint8(0x80) >> 0 -> 128",
         );
         let neg_128 = B256::from(I256::try_from(-128).unwrap().into_raw());
@@ -1029,8 +1019,8 @@ mod tests {
         }
 
         // The in-range expression and the cast operands themselves still fold.
-        assert_word(&map, DynSolType::Int(8), B256::from(U256::from(125)), "int8(5) ** 3 -> 125");
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(250)), "operand uint8(250)");
+        assert_word(&map, DynSolType::Int(8), B256::with_last_byte(125), "int8(5) ** 3 -> 125");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(250), "operand uint8(250)");
     }
 
     #[test]
@@ -1092,7 +1082,7 @@ mod tests {
         let map = process_source_literals(source);
 
         assert_word(&map, DynSolType::Uint(256), B256::from(U256::MAX), "type(uint256).max");
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(255)), "type(uint8).max");
+        assert_word(&map, DynSolType::Uint(8), B256::with_last_byte(255), "type(uint8).max");
         assert_word(
             &map,
             DynSolType::Int(256),
@@ -1105,7 +1095,7 @@ mod tests {
             B256::from(I256::MAX.into_raw()),
             "type(int256).max",
         );
-        let max_minus_one = B256::from(U256::MAX - U256::from(1));
+        let max_minus_one = B256::from(U256::MAX - U256::ONE);
         assert_word(&map, DynSolType::Uint(256), max_minus_one, "type(uint256).max - 1");
         let min8 = B256::from(I256::try_from(-128).unwrap().into_raw());
         assert_word(&map, DynSolType::Int(8), min8, "type(int8).min -> -128");

@@ -45,7 +45,6 @@ pub(crate) fn tempo_provider(
 pub(crate) async fn apply_fee_payment<N, P>(
     sponsor: Option<&TempoSponsor>,
     provider: Option<&P>,
-    chain: Chain,
     tx: &mut N::TransactionRequest,
     payer: Address,
 ) -> Result<()>
@@ -63,9 +62,9 @@ where
     }
 
     if sponsor.is_some() {
-        maybe_attach_sponsor(sponsor, provider, chain, tx, payer).await
+        maybe_attach_sponsor(sponsor, provider, tx, payer).await
     } else {
-        resolve_and_print_fee_token(provider, Some(chain), tx, Some(payer)).await
+        resolve_and_print_fee_token(provider, tx, Some(payer)).await
     }
 }
 
@@ -74,7 +73,6 @@ where
 pub(crate) async fn maybe_attach_sponsor<N, P>(
     sponsor: Option<&TempoSponsor>,
     provider: Option<&P>,
-    chain: Chain,
     tx: &mut N::TransactionRequest,
     payer: Address,
 ) -> Result<()>
@@ -85,7 +83,7 @@ where
 {
     if let Some(sponsor) = sponsor {
         let provider = provider.map(|p| p as &dyn Provider<N>);
-        sponsor.resolve_and_set_fee_token(provider, Some(chain), tx).await?;
+        sponsor.resolve_and_set_fee_token(provider, tx).await?;
         sponsor.attach_and_print::<N>(tx, payer).await?;
     }
     Ok(())
@@ -94,7 +92,6 @@ where
 /// Resolves and sets the fee token paid by `fee_payer`, printing it when it was resolved.
 pub(crate) async fn resolve_and_print_fee_token<N, P>(
     provider: Option<&P>,
-    chain: Option<Chain>,
     tx: &mut N::TransactionRequest,
     fee_payer: Option<Address>,
 ) -> Result<()>
@@ -104,7 +101,7 @@ where
     P: Provider<N>,
 {
     let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
-    let fee_token = resolve_and_set_fee_token(dyn_provider, chain, tx, fee_payer).await?;
+    let fee_token = resolve_and_set_fee_token(dyn_provider, tx, fee_payer).await?;
     maybe_print_fee_token(provider, fee_token).await
 }
 
@@ -112,7 +109,6 @@ where
 /// when one is configured. Used by `--tempo.print-sponsor-hash`.
 pub(crate) async fn sponsor_hash<N, P>(
     provider: Option<&P>,
-    chain: Chain,
     tx: &mut N::TransactionRequest,
     from: Address,
     fee_payer: Option<Address>,
@@ -124,7 +120,7 @@ where
 {
     if fee_payer.is_some() {
         let provider = provider.map(|p| p as &dyn Provider<N>);
-        resolve_and_set_fee_token(provider, Some(chain), tx, fee_payer).await?;
+        resolve_and_set_fee_token(provider, tx, fee_payer).await?;
     }
     tx.compute_sponsor_hash(from)
         .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))
@@ -331,19 +327,15 @@ mod tests {
         let provider =
             AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
         let payer = Address::repeat_byte(0x11);
-        let chain = Chain::from_id(4217);
         let mut tx = <TempoNetwork as Network>::TransactionRequest::default();
         tx.set_gas_price(1);
 
-        apply_fee_payment(None, Some(&provider), chain, &mut tx, payer).await.unwrap();
+        apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap();
         assert!(tx.fee_token().is_none());
 
         tx.set_fee_token(Address::repeat_byte(0x22));
         assert_eq!(
-            apply_fee_payment(None, Some(&provider), chain, &mut tx, payer)
-                .await
-                .unwrap_err()
-                .to_string(),
+            apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap_err().to_string(),
             "Tempo transaction options cannot be combined with a legacy transaction"
         );
     }

@@ -303,6 +303,7 @@ const fn known_precompile_name(address: Address) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::bytes;
     use foundry_evm_traces::{CallTraceNode, DecodedCallData, DecodedInternalCall};
     use revm::interpreter::InstructionResult;
 
@@ -339,10 +340,7 @@ mod tests {
             trace: CallTrace {
                 address: precompiles::SHA_256,
                 data: Bytes::from_static(b"hello"),
-                output: alloy_primitives::hex!(
-                    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-                )
-                .into(),
+                output: bytes!("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
                 ..Default::default()
             },
             ordering: Vec::new(),
@@ -378,7 +376,7 @@ mod tests {
 
     fn decoded_fee_manager_trace() -> CallTrace {
         CallTrace {
-            address: Address::from([0x42; 20]),
+            address: Address::repeat_byte(0x42),
             decoded: Some(Box::new(DecodedCallTrace {
                 label: Some("FeeManager".to_string()),
                 call_data: Some(DecodedCallData {
@@ -570,7 +568,7 @@ mod tests {
 
     #[test]
     fn flatten_annotates_chain_labeled_precompile_child_calls_with_decoded_label() {
-        let address = Address::from([0x42; 20]);
+        let address = Address::repeat_byte(0x42);
         let arena = arena_with_child_after_staticcall(decoded_fee_manager_trace());
         let precompile_labels = AddressHashMap::from_iter([(address, "FeeManager".to_string())]);
 

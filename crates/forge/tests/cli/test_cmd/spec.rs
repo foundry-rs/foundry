@@ -3,6 +3,9 @@ use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 #[cfg(feature = "monad")]
+use alloy_primitives::Address;
+
+#[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
     reqwest::Client::new()
         .post(endpoint)
@@ -61,11 +64,6 @@ fn address_and_flags(address: alloy_primitives::Address, flags: u64) -> alloy_pr
     bytes[..20].copy_from_slice(address.as_slice());
     bytes[20..28].copy_from_slice(&flags.to_be_bytes());
     alloy_primitives::U256::from_be_bytes(bytes)
-}
-
-#[cfg(feature = "monad")]
-fn storage_value(value: alloy_primitives::U256) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from(value.to_be_bytes::<32>())
 }
 
 #[cfg(feature = "monad")]
@@ -423,7 +421,15 @@ contract MonadEvmVersionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
+    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadEvmVersion.t.sol:MonadEvmVersionTest
+[PASS] test_set_monad_evm_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[cfg(feature = "monad")]
@@ -608,7 +614,14 @@ contract MonadForkHardforkTest {
             "--mt",
             "test_monad_nine",
         ])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadForkHardfork.t.sol:MonadForkHardforkTest
+[PASS] test_monad_nine() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[cfg(feature = "monad")]
@@ -885,7 +898,17 @@ contract ExecuteTransactionMonadContextTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "ExecuteTransactionMonadContextTest"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/ExecuteTransactionMonadContext.t.sol:ExecuteTransactionMonadContextTest
+[PASS] test_execute_transaction_credit_clears_outer_violation() ([GAS])
+[PASS] test_execute_transaction_does_not_track_nested_only_account() ([GAS])
+[PASS] test_execute_transaction_preserves_unaffected_outer_violation() ([GAS])
+[PASS] test_execute_transaction_uses_ancestor_context() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[cfg(feature = "monad")]
@@ -1136,7 +1159,17 @@ contract TransactionForkMonadContextTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "TransactionForkMonadContextTest"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 4 tests for test/TransactionForkMonadContext.t.sol:TransactionForkMonadContextTest
+[PASS] test_future_transaction_is_not_an_ancestor() ([GAS])
+[PASS] test_non_immediate_transact_rejects_without_mutation() ([GAS])
+[PASS] test_parent_block_transact_advances_to_next_transaction() ([GAS])
+[PASS] test_sequential_transacts_advance_past_block() ([GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[cfg(feature = "monad")]
@@ -1779,7 +1812,14 @@ contract MonadForkAuxLifecycleTest {
             "test_fork_active_transact_advances_outer_context",
             "--isolate",
         ])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/MonadForkAuxLifecycle.t.sol:MonadForkAuxLifecycleTest
+[PASS] test_fork_active_transact_advances_outer_context() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[cfg(feature = "monad")]
@@ -1792,12 +1832,9 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
         alloy_primitives::address!("0x6f49a8F621353f12378d0046E7d7e4b9B249DC9e");
     const STAKING_ADDRESS: alloy_primitives::Address =
         alloy_primitives::address!("0x0000000000000000000000000000000000001000");
-    const BLOCK_AUTHOR: alloy_primitives::Address =
-        alloy_primitives::address!("0x1111111111111111111111111111111111111111");
-    const VALIDATOR_AUTH: alloy_primitives::Address =
-        alloy_primitives::address!("0x2222222222222222222222222222222222222222");
-    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address =
-        alloy_primitives::address!("0x3333333333333333333333333333333333333333");
+    const BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x11);
+    const VALIDATOR_AUTH: alloy_primitives::Address = Address::repeat_byte(0x22);
+    const UNKNOWN_BLOCK_AUTHOR: alloy_primitives::Address = Address::repeat_byte(0x33);
     const VALIDATOR_ID: u64 = 7;
 
     let (api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
@@ -1813,14 +1850,14 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_id_key(BLOCK_AUTHOR),
-        storage_value(left_aligned_u64(VALIDATOR_ID)),
+        left_aligned_u64(VALIDATOR_ID).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 0),
-        storage_value(alloy_primitives::U256::from(100) * mon),
+        (alloy_primitives::U256::from(100) * mon).into(),
     )
     .await
     .unwrap();
@@ -1834,7 +1871,7 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x09, VALIDATOR_ID, 6),
-        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        address_and_flags(VALIDATOR_AUTH, 0).into(),
     )
     .await
     .unwrap();
@@ -2077,7 +2114,18 @@ contract MonadProtocolSystemTargetTest {
     });
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadProtocolSystemTargetTest"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/MonadProtocolSystemTarget.t.sol:MonadProtocolSystemTargetTest
+[PASS] test_failed_reward_target_from_parent_block_fork_rolls_back() ([GAS])
+[PASS] test_failed_reward_target_from_transaction_hash_fork_rolls_back() ([GAS])
+[PASS] test_gas_paying_system_sender_target_fork_is_rejected() ([GAS])
+[PASS] test_reward_target_from_parent_block_fork() ([GAS])
+[PASS] test_reward_target_from_transaction_hash_fork() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2112,7 +2160,15 @@ contract TempoEvmVersionTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoEvmVersion.t.sol:TempoEvmVersionTest
+[PASS] test_set_tempo_evm_version() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -2135,7 +2191,18 @@ fn test_set_evm_version_tempo_gas(prj: _, cmd: _) {
                 "--mc",
                 "TempoEvmVersionGasTest",
             ])
-            .assert_success();
+            .assert_success()
+            .stdout_eq(str![[r#"
+...
+Ran 5 tests for test/TempoEvmVersionGas.t.sol:TempoEvmVersionGasTest
+[PASS] testCodeDepositGas() ([GAS])
+[PASS] testEmptyAccountGas() ([GAS])
+[PASS] testLegacyEthereumAliasGas() ([GAS])
+[PASS] testLegacyNativeRevisionChange() ([GAS])
+[PASS] testNewStorageSlotGas() ([GAS])
+Suite result: ok. 5 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     }
 }
 
@@ -2170,7 +2237,15 @@ contract TempoDefaultEvmVersionTest is Test {{
         ),
     );
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TempoDefaultEvmVersion.t.sol:TempoDefaultEvmVersionTest
+[PASS] test_network_tempo_defaults_to_latest_hardfork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Validates T5 implicit-approval wiring: the cheatcodes, the AddressRegistry selector,
@@ -2189,7 +2264,21 @@ fn test_tempo_implicit_approval_t5(prj: _, cmd: _) {
     let fixture = include_str!("../../fixtures/TempoImplicitApproval.t.sol");
     prj.add_test("TempoImplicitApproval.t.sol", fixture);
 
-    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/TempoImplicitApproval.t.sol:TempoImplicitApprovalTest
+[PASS] test_assumeImplicitApproval_positive_t5() ([GAS])
+[PASS] test_cheatcode_isImplicitlyApproved_reports_pre_t5() ([GAS])
+[PASS] test_cheatcode_matches_registry_selector_t5() ([GAS])
+[PASS] test_implicit_spender_pulls_without_approve_t5() ([GAS])
+[PASS] test_isImplicitlyApproved_t5() ([GAS])
+[PASS] test_non_implicit_spender_requires_approve_t5() ([GAS])
+[PASS] test_standard_approve_flow_unchanged_t5() ([GAS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
@@ -2220,5 +2309,33 @@ contract ForkEvmVersionTest is Test {
         .replace("<rpc>", &endpoint),
     );
 
-    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
+    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/ForkEvmVersion.t.sol:ForkEvmVersionTest
+[PASS] test_evm_version_preserved_after_fork() ([GAS])
+Traces:
+  [12097] ForkEvmVersionTest::test_evm_version_preserved_after_fork()
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "before fork") [staticcall]
+    │   └─ ← [Return]
+    ├─ [0] VM::createSelectFork("<rpc url>", 21000000 [2.1e7])
+    │   └─ ← [Return] 0
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "after createSelectFork") [staticcall]
+    │   └─ ← [Return]
+    ├─ [0] VM::rollFork(21000001 [2.1e7])
+    │   └─ ← [Return]
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "cancun"
+    ├─ [0] VM::assertEq("cancun", "cancun", "after rollFork") [staticcall]
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
 }

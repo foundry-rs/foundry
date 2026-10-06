@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, Bytes, U256, address, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
 use alloy_provider::Provider;
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
@@ -34,6 +34,7 @@ use std::{
     },
     time::Duration,
 };
+use tempo_alloy::TempoNetwork;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -61,31 +62,6 @@ fn latest_dry_run_sequence(root: &Path) -> ScriptSequence<Ethereum> {
         .find(|path| path.ends_with("dry-run/run-latest.json"))
         .unwrap();
     foundry_common::fs::read_json_file(&path).unwrap()
-}
-
-// Tests that fork cheat codes can be used in script
-#[forgetest_init]
-#[ignore]
-fn can_use_fork_cheat_codes_in_script(prj: _, cmd: _) {
-    let script = prj.add_source(
-        "Foo",
-        r#"
-import "forge-std/Script.sol";
-
-contract ContractScript is Script {
-    function setUp() public {}
-
-    function run() public {
-        uint256 fork = vm.activeFork();
-        vm.rollFork(11469702);
-    }
-}
-   "#,
-    );
-
-    let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
-
-    cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
 }
 
 #[forgetest]
@@ -175,7 +151,7 @@ async fn monad_simulation_advances_transaction_context(prj: _, cmd: _) {
     // Payable runtime calls `dippedIntoReserve()` and reverts when it returns true.
     api.anvil_set_code(
         address!("0x000000000000000000000000000000000000bEEF"),
-        hex!("633a61584e5f5260205f6004601c5f6110015af1505f5115601e575f5ffd5b00").into(),
+        bytes!("633a61584e5f5260205f6004601c5f6110015af1505f5115601e575f5ffd5b00"),
     )
     .await
     .unwrap();
@@ -1154,7 +1130,7 @@ async fn can_deploy_unlocked(prj: _, cmd: _) {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .sender(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .unlocked()
         .add_sig("BroadcastTest", "deployOther()")
         .simulate(ScriptOutcome::OkSimulation)
@@ -1206,7 +1182,7 @@ async fn delegated_transport_error_is_not_retried(prj: _, cmd: _) {
 
     let mut tester = ScriptTester::new_broadcast(cmd, &endpoint, prj.root());
     tester
-        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .sender(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .unlocked()
         .add_sig("BroadcastTest", "deployOther()")
         .arg("--broadcast");
@@ -1227,7 +1203,7 @@ Error: submission outcome for delegated operation 0 is unknown; refusing to risk
 
     tester.clear();
     tester
-        .sender("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".parse().unwrap())
+        .sender(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .unlocked()
         .add_sig("BroadcastTest", "deployOther()")
         .arg("--resume");
@@ -1524,7 +1500,7 @@ async fn can_deploy_with_custom_create2_notmatched_bytecode(prj: _, cmd: _) {
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
         create2,
-        Bytes::from_static(&hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef")),
+        bytes!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cef"),
     )
     .await
     .unwrap();
@@ -5167,7 +5143,7 @@ contract SaltedDeployCodeScript is Script {
         for deployed in [first, second] {
             assert!(!api.get_code(deployed, None).await.unwrap().is_empty());
         }
-        assert_eq!(api.balance(first, None).await.unwrap(), U256::from(1));
+        assert_eq!(api.balance(first, None).await.unwrap(), U256::ONE);
     }
 }
 
@@ -5483,7 +5459,6 @@ Script ran successfully.
 // fork block pinning used the remapped L1 block number, causing the fork to
 // fetch state from an ancient block where contracts did not exist.
 #[forgetest_init]
-#[ignore]
 fn flaky_can_call_arbitrum_contract_in_script(prj: _, cmd: _) {
     let script = prj.add_source(
         "ArbScript",
@@ -6083,26 +6058,6 @@ async fn tempo_batch_resume_waits_for_pending_hash(prj: _, cmd: _) {
     assert!(receipts.iter().all(|receipt| receipt["transactionHash"] == hash));
 }
 
-// Same dry-run assertions against the live Moderato testnet.
-#[forgetest_init]
-#[ignore]
-async fn script_batch_rewrites_creates_to_create2_moderato(prj: _, cmd: _) {
-    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
-
-    cmd.arg("script").arg(script).args([
-        "--tc",
-        "MultiDeploy",
-        "--rpc-url",
-        "https://rpc.moderato.tempo.xyz",
-        "--batch",
-        "--network",
-        "tempo",
-    ]);
-    cmd.assert_success();
-
-    assert_create2_rewrite_dry_run(prj.root());
-}
-
 // Tests that `forge script` works in Tempo mode without CreateCollision.
 // Tempo genesis pre-deploys the Arachnid CREATE2 factory at the same address as the default
 // CREATE2 deployer, so `deploy_create2_deployer` must be skipped to avoid a collision.
@@ -6237,6 +6192,160 @@ contract DeployTempoAA is Script {
     }
 }
 
+// A local Tempo node runs on chain 31337. Broadcasts must still resolve the sender's stored fee
+// token, with and without `--batch`.
+#[forgetest_init]
+async fn tempo_script_resolves_fee_token_on_local_chain_id(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoFeeToken.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoFeeTokenTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract TempoFeeToken is Script {
+    function run() external {
+        vm.startBroadcast();
+        TempoFeeTokenTarget target = new TempoFeeTokenTarget();
+        target.set(7);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let alpha_usd = "0x20c0000000000000000000000000000000000001";
+    let broadcast = prj.root().join("broadcast");
+    let receipts = || {
+        let run_latest = foundry_common::fs::json_files(&broadcast)
+            .find(|path| {
+                path.ends_with("run-latest.json") && !path.to_string_lossy().contains("dry-run")
+            })
+            .expect("no broadcast artifact found");
+        let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+        json["receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|receipt| {
+                (receipt["type"].as_str().unwrap().to_owned(), receipt["feeToken"].clone())
+            })
+            .collect::<Vec<_>>()
+    };
+
+    cmd.arg("script").arg(&script).args([
+        "--tc",
+        "TempoFeeToken",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    cmd.assert_success().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    // CREATE requests stay Ethereum transactions; the protocol still charges the stored token.
+    assert_eq!(
+        receipts(),
+        [("0x2".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
+    );
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "TempoFeeToken",
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--batch",
+    ]);
+    cmd.assert_success().stderr_eq(str![[r#"
+Warning: --batch rewrites CREATE → CREATE2 via the Arachnid factory; deployed addresses follow the CREATE2 formula and constructor msg.sender is the factory, not the EOA.
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+
+"#]]);
+    assert_eq!(
+        receipts(),
+        [("0x76".to_owned(), Value::from(alpha_usd)), ("0x76".to_owned(), Value::from(alpha_usd))]
+    );
+}
+
+// Bundle estimation must preserve script-specified gas and still estimate ordinary transactions.
+#[forgetest_init]
+async fn tempo_script_preserves_fixed_gas_limit(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "TempoFixedGas.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoFixedGas is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool fixedSuccess,) = address(0xBEEF).call{gas: 500000}("");
+        require(fixedSuccess);
+        (bool estimatedSuccess,) = address(0xBEEF).call("");
+        require(estimatedSuccess);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    // Both calls must be estimable before any transaction has been broadcast.
+    api.anvil_set_code(address!("000000000000000000000000000000000000beef"), hex!("00").into())
+        .await
+        .unwrap();
+    let rpc = spawn_rpc_proxy_mapping_method(handle.http_endpoint(), "eth_estimateGas", |_, _| {
+        Value::from("0x186a0")
+    })
+    .await;
+    let (rpc, estimates) = spawn_rpc_proxy_recording_method(rpc, "eth_estimateGas").await;
+    let gas_limits = |dry_run| {
+        let path = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+            .find(|path| {
+                path.ends_with("run-latest.json")
+                    && path.components().any(|part| part.as_os_str() == "dry-run") == dry_run
+            })
+            .expect("no script artifact found");
+        let sequence =
+            foundry_common::fs::read_json_file::<ScriptSequence<TempoNetwork>>(&path).unwrap();
+        sequence
+            .transactions
+            .iter()
+            .map(|tx| (tx.is_fixed_gas_limit, tx.tx().gas().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--network",
+        "tempo",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-estimate-multiplier",
+        "130",
+    ]);
+    cmd.assert_success();
+    assert_eq!(gas_limits(true), [(true, 500000), (false, 130000)]);
+    assert_eq!(estimates.lock().unwrap().len(), 1);
+
+    cmd.arg("--broadcast").assert_success();
+    assert_eq!(gas_limits(false), [(true, 500000), (false, 130000)]);
+    // The second run estimates the ordinary call during bundling and again before sending.
+    assert_eq!(estimates.lock().unwrap().len(), 3);
+}
+
 #[forgetest_init]
 async fn tempo_batch_broadcasts_deploy_code_via_create2(prj: _, cmd: _) {
     prj.add_source(
@@ -6312,7 +6421,7 @@ contract DeployTempoBatch is Script {
     assert_eq!(transactions[3]["transaction"]["to"], deployed[0].to_string().to_lowercase());
     assert_eq!(
         handle.http_provider().get_storage_at(deployed[0], U256::ZERO).await.unwrap(),
-        U256::from(1)
+        U256::ONE
     );
 }
 
@@ -6442,9 +6551,9 @@ contract DeploySponsoredTempoAA is Script {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
-    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
     let sponsor_key =
-        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
     let sponsor = format!("{:?}", wallets[1].address());
 
     let assert = cmd
@@ -6600,9 +6709,9 @@ contract DeploySponsoredTempoAA is Script {
     .await;
     let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
     let sender = wallets[0].address();
-    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
     let sponsor_key =
-        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
     let sponsor = format!("{:?}", wallets[1].address());
     let path = prj.root().join("broadcast/DeploySponsoredTempoAA.s.sol/31337/run-latest.json");
 
@@ -6934,10 +7043,7 @@ contract SetCodeViaRpc {
         .assert_success();
 
     let target = address!("0x0000000000000000000000000000000000001331");
-    assert_eq!(
-        api.get_code(target, None).await.unwrap(),
-        Bytes::from(hex!("602a60005260206000f3"))
-    );
+    assert_eq!(api.get_code(target, None).await.unwrap(), bytes!("602a60005260206000f3"));
 }
 
 // An out-of-band storage mutation must replace the same locally modified slot.

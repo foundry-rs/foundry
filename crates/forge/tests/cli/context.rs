@@ -50,7 +50,15 @@ contract ForgeContextTest is DSTest {
 fn can_set_forge_test_standard_context(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("ForgeContextTest.t.sol", FORGE_TEST_CONTEXT_CONTRACT);
-    cmd.args(["test", "--match-test", "testForgeTestContext"]).assert_success();
+    cmd.args(["test", "--match-test", "testForgeTestContext"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for src/ForgeContextTest.t.sol:ForgeContextTest
+[PASS] testForgeTestContext() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#
+    ]]);
 }
 
 // tests that context properly set for `forge snapshot` command

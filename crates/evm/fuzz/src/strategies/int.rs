@@ -124,13 +124,11 @@ impl IntStrategy {
         let rng = runner.rng();
 
         let offset = I256::from_raw(U256::from(rng.random_range(0..4)));
-        let umax: U256 = (U256::from(1) << (self.bits - 1)) - U256::from(1);
+        let umax: U256 = (U256::ONE << (self.bits - 1)) - U256::ONE;
         // Choose if we want values around min, -0, +0, or max
         let kind = rng.random_range(0..4);
         let start = match kind {
-            0 => {
-                I256::overflowing_from_sign_and_abs(Sign::Negative, umax + U256::from(1)).0 + offset
-            }
+            0 => I256::overflowing_from_sign_and_abs(Sign::Negative, umax + U256::ONE).0 + offset,
             1 => -offset - I256::ONE,
             2 => offset,
             3 => I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0 - offset,

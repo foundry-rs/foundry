@@ -341,8 +341,8 @@ mod tests {
 
     #[test]
     fn strict_uint256_array_is_homogeneous() {
-        let small = U256::from(1u64);
-        let big = U256::from(1u64) << 200;
+        let small = U256::ONE;
+        let big = U256::ONE << 200;
 
         let arr =
             DynSolValue::Array(vec![DynSolValue::Uint(small, 256), DynSolValue::Uint(big, 256)]);
