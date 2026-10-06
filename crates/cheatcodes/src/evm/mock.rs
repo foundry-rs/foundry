@@ -253,17 +253,15 @@ fn make_acc_non_empty<FEN: FoundryEvmNetwork>(
 ///
 /// An exact calldata and value match wins. Otherwise, the first mock in map order whose calldata
 /// prefixes `input` and whose value, if set, equals `value` is used.
-pub(crate) fn find_mock_returns<'a>(
-    mocks: &'a mut BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>,
+pub(crate) fn find_mock_returns<'a, T>(
+    mocks: &'a mut BTreeMap<MockCallDataContext, VecDeque<T>>,
     input: &Bytes,
     value: Option<U256>,
-) -> Option<&'a mut VecDeque<MockCallReturnData>> {
+) -> Option<&'a mut VecDeque<T>> {
     let ctx = MockCallDataContext { calldata: input.clone(), value };
-    if mocks.contains_key(&ctx) {
-        return mocks.get_mut(&ctx);
-    }
+    // Reversed `Ord` puts all matches at or after `ctx`, with the exact key first.
     mocks
-        .iter_mut()
+        .range_mut(ctx..)
         .find(|(mock, _)| {
             input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
                 && mock.value.is_none_or(|mock_value| Some(mock_value) == value)
@@ -272,9 +270,97 @@ pub(crate) fn find_mock_returns<'a>(
 }
 
 /// Consumes the front return data of a mock, keeping the last one for every later call.
-pub(crate) fn advance_mock_returns(queue: &mut VecDeque<MockCallReturnData>) {
-    // If the mocked calls stack has a single element in it, don't empty it.
+pub(crate) fn advance_mock_returns<T>(queue: &mut VecDeque<T>) {
     if queue.len() > 1 {
         queue.pop_front();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mock(
+        calldata: &'static [u8],
+        value: Option<u64>,
+        result: u8,
+    ) -> (MockCallDataContext, VecDeque<u8>) {
+        (
+            MockCallDataContext {
+                calldata: Bytes::from_static(calldata),
+                value: value.map(U256::from),
+            },
+            VecDeque::from([result]),
+        )
+    }
+
+    #[test]
+    fn mock_matching_precedence() {
+        let mut mocks = BTreeMap::from([
+            mock(b"call", Some(1), 1),
+            mock(b"call", Some(4), 9),
+            mock(b"call", None, 2),
+            mock(b"cal", Some(1), 3),
+            mock(b"cal", Some(0), 4),
+            mock(b"cal", Some(2), 5),
+            mock(b"cal", None, 6),
+            mock(b"ca", Some(3), 7),
+            mock(b"call-longer", Some(1), 8),
+        ]);
+
+        for (input, value, expected) in [
+            (b"call", Some(1), 1),
+            (b"call", Some(3), 2),
+            (b"call", None, 2),
+            (b"calx", Some(1), 3),
+            (b"calx", Some(3), 6),
+        ] {
+            let queue =
+                find_mock_returns(&mut mocks, &Bytes::from_static(input), value.map(U256::from))
+                    .unwrap();
+            assert_eq!(queue.front(), Some(&expected), "input: {input:?}, value: {value:?}");
+        }
+    }
+
+    #[test]
+    fn absent_transfer_value_does_not_match_zero() {
+        let mut mocks = BTreeMap::from([mock(b"call", Some(0), 1)]);
+        let input = Bytes::from_static(b"call");
+        assert!(find_mock_returns(&mut mocks, &input, None).is_none());
+        assert_eq!(
+            find_mock_returns(&mut mocks, &input, Some(U256::ZERO)).unwrap().front(),
+            Some(&1)
+        );
+
+        mocks.extend([mock(b"cal", None, 2)]);
+        assert_eq!(find_mock_returns(&mut mocks, &input, None).unwrap().front(), Some(&2));
+    }
+
+    #[test]
+    fn empty_matched_queue_is_distinct_from_no_match() {
+        let mut mocks = BTreeMap::from([mock(b"cal", None, 1)]);
+        mocks.insert(
+            MockCallDataContext { calldata: Bytes::from_static(b"call"), value: None },
+            VecDeque::new(),
+        );
+
+        let queue = find_mock_returns(&mut mocks, &Bytes::from_static(b"call"), None).unwrap();
+        assert!(queue.is_empty());
+        assert!(find_mock_returns(&mut mocks, &Bytes::from_static(b"other"), None).is_none());
+    }
+
+    #[test]
+    fn advancing_returns_keeps_last_result() {
+        let mut queue = VecDeque::from([1, 2, 3]);
+        advance_mock_returns(&mut queue);
+        assert_eq!(queue, VecDeque::from([2, 3]));
+        advance_mock_returns(&mut queue);
+        assert_eq!(queue, VecDeque::from([3]));
+        advance_mock_returns(&mut queue);
+        assert_eq!(queue, VecDeque::from([3]));
+
+        queue.clear();
+        advance_mock_returns(&mut queue);
+        assert!(queue.is_empty());
     }
 }
