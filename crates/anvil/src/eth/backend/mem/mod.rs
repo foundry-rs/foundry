@@ -4836,8 +4836,7 @@ impl<N: Network> Backend<N> {
             if account.code.as_ref().is_none_or(|code| code.is_empty()) {
                 let code =
                     revm::state::Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
-                account.code_hash = code.hash_slow();
-                account.code = Some(code);
+                account.set_code(code);
                 db.insert_account(address, account);
             }
         }
