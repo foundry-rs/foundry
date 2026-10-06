@@ -29,7 +29,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
@@ -1353,6 +1353,106 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
+async fn broadcast_stops_after_dropped_predecessor(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "DroppedPredecessor.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract DroppedPredecessorTarget {}
+
+contract DroppedPredecessor is Script {
+    function run() external {
+        vm.startBroadcast();
+        new DroppedPredecessorTarget();
+        new DroppedPredecessorTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let hidden_hash = Arc::new(Mutex::new(Value::Null));
+    let rpc = spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionByHash", {
+        let hidden_hash = hidden_hash.clone();
+        move |params, result| {
+            if params.get(0) == Some(&*hidden_hash.lock().unwrap()) { Value::Null } else { result }
+        }
+    })
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let path = prj.root().join("broadcast/DroppedPredecessor.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let sequence = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 2)
+            {
+                break sequence;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both submitted transactions were not checkpointed");
+    let first_hash = sequence["transactions"][0]["hash"].as_str().unwrap().parse().unwrap();
+    let second_hash = sequence["transactions"][1]["hash"].as_str().unwrap().parse().unwrap();
+    // Some RPC endpoints forget one transaction while still returning its queued successor.
+    // Anvil also hides successors when a predecessor is dropped, so model that RPC response.
+    *hidden_hash.lock().unwrap() = serde_json::json!(first_hash);
+    let provider = handle.http_provider();
+    assert!(provider.get_transaction_by_hash(second_hash).await.unwrap().is_some());
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("receipt polling hung on the visible successor of a dropped transaction");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let pending = sequence["pending"].as_array().unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(pending.contains(&serde_json::json!(first_hash)));
+    assert!(pending.contains(&serde_json::json!(second_hash)));
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+    let original_submissions = submissions.lock().unwrap().clone();
+    assert_eq!(original_submissions.len(), 2);
+
+    api.anvil_drop_transaction(first_hash).await.unwrap();
+    *hidden_hash.lock().unwrap() = Value::Null;
+    api.anvil_set_auto_mine(true).await.unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let submissions = submissions.lock().unwrap();
+    assert_eq!(submissions.len(), 4);
+    for original in original_submissions {
+        assert!(submissions[2..].contains(&original));
+    }
 }
 
 #[forgetest]

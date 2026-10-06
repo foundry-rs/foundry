@@ -375,7 +375,7 @@ async fn multi_chain_stops_when_submission_disappears(prj: _, cmd: _) {
     assert!(!output.status.success(), "Forge reported success: {stderr}");
     assert!(
         stderr.contains(&format!(
-            "submitted transactions on chain 31337 have no receipt and are no longer visible to the RPC endpoint: {submitted_hash}"
+            "submitted transactions on chain 31337 have no receipt after a transaction disappeared from the RPC endpoint: {submitted_hash}"
         )),
         "{stderr}"
     );

@@ -1044,7 +1044,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             self.sequence.submission_hashes(i);
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        progress
+                        let result = progress
                             .wait_for_pending(
                                 i,
                                 sequence,
@@ -1053,7 +1053,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 self.args.confirmations,
                                 (&durable_hashes, &replayable_hashes),
                             )
-                            .await?;
+                            .await;
+                        self.sequence.save(true, false)?;
+                        result?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
 
                         // A submitted transaction that the endpoint stopped returning has no
@@ -1074,7 +1076,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     .or(deployment.transactions[index].hash)
                             });
                             bail!(
-                                "submitted transactions on chain {} have no receipt and are no longer visible to the RPC endpoint: {}\n\nStopped before sending later transactions. Add `--resume` to your command to resend them.",
+                                "submitted transactions on chain {} have no receipt after a transaction disappeared from the RPC endpoint: {}\n\nStopped before sending later transactions. Add `--resume` to your command to resend them.",
                                 deployment.chain,
                                 hashes.format(", ")
                             );
