@@ -43,12 +43,12 @@ fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
 
 fn calldata_for(abi: &JsonAbi, function_name: &str, arg: u64) -> String {
     let function = abi.functions().find(|function| function.name == function_name).unwrap();
-    format!("0x{}{:064x}", hex::encode(function.selector()), arg)
+    format!("{:#x}{:064x}", function.selector(), arg)
 }
 
 fn calldata_for_args(abi: &JsonAbi, function_name: &str, args: &[DynSolValue]) -> String {
     let function = abi.functions().find(|function| function.name == function_name).unwrap();
-    format!("0x{}", hex::encode(function.abi_encode_input(args).unwrap()))
+    hex::encode_prefixed(function.abi_encode_input(args).unwrap())
 }
 
 fn output_calldata_args(
@@ -3969,11 +3969,8 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
         "out/ForgeFuzzInvariantFailOnRevertReplay.t.sol/ForgeFuzzInvariantFailOnRevertReplayTest.json",
     );
     let revert_handler = calldata_for(&abi, "revertHandler", 1);
-    let break_invariant = format!(
-        "0x{}",
-        hex::encode(
-            abi.functions().find(|function| function.name == "breakInvariant").unwrap().selector()
-        )
+    let break_invariant = hex::encode_prefixed(
+        abi.functions().find(|function| function.name == "breakInvariant").unwrap().selector(),
     );
     let corpus = prj.root().join("invariant_corpus");
     std::fs::create_dir_all(&corpus).unwrap();

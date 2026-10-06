@@ -550,7 +550,7 @@ Genesis Number
 
         for wallet in &self.genesis_accounts {
             available_accounts.push(format!("{:?}", wallet.address()));
-            private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
+            private_keys.push(hex::encode_prefixed(wallet.credential().to_bytes()));
         }
 
         if let Some(generator) = &self.account_generator {
@@ -2756,9 +2756,8 @@ mod tests {
             .with_chain_id(Some(1u64));
         let block = 42;
         config.fork_source_chain_id = Some(143);
-        let expected = Config::foundry_block_cache_file(143, block).map(|path| {
-            path.with_file_name(format!("storage-{}.json", hex::encode(keccak256(rpc_url))))
-        });
+        let expected = Config::foundry_block_cache_file(143, block)
+            .map(|path| path.with_file_name(format!("storage-{:x}.json", keccak256(rpc_url))));
 
         assert_eq!(config.block_cache_path(block), expected);
         assert_ne!(

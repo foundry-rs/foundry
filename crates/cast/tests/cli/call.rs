@@ -705,7 +705,7 @@ async fn cast_call_decodes_custom_error(prj: _, cmd: _) {
     let home = prj.root().join("home");
     let cache_dir = home.join(".foundry/cache");
     fs::create_dir_all(&cache_dir).unwrap();
-    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let selector = hex::encode_prefixed(&selector[..4]);
     let mut errors = serde_json::Map::new();
     errors.insert(selector, json!(signature));
     fs::write(
@@ -720,7 +720,7 @@ async fn cast_call_decodes_custom_error(prj: _, cmd: _) {
     .unwrap();
 
     let target = "0x000000000000000000000000000000000000dead";
-    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let code_override = format!("{target}:{}", hex::encode_prefixed(runtime));
     let endpoint = handle.http_endpoint();
 
     cmd.env("HOME", &home);

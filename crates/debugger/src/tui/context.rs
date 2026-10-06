@@ -1687,7 +1687,7 @@ pub(super) fn pretty_opcode(step: &CallTraceStep) -> String {
 
 pub(super) fn write_pretty_opcode(buf: &mut String, step: &CallTraceStep) {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
-        write!(buf, "{}(0x{})", step.op, hex::encode(immediate)).unwrap();
+        write!(buf, "{}({})", step.op, hex::encode_prefixed(immediate)).unwrap();
     } else {
         write!(buf, "{}", step.op).unwrap();
     }

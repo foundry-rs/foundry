@@ -101,9 +101,8 @@ pub async fn ensure_access_key(cfg: EnsureAccessKeyConfig) -> Result<AccessKeyOu
     let key_address = signer.address();
     // The server requires uncompressed SEC1 (65-byte `0x04 || X || Y`); the
     // default `to_sec1_bytes()` would emit the compressed 33-byte form.
-    let pub_key_hex = format!(
-        "0x{}",
-        hex::encode(signer.credential().verifying_key().to_encoded_point(false).as_bytes()),
+    let pub_key_hex = hex::encode_prefixed(
+        signer.credential().verifying_key().to_encoded_point(false).as_bytes(),
     );
 
     let code_verifier = random_code_verifier();
@@ -439,7 +438,7 @@ mod tests {
         let signed = auth.into_signed(sig);
         let mut buf = Vec::new();
         signed.encode(&mut buf);
-        format!("0x{}", hex::encode(buf))
+        hex::encode_prefixed(buf)
     }
 
     async fn poll_handler(State(state): State<MockState>) -> Json<serde_json::Value> {
