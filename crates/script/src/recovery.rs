@@ -1077,7 +1077,7 @@ mod tests {
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{TempoSignature, TempoTxEnvelope, transaction::Call};
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1134,10 +1134,8 @@ mod tests {
         request: TempoTransactionRequest,
         from: Address,
     ) -> RpcTransaction<TempoTxEnvelope> {
-        let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-            request.build_aa().unwrap(),
-            TempoSignature::default(),
-        ));
+        let envelope =
+            TempoTxEnvelope::AA(request.build_aa().unwrap().into_signed(TempoSignature::default()));
         RpcTransaction {
             inner: Recovered::new_unchecked(envelope, from),
             block_hash: None,

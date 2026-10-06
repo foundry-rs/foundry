@@ -1589,9 +1589,7 @@ async fn test_tempo_t5_key_authorization_witness_burn_flow() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -1676,9 +1674,7 @@ async fn test_tempo_t5_tip20_channel_reserve_basic_views() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -2675,9 +2671,7 @@ async fn test_tempo_aa_transaction_basic() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -2773,8 +2767,7 @@ async fn test_tempo_send_transaction_preserves_signed_identity() {
         dev_key(1).sign_hash(&expected_tx.fee_payer_signature_hash(from)).await.unwrap();
     expected_tx.fee_payer_signature = Some(fee_payer_signature);
     let sender_signature = dev_key(0).sign_hash(&expected_tx.signature_hash()).await.unwrap();
-    let expected_signature =
-        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(sender_signature));
+    let expected_signature = TempoSignature::from(sender_signature);
 
     let hash = provider
         .raw_request::<_, B256>(
@@ -2802,7 +2795,7 @@ async fn test_tempo_send_transaction_preserves_signed_identity() {
         .unwrap();
     let transaction = serde_json::from_value::<AASigned>(transaction).unwrap();
     let recomputed_hash =
-        *AASigned::new_unhashed(transaction.tx().clone(), transaction.signature().clone()).hash();
+        *transaction.tx().clone().into_signed(transaction.signature().clone()).hash();
 
     assert_eq!(*transaction.hash(), hash);
     assert_eq!(recomputed_hash, hash);
@@ -2843,10 +2836,7 @@ async fn sponsorship_requested_transfer(
         tempo_authorization_list: vec![],
     };
     let signature = dev_key(sender_index).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
-    AASigned::new_unhashed(
-        tempo_tx,
-        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-    )
+    tempo_tx.into_signed(signature.into())
 }
 
 /// Encodes a Tempo AA transaction the way fee payer service clients submit it: the fee payer
@@ -4004,7 +3994,7 @@ async fn test_tempo_estimate_gas_with_provisioned_key() {
         account,
         PrimitiveSignature::Secp256k1(signature),
     ));
-    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(tempo_tx, tempo_signature));
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(tempo_signature));
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
 
@@ -4135,9 +4125,7 @@ async fn test_tempo_aa_transaction_with_2d_nonce() {
 
         let sig_hash = tempo_tx.signature_hash();
         let signature = signer.sign_hash(&sig_hash).await.unwrap();
-        let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-        let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-        let envelope = TempoTxEnvelope::AA(signed_tx);
+        let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
         let mut encoded = Vec::new();
         envelope.encode_2718(&mut encoded);
@@ -4190,9 +4178,7 @@ async fn test_tempo_nonzero_lane_pending_tx_does_not_advance_scalar_nonce() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4241,10 +4227,7 @@ async fn test_tempo_txpool_orders_same_nonce_lane() {
             ..Default::default()
         };
         let signature = signer.sign_hash(&tempo_tx.signature_hash()).await.unwrap();
-        let signed_tx = AASigned::new_unhashed(
-            tempo_tx,
-            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-        );
+        let signed_tx = tempo_tx.into_signed(signature.into());
         let mut encoded = Vec::new();
         TempoTxEnvelope::AA(signed_tx).encode_2718(&mut encoded);
         let pending = provider.send_raw_transaction(&encoded).await.unwrap();
@@ -4311,10 +4294,7 @@ async fn test_tempo_txpool_mines_successor_after_lane_nonce_fast_forward() {
             ..Default::default()
         };
         let signature = sender.sign_hash(&tx.signature_hash()).await.unwrap();
-        let signed = AASigned::new_unhashed(
-            tx,
-            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-        );
+        let signed = tx.into_signed(signature.into());
         let mut encoded = Vec::new();
         TempoTxEnvelope::AA(signed).encode_2718(&mut encoded);
         hashes.push(*provider.send_raw_transaction(&encoded).await.unwrap().tx_hash());
@@ -4376,9 +4356,7 @@ async fn test_tempo_txpool_keeps_nonzero_nonce_lanes_separate() {
 
         let sig_hash = tempo_tx.signature_hash();
         let signature = signer.sign_hash(&sig_hash).await.unwrap();
-        let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-        let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-        let envelope = TempoTxEnvelope::AA(signed_tx);
+        let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
         let mut encoded = Vec::new();
         envelope.encode_2718(&mut encoded);
@@ -4437,9 +4415,7 @@ async fn test_tempo_aa_transaction_with_valid_before() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4489,9 +4465,7 @@ async fn test_tempo_aa_transaction_with_valid_after() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4547,9 +4521,7 @@ async fn test_tempo_aa_expired_valid_before() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4606,9 +4578,7 @@ async fn test_tempo_aa_valid_after_future() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4671,10 +4641,7 @@ async fn test_tempo_aa_valid_after_pool_limit() {
             tempo_authorization_list: vec![],
         };
         let signature = dev_key(0).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
-        let signed_tx = AASigned::new_unhashed(
-            tempo_tx,
-            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-        );
+        let signed_tx = tempo_tx.into_signed(signature.into());
         let mut encoded = Vec::new();
         TempoTxEnvelope::AA(signed_tx).encode_2718(&mut encoded);
 
@@ -4729,9 +4696,7 @@ async fn test_tempo_aa_nonce_replay_same_key() {
 
     let sig_hash = tempo_tx1.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx1, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx1.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4763,9 +4728,7 @@ async fn test_tempo_aa_nonce_replay_same_key() {
 
     let sig_hash = tempo_tx2.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx2, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx2.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -4816,9 +4779,7 @@ async fn test_tempo_aa_parallel_nonces_different_keys() {
 
         let sig_hash = tempo_tx.signature_hash();
         let signature = signer.sign_hash(&sig_hash).await.unwrap();
-        let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-        let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-        let envelope = TempoTxEnvelope::AA(signed_tx);
+        let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
         let mut encoded = Vec::new();
         envelope.encode_2718(&mut encoded);
@@ -5406,9 +5367,7 @@ async fn test_tempo_aa_transaction_expiring_nonce() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5462,10 +5421,7 @@ async fn test_tempo_expiring_nonce_valid_before_pool_limits() {
                 tempo_authorization_list: vec![],
             };
             let signature = dev_key(0).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
-            let signed_tx = AASigned::new_unhashed(
-                tempo_tx,
-                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-            );
+            let signed_tx = tempo_tx.into_signed(signature.into());
             let mut encoded = Vec::new();
             TempoTxEnvelope::AA(signed_tx).encode_2718(&mut encoded);
 
@@ -5547,9 +5503,7 @@ async fn test_tempo_aa_expiring_nonce_replay() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5620,9 +5574,7 @@ async fn test_tempo_aa_transaction_multiple_calls() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5681,9 +5633,7 @@ async fn test_tempo_aa_nonce_keys_are_isolated() {
 
     let sig_hash = tempo_tx1.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx1, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx1.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5711,9 +5661,7 @@ async fn test_tempo_aa_nonce_keys_are_isolated() {
 
     let sig_hash = tempo_tx2.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx2, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx2.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5770,9 +5718,7 @@ async fn test_tempo_aa_explicit_fee_token_selection() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5895,9 +5841,7 @@ async fn test_tempo_aa_transaction_receipt_fields() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -5953,9 +5897,7 @@ async fn test_tempo_aa_get_transaction_by_hash() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -6014,9 +5956,7 @@ async fn test_tempo_aa_raw_transaction() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -6075,9 +6015,7 @@ async fn test_tempo_aa_wrong_chain_id_rejected() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -6128,9 +6066,7 @@ async fn test_tempo_aa_gas_too_low_rejected() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -6181,9 +6117,7 @@ async fn test_tempo_aa_value_in_call_rejected() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -6530,9 +6464,7 @@ async fn test_gas_estimation_2d_nonce_converges() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
@@ -6603,9 +6535,7 @@ async fn test_gas_estimation_converges_for_tempo_intrinsic_gas() {
 
     let sig_hash = tempo_tx.signature_hash();
     let signature = signer.sign_hash(&sig_hash).await.unwrap();
-    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
-    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
-    let envelope = TempoTxEnvelope::AA(signed_tx);
+    let envelope = TempoTxEnvelope::AA(tempo_tx.into_signed(signature.into()));
 
     let mut encoded = Vec::new();
     envelope.encode_2718(&mut encoded);
