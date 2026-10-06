@@ -258,7 +258,10 @@ impl FuzzImproveArgs {
             .match_contract
             .as_deref()
             .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
-        let baseline = self.run_mutations(&forge, &config.root, None, contract_filter)?;
+        let contract_filter_args = contract_filter
+            .map(|contract| vec!["--match-contract".to_string(), contract.to_string()])
+            .unwrap_or_default();
+        let baseline = self.run_mutations(&forge, &config.root, None, &contract_filter_args)?;
         let project_context = project_context(&config, &self.mutate);
         let prompt_baseline = baseline
             .iter()
@@ -448,9 +451,11 @@ impl FuzzImproveArgs {
         let candidate_workspace =
             tempfile::Builder::new().prefix("forge-fuzz-improve-").tempdir()?;
         workspace::copy_project(config, candidate_workspace.path())?;
-        // Mutation testing copies this workspace again. Materialize project-local library
-        // symlinks so that nested copy cannot escape through links back to the source project.
-        for lib in &config.libs {
+        // Mutation testing copies this workspace again. Materialize project-local library and
+        // dependency symlinks (`copy_project` links `node_modules` and `dependencies` even when
+        // they are not in `libs`) so that nested copy cannot escape back to the source project.
+        let dependency_dirs = ["node_modules", "dependencies"].map(PathBuf::from);
+        for lib in config.libs.iter().chain(&dependency_dirs) {
             let source = if lib.is_absolute() { lib.clone() } else { config.root.join(lib) };
             let Ok(relative) = source.strip_prefix(&config.root) else { continue };
             if !workspace::is_safe_relative_path(relative) || !source.is_dir() {
@@ -530,22 +535,23 @@ impl FuzzImproveArgs {
         }
 
         let candidate_results = if reasons.is_empty() {
-            let base_filter = self
-                .match_contract
-                .as_deref()
-                .or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
-            let contract_filter = candidate_contract_filter(base_filter, candidate);
+            let filter_args =
+                candidate_filter_args(self.match_contract.as_deref(), config, candidate);
             let mut results = Vec::with_capacity(self.seed.len());
             for before in current_results {
                 let after = self.run_mutation(
                     forge,
                     candidate_workspace.path(),
                     Some(config),
-                    contract_filter.as_deref(),
+                    &filter_args,
                     &before.seed,
                 )?;
-                let changed_population = before.output.summary.total != after.output.summary.total
-                    || before.output.summary.invalid != after.output.summary.invalid;
+                // Invalid is an execution outcome, not part of the population: a stronger test can
+                // expose a previously skipped mutant that does not compile. Only a survivor that
+                // became invalid would be miscounted as resolved.
+                let changed_population = before.output.summary.total != after.output.summary.total;
+                let invalidated_survivor = !survivor_identities(&before.output)
+                    .is_disjoint(&mutant_identities(&after.output.invalid_mutants));
                 let introduced_timeout =
                     after.output.timed_out_mutants.iter().any(|(path, mutants)| {
                         before.output.timed_out_mutants.get(path).is_none_or(|baseline| {
@@ -557,6 +563,13 @@ impl FuzzImproveArgs {
                 if changed_population {
                     reasons.push(format!(
                         "candidate changed the mutant population on seed {}",
+                        before.seed
+                    ));
+                    break;
+                }
+                if invalidated_survivor {
+                    reasons.push(format!(
+                        "candidate made a surviving mutant invalid on seed {}",
                         before.seed
                     ));
                     break;
@@ -645,11 +658,11 @@ impl FuzzImproveArgs {
         forge: &Path,
         root: &Path,
         dependency_config: Option<&Config>,
-        contract_filter: Option<&str>,
+        filter_args: &[String],
     ) -> Result<Vec<SeedMutation>> {
         self.seed
             .iter()
-            .map(|seed| self.run_mutation(forge, root, dependency_config, contract_filter, seed))
+            .map(|seed| self.run_mutation(forge, root, dependency_config, filter_args, seed))
             .collect()
     }
 
@@ -658,7 +671,7 @@ impl FuzzImproveArgs {
         forge: &Path,
         root: &Path,
         dependency_config: Option<&Config>,
-        contract_filter: Option<&str>,
+        filter_args: &[String],
         seed: &U256,
     ) -> Result<SeedMutation> {
         let mut command = forge_command(forge, root, seed);
@@ -670,9 +683,7 @@ impl FuzzImproveArgs {
         // Adaptive mutation skipping is concurrency-sensitive, so candidate comparisons must use
         // the same stable execution order.
         command.args(["--mutation-jobs", "1"]);
-        if let Some(contract) = contract_filter {
-            command.args(["--match-contract", contract]);
-        }
+        command.args(filter_args);
         if let Some(config) = dependency_config {
             add_dependency_args(&mut command, config, root);
         }
@@ -719,18 +730,48 @@ fn candidate_test_result(
     Ok((status, reason))
 }
 
-fn candidate_contract_filter(base: Option<&str>, candidate: &Candidate) -> Option<String> {
-    let base = base?;
-    let contracts = candidate
-        .tests
-        .iter()
-        .map(|test| regex::escape(&test.contract))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join("|");
-    let generated = format!("^(?:{contracts})$");
-    Some(format!("(?:{base})|(?:{generated})"))
+/// Returns test filter arguments that select the configured tests plus the generated tests.
+///
+/// Configured filters still apply to the mutation run, so each one is widened to include the
+/// candidate's contracts, test functions, and files rather than replaced.
+fn candidate_filter_args(
+    match_contract: Option<&str>,
+    config: &Config,
+    candidate: &Candidate,
+) -> Vec<String> {
+    let alternatives = |items: BTreeSet<String>| items.into_iter().collect::<Vec<_>>().join("|");
+    let mut args = Vec::new();
+    let contract =
+        match_contract.or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
+    if let Some(contract) = contract {
+        let generated = alternatives(
+            candidate.tests.iter().map(|test| regex::escape(&test.contract)).collect(),
+        );
+        args.extend([
+            "--match-contract".to_string(),
+            format!("(?:{contract})|(?:^(?:{generated})$)"),
+        ]);
+    }
+    if let Some(test) = &config.test_pattern {
+        let generated =
+            alternatives(candidate.tests.iter().map(|test| regex::escape(&test.name)).collect());
+        args.extend([
+            "--match-test".to_string(),
+            format!("(?:{})|(?:^(?:{generated})(?:\\(.*\\))?$)", test.as_str()),
+        ]);
+    }
+    if let Some(path) = &config.path_pattern {
+        let generated = candidate
+            .tests
+            .iter()
+            // Test paths can be matched relative to the project root or as absolute paths.
+            .map(|test| format!("**/{}", test.path.display()))
+            .collect::<BTreeSet<_>>();
+        let globs =
+            std::iter::once(path.glob().to_string()).chain(generated).collect::<Vec<_>>().join(",");
+        args.extend(["--match-path".to_string(), format!("{{{globs}}}")]);
+    }
+    args
 }
 
 fn project_context(config: &Config, mutate: &[PathBuf]) -> ProjectContext {
@@ -920,8 +961,13 @@ fn resolved_survivor_identities(
 }
 
 fn survivor_identities(output: &MutationJsonOutput) -> BTreeSet<MutationIdentity> {
-    output
-        .survived_mutants
+    mutant_identities(&output.survived_mutants)
+}
+
+fn mutant_identities(
+    mutants: &BTreeMap<String, Vec<crate::mutation::SurvivedMutantJson>>,
+) -> BTreeSet<MutationIdentity> {
+    mutants
         .iter()
         .flat_map(|(path, mutants)| {
             mutants.iter().map(|mutant| {

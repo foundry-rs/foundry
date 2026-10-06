@@ -6496,3 +6496,182 @@ accepted candidate: cache/fuzz-improve/0x86baaa33c9eb6ccc1a31ef1518b82d78f1d0db2
     assert!(candidate.contains("ArithmeticLowerTest"));
     assert!(candidate.contains("ArithmeticUpperTest"));
 }
+
+#[cfg(unix)]
+#[forgetest_init]
+fn fuzz_improve_materializes_node_modules_for_candidate_mutations(prj: _, cmd: _) {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "exercise the lower comparison boundary",
+  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1); Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"}],
+  "tests": [{"path": "test/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
+}
+JSON
+"#;
+
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    fs::create_dir_all(prj.root().join("node_modules/example")).unwrap();
+    fs::write(
+        prj.root().join("node_modules/example/Assertions.sol"),
+        "pragma solidity ^0.8.20;\nlibrary Assertions {\n    function equal(uint256 a, uint256 b) internal pure {\n        assert(a == b);\n    }\n}\n",
+    )
+    .unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![
+            "example/=node_modules/example/"
+                .parse::<foundry_compilers::artifacts::remappings::Remapping>()
+                .unwrap()
+                .into(),
+        ];
+    });
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "fuzz",
+        "improve",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+accepted candidate: cache/fuzz-improve/0x[..] (reproducibly resolved [..] survivor(s) across rounds)
+
+"#]]);
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn fuzz_improve_mutation_selection_includes_generated_tests(prj: _, cmd: _) {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "exercise the lower comparison boundary",
+  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}],
+  "tests": [{"path": "test/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
+}
+JSON
+"#;
+
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    // Configured filters exclude the generated test; candidate mutation runs must still select it.
+    prj.update_config(|config| {
+        config.test_pattern = Some(regex::Regex::new(r"^testSmall\w*\(").unwrap().into());
+        config.path_pattern = Some("**/Arithmetic.t.sol".parse().unwrap());
+    });
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "fuzz",
+        "improve",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+accepted candidate: cache/fuzz-improve/0x[..] (reproducibly resolved [..] survivor(s) across rounds)
+
+"#]]);
+}
