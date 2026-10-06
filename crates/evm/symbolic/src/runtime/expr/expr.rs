@@ -2358,8 +2358,8 @@ pub(crate) fn compute_create2_address_word(
     if let (Some(deployer), Some(salt), Some(init_code_hash)) =
         (deployer_concrete, salt_concrete, init_code_hash_concrete)
     {
-        let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
-        let address = deployer.create2(B256::from(salt.to_be_bytes::<32>()), init_code_hash);
+        let init_code_hash = B256::from(init_code_hash);
+        let address = deployer.create2(B256::from(salt), init_code_hash);
         return Ok(SymExpr::constant(cx, address_word(address)));
     }
 
@@ -2368,7 +2368,7 @@ pub(crate) fn compute_create2_address_word(
         .unwrap_or_else(|| format!("{deployer:?}"));
     let init_code_hash_identity = init_code_hash_concrete
         .map(|init_code_hash| {
-            let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
+            let init_code_hash = B256::from(init_code_hash);
             format!("{init_code_hash:?}")
         })
         .unwrap_or_else(|| format!("{init_code_hash:?}"));

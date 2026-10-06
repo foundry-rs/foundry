@@ -1533,7 +1533,7 @@ async fn test_tx_access_list() {
     let reverter_call_tx = TransactionRequest::default()
         .from(funded_sender)
         .to(reverter)
-        .input(Bytes::from(slot.to_vec()).into());
+        .input(Bytes::from(slot).into());
     let reverter_call_tx = WithOtherFields::new(reverter_call_tx);
     let access_list = provider.create_access_list(&reverter_call_tx).await.unwrap();
 

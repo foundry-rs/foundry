@@ -4263,9 +4263,8 @@ impl EthApi<FoundryNetwork> {
                 continue;
             };
             for slot in &item.storage_keys {
-                let account_override = AccountOverride::default().with_state_diff(std::iter::once(
-                    (*slot, B256::from(expected_value.to_be_bytes())),
-                ));
+                let account_override = AccountOverride::default()
+                    .with_state_diff(std::iter::once((*slot, B256::from(expected_value))));
 
                 let state_override = StateOverridesBuilder::default()
                     .append(token_address, account_override)
@@ -4327,12 +4326,7 @@ impl EthApi<FoundryNetwork> {
             })?;
 
         // Set the storage slot to the desired balance
-        self.anvil_set_storage_at(
-            token_address,
-            U256::from_be_bytes(slot.0),
-            B256::from(balance.to_be_bytes()),
-        )
-        .await?;
+        self.anvil_set_storage_at(token_address, slot.into(), balance.into()).await?;
 
         Ok(())
     }
@@ -4380,12 +4374,7 @@ impl EthApi<FoundryNetwork> {
             })?;
 
         // Set the storage slot to the desired allowance
-        self.anvil_set_storage_at(
-            token_address,
-            U256::from_be_bytes(slot.0),
-            B256::from(amount.to_be_bytes()),
-        )
-        .await?;
+        self.anvil_set_storage_at(token_address, slot.into(), amount.into()).await?;
 
         Ok(())
     }

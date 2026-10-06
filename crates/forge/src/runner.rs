@@ -1621,7 +1621,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &txes,
             &sequence,
             replay.invariant_contract.address,
-            replay.target_invariant.selector().to_vec().into(),
+            replay.target_invariant.selector().into(),
             CheckSequenceOptions {
                 accumulate_warp_roll: false,
                 fail_on_revert: replay.invariant_config.fail_on_revert,
@@ -1653,7 +1653,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &txes,
             &sequence,
             invariant_contract.address,
-            invariant_contract.anchor().selector().to_vec().into(),
+            invariant_contract.anchor().selector().into(),
             CheckSequenceOptions {
                 accumulate_warp_roll: config.has_delay(),
                 fail_on_revert: config.fail_on_revert,
@@ -2837,7 +2837,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &txes,
                     &sequence,
                     self.setup.address,
-                    invariant.selector().to_vec().into(),
+                    invariant.selector().into(),
                     CheckSequenceOptions {
                         // Artifact replay executes every stored call in order, so each call's
                         // warp/roll delta is applied directly. Accumulation is only needed when a

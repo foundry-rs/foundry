@@ -1323,12 +1323,12 @@ impl Cheatcode for setBlockhashCall {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
-            blockNumber <= U256::from(ccx.block_number()),
+            blockNumber <= ccx.block_number(),
             "block number must be less than or equal to the current block number"
         );
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
-        let current_block = U256::from(ccx.block_number());
+        let current_block = ccx.block_number();
         if ccx.spec().into() >= SpecId::PRAGUE
             && blockNumber < current_block
             && current_block - blockNumber <= U256::from(HISTORY_SERVE_WINDOW)

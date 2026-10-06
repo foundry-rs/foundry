@@ -850,10 +850,9 @@ pub(crate) fn parse_env_value(value: &str, ty: &DynSolType) -> Result<DynSolValu
         DynSolType::Uint(256) => Ok(DynSolValue::Uint(parse_env_uint(value)?, 256)),
         DynSolType::Int(256) => Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256)),
         DynSolType::Address => Ok(DynSolValue::Address(parse_env_address(value)?)),
-        DynSolType::FixedBytes(32) => Ok(DynSolValue::FixedBytes(
-            B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()),
-            32,
-        )),
+        DynSolType::FixedBytes(32) => {
+            Ok(DynSolValue::FixedBytes(B256::from(parse_env_bytes32(value)?), 32))
+        }
         DynSolType::String => Ok(DynSolValue::String(value.to_string())),
         DynSolType::Bytes => Ok(DynSolValue::Bytes(parse_env_bytes(value)?)),
         _ => Err(SymbolicError::Unsupported("symbolic env type")),
@@ -913,7 +912,7 @@ pub(crate) fn sign_hash_words(
     digest: U256,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
     let signer = private_key_signer(private_key)?;
-    let digest = B256::from(digest.to_be_bytes::<32>());
+    let digest = B256::from(digest);
     let sig = signer
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
@@ -930,7 +929,7 @@ pub(crate) fn sign_compact_hash_words(
     digest: U256,
 ) -> Result<Vec<SymExpr>, SymbolicError> {
     let signer = private_key_signer(private_key)?;
-    let digest = B256::from(digest.to_be_bytes::<32>());
+    let digest = B256::from(digest);
     let sig = signer
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.signCompact"))?;
