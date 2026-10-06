@@ -354,6 +354,7 @@ impl RunArgs {
             .await
             .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {tx_hash:?}"))?;
+        ensure_requested_transaction(tx_hash, &tx)?;
         Ok(TargetFetch { tx, provider, compute_units_per_second })
     }
 
@@ -448,6 +449,9 @@ impl RunArgs {
         ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
         let current_tx = provider.get_transaction_by_hash(tx_hash).await?;
+        if let Some(current_tx) = &current_tx {
+            ensure_requested_transaction(tx_hash, current_tx)?;
+        }
         ensure_remote_transaction_inclusion(
             tx_hash,
             tx_inclusion,
@@ -1073,6 +1077,16 @@ fn ensure_remote_transaction_inclusion(
         );
     }
 
+    Ok(())
+}
+
+/// Ensures the RPC answered `eth_getTransactionByHash` with the requested transaction.
+fn ensure_requested_transaction(requested: B256, tx: &AnyRpcTransaction) -> Result<()> {
+    let returned = tx.tx_hash();
+    eyre::ensure!(
+        returned == requested,
+        "RPC returned transaction {returned:?} for requested {requested:?}"
+    );
     Ok(())
 }
 
