@@ -247,7 +247,7 @@ impl Precompile for Ecpairing {
             for tmp in &mut tmp {
                 *tmp = decoder.take_word()?;
             }
-            values.push(iter_to_string(tmp.iter().map(|x| U256::from_be_bytes(x.0))));
+            values.push(iter_to_string(tmp.iter().map(|x| Into::<U256>::into(**x))));
         }
         Ok(values)
     }

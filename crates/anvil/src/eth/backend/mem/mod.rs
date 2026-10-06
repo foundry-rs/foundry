@@ -9768,8 +9768,7 @@ where
                         |error| BlockchainError::Eip8130TransactionRejected(error.to_string()),
                     )?;
                     let word = self.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
-                    let channel_nonce =
-                        Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)).to::<u64>();
+                    let channel_nonce = Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>();
                     (channel_nonce == 0, body.nonce_sequence == channel_nonce)
                 };
             let intrinsic = IntrinsicGas::compute(

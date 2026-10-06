@@ -566,8 +566,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             backend.insert_account_info(address, info);
 
             for (slot, value) in account_state.storage {
-                let slot = U256::from_be_bytes(slot.0);
-                let value = U256::from_be_bytes(value.0);
+                let slot = slot.into();
+                let value = value.into();
                 backend.insert_account_storage(address, slot, value)?;
             }
         }

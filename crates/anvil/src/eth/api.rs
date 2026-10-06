@@ -2909,7 +2909,7 @@ impl EthApi<FoundryNetwork> {
             .backend
             .storage_at(NonceManagerStorage::ADDRESS, slot, Some(block_request))
             .await?;
-        Ok(Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)))
+        Ok(Eip8130Nonce::decode_channel_nonce(word.into()))
     }
 
     /// Returns the number of transactions in a block with given block number.
@@ -5261,8 +5261,7 @@ impl EthApi<FoundryNetwork> {
                 let slot = NonceManagerStorage::expiring_nonce_seen_slot(replay_id);
                 let word =
                     self.backend.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
-                let recorded_expiry =
-                    (U256::from_be_bytes(word.0) & U256::from(u64::MAX)).to::<u64>();
+                let recorded_expiry = (Into::<U256>::into(word) & U256::from(u64::MAX)).to::<u64>();
                 if recorded_expiry > now {
                     return Err(BlockchainError::Eip8130TransactionRejected(
                         "expiring nonce replay has already been recorded".to_string(),
@@ -5277,8 +5276,7 @@ impl EthApi<FoundryNetwork> {
             let slot = NonceManagerStorage::nonce_slot(*pending.sender(), tx.nonce_key)
                 .map_err(|error| BlockchainError::InvalidTransactionRequest(error.to_string()))?;
             let word = self.backend.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
-            let state_nonce =
-                Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)).to::<u64>();
+            let state_nonce = Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>();
             if tx.nonce_sequence < state_nonce {
                 return Err(InvalidTransactionError::NonceTooLow.into());
             }

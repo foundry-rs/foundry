@@ -76,7 +76,7 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
                 for byte in bytes.iter().take(len) {
                     input.push((self.eval_word(byte)? & U256::from(0xff)).to::<u8>());
                 }
-                U256::from_be_bytes(keccak256(input).0)
+                keccak256(input).into()
             }
             SymExprKind::Not(value) => !self.eval_word(value)?,
             SymExprKind::BinOp(op, left, right) => {

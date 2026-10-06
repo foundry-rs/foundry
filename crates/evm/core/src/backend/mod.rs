@@ -2551,12 +2551,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         if let Some(acc) = journaled_state.state.get_mut(target) {
             if let Some(storage) = source.storage.as_ref() {
                 for (slot, value) in storage {
-                    let slot = U256::from_be_bytes(slot.0);
+                    let slot = (*slot).into();
                     acc.storage.insert(
                         slot,
                         EvmStorageSlot::new_changed(
                             acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
-                            U256::from_be_bytes(value.0),
+                            (*value).into(),
                             TransactionId::ZERO,
                         ),
                     );
