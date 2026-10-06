@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256, map::HashMap};
+use alloy_primitives::{Address, map::HashMap};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use foundry_evm_traces::RevertDiagnostic as DetailedRevertReason;
 use revm::{
@@ -148,7 +148,7 @@ impl RevertDiagnostic {
     #[cold]
     fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
         if let Ok(size) = interp.stack.peek(0)
-            && size != U256::ZERO
+            && !size.is_zero()
         {
             self.non_contract_size_check = None;
         }

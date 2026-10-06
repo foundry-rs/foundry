@@ -1096,7 +1096,7 @@ feeToken             {}",
 
 impl UIfmtReceiptExt for TempoTransactionReceipt {
     fn logs_pretty(&self) -> String {
-        serde_json::to_string(self.inner.inner.logs()).unwrap_or_default()
+        receipt_logs_pretty(&self.inner)
     }
 
     fn logs_bloom_pretty(&self) -> String {

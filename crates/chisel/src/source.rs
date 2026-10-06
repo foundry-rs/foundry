@@ -374,7 +374,7 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
 
     /// Uses credentials from this invocation, never values persisted by an older Chisel version.
     pub(crate) fn restore_credentials(&mut self, current: &InvocationRpc) -> Result<()> {
-        let forked = self.fork_url_required || self.evm_opts.fork_url.is_some();
+        let forked = self.persisted_fork_url_required();
         if forked && current.fork_url.is_none() {
             eyre::bail!(
                 "this saved Chisel session requires a fork endpoint; use !fork <url> or restart Chisel with --fork-url to load it"

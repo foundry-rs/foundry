@@ -186,7 +186,7 @@ impl BoundMutator for I256 {
 
             // Map to range.
             let range = max.saturating_sub(min).saturating_add(Self::ONE).unsigned_abs();
-            let wrapped = Self::from_raw(U256::from(signed_candidate.unsigned_abs()) % range);
+            let wrapped = Self::from_raw(signed_candidate.unsigned_abs() % range);
             let candidate =
                 if signed_candidate.is_negative() { max - wrapped } else { min + wrapped };
 

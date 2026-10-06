@@ -34,7 +34,7 @@ impl AcceptableRevertParameters {
         Self {
             reason: potential_revert.revertData.to_vec(),
             partial_match: potential_revert.partialMatch,
-            reverter: if potential_revert.reverter == Address::ZERO {
+            reverter: if potential_revert.reverter.is_zero() {
                 None
             } else {
                 Some(potential_revert.reverter)

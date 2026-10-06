@@ -526,7 +526,7 @@ impl<'a> InvariantContract<'a> {
         abi: &'a JsonAbi,
     ) -> Self {
         let invariant_calldata =
-            invariant_fns.iter().map(|(func, _)| func.selector().to_vec().into()).collect();
+            invariant_fns.iter().map(|(func, _)| func.selector().into()).collect();
         Self {
             address,
             name,

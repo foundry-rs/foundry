@@ -118,11 +118,7 @@ async fn storage_values_agrees_with_get_storage_at() {
 
         let mut expected = Vec::new();
         for index in [U256::ZERO, U256::ONE] {
-            let value = provider
-                .get_storage_at(address, index)
-                .block_id(BlockId::number(block))
-                .await
-                .unwrap();
+            let value = provider.get_storage_at(address, index).number(block).await.unwrap();
             expected.push(B256::from(value));
         }
         assert_eq!(batched[&address], expected, "divergence at block {block}");

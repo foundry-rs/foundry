@@ -489,7 +489,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
                 accounts.remove(address);
                 continue;
             }
-            if overlay.account_state == AccountState::StorageCleared {
+            if overlay.account_state.is_storage_cleared() {
                 accounts.insert(*address, overlay.clone());
                 continue;
             }
@@ -1026,10 +1026,7 @@ mod test {
         cache.insert_account_info(updated, AccountInfo::from_balance(U256::from(20)));
         cache.insert_account_storage(updated, deleted_slot, U256::ZERO).unwrap();
         cache.insert_account_storage(updated, updated_slot, U256::from(12)).unwrap();
-        cache.cache.accounts.insert(
-            deleted,
-            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
+        cache.cache.accounts.insert(deleted, DbAccount::new_not_existing());
         cache.cache.accounts.insert(
             cleared,
             DbAccount {

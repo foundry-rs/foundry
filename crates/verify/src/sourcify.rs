@@ -368,14 +368,12 @@ impl SourcifyVerificationProvider {
                     let creation_exact = contract_response
                         .creation_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     let runtime_exact = contract_response
                         .runtime_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     Ok(creation_exact && runtime_exact)
                 } else {

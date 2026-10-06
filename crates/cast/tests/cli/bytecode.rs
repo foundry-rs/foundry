@@ -6,7 +6,7 @@ use super::*;
 // tests `cast code --disassemble`
 #[casttest]
 fn can_disassemble_contract_code(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "code",
         "--disassemble",
