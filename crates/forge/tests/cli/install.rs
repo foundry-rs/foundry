@@ -1595,6 +1595,7 @@ bad = { version = "1.0.0", url = "http://127.0.0.1:1/bad.zip" }
     cmd.args(["install", "--no-git", "fixture/parent"]).assert_failure().stderr_eq(str![[r#"
 ...
 Error: Failed to install soldeer dependencies for parent: Failed to run soldeer install: [..]
+Run `forge soldeer install` in [..]/lib/parent to retry.
 
 "#]]);
 

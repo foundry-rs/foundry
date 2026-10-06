@@ -322,7 +322,12 @@ impl DependencyInstallOpts {
 
             // Check if the dependency has soldeer.lock and install soldeer dependencies
             install_soldeer_deps_if_needed(&path).await.map_err(|e| {
-                eyre::eyre!("Failed to install soldeer dependencies for {}: {e}", dep.name)
+                eyre::eyre!(
+                    "Failed to install soldeer dependencies for {}: {e}\n\
+                     Run `forge soldeer install` in {} to retry.",
+                    dep.name,
+                    path.display()
+                )
             })?;
         }
 
