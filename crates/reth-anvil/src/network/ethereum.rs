@@ -52,13 +52,7 @@ impl AnvilNetwork for Ethereum {
     type Attributes = LocalPayloadAttributesBuilder<ChainSpec>;
 
     async fn prepare(config: &mut NodeConfig) -> Result<Prepared<EthereumNode>> {
-        if config.is_fork() {
-            let (fork, accounts) = ForkBackend::setup(config).await?;
-            config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
-            let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
-            return Ok(Prepared { chain_spec, fork: Some(fork) });
-        }
-        Ok(Prepared { chain_spec: config.chain_spec()?, fork: None })
+        prepare(config).await
     }
 
     fn components(anvil: &AnvilComponents) -> Self::Components {
@@ -86,4 +80,15 @@ impl AnvilNetwork for Ethereum {
     fn payload_attributes(chain_spec: Arc<ChainSpec>) -> Self::Attributes {
         LocalPayloadAttributesBuilder::new(chain_spec)
     }
+}
+
+/// Resolves the chain spec and the fork of a network built on reth's Ethereum node types.
+pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<EthereumNode>> {
+    if config.is_fork() {
+        let (fork, accounts) = ForkBackend::setup(config).await?;
+        config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
+        let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
+        return Ok(Prepared { chain_spec, fork: Some(fork) });
+    }
+    Ok(Prepared { chain_spec: config.chain_spec()?, fork: None })
 }

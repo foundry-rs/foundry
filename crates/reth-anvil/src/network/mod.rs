@@ -2,6 +2,7 @@
 //! installed.
 
 use crate::{
+    api::NodeIdentity,
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     evm::{AnvilExecutionPayload, AnvilNextBlockEnv},
@@ -34,6 +35,8 @@ use reth_rpc_eth_api::{FullEthApiServer, RpcTypes, helpers::EthTransactions};
 use std::sync::Arc;
 
 pub mod ethereum;
+#[cfg(feature = "monad")]
+pub mod monad;
 
 /// The database every network runs on.
 pub type AnvilDb = Arc<DatabaseEnv>;
@@ -127,4 +130,10 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
     fn payload_attributes(
         chain_spec: Arc<<Self::Node as NodeTypes>::ChainSpec>,
     ) -> Self::Attributes;
+
+    /// Returns what `anvil_nodeInfo` reports about the network.
+    fn identity(config: &NodeConfig) -> Result<NodeIdentity> {
+        let _ = config;
+        Ok(NodeIdentity::default())
+    }
 }

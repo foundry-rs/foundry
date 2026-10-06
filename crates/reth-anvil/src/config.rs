@@ -29,6 +29,11 @@ use std::{
 };
 use yansi::Paint;
 
+#[cfg(feature = "monad")]
+use foundry_evm_hardforks::MonadHardfork;
+#[cfg(feature = "monad")]
+use revm::primitives::hardfork::SpecId;
+
 const BANNER: &str = r"
                              _   _
                             (_) | |
@@ -327,14 +332,39 @@ impl NodeConfig {
 
     /// Returns the Ethereum hardfork active from genesis.
     pub fn get_hardfork(&self) -> Result<EthereumHardfork> {
+        self.ethereum_hardfork_at(Chain::mainnet(), self.get_genesis_timestamp())
+    }
+
+    /// Returns the configured Ethereum hardfork, or the one active on `chain` at `timestamp`.
+    ///
+    /// On Monad, this is the Ethereum hardfork the Monad hardfork is based on.
+    fn ethereum_hardfork_at(&self, chain: Chain, timestamp: u64) -> Result<EthereumHardfork> {
+        #[cfg(feature = "monad")]
+        if self.networks.is_monad() {
+            return Ok(ethereum_hardfork_of_monad(self.monad_hardfork_at(timestamp)?));
+        }
         match self.hardfork {
-            None => Ok(EthereumHardfork::from_chain_and_timestamp(
-                Chain::mainnet(),
-                self.get_genesis_timestamp(),
-            )
-            .unwrap_or(EthereumHardfork::Osaka)),
+            None => Ok(EthereumHardfork::from_chain_and_timestamp(chain, timestamp)
+                .unwrap_or(EthereumHardfork::Osaka)),
             Some(FoundryHardfork::Ethereum(hardfork)) => Ok(hardfork),
             Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not supported yet"),
+        }
+    }
+
+    /// Returns the Monad hardfork active from genesis.
+    #[cfg(feature = "monad")]
+    pub fn get_monad_hardfork(&self) -> Result<MonadHardfork> {
+        self.monad_hardfork_at(self.get_genesis_timestamp())
+    }
+
+    /// Returns the configured Monad hardfork, or the one active on the chain at `timestamp`.
+    #[cfg(feature = "monad")]
+    fn monad_hardfork_at(&self, timestamp: u64) -> Result<MonadHardfork> {
+        match self.hardfork {
+            None => Ok(MonadHardfork::from_chain_and_timestamp(self.get_chain_id(), timestamp)
+                .unwrap_or_default()),
+            Some(FoundryHardfork::Monad(hardfork)) => Ok(hardfork),
+            Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not a Monad hardfork"),
         }
     }
 
@@ -871,15 +901,8 @@ impl NodeConfig {
         header: &SealedHeader,
         accounts: &[(Address, ForkGenesisAccount)],
     ) -> Result<Arc<ChainSpec>> {
-        let hardfork = match self.hardfork {
-            Some(FoundryHardfork::Ethereum(hardfork)) => hardfork,
-            Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not supported yet"),
-            None => EthereumHardfork::from_chain_and_timestamp(
-                Chain::from_id(self.get_chain_id()),
-                header.timestamp,
-            )
-            .unwrap_or(EthereumHardfork::Osaka),
-        };
+        let hardfork =
+            self.ethereum_hardfork_at(Chain::from_id(self.get_chain_id()), header.timestamp)?;
         let mut genesis = self
             .genesis
             .clone()
@@ -999,6 +1022,15 @@ impl NodeConfig {
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
         Ok(Arc::new(activate_hardfork(builder, hardfork).build()))
+    }
+}
+
+/// Returns the Ethereum hardfork a Monad hardfork is based on.
+#[cfg(feature = "monad")]
+const fn ethereum_hardfork_of_monad(hardfork: MonadHardfork) -> EthereumHardfork {
+    match hardfork.into_eth_spec() {
+        SpecId::PRAGUE => EthereumHardfork::Prague,
+        _ => EthereumHardfork::Osaka,
     }
 }
 

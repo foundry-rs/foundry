@@ -295,9 +295,19 @@ fn with_recipient<TxReq: AsMut<TransactionRequest>>(mut request: TxReq) -> TxReq
     request
 }
 
+/// What `anvil_nodeInfo` reports about the network the node runs.
+#[derive(Clone, Debug, Default)]
+pub struct NodeIdentity {
+    /// The network family, if not Ethereum.
+    pub network: Option<&'static str>,
+    /// The hardfork name, when the chain spec's Ethereum forks do not describe it.
+    pub hardfork: Option<String>,
+}
+
 /// Implementation of the `anvil_*` RPC namespace.
 #[derive(Debug, Clone)]
 pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
+    identity: NodeIdentity,
     impersonation: ImpersonationState,
     mining: MiningController<HeaderOf<Provider>>,
     time: TimeManager,
@@ -318,6 +328,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
     /// Creates the `anvil_*` namespace over the given node components.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
+        identity: NodeIdentity,
         impersonation: ImpersonationState,
         mining: MiningController<HeaderOf<Provider>>,
         time: TimeManager,
@@ -334,6 +345,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
         eth: Eth,
     ) -> Self {
         Self {
+            identity,
             impersonation,
             mining,
             time,
@@ -815,7 +827,9 @@ where
             current_block_number: latest.header.number(),
             current_block_timestamp: latest.header.timestamp(),
             current_block_hash: latest.header.hash(),
-            hard_fork: self.hardfork_name(latest.header.timestamp(), latest.header.number()),
+            hard_fork: self.identity.hardfork.clone().unwrap_or_else(|| {
+                self.hardfork_name(latest.header.timestamp(), latest.header.number())
+            }),
             transaction_order: self.transaction_order.to_string(),
             environment: NodeEnvironment {
                 base_fee: latest.header.base_fee_per_gas().unwrap_or_default().into(),
@@ -830,7 +844,7 @@ where
                     fork_retry_backoff: Some(fork.retry_backoff().as_millis()),
                 }
             }),
-            network: None,
+            network: self.identity.network.map(str::to_string),
         })
     }
 

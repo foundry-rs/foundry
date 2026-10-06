@@ -60,6 +60,10 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 # revm
 revm.workspace = true
 
+# monad
+alloy-monad-evm = { workspace = true, optional = true }
+monad-revm = { workspace = true, optional = true }
+
 # misc
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 chrono.workspace = true
@@ -83,7 +87,12 @@ yansi.workspace = true
 
 [features]
 default = []
-monad = ["foundry-evm-networks/monad", "foundry-evm-hardforks/monad"]
+monad = [
+    "foundry-evm-networks/monad",
+    "foundry-evm-hardforks/monad",
+    "dep:alloy-monad-evm",
+    "dep:monad-revm",
+]
 base = ["foundry-evm-networks/base", "foundry-evm-hardforks/base"]
 optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
 

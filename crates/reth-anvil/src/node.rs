@@ -146,6 +146,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     match config.networks.resolved_network().unwrap_or_default() {
         NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
+        #[cfg(feature = "monad")]
+        NetworkVariant::Monad => launch::<crate::network::monad::Monad>(config).await,
         network => eyre::bail!("the {network:?} network is not supported yet"),
     }
 }
@@ -250,6 +252,7 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
             let fork = fork.clone();
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
+            let identity = Net::identity(&config)?;
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
                 {
@@ -258,6 +261,7 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
                     signers.push(Box::new(ImpersonatedSigner::new(impersonation.clone())));
                 }
                 let rpc = AnvilRpc::new(
+                    identity,
                     impersonation,
                     mining,
                     time,

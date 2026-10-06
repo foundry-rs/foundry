@@ -18,6 +18,9 @@ use serde_json::Value;
 use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
+#[cfg(feature = "monad")]
+mod monad;
+
 async fn with_test_client<F, Fut>(test: F) -> Result<()>
 where
     F: FnOnce(HttpClient) -> Fut,

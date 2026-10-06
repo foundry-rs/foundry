@@ -1,5 +1,7 @@
 use crate::{config::NodeConfig, impersonation::ImpersonationState, types::TransactionOrder};
-use alloy_consensus::{Transaction, transaction::TxHashRef};
+use alloy_consensus::{
+    BlockHeader, Transaction, Typed2718, constants::EIP4844_TX_TYPE_ID, transaction::TxHashRef,
+};
 use alloy_primitives::{B256, Signature, U256};
 use eyre::Result;
 use parking_lot::Mutex;
@@ -21,7 +23,10 @@ use reth_ethereum::{
         error::{InvalidPoolTransactionError, PoolTransactionError},
         validate::ValidTransaction,
     },
-    primitives::{BlockBody, Recovered, SealedBlock},
+    primitives::{
+        BlockBody, GotExpected, Recovered, SealedBlock, transaction::error::InvalidTransactionError,
+    },
+    storage::BlockReaderIdExt,
 };
 use std::{
     any::Any,
@@ -51,7 +56,9 @@ impl TxSignature for TransactionSigned {
 pub struct AnvilValidator<V> {
     inner: V,
     state: ImpersonationState,
-    disable_balance_checks: bool,
+    settings: PoolSettings,
+    /// The base fee of the latest block, for the gas-only balance rule.
+    base_fee: Arc<AtomicU64>,
 }
 
 impl<V: Debug> Debug for AnvilValidator<V> {
@@ -77,6 +84,12 @@ where
             return TransactionValidationOutcome::Invalid(
                 transaction,
                 InvalidPoolTransactionError::Other(Box::new(RevertedTransaction)),
+            );
+        }
+        if self.settings.reject_blob_transactions && transaction.ty() == EIP4844_TX_TYPE_ID {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::Other(Box::new(BlobTransactionsUnsupported)),
             );
         }
         // A signature override attributes the transaction to the chosen sender. The pool keeps
@@ -120,20 +133,57 @@ where
             };
         }
 
-        let mut outcome = self.inner.validate_transaction(origin, transaction).await;
-        if self.disable_balance_checks
-            && let TransactionValidationOutcome::Valid { balance, .. } = &mut outcome
-        {
+        let outcome = self.inner.validate_transaction(origin, transaction).await;
+        let TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            bytecode_hash,
+            transaction,
+            propagate,
+            authorities,
+        } = outcome
+        else {
+            return outcome;
+        };
+        let balance = match self.settings.balance_rule {
+            BalanceRule::Full => balance,
             // The pool parks transactions the sender cannot afford. Report an unlimited balance,
             // so a transaction funded earlier in the same block is mined.
-            *balance = U256::MAX;
+            BalanceRule::None => U256::MAX,
+            BalanceRule::GasOnly => {
+                let tx = transaction.transaction();
+                let base_fee = self.base_fee.load(Ordering::Relaxed);
+                let price = tx.clone_into_consensus().effective_gas_price(Some(base_fee));
+                let required = U256::from(tx.gas_limit()).saturating_mul(U256::from(price));
+                if balance < required {
+                    return TransactionValidationOutcome::Invalid(
+                        transaction.into_transaction(),
+                        InvalidTransactionError::InsufficientFunds(
+                            GotExpected { got: balance, expected: required }.into(),
+                        )
+                        .into(),
+                    );
+                }
+                U256::MAX
+            }
+        };
+        TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            bytecode_hash,
+            transaction,
+            propagate,
+            authorities,
         }
-        outcome
     }
 
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.state
             .forget_tx_senders(new_tip_block.body().transactions().iter().map(|tx| *tx.tx_hash()));
+        self.base_fee.store(
+            new_tip_block.header().base_fee_per_gas().unwrap_or_default(),
+            Ordering::Relaxed,
+        );
         self.inner.on_new_head_block(new_tip_block);
     }
 }
@@ -153,6 +203,28 @@ impl std::error::Error for RevertedTransaction {}
 impl PoolTransactionError for RevertedTransaction {
     fn is_bad_transaction(&self) -> bool {
         false
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// The pool error for a blob transaction on a network without blobs.
+#[derive(Debug)]
+struct BlobTransactionsUnsupported;
+
+impl Display for BlobTransactionsUnsupported {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("EIP-4844 blob transactions are not supported on Monad")
+    }
+}
+
+impl std::error::Error for BlobTransactionsUnsupported {}
+
+impl PoolTransactionError for BlobTransactionsUnsupported {
+    fn is_bad_transaction(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -227,15 +299,31 @@ where
     }
 }
 
+/// How the pool checks that a sender can pay for a transaction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BalanceRule {
+    /// The value plus the gas limit at the maximum fee, as Ethereum does.
+    #[default]
+    Full,
+    /// Only the gas limit at the effective gas price, as Monad does. The value is charged, or the
+    /// transaction fails, when it executes.
+    #[cfg_attr(not(feature = "monad"), expect(dead_code))]
+    GasOnly,
+    /// No check.
+    None,
+}
+
 /// The pool validation knobs anvil exposes.
 #[derive(Clone, Copy, Debug)]
 pub struct PoolSettings {
     /// The block gas limit the validator enforces until the first block is mined.
     pub block_gas_limit: u64,
-    /// Whether the validator skips the sender balance check.
-    pub disable_balance_checks: bool,
+    /// How the validator checks the sender balance.
+    pub balance_rule: BalanceRule,
     /// Whether the pool enforces no minimum priority fee.
     pub disable_min_priority_fee: bool,
+    /// Whether the pool rejects EIP-4844 blob transactions.
+    pub reject_blob_transactions: bool,
 }
 
 impl PoolSettings {
@@ -243,8 +331,13 @@ impl PoolSettings {
     pub fn from_config(config: &NodeConfig) -> Self {
         Self {
             block_gas_limit: config.get_gas_limit(),
-            disable_balance_checks: config.disable_pool_balance_checks,
+            balance_rule: if config.disable_pool_balance_checks {
+                BalanceRule::None
+            } else {
+                BalanceRule::Full
+            },
             disable_min_priority_fee: config.disable_min_priority_fee,
+            reject_blob_transactions: false,
         }
     }
 }
@@ -300,15 +393,17 @@ where
                 .with_minimum_priority_fee(minimum_priority_fee)
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .set_block_gas_limit(self.settings.block_gas_limit);
-        if self.settings.disable_balance_checks {
+        if self.settings.balance_rule != BalanceRule::Full {
             validator = validator.disable_balance_check();
         }
+        let base_fee = ctx.provider().latest_header()?.and_then(|header| header.base_fee_per_gas());
         let validator = validator
             .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
             .map(|inner| AnvilValidator {
                 inner,
                 state: self.state.clone(),
-                disable_balance_checks: self.settings.disable_balance_checks,
+                settings: self.settings,
+                base_fee: Arc::new(AtomicU64::new(base_fee.unwrap_or_default())),
             });
 
         TxPoolBuilder::new(ctx)

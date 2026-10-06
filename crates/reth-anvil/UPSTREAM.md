@@ -43,8 +43,13 @@ be free if reth had a dev mode:
 - `--max-transactions`: reth's payload builder has no cap on the number of transactions per block.
 - Dev accounts keep their history on a forked chain: anvil resets their nonces and balances in the
   fork genesis, reth-anvil only sets the balances.
-- Networks: Optimism and Base through `op-reth` node types, Tempo through `tempo-node`, Monad through
-  a `ConfigureEvm` built on `monad-revm`.
+- Networks: Optimism and Base through `op-reth` node types, Tempo through `tempo-node`. Monad runs
+  (`src/network/monad.rs`) with its own `ConfigureEvm` on `monad-revm`; still missing are the
+  protocol system envelopes anvil replays on reorgs and transaction-hash forks, the per-block
+  hardfork profiles of a Monad fork, and signature overrides for EIP-7702 authorities.
+- Monad reserve balances depend on the senders of the two ancestor blocks. Block execution gets them
+  from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
+  on top of it, like anvil's pending block, and a call at an older block replays that block.
 
 ## Things reth already fixes
 
