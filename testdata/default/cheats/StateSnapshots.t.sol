@@ -393,17 +393,13 @@ abstract contract NestedRestoreFrameRevertBase is Test {
 
     function testRevertedOuterCallUndoesNestedRestore() public {
         uint256 snapshotId = prepare(20);
-        expectHelperRevert(
-            abi.encodeCall(helper.nestedRestoresThenRevert, (snapshotId, store, 1)), "outer reverted"
-        );
+        expectHelperRevert(abi.encodeCall(helper.nestedRestoresThenRevert, (snapshotId, store, 1)), "outer reverted");
         assertUndone(20, 100);
     }
 
     function testRevertedOuterCallUndoesSiblingRestores() public {
         uint256 snapshotId = prepare(20);
-        expectHelperRevert(
-            abi.encodeCall(helper.nestedRestoresThenRevert, (snapshotId, store, 3)), "outer reverted"
-        );
+        expectHelperRevert(abi.encodeCall(helper.nestedRestoresThenRevert, (snapshotId, store, 3)), "outer reverted");
         assertUndone(20, 100);
     }
 
