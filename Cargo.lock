@@ -4059,9 +4059,9 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.136.0"
+version = "0.136.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b46ea04636aa506eb49e5a61c54270314912de7f1c33ad7f7c2c57cb0784e23"
+checksum = "379f10a451c9b1bf4f59e4ce38061c53ca2454783041a3c1fafa6deef3c37108"
 
 [[package]]
 name = "crc"
@@ -12069,7 +12069,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -12085,7 +12085,7 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -12116,7 +12116,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -12137,7 +12137,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -12155,7 +12155,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -12168,7 +12168,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "bumpalo",
  "diff",
@@ -12183,7 +12183,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -12192,7 +12192,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "normalize-path",
  "once_map",
  "rayon",
@@ -12203,7 +12203,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.21",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -12211,7 +12211,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -12222,7 +12222,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "arc-swap",
  "async-lsp",
@@ -12238,7 +12238,7 @@ dependencies = [
  "solar-interface",
  "solar-parse",
  "solar-sema",
- "thiserror 2.0.21",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "toml_edit",
@@ -12249,7 +12249,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12259,12 +12259,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.2",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint 0.5.1",
  "num-rational",
@@ -12280,7 +12280,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=257f8852ff8608c5cb7152412b879612ecb68a07#257f8852ff8608c5cb7152412b879612ecb68a07"
+source = "git+https://github.com/paradigmxyz/solar?rev=b3d988b227d6597bafc9a1857f75db0a8123baec#b3d988b227d6597bafc9a1857f75db0a8123baec"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
