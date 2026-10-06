@@ -155,6 +155,7 @@ use revm::{
     context_interface::{
         JournalTr, Transaction as _,
         block::BlobExcessGasAndPrice,
+        cfg::gas_params::Eip2780TxInfo,
         result::{
             EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output, ResultAndState,
         },
@@ -10184,8 +10185,28 @@ where
 
         // Balance and fee related checks
         if !self.disable_pool_balance_checks {
-            // Gas limit validation
-            if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
+            // Amsterdam's decomposed base can be below 21,000 gas. Account-creation state
+            // charges are applied at runtime and must not affect this admission threshold.
+            let minimum_gas = if evm_env.cfg_env.enable_amsterdam_eip2780 {
+                evm_env
+                    .cfg_env
+                    .gas_params
+                    .initial_tx_gas(
+                        &[],
+                        tx.kind().is_create(),
+                        0,
+                        0,
+                        0,
+                        Some(Eip2780TxInfo {
+                            value: tx.value(),
+                            is_self_transfer: tx.to() == Some(*pending.sender()),
+                        }),
+                    )
+                    .initial_regular_gas()
+            } else {
+                MIN_TRANSACTION_GAS as u64
+            };
+            if tx.gas_limit() < minimum_gas {
                 debug!(target: "backend", "[{:?}] gas too low", tx.hash());
                 return Err(InvalidTransactionError::GasTooLow);
             }
