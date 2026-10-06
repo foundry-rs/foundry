@@ -19,13 +19,23 @@ path = "bin/main.rs"
 
 [dependencies]
 # reth
-reth-ethereum = { workspace = true, features = ["node", "node-api"] }
+reth-chain-state.workspace = true
+reth-db-api.workspace = true
+reth-engine-tree.workspace = true
+reth-engine-util.workspace = true
+reth-ethereum = { workspace = true, features = ["exex", "node", "node-api"] }
+reth-node-events.workspace = true
+reth-prune-types.workspace = true
 reth-rpc-eth-api.workspace = true
+reth-stages-types.workspace = true
+reth-storage-overlay.workspace = true
+reth-tokio-util.workspace = true
 
 # alloy
 alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-eips.workspace = true
+alloy-evm.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
@@ -33,13 +43,19 @@ alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer.workspace = true
 
+# revm
+revm.workspace = true
+
 # misc
 eyre.workspace = true
 futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 parking_lot.workspace = true
+rocksdb.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio-stream.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 jsonrpsee = { version = "0.26", features = ["http-client"] }

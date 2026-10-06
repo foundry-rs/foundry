@@ -1,11 +1,11 @@
 use crate::{
     block_env::BlockEnvOverrides, impersonation::ImpersonationState, mining::MiningController,
-    time::TimeManager,
+    state::SharedAnvilState, time::TimeManager,
 };
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::anvil::{Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo};
 use alloy_rpc_types_eth::Block;
 use jsonrpsee::{
@@ -19,7 +19,8 @@ use jsonrpsee::{
 use reth_ethereum::{
     chainspec::{ChainSpec, EthChainSpec},
     pool::TransactionPool,
-    storage::{BlockNumReader, HeaderProvider},
+    primitives::Bytecode,
+    storage::{BlockNumReader, HeaderProvider, StateProviderFactory},
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -119,6 +120,31 @@ pub trait AnvilApi {
     /// Sets the base fee of the next block.
     #[method(name = "setNextBlockBaseFeePerGas", aliases = ["hardhat_setNextBlockBaseFeePerGas"])]
     async fn anvil_set_next_block_base_fee_per_gas(&self, base_fee: U256) -> RpcResult<()>;
+
+    /// Sets the balance of an account.
+    #[method(name = "setBalance", aliases = ["hardhat_setBalance"])]
+    async fn anvil_set_balance(&self, address: Address, balance: U256) -> RpcResult<()>;
+
+    /// Adds to the balance of an account.
+    #[method(name = "addBalance", aliases = ["hardhat_addBalance"])]
+    async fn anvil_add_balance(&self, address: Address, balance: U256) -> RpcResult<()>;
+
+    /// Sets the nonce of an account.
+    #[method(name = "setNonce", aliases = ["hardhat_setNonce", "evm_setAccountNonce"])]
+    async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> RpcResult<()>;
+
+    /// Sets the code of an account.
+    #[method(name = "setCode", aliases = ["hardhat_setCode"])]
+    async fn anvil_set_code(&self, address: Address, code: Bytes) -> RpcResult<()>;
+
+    /// Sets one storage slot of an account.
+    #[method(name = "setStorageAt", aliases = ["hardhat_setStorageAt"])]
+    async fn anvil_set_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        value: B256,
+    ) -> RpcResult<bool>;
 }
 
 /// Implementation of the `anvil_*` RPC namespace.
@@ -128,6 +154,7 @@ pub struct AnvilRpc<Pool, Provider, Eth> {
     mining: MiningController,
     time: TimeManager,
     block_env: BlockEnvOverrides,
+    state: SharedAnvilState,
     chain_spec: Arc<ChainSpec>,
     instance_id: B256,
     pool: Pool,
@@ -143,6 +170,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
         mining: MiningController,
         time: TimeManager,
         block_env: BlockEnvOverrides,
+        state: SharedAnvilState,
         chain_spec: Arc<ChainSpec>,
         instance_id: B256,
         pool: Pool,
@@ -154,6 +182,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
             mining,
             time,
             block_env,
+            state,
             chain_spec,
             instance_id,
             pool,
@@ -165,7 +194,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
 
 impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth>
 where
-    Provider: BlockNumReader,
+    Provider: BlockNumReader + StateProviderFactory,
     Eth: FullEthApiServer<NetworkTypes = Ethereum>,
 {
     fn best_block_number(&self) -> RpcResult<u64> {
@@ -214,6 +243,17 @@ where
         Ok(((start + 1)..=end).collect())
     }
 
+    /// Returns the balance of the account in the latest state, including anvil state writes.
+    fn latest_balance(&self, address: Address) -> RpcResult<U256> {
+        Ok(self
+            .provider
+            .latest()
+            .and_then(|state| state.basic_account(&address))
+            .map_err(|error| internal_error(format!("failed to read account: {error}")))?
+            .unwrap_or_default()
+            .balance)
+    }
+
     /// Returns the lowercase name of the latest hardfork active at the given block.
     fn hardfork_name(&self, timestamp: u64, number: u64) -> String {
         self.chain_spec
@@ -230,7 +270,7 @@ where
 impl<Pool, Provider, Eth> AnvilApiServer for AnvilRpc<Pool, Provider, Eth>
 where
     Pool: TransactionPool + Send + Sync + 'static,
-    Provider: BlockNumReader + HeaderProvider + Send + Sync + 'static,
+    Provider: BlockNumReader + HeaderProvider + StateProviderFactory + Send + Sync + 'static,
     Eth: FullEthApiServer<NetworkTypes = Ethereum>,
 {
     async fn anvil_impersonate_account(&self, address: Address) -> RpcResult<()> {
@@ -418,6 +458,38 @@ where
             base_fee.try_into().map_err(|_| invalid_params("base_fee exceeds u64::MAX"))?;
         self.block_env.set_next_base_fee(base_fee);
         Ok(())
+    }
+
+    async fn anvil_set_balance(&self, address: Address, balance: U256) -> RpcResult<()> {
+        self.state.write().set_balance(address, balance);
+        Ok(())
+    }
+
+    async fn anvil_add_balance(&self, address: Address, balance: U256) -> RpcResult<()> {
+        let current = self.latest_balance(address)?;
+        self.state.write().set_balance(address, current.saturating_add(balance));
+        Ok(())
+    }
+
+    async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> RpcResult<()> {
+        let nonce = nonce.try_into().map_err(|_| invalid_params("nonce exceeds u64::MAX"))?;
+        self.state.write().set_nonce(address, nonce);
+        Ok(())
+    }
+
+    async fn anvil_set_code(&self, address: Address, code: Bytes) -> RpcResult<()> {
+        self.state.write().set_code(address, Bytecode::new_raw(code));
+        Ok(())
+    }
+
+    async fn anvil_set_storage_at(
+        &self,
+        address: Address,
+        slot: U256,
+        value: B256,
+    ) -> RpcResult<bool> {
+        self.state.write().set_storage_at(address, slot.into(), value.into());
+        Ok(true)
     }
 }
 

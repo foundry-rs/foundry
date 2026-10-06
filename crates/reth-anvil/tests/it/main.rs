@@ -1,9 +1,9 @@
 //! Integration tests for the `anvil_*` namespace served by reth-anvil.
 
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::anvil::{Metadata, MineOptions, NodeInfo};
-use alloy_rpc_types_eth::{Block, TransactionRequest};
+use alloy_rpc_types_eth::{Block, TransactionRequest, state::StateOverridesBuilder};
 use eyre::{OptionExt, Result, bail};
 use jsonrpsee::{
     core::{ClientError, client::ClientT},
@@ -536,6 +536,222 @@ async fn anvil_set_next_block_base_fee_per_gas_is_consumed_once() -> Result<()> 
             after_base_fee, custom_base_fee,
             "base fee override should be consumed after one block"
         );
+
+        Ok(())
+    })
+    .await
+}
+
+/// Runtime code that returns `BALANCE(target)`.
+fn balance_of_code(target: Address) -> Bytes {
+    let mut bytecode = Vec::with_capacity(30);
+    bytecode.push(0x73);
+    bytecode.extend_from_slice(target.as_slice());
+    bytecode.extend_from_slice(&[0x31, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
+    Bytes::from(bytecode)
+}
+
+/// Runtime code that returns `SLOAD(0)`.
+const SLOAD_ZERO_CODE: Bytes =
+    Bytes::from_static(&[0x60, 0x00, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+/// Runtime code that returns 42.
+const RETURN_42_CODE: Bytes =
+    Bytes::from_static(&[0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+#[tokio::test]
+async fn anvil_set_balance_is_visible_to_reads_and_eth_call() -> Result<()> {
+    with_test_client(|client| async move {
+        let target = Address::repeat_byte(0xBA);
+        let contract = Address::repeat_byte(0xCC);
+        let new_balance = U256::from(42_000_000_000_000_000_000u128);
+
+        let before: U256 = client.request("eth_getBalance", rpc_params![target, "latest"]).await?;
+        assert_eq!(before, U256::ZERO, "target should start with zero balance");
+
+        client.request::<(), _>("anvil_setBalance", rpc_params![target, new_balance]).await?;
+
+        let after: U256 = client.request("eth_getBalance", rpc_params![target, "latest"]).await?;
+        assert_eq!(
+            after, new_balance,
+            "eth_getBalance should return the value set by anvil_setBalance"
+        );
+
+        let state_override =
+            StateOverridesBuilder::default().with_code(contract, balance_of_code(target)).build();
+        let call = TransactionRequest::default().with_to(contract);
+        let result: Bytes =
+            client.request("eth_call", rpc_params![call, "latest", state_override]).await?;
+        assert_eq!(
+            U256::from_be_slice(result.as_ref()),
+            new_balance,
+            "eth_call should see the balance set by anvil_setBalance"
+        );
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_set_balance_funds_transactions_and_lands_in_chain_state() -> Result<()> {
+    with_test_client(|client| async move {
+        let sender = Address::repeat_byte(0xF1);
+        let recipient = Address::repeat_byte(0xF2);
+        let funded = U256::from(10_000_000_000_000_000_000u128);
+        let value = U256::from(1_000_000_000_000_000_000u128);
+
+        client.request::<(), _>("anvil_setBalance", rpc_params![sender, funded]).await?;
+        client.request::<(), _>("anvil_impersonateAccount", rpc_params![sender]).await?;
+
+        let gas_price: u128 =
+            client.request::<U256, _>("eth_gasPrice", rpc_params![]).await?.to::<u128>() * 2;
+        let tx = TransactionRequest::default()
+            .with_from(sender)
+            .with_to(recipient)
+            .with_gas_price(gas_price)
+            .with_gas_limit(21_000)
+            .with_value(value);
+        let tx_hash: B256 = client.request("eth_sendTransaction", rpc_params![tx]).await?;
+        let receipt = wait_for_receipt(&client, tx_hash).await?;
+        assert_eq!(receipt["status"].as_str(), Some("0x1"), "transfer should succeed");
+
+        let recipient_balance: U256 =
+            client.request("eth_getBalance", rpc_params![recipient, "latest"]).await?;
+        assert_eq!(recipient_balance, value);
+
+        let gas_used = U256::from_str(receipt["gasUsed"].as_str().ok_or_eyre("missing gasUsed")?)?;
+        let effective_gas_price = U256::from_str(
+            receipt["effectiveGasPrice"].as_str().ok_or_eyre("missing effectiveGasPrice")?,
+        )?;
+        let expected = funded - value - gas_used * effective_gas_price;
+        let sender_balance: U256 =
+            client.request("eth_getBalance", rpc_params![sender, "latest"]).await?;
+        assert_eq!(sender_balance, expected, "the spend should be visible after the block lands");
+
+        let mined_block =
+            U256::from_str(receipt["blockNumber"].as_str().ok_or_eyre("missing blockNumber")?)?;
+        let historical: U256 = client
+            .request("eth_getBalance", rpc_params![sender, format!("0x{mined_block:x}")])
+            .await?;
+        assert_eq!(
+            historical, expected,
+            "the chain state at the mined block should hold the balance"
+        );
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_add_balance_accumulates_and_is_visible_to_reads() -> Result<()> {
+    with_test_client(|client| async move {
+        let target = Address::repeat_byte(0xAD);
+        let contract = Address::repeat_byte(0xCE);
+        let first = U256::from(7u64);
+        let second = U256::from(9u64);
+        let expected = first + second;
+
+        client.request::<(), _>("anvil_addBalance", rpc_params![target, first]).await?;
+        client.request::<(), _>("anvil_addBalance", rpc_params![target, second]).await?;
+
+        let balance: U256 = client.request("eth_getBalance", rpc_params![target, "latest"]).await?;
+        assert_eq!(balance, expected, "eth_getBalance should reflect the accumulated balance");
+
+        let state_override =
+            StateOverridesBuilder::default().with_code(contract, balance_of_code(target)).build();
+        let call = TransactionRequest::default().with_to(contract);
+        let result: Bytes =
+            client.request("eth_call", rpc_params![call, "latest", state_override]).await?;
+        assert_eq!(U256::from_be_slice(result.as_ref()), expected);
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_set_nonce_reflected_by_eth_get_transaction_count() -> Result<()> {
+    with_test_client(|client| async move {
+        let target = Address::repeat_byte(0xAB);
+        let new_nonce = U256::from(7u64);
+
+        let before: U256 =
+            client.request("eth_getTransactionCount", rpc_params![target, "latest"]).await?;
+        assert_eq!(before, U256::ZERO, "target should start with zero nonce");
+
+        client.request::<(), _>("anvil_setNonce", rpc_params![target, new_nonce]).await?;
+
+        let after: U256 =
+            client.request("eth_getTransactionCount", rpc_params![target, "latest"]).await?;
+        assert_eq!(after, new_nonce, "eth_getTransactionCount should see the override");
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        let after_block: U256 =
+            client.request("eth_getTransactionCount", rpc_params![target, "latest"]).await?;
+        assert_eq!(after_block, new_nonce, "the nonce should persist once a block lands");
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_set_code_is_visible_to_eth_get_code_and_eth_call() -> Result<()> {
+    with_test_client(|client| async move {
+        let contract = Address::repeat_byte(0xCD);
+
+        let before: Bytes = client.request("eth_getCode", rpc_params![contract, "latest"]).await?;
+        assert!(before.is_empty(), "target should start without code");
+
+        client.request::<(), _>("anvil_setCode", rpc_params![contract, RETURN_42_CODE]).await?;
+
+        let after: Bytes = client.request("eth_getCode", rpc_params![contract, "latest"]).await?;
+        assert_eq!(after, RETURN_42_CODE, "eth_getCode should see the overridden code");
+
+        let call = TransactionRequest::default().with_to(contract);
+        let result: Bytes = client.request("eth_call", rpc_params![call.clone(), "latest"]).await?;
+        assert_eq!(U256::from_be_slice(result.as_ref()), U256::from(42u64));
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        let after_block: Bytes =
+            client.request("eth_getCode", rpc_params![contract, "latest"]).await?;
+        assert_eq!(after_block, RETURN_42_CODE, "the code should persist once a block lands");
+        let result: Bytes = client.request("eth_call", rpc_params![call, "latest"]).await?;
+        assert_eq!(U256::from_be_slice(result.as_ref()), U256::from(42u64));
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_set_storage_at_is_visible_to_eth_get_storage_at_and_eth_call() -> Result<()> {
+    with_test_client(|client| async move {
+        let contract = Address::repeat_byte(0xCE);
+        let slot = U256::ZERO;
+        let value = B256::from(U256::from(0xBEEFu64));
+
+        client.request::<(), _>("anvil_setCode", rpc_params![contract, SLOAD_ZERO_CODE]).await?;
+        let updated: bool =
+            client.request("anvil_setStorageAt", rpc_params![contract, slot, value]).await?;
+        assert!(updated, "anvil_setStorageAt should return true");
+
+        let storage: B256 =
+            client.request("eth_getStorageAt", rpc_params![contract, slot, "latest"]).await?;
+        assert_eq!(storage, value, "eth_getStorageAt should see the overridden storage");
+
+        let call = TransactionRequest::default().with_to(contract);
+        let result: Bytes = client.request("eth_call", rpc_params![call.clone(), "latest"]).await?;
+        assert_eq!(B256::from_slice(result.as_ref()), value);
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        let storage: B256 =
+            client.request("eth_getStorageAt", rpc_params![contract, slot, "latest"]).await?;
+        assert_eq!(storage, value, "the storage should persist once a block lands");
+        let result: Bytes = client.request("eth_call", rpc_params![call, "latest"]).await?;
+        assert_eq!(B256::from_slice(result.as_ref()), value);
 
         Ok(())
     })

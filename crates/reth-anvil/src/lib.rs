@@ -6,9 +6,13 @@ mod api;
 mod block_env;
 mod evm;
 mod impersonation;
+mod launcher;
 mod mining;
 mod node;
 mod pool;
+mod provider;
+mod state;
+mod state_provider;
 mod time;
 
 pub use api::{AnvilApiServer, AnvilRpc};

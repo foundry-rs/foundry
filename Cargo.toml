@@ -427,6 +427,7 @@ quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
 async-lsp = { version = "0.2.4", default-features = false, features = ["omni-trait"] }
+tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["compat"] }
 derive_more = { version = "2.1", features = ["full"] }
 thiserror = "2"
@@ -478,6 +479,7 @@ ratatui = { version = "0.30", default-features = false }
 rayon = "1"
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+rocksdb = "0.24"
 # PTY-based CLI tests.
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
@@ -563,8 +565,17 @@ base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "2aa
 base-execution-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 
 # reth
+reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-engine-util = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-node-events = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-stages-types = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-storage-overlay = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+reth-tokio-util = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
