@@ -675,6 +675,52 @@ impl RevertParameters for ExpectedRevert {
     }
 }
 
+impl ExpectedRevert {
+    /// Returns whether a call ending at `depth`, at or above the expectation's depth, consumes
+    /// this expectation.
+    ///
+    /// With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but it must not
+    /// be consumed by external calls that succeed (e.g. calls to non-contract addresses that
+    /// return `Stop` before Solidity's own revert).
+    pub(crate) const fn needs_processing(
+        &self,
+        cheatcode_call: bool,
+        call_failed: bool,
+        depth: usize,
+        internal_expect_revert: bool,
+    ) -> bool {
+        let went_deeper = self.max_depth > self.depth;
+        match self.kind {
+            ExpectedRevertKind::Default => {
+                // Cheatcode reverts propagate up; let the outer frame catch them.
+                if cheatcode_call {
+                    return false;
+                }
+                // Any failure satisfies the expectation.
+                if call_failed {
+                    return true;
+                }
+                // Traditional expectRevert: succeeded external call went deeper.
+                if !internal_expect_revert && went_deeper {
+                    return true;
+                }
+                // Test function returned: catch dangling expectations.
+                if depth == 0 {
+                    return true;
+                }
+                // Same-depth success with internal mode off is an error; with it on,
+                // keep waiting for the actual revert.
+                !internal_expect_revert
+            }
+            // `pending_processing == true` means we're in the `call_end` hook for
+            // `vm.expectCheatcodeRevert` and shouldn't expect a revert here.
+            ExpectedRevertKind::Cheatcode { pending_processing } => {
+                cheatcode_call && !pending_processing
+            }
+        }
+    }
+}
+
 /// Handles expected calls specified by the `expectCall` cheatcodes.
 ///
 /// It can handle calls in two ways:
@@ -1230,5 +1276,23 @@ mod tests {
 
         observe_create(&mut expected_creates, Address::ZERO, || CreateScheme::Create, &bytecode);
         assert!(expected_creates.is_empty());
+    }
+
+    #[test]
+    fn internal_expect_revert_waits_for_failure_before_root() {
+        let expected_revert = ExpectedRevert {
+            reason: None,
+            depth: 1,
+            kind: ExpectedRevertKind::Default,
+            partial_match: false,
+            reverter: None,
+            reverted_by: None,
+            max_depth: 1,
+            count: 1,
+            actual_count: 0,
+        };
+
+        assert!(expected_revert.needs_processing(false, true, 1, true));
+        assert!(!expected_revert.needs_processing(false, false, 1, true));
     }
 }
