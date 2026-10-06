@@ -1704,16 +1704,13 @@ impl SymbolicExecutor {
                             "symbolic vm.toString"
                         )?
                     ),
-                    toString_1Call::SELECTOR => format!(
-                        "0x{}",
-                        hex::encode(read_abi_dynamic_bytes_arg(
-                            &mut self.cx,
-                            &state.memory,
-                            args_offset,
-                            0,
-                            "symbolic vm.toString",
-                        )?)
-                    ),
+                    toString_1Call::SELECTOR => hex::encode_prefixed(read_abi_dynamic_bytes_arg(
+                        &mut self.cx,
+                        &state.memory,
+                        args_offset,
+                        0,
+                        "symbolic vm.toString",
+                    )?),
                     toString_3Call::SELECTOR => read_abi_bool_arg(
                         &mut self.cx,
                         &state.memory,
@@ -1732,7 +1729,7 @@ impl SymbolicExecutor {
                         )?;
                         match selector {
                             toString_2Call::SELECTOR => {
-                                format!("0x{}", hex::encode(value.to_be_bytes::<32>()))
+                                hex::encode_prefixed(value.to_be_bytes::<32>())
                             }
                             toString_4Call::SELECTOR => value.to_string(),
                             _ => I256::from_raw(value).to_string(),
@@ -2241,7 +2238,7 @@ impl SymbolicExecutor {
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             randomBoolCall::SELECTOR => {
-                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::ONE);
                 Ok(CheatcodeOutcome::Continue(vec![value]))
             }
             randomBytesCall::SELECTOR => {
@@ -2339,7 +2336,7 @@ impl SymbolicExecutor {
                 Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBool => {
-                let value = state.fresh_bounded_uint(&mut self.cx, U256::from(1));
+                let value = state.fresh_bounded_uint(&mut self.cx, U256::ONE);
                 Ok(SymReturnData::from_words(&mut self.cx, vec![value]))
             }
             SymbolicVmCheatcode::CreateBytes => {

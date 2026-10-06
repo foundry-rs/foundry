@@ -317,7 +317,7 @@ impl PathState {
 
     pub(crate) fn inherit_branch_target_progress(&mut self, child: &Self) {
         if self.branch_target == child.branch_target && child.branch_target_reached {
-            self.branch_target_reached = true;
+            self.mark_branch_target_reached();
         }
     }
 
@@ -410,7 +410,7 @@ impl PathState {
                 SymExprKind::Not(_) => None,
                 SymExprKind::TernOp(_, _, _, modulus) => match modulus.as_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
-                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
+                    Some(modulus) => usize::try_from(modulus - U256::ONE).ok(),
                     None => self
                         .expr_upper_bound_usize_cached(modulus, bounds, ordering, remaining)
                         .and_then(|bound| bound.checked_sub(1)),
@@ -452,7 +452,7 @@ impl PathState {
                     }
                     SymBinOp::URem => match right.as_const() {
                         Some(divisor) if divisor.is_zero() => Some(0),
-                        Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
+                        Some(divisor) => usize::try_from(divisor - U256::ONE).ok(),
                         None => {
                             self.expr_upper_bound_usize_cached(left, bounds, ordering, remaining)
                         }
@@ -843,7 +843,7 @@ impl PathState {
             let upper = if bits.is_zero() {
                 U256::ZERO
             } else {
-                U256::from(1) << usize::try_from(bits).expect("checked bit width")
+                U256::ONE << usize::try_from(bits).expect("checked bit width")
             };
             self.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, upper));
         }
@@ -884,8 +884,7 @@ impl PathState {
         if bits.is_zero() {
             self.constraints.push(SymBoolExpr::eq_word_const(cx, &value, U256::ZERO));
         } else if bits < U256::from(256) {
-            let magnitude =
-                U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
+            let magnitude = U256::ONE << (usize::try_from(bits).expect("checked bit width") - 1);
             let lt = SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &value, magnitude);
             let ge = SymBoolExpr::cmp_word_const(
                 cx,
@@ -1071,10 +1070,10 @@ impl ExpectedRevert {
                     return None;
                 }
                 let prefix_len = SymExpr::constant(cx, U256::from(prefix.len()));
-                conditions.push(SymBoolExpr::cmp(
+                conditions.push(SymBoolExpr::cmp_word_expr(
                     cx,
                     SymCmpOp::Uge,
-                    return_data.len_word.clone(),
+                    &return_data.len_word,
                     prefix_len,
                 ));
                 conditions.extend((0..prefix.len()).map(|offset| {
@@ -2365,7 +2364,7 @@ pub(crate) struct SymbolicBlock {
 impl SymbolicBlock {
     pub(crate) fn new(cx: &mut SymCx) -> Self {
         Self {
-            chain_id: SymExpr::constant(cx, U256::from(1)),
+            chain_id: SymExpr::one(cx),
             coinbase: Address::ZERO,
             timestamp: SymExpr::zero(cx),
             number: SymExpr::zero(cx),

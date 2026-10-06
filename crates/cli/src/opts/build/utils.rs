@@ -19,26 +19,6 @@ use path_slash::PathExt as _;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt as _;
 
-/// Configures a [`ParsingContext`] from [`Config`].
-///
-/// - Configures include paths, remappings
-/// - Source files are added if `add_source_file` is set
-/// - If no `project` is provided, it will spin up a new ephemeral project.
-/// - If no `target_paths` are provided, all project files are processed.
-/// - Only processes the subset of sources with the most up-to-date Solidity version.
-pub fn configure_pcx(
-    pcx: &mut ParsingContext<'_>,
-    config: &Config,
-    project: Option<&Project>,
-    target_paths: Option<&[PathBuf]>,
-) -> Result<()> {
-    let status = configure_pcx_with_sources(pcx, config, project, target_paths, false)?;
-    if !status.has_compatible_sources && !status.has_unsupported_sources {
-        eyre::bail!("no Solidity sources");
-    }
-    Ok(())
-}
-
 /// Describes the Solidity sources encountered while configuring Solar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SolarSourceStatus {

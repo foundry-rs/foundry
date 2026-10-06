@@ -72,15 +72,16 @@ Virtual addresses:
 
 // End-to-end `cast vaddr` tests against a local Anvil Tempo node.
 //
-// These tests exercise the full TIP-1022 lifecycle, including mining a 4-byte PoW salt.
-// Keep them out of the default local suite because the mining step is intentionally CPU-bound
-// and can saturate developer machines. Run explicitly with `--ignored` when changing this flow.
+// These exercise the TIP-1022 register, resolve, forward and watch flow. They pass a precomputed
+// salt instead of mining one; the CPU-bound miner has its own unit tests in `tip20::mine`.
 
 mod vaddr_e2e {
     use super::*;
     use std::{
         io::{BufRead, BufReader},
         process::Stdio,
+        sync::mpsc,
+        thread,
         time::{Duration, Instant},
     };
     use tempo_contracts::precompiles::DEFAULT_FEE_TOKEN;
@@ -91,20 +92,14 @@ mod vaddr_e2e {
         anvil::NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T3.into()))
     }
 
-    /// Number of mining threads — use all available CPUs to keep wall time
-    /// down on hosts where nextest limits per-test parallelism.
-    fn mining_threads() -> String {
-        std::thread::available_parallelism().map_or(8, |n| n.get()).to_string()
-    }
-
-    /// Run `cast vaddr create` (mine + register) and parse the user-tag-zero virtual
-    /// address from the plain-text output.
+    /// Run `cast vaddr create` (register with the precomputed salt) and parse the user-tag-zero
+    /// virtual address from the plain-text output.
     fn create_and_register_vaddr(
         cmd: &mut foundry_test_utils::TestCommand,
         rpc: &str,
         owner: &PrivateKeySigner,
     ) -> String {
-        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+        let owner_pk = hex::encode_prefixed(owner.credential().to_bytes());
         let owner_addr = format!("{:#x}", owner.address());
         let out = cmd
             .cast_fuse()
@@ -113,10 +108,10 @@ mod vaddr_e2e {
                 "create",
                 "--owner",
                 &owner_addr,
+                "--salt",
+                PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
                 "--private-key",
                 &owner_pk,
-                "-j",
-                &mining_threads(),
                 "--rpc-url",
                 rpc,
             ])
@@ -133,12 +128,11 @@ mod vaddr_e2e {
     }
 
     #[casttest]
-    #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
     async fn vaddr_create_register_json_includes_tx_hash(cmd: _) {
         let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
         let rpc = handle.http_endpoint();
         let owner = handle.dev_wallets().next().unwrap();
-        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+        let owner_pk = hex::encode_prefixed(owner.credential().to_bytes());
         let owner_addr = format!("{:#x}", owner.address());
 
         let out = cmd
@@ -149,10 +143,10 @@ mod vaddr_e2e {
                 "create",
                 "--owner",
                 &owner_addr,
+                "--salt",
+                PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
                 "--private-key",
                 &owner_pk,
-                "-j",
-                &mining_threads(),
                 "--rpc-url",
                 &rpc,
             ])
@@ -171,7 +165,6 @@ mod vaddr_e2e {
     // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
     // and `cast vaddr resolve` returns the registered owner.
     #[casttest]
-    #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
     async fn vaddr_create_register_and_resolve(cmd: _) {
         let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
         let rpc = handle.http_endpoint();
@@ -203,13 +196,12 @@ mod vaddr_e2e {
     // Transferring a TIP-20 fee token to a registered virtual address must
     // auto-forward the deposit to the master wallet at the protocol level.
     #[casttest]
-    #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
     async fn vaddr_auto_forward_to_master(cmd: _) {
         let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
         let rpc = handle.http_endpoint();
         let owner = handle.dev_wallets().next().unwrap();
         let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+        let sender_pk = hex::encode_prefixed(sender.credential().to_bytes());
         let owner_addr = format!("{:#x}", owner.address());
 
         let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
@@ -262,13 +254,12 @@ mod vaddr_e2e {
     // we spawn it as a child process and kill it once we observe the expected
     // historical line (or the deadline elapses).
     #[casttest]
-    #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
     async fn vaddr_watch_historical(cmd: _) {
         let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
         let rpc = handle.http_endpoint();
         let owner = handle.dev_wallets().next().unwrap();
         let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+        let sender_pk = hex::encode_prefixed(sender.credential().to_bytes());
         let sender_addr = format!("{:#x}", sender.address());
 
         let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
@@ -311,7 +302,6 @@ mod vaddr_e2e {
         ]);
         let mut child = cmd.cmd().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
 
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let expected = format!(
             "token={} from={} amount={}",
             DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
@@ -319,21 +309,27 @@ mod vaddr_e2e {
             amount
         );
 
+        // `watch` never exits, so read on a separate thread: a blocking `read_line` would
+        // otherwise outlive the deadline whenever the expected line is never printed.
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for line in stdout.lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut captured = String::new();
         let mut found = false;
-        while Instant::now() < deadline {
-            let mut line = String::new();
-            match stdout.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
-                    captured.push_str(&line);
-                    if line.to_lowercase().contains(&expected) {
-                        found = true;
-                        break;
-                    }
-                }
-                Err(_) => break,
+        while let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            captured.push_str(&line);
+            captured.push('\n');
+            if line.to_lowercase().contains(&expected) {
+                found = true;
+                break;
             }
         }
         let _ = child.kill();

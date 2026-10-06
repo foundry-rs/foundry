@@ -6,7 +6,6 @@ use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    refresh_chain_journal,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap};
@@ -299,8 +298,10 @@ where
     ecx.set_evm(evm_env);
     *ecx.chain_mut() = chain_context;
     #[cfg(feature = "monad")]
-    FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
-    refresh_chain_journal(ecx);
+    {
+        FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
+        refresh_chain_journal(ecx);
+    }
     Ok(())
 }
 

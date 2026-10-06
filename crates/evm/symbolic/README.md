@@ -902,6 +902,7 @@ SYMBOLIC_LIMITS=1 cargo test -p forge --test cli symbolic_limits -- --nocapture
 ```
 
 The conformance and limits suites are gated because they require Z3 and exercise
-broader, slower symbolic behavior. The limits suite intentionally checks resource
-boundaries such as path width, execution depth, calldata budgets, hard arithmetic,
-and invariant sequence depth.
+broader, slower symbolic behavior; PR CI skips them and the nightly `test-flaky`
+workflow runs them with both variables set. The limits suite checks resource
+boundaries such as execution depth, calldata budgets and invariant sequence
+depth.

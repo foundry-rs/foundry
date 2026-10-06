@@ -315,7 +315,7 @@ mod tests {
             assert_eq!(snapshot.storage_ref(address, slot).unwrap(), U256::ZERO);
             assert_eq!(snapshot.storage_ref(address, slot + U256::ONE).unwrap(), U256::ZERO);
 
-            if account_state == AccountState::StorageCleared {
+            if account_state.is_storage_cleared() {
                 snapshot
                     .local
                     .cache

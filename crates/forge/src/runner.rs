@@ -1386,12 +1386,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut executor = self.clone_executor();
         let raw = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
-        if executor.is_raw_call_success(
-            self.address,
-            Cow::Borrowed(&raw.state_changeset),
-            &raw,
-            false,
-        ) {
+        if executor.is_raw_call_success(self.address, Cow::Borrowed(&raw.state_changeset), &raw) {
             return Err("candidate replay succeeded".to_string());
         }
         if let Some(reason) = raw.skip_reason() {
@@ -1626,7 +1621,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &txes,
             &sequence,
             replay.invariant_contract.address,
-            replay.target_invariant.selector().to_vec().into(),
+            replay.target_invariant.selector().into(),
             CheckSequenceOptions {
                 accumulate_warp_roll: false,
                 fail_on_revert: replay.invariant_config.fail_on_revert,
@@ -1658,7 +1653,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &txes,
             &sequence,
             invariant_contract.address,
-            invariant_contract.anchor().selector().to_vec().into(),
+            invariant_contract.anchor().selector().into(),
             CheckSequenceOptions {
                 accumulate_warp_roll: config.has_delay(),
                 fail_on_revert: config.fail_on_revert,
@@ -1917,8 +1912,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let Ok((mut raw_call_result, reason)) = self.call_test(func, &[]) else {
             return self.result;
         };
-        let success =
-            self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
+        let success = self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result);
         self.result.single_result(success, reason, raw_call_result);
         self.result
     }
@@ -2506,7 +2500,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.address,
             Cow::Borrowed(&raw.state_changeset),
             &raw,
-            false,
         ) {
             // The solver model is not a user-facing counterexample until replay confirms it, so
             // report the mismatch as an incomplete run instead.
@@ -2705,7 +2698,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.address,
                     Cow::Borrowed(&raw.state_changeset),
                     &raw,
-                    false,
                 ) {
                     self.result.single_result(true, None, raw);
                     return Ok(());
@@ -2845,7 +2837,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &txes,
                     &sequence,
                     self.setup.address,
-                    invariant.selector().to_vec().into(),
+                    invariant.selector().into(),
                     CheckSequenceOptions {
                         // Artifact replay executes every stored call in order, so each call's
                         // warp/roll delta is applied directly. Accumulation is only needed when a
@@ -3688,7 +3680,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 self.address,
                 Cow::Borrowed(&raw.state_changeset),
                 &raw,
-                false,
             ),
         )
     }
@@ -3773,7 +3764,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             HitMaps::merge_opt(&mut result.line_coverage, raw_call_result.line_coverage.clone());
 
             let is_success =
-                self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
+                self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result);
             // Record counterexample if test fails.
             if !is_success {
                 result.counterexample =
@@ -5622,7 +5613,7 @@ fn fuzz_test_path_name<'a>(
     config: &FuzzConfig,
     contract_name: &str,
 ) -> Cow<'a, str> {
-    let test_name = format!("{}-{}", func.name, hex::encode(func.selector()));
+    let test_name = format!("{}-{:x}", func.name, func.selector());
     let overloaded = abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1);
     let contract = contract_short_name(contract_name);
     let has_qualified_artifact = config
@@ -6056,7 +6047,7 @@ mod tests {
         let site = |target: u8, fingerprint: u8| CheckSequenceFailureSite::SequenceCall {
             target: Address::with_last_byte(target),
             selector: Selector::from([0, 0, 0, 1]),
-            fingerprint: B256::from([fingerprint; 32]),
+            fingerprint: B256::repeat_byte(fingerprint),
         };
         let expected = outcome(site(1, 1));
 
