@@ -6460,7 +6460,9 @@ JSON
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x86baaa33c9eb6ccc1a31ef1518b82d78f1d0db2a4e6b4187c5f78a763960ed51 (reproducibly resolved 6 survivor(s) across rounds)
+added 2 generated test file(s) that reproducibly resolve 6 mutation survivor(s):
+  tests/generated/ArithmeticLower.t.sol
+  tests/generated/ArithmeticUpper.t.sol
 
 "#]]);
 
@@ -6495,6 +6497,11 @@ accepted candidate: cache/fuzz-improve/0x86baaa33c9eb6ccc1a31ef1518b82d78f1d0db2
     .unwrap();
     assert!(candidate.contains("ArithmeticLowerTest"));
     assert!(candidate.contains("ArithmeticUpperTest"));
+    for name in ["ArithmeticLower", "ArithmeticUpper"] {
+        let source =
+            fs::read_to_string(prj.root().join(format!("tests/generated/{name}.t.sol"))).unwrap();
+        assert!(source.contains(&format!("contract {name}Test")));
+    }
 }
 
 #[cfg(unix)]
@@ -6586,7 +6593,8 @@ contract ArithmeticTest {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x[..] (reproducibly resolved [..] survivor(s) across rounds)
+added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
+  test/generated/ArithmeticLower.t.sol
 
 "#]]);
 }
@@ -6671,7 +6679,106 @@ contract ArithmeticTest {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-accepted candidate: cache/fuzz-improve/0x[..] (reproducibly resolved [..] survivor(s) across rounds)
+added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
+  test/generated/ArithmeticLower.t.sol
 
 "#]]);
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn fuzz_improve_reports_possible_bugs(prj: _, cmd: _) {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+if grep -q '"round": 2' "$1"; then
+    echo "generator quota exceeded" >&2
+    exit 3
+fi
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/fuzz-improve-candidate-v1",
+  "rationale": "the documented cap is 100 ether",
+  "files": [{"path": "test/generated/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testFuzzCap(uint256 amount) public pure {\n        amount = amount % 1e30;\n        uint256 expected = amount / 100;\n        if (expected > 100 ether) expected = 100 ether;\n        require(Fee.fee(amount) == expected, \"fee\");\n    }\n}\n"}],
+  "tests": [{"path": "test/generated/FeeCap.t.sol", "contract": "FeeCapTest", "name": "testFuzzCap"}]
+}
+JSON
+"#;
+
+    prj.add_source(
+        "Fee.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+/// @notice Charges 1% of `amount`, capped at 100 ether.
+library Fee {
+    function fee(uint256 amount) internal pure returns (uint256 f) {
+        f = amount / 100;
+        if (f > 10 ether) f = 10 ether;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Fee.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Fee} from "../src/Fee.sol";
+
+contract FeeTest {
+    function testSmallFee() public pure {
+        require(Fee.fee(100) == 1);
+    }
+}
+"#,
+    );
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Check the documented fee cap.").unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "fuzz",
+        "improve",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Fee.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^FeeTest$",
+        "--rounds",
+        "2",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+possible bug: FeeCapTest::testFuzzCap (seed 24301: fee; counterexample: [..]; seed 12648430: fee; counterexample: [..])
+  the property fails on every seed against the current implementation; candidate: cache/fuzz-improve/0x[..]
+no candidate reproducibly resolved a mutation survivor
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: generator failed in round 2: generator quota exceeded
+
+"#]]);
+
+    let rounds: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(prj.root().join("cache/fuzz-improve/rounds.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(rounds.as_array().unwrap().len(), 1);
+    assert_eq!(rounds[0]["possible_bugs"].as_array().unwrap().len(), 1);
+    assert!(!prj.root().join("test/generated/FeeCap.t.sol").exists());
 }

@@ -8,11 +8,13 @@ use foundry_compilers::{
     compilers::multi::{MultiCompilerLanguage, MultiCompilerParser},
 };
 use foundry_config::Config;
+use foundry_evm::fuzz::CounterExample;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     ffi::OsString,
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -192,6 +194,10 @@ struct Evaluation {
     candidate: Vec<MutationResultSummary>,
     resolved_survivors: usize,
     newly_resolved_survivors: usize,
+    /// Candidate tests that fail on every seed against the current implementation. Such a
+    /// property is either incorrect or exposes a bug, so it is reported for review.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    possible_bugs: Vec<String>,
 }
 
 impl Evaluation {
@@ -210,6 +216,7 @@ impl Evaluation {
             candidate: vec![],
             resolved_survivors: 0,
             newly_resolved_survivors: 0,
+            possible_bugs: vec![],
         }
     }
 
@@ -276,7 +283,7 @@ impl FuzzImproveArgs {
         let mut last_rejected_sources = None::<Vec<PromptSource>>;
         let mut current_results = baseline.clone();
         let mut resolved_survivors = BTreeSet::new();
-        let mut accepted = None;
+        let mut generator_error = None;
         for round in 1..=self.rounds {
             let round_dir = tempfile::Builder::new().prefix("forge-fuzz-improve-").tempdir()?;
             let prompt_path = round_dir.path().join("prompt.json");
@@ -348,12 +355,12 @@ impl FuzzImproveArgs {
                 .current_dir(&config.root)
                 .output()
                 .wrap_err("failed to invoke generator")?;
-            let proposal = if output.status.success() {
-                read_candidate(&candidate_path, &generated_tests)
-            } else {
-                Err(eyre!("generator failed: {}", stderr(&output)))
-            };
-            let evaluation = match proposal {
+            if !output.status.success() {
+                generator_error =
+                    Some(eyre!("generator failed in round {round}: {}", stderr(&output)));
+                break;
+            }
+            let evaluation = match read_candidate(&candidate_path, &generated_tests) {
                 Ok(proposal) => match accumulate_candidate(
                     current_candidate.as_ref(),
                     &proposal,
@@ -396,7 +403,6 @@ impl FuzzImproveArgs {
                             current_candidate = Some(candidate);
                             current_results = candidate_results;
                             resolved_survivors.extend(newly_resolved);
-                            accepted = Some(candidate_cache);
                         } else {
                             last_rejected_sources = Some(rejected_sources(&proposal.files));
                         }
@@ -426,17 +432,40 @@ impl FuzzImproveArgs {
         }
 
         fs::write(cache_root.join("rounds.json"), serde_json::to_vec_pretty(&evaluations)?)?;
-        if let Some(path) = accepted {
+        for evaluation in &evaluations {
+            let path = cache_root.join(&evaluation.candidate_digest);
             let path = path.strip_prefix(&config.root).unwrap_or(&path);
+            for possible_bug in &evaluation.possible_bugs {
+                sh_println!(
+                    "possible bug: {possible_bug}\n  the property fails on every seed against the current implementation; candidate: {}",
+                    path.display()
+                )?;
+            }
+        }
+        if let Some(candidate) = current_candidate {
+            // Evaluation rejects paths that already exist, so this adds files without overwriting.
+            for file in &candidate.files {
+                let path = config.root.join(&file.path);
+                fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
+                fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .and_then(|mut target| target.write_all(file.content.as_bytes()))
+                    .wrap_err_with(|| format!("failed to write {}", file.path.display()))?;
+            }
             sh_println!(
-                "accepted candidate: {} (reproducibly resolved {} survivor(s) across rounds)",
-                path.display(),
+                "added {} generated test file(s) that reproducibly resolve {} mutation survivor(s):",
+                candidate.files.len(),
                 resolved_survivors.len(),
             )?;
+            for file in &candidate.files {
+                sh_println!("  {}", file.path.display())?;
+            }
         } else {
             sh_println!("no candidate reproducibly resolved a mutation survivor")?;
         }
-        Ok(())
+        generator_error.map_or(Ok(()), Err)
     }
 
     fn evaluate(
@@ -493,8 +522,9 @@ impl FuzzImproveArgs {
             fs::write(path, &file.content)?;
         }
         let mut reasons = Vec::new();
+        let mut failures = vec![Vec::new(); candidate.tests.len()];
         for seed in &self.seed {
-            for test in &candidate.tests {
+            for (test, failures) in candidate.tests.iter().zip(&mut failures) {
                 let output =
                     self.run_candidate_test(forge, candidate_workspace.path(), config, seed, test)?;
                 if !output.status.success() && output.stdout.is_empty() {
@@ -514,12 +544,14 @@ impl FuzzImproveArgs {
                         test.name,
                         stderr(&output)
                     )),
-                    Ok((TestStatus::Failure, reason)) => reasons.push(format!(
-                        "{}::{} failed on seed {seed}: {}",
-                        test.contract,
-                        test.name,
-                        reason.unwrap_or_else(|| stderr(&output))
-                    )),
+                    Ok((TestStatus::Failure, reason)) => {
+                        let reason = reason.unwrap_or_else(|| stderr(&output));
+                        reasons.push(format!(
+                            "{}::{} failed on seed {seed}: {reason}",
+                            test.contract, test.name
+                        ));
+                        failures.push(format!("seed {seed}: {reason}"));
+                    }
                     Ok((TestStatus::Skipped, reason)) => reasons.push(format!(
                         "{}::{} was skipped on seed {seed}: {}",
                         test.contract,
@@ -622,6 +654,15 @@ impl FuzzImproveArgs {
                 resolved_survivors: resolved_survivor_identities(baseline, &candidate_results)
                     .len(),
                 newly_resolved_survivors: newly_resolved.len(),
+                possible_bugs: candidate
+                    .tests
+                    .iter()
+                    .zip(failures)
+                    .filter(|(_, failures)| failures.len() == self.seed.len())
+                    .map(|(test, failures)| {
+                        format!("{}::{} ({})", test.contract, test.name, failures.join("; "))
+                    })
+                    .collect(),
             },
             candidate_results,
             newly_resolved,
@@ -726,7 +767,16 @@ fn candidate_test_result(
     let status = serde_json::from_value(
         result.get("status").ok_or_else(|| eyre!("test result has no status"))?.clone(),
     )?;
-    let reason = result.get("reason").and_then(serde_json::Value::as_str).map(str::to_string);
+    let mut reason = result.get("reason").and_then(serde_json::Value::as_str).map(str::to_string);
+    if let Some(CounterExample::Single(counterexample)) =
+        result.get("counterexample").and_then(|value| CounterExample::deserialize(value).ok())
+    {
+        let counterexample = format!("counterexample: {}", counterexample.to_string().trim());
+        reason = Some(match reason {
+            Some(reason) => format!("{reason}; {counterexample}"),
+            None => counterexample,
+        });
+    }
     Ok((status, reason))
 }
 
