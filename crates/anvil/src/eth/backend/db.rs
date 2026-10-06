@@ -416,6 +416,9 @@ pub trait Db:
     /// Returns `true` if the state snapshot was reverted.
     fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
 
+    /// Deletes a state snapshot without reverting it.
+    fn delete_state_snapshot(&mut self, state_snapshot: U256) -> bool;
+
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
         None
@@ -465,6 +468,10 @@ where
     }
 
     fn revert_state(&mut self, _state_snapshot: U256, _action: RevertStateSnapshotAction) -> bool {
+        false
+    }
+
+    fn delete_state_snapshot(&mut self, _state_snapshot: U256) -> bool {
         false
     }
 
