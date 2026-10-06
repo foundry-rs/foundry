@@ -483,6 +483,99 @@ No files changed, compilation skipped
 }
 
 #[casttest]
+async fn storage_layout_local_proxy_at_block(prj: _, cmd: _) {
+    prj.add_source(
+        "Vault",
+        r#"
+contract Vault {
+    address public owner;
+    uint256 public totalDeposits;
+
+    function deposit(uint256 amount) external {
+        owner = msg.sender;
+        totalDeposits += amount;
+    }
+}
+"#,
+    );
+
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let sender = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let clone = sender.create(0).to_string();
+    let implementation = sender.create(1).to_string();
+    let vault = cmd
+        .forge_fuse()
+        .args(["inspect", "Vault", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let clone_code = format!(
+        "0x3d602d80600a3d3981f3363d3d373d3d3d363d73{}5af43d82803e903d91602b57fd5bf3",
+        hex::encode(sender.create(1))
+    );
+
+    // Block 1 deploys the clone, block 2 its implementation, and blocks 3 and 4 deposit.
+    for args in [
+        &["--create", clone_code.as_str()][..],
+        &["--create", vault.trim()],
+        &[&clone, "deposit(uint256)", "42"],
+        &[&clone, "deposit(uint256)", "1"],
+    ] {
+        cmd.cast_fuse()
+            .args(["send", "--private-key", private_key, "--rpc-url", &rpc])
+            .args(args)
+            .assert_success();
+    }
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["storage", &clone, "--proxy", &implementation, "--rpc-url", &rpc, "--block", "1"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Provided proxy address has no deployed code and thus no storage layout
+
+"#]]);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["storage", &clone, "--proxy", &implementation, "--rpc-url", &rpc, "--block", "3"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+╭---------------+---------+------+--------+-------+---------------------------------------------------+--------------------------------------------------------------------+---------------------╮
+| Name          | Type    | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract            |
++================================================================================================================================================================================================+
+| owner         | address | 0    | 0      | 20    | 1390849295786071768276380950238675083608645509734 | 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266 | src/Vault.sol:Vault |
+|---------------+---------+------+--------+-------+---------------------------------------------------+--------------------------------------------------------------------+---------------------|
+| totalDeposits | uint256 | 1    | 0      | 32    | 42                                                | 0x000000000000000000000000000000000000000000000000000000000000002a | src/Vault.sol:Vault |
+╰---------------+---------+------+--------+-------+---------------------------------------------------+--------------------------------------------------------------------+---------------------╯
+
+
+"#]]);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["storage", &clone, "--proxy", &implementation, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+╭---------------+---------+------+--------+-------+---------------------------------------------------+--------------------------------------------------------------------+---------------------╮
+| Name          | Type    | Slot | Offset | Bytes | Value                                             | Hex Value                                                          | Contract            |
++================================================================================================================================================================================================+
+| owner         | address | 0    | 0      | 20    | 1390849295786071768276380950238675083608645509734 | 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266 | src/Vault.sol:Vault |
+|---------------+---------+------+--------+-------+---------------------------------------------------+--------------------------------------------------------------------+---------------------|
+| totalDeposits | uint256 | 1    | 0      | 32    | 43                                                | 0x000000000000000000000000000000000000000000000000000000000000002b | src/Vault.sol:Vault |
+╰---------------+---------+------+--------+-------+---------------------------------------------------+--------------------------------------------------------------------+---------------------╯
+
+
+"#]]);
+}
+
+#[casttest]
 async fn storage_root_empty(cmd: _) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     cmd.args([

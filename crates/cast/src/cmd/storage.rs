@@ -134,11 +134,13 @@ impl StorageArgs {
         } else {
             provider.get_code_at(source_address).block_id(block.unwrap_or_default()).await?
         };
+        if source_code.is_empty() {
+            eyre::bail!("Provided proxy address has no deployed code and thus no storage layout");
+        }
 
         // Check if we're in a forge project and if we can find the source's code.
         let project = build.project()?;
-        if !source_code.is_empty()
-            && project.paths.has_input_files()
+        if project.paths.has_input_files()
             && let Some(artifact) =
                 compile_local_storage_layout(&project, &source_code, shell::is_json())?
         {
