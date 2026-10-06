@@ -1,6 +1,7 @@
 //! CLI tests for call trace commands.
 
 use super::*;
+use alloy_primitives::bytes;
 
 // https://github.com/foundry-rs/foundry/issues/9476
 #[forgetest]
@@ -672,9 +673,7 @@ async fn cast_call_delegate_trace_uses_sender_storage(cmd: _) {
     let to = "0x00000000000000000000000000000000000000d8";
 
     // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
-    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
-        .await
-        .unwrap();
+    api.anvil_set_code(to.parse().unwrap(), bytes!("0x60005460005260206000f3")).await.unwrap();
     api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
         .await
         .unwrap();

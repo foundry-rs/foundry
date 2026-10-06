@@ -641,7 +641,7 @@ impl<T> ReadyTransactions<T> {
         while let Some(hash) = tx_hashes.pop() {
             if let Some(mut tx) = ready.remove(&hash) {
                 let invalidated = tx.transaction.transaction.provides.iter().filter(|mark| {
-                    marker_filter.as_ref().map(|filter| !filter.contains(&**mark)).unwrap_or(true)
+                    marker_filter.as_ref().is_none_or(|filter| !filter.contains(&**mark))
                 });
 
                 let mut removed_some_marks = false;

@@ -39,6 +39,5 @@ jobs:
             Cargo.lock
           commit-message: "chore(deps): bump solar dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
           title: "chore(deps): bump solar dependencies to ${{ steps.bump.outputs.latest_rev_short }}"
-          labels: L-ignore
           body-path: ${{ steps.bump.outputs.changelog }}
           branch: deps/bump-solar

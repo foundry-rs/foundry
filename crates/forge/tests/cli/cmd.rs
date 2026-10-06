@@ -6,7 +6,7 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    BasicConfig, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
     parse_with_profile,
 };
 use foundry_test_utils::{
@@ -21,6 +21,11 @@ use std::{
     process::{Command, Stdio},
     str::FromStr,
 };
+
+#[cfg(unix)]
+use foundry_test_utils::util::TestCommand;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 // tests `--help` is printed to std out
 #[forgetest]
@@ -129,165 +134,145 @@ Please use [profile.default] instead or run `forge config --fix`.
 "#]]);
 }
 
+/// Points `cmd` at an empty temporary `HOME` so the `forge cache` tests never touch the real
+/// `~/.foundry/cache`, and returns it with the cache dir inside it.
+#[cfg(unix)]
+fn isolated_foundry_cache(cmd: &mut TestCommand) -> (tempfile::TempDir, PathBuf) {
+    let home = tempfile::tempdir().unwrap();
+    cmd.env("HOME", home.path());
+    cmd.env("XDG_DATA_HOME", home.path().join("data"));
+    let cache = home.path().join(".foundry").join("cache");
+    (home, cache)
+}
+
+/// Creates the given dirs, each with a two byte cache file.
+#[cfg(unix)]
+fn seed_cache_dirs(dirs: &[&Path]) {
+    for dir in dirs {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("storage.json"), "{}").unwrap();
+    }
+}
+
 // checks that `cache ls` can be invoked and displays the foundry cache
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
-#[expect(clippy::disallowed_macros, reason = "debug output for a manual test")]
 fn can_cache_ls(cmd: _) {
-    let chain = Chain::mainnet();
-    let block1 = 100;
-    let block2 = 101;
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let chain = cache.join("rpc").join("mainnet");
+    seed_cache_dirs(&[&chain.join("100"), &chain.join("101")]);
+    fs::create_dir_all(cache.join("etherscan").join("mainnet")).unwrap();
 
-    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-    let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
-    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-    let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-    fs::create_dir_all(block1_cache_dir).unwrap();
-    fs::write(block1_file, "{}").unwrap();
-    fs::create_dir_all(block2_cache_dir).unwrap();
-    fs::write(block2_file, "{}").unwrap();
-    fs::create_dir_all(etherscan_cache_dir).unwrap();
+    cmd.args(["cache", "ls"]).assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+- mainnet (4.0 B)
+	- Block Explorer (0.0 B)
 
-    let output = cmd.args(["cache", "ls"]).assert_success().get_output().stderr_lossy();
-    let output_lines = output.split('\n').collect::<Vec<_>>();
-    println!("{output}");
+	- Block 100 (2.0 B)
+	- Block 101 (2.0 B)
 
-    assert_eq!(output_lines.len(), 6);
-    assert!(output_lines[0].starts_with("-️ mainnet ("));
-    assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
-    assert_eq!(output_lines[2], "");
-    assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
-    assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
-    assert_eq!(output_lines[5], "");
-
-    Config::clean_foundry_cache().unwrap();
+"#]]
+        .unordered(),
+    );
 }
 
 // checks that `cache clean` can be invoked and cleans the foundry cache
-// this test is not isolated and modifies ~ so it is ignored
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
 fn can_cache_clean(cmd: _) {
-    let cache_dir = Config::foundry_cache_dir().unwrap();
-    let path = cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    cmd.args(["cache", "clean"]);
-    cmd.assert_empty_stdout();
+    let (home, cache) = isolated_foundry_cache(&mut cmd);
+    seed_cache_dirs(&[&cache.join("rpc").join("mainnet").join("100")]);
+    fs::create_dir_all(cache.join("etherscan").join("mainnet")).unwrap();
 
-    assert!(!path.exists());
+    cmd.args(["cache", "clean"]).assert_empty_stdout();
+
+    assert!(!cache.exists());
+    assert!(home.path().join(".foundry").exists());
 }
 
-// checks that `cache clean --etherscan` can be invoked and only cleans the foundry etherscan cache
-// this test is not isolated and modifies ~ so it is ignored
+// checks that `cache clean --etherscan` only cleans the foundry etherscan cache
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
 fn can_cache_clean_etherscan(cmd: _) {
-    let cache_dir = Config::foundry_cache_dir().unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
-    let path = cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "--etherscan"]);
-    cmd.assert_empty_stdout();
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let block = cache.join("rpc").join("mainnet").join("100");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[&block, &etherscan.join("mainnet")]);
 
-    assert!(path.exists());
-    assert!(!etherscan_path.exists());
+    cmd.args(["cache", "clean", "--etherscan"]).assert_empty_stdout();
 
-    Config::clean_foundry_cache().unwrap();
+    assert!(block.exists());
+    assert!(!etherscan.exists());
 }
 
-// checks that `cache clean all --etherscan` can be invoked and only cleans the foundry etherscan
-// cache. This test is not isolated and modifies ~ so it is ignored
+// checks that `cache clean all --etherscan` only cleans the foundry etherscan cache
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
 fn can_cache_clean_all_etherscan(cmd: _) {
-    let rpc_cache_dir = Config::foundry_rpc_cache_dir().unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
-    let rpc_path = rpc_cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(rpc_path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "all", "--etherscan"]);
-    cmd.assert_empty_stdout();
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let block = cache.join("rpc").join("mainnet").join("100");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[&block, &etherscan.join("mainnet")]);
 
-    assert!(rpc_path.exists());
-    assert!(!etherscan_path.exists());
+    cmd.args(["cache", "clean", "all", "--etherscan"]).assert_empty_stdout();
 
-    Config::clean_foundry_cache().unwrap();
+    assert!(block.exists());
+    assert!(!etherscan.exists());
 }
 
-// checks that `cache clean <chain>` can be invoked and cleans the chain cache
-// this test is not isolated and modifies ~ so it is ignored
+// checks that `cache clean <chain>` cleans the rpc and etherscan caches of that chain only
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
 fn can_cache_clean_chain(cmd: _) {
-    let chain = Chain::mainnet();
-    let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-    let path = cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet"]);
-    cmd.assert_empty_stdout();
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let rpc = cache.join("rpc");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[
+        &rpc.join("mainnet").join("100"),
+        &rpc.join("sepolia").join("100"),
+        &etherscan.join("mainnet"),
+        &etherscan.join("sepolia"),
+    ]);
 
-    assert!(!path.exists());
-    assert!(!etherscan_path.exists());
+    cmd.args(["cache", "clean", "mainnet"]).assert_empty_stdout();
 
-    Config::clean_foundry_cache().unwrap();
+    assert!(!rpc.join("mainnet").exists());
+    assert!(!etherscan.join("mainnet").exists());
+    assert!(rpc.join("sepolia").join("100").exists());
+    assert!(etherscan.join("sepolia").exists());
 }
 
-// checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
-// caches this test is not isolated and modifies ~ so it is ignored
+// checks that `cache clean <chain> --blocks 100,101` only cleans those block caches
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
 fn can_cache_clean_blocks(cmd: _) {
-    let chain = Chain::mainnet();
-    let block1 = 100;
-    let block2 = 101;
-    let block3 = 102;
-    let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-    let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-    let block3_cache_dir = Config::foundry_block_cache_dir(chain, block3).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-    let block1_path = block1_cache_dir.as_path();
-    let block2_path = block2_cache_dir.as_path();
-    let block3_path = block3_cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(block1_path).unwrap();
-    fs::create_dir_all(block2_path).unwrap();
-    fs::create_dir_all(block3_path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
-    cmd.assert_empty_stdout();
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let chain = cache.join("rpc").join("mainnet");
+    let etherscan = cache.join("etherscan").join("mainnet");
+    seed_cache_dirs(&[&chain.join("100"), &chain.join("101"), &chain.join("102"), &etherscan]);
 
-    assert!(!block1_path.exists());
-    assert!(!block2_path.exists());
-    assert!(block3_path.exists());
-    assert!(etherscan_path.exists());
+    cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]).assert_empty_stdout();
 
-    Config::clean_foundry_cache().unwrap();
+    assert!(!chain.join("100").exists());
+    assert!(!chain.join("101").exists());
+    assert!(chain.join("102").exists());
+    assert!(etherscan.exists());
 }
 
-// checks that `cache clean <chain> --etherscan` can be invoked and cleans the etherscan chain cache
-// this test is not isolated and modifies ~ so it is ignored
+// checks that `cache clean <chain> --etherscan` only cleans the etherscan cache of that chain
+#[cfg(unix)]
 #[forgetest]
-#[ignore]
 fn can_cache_clean_chain_etherscan(cmd: _) {
-    let cache_dir = Config::foundry_chain_cache_dir(Chain::mainnet()).unwrap();
-    let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap();
-    let path = cache_dir.as_path();
-    let etherscan_path = etherscan_cache_dir.as_path();
-    fs::create_dir_all(path).unwrap();
-    fs::create_dir_all(etherscan_path).unwrap();
-    cmd.args(["cache", "clean", "mainnet", "--etherscan"]);
-    cmd.assert_empty_stdout();
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let block = cache.join("rpc").join("mainnet").join("100");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[&block, &etherscan.join("mainnet"), &etherscan.join("sepolia")]);
 
-    assert!(path.exists());
-    assert!(!etherscan_path.exists());
+    cmd.args(["cache", "clean", "mainnet", "--etherscan"]).assert_empty_stdout();
 
-    Config::clean_foundry_cache().unwrap();
+    assert!(block.exists());
+    assert!(!etherscan.join("mainnet").exists());
+    assert!(etherscan.join("sepolia").exists());
 }
 
 // checks that init works

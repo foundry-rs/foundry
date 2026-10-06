@@ -62,7 +62,7 @@ use foundry_evm::{
     revm::interpreter::InstructionResult,
     traces::{InternalTraceMode, TraceRequirements, Traces},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{MultiWalletOpts, wallet_multi::MultiWallet};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -453,84 +453,84 @@ impl ScriptArgs {
 
         // Box each branch's future to keep its large async state off `run_script`'s future;
         // otherwise `run_command` trips `clippy::large_stack_frames` by a small margin.
-        if is_tempo {
-            let batch = self.batch;
-            return Box::pin(async move {
-                let bundled = match self
-                    .prepare_bundled::<TempoEvmNetwork>(
-                        config,
-                        evm_opts,
-                        ExecutorBuilder::<TempoEvmNetwork>::new(),
-                    )
-                    .await?
-                {
-                    Some(bundled) => bundled,
-                    None => return Ok(()),
-                };
-                // batch mode owns its own pending recovery inside broadcast_batch(); running the
-                // generic wait_for_pending() first would race with that and could double-process
-                // an already-confirmed batch hash.
-                let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
-                let broadcasted = if batch {
-                    bundled.broadcast_batch().await?
-                } else {
-                    bundled.broadcast().await?
-                };
-                if broadcasted.args.verify {
-                    broadcasted.verify().await?;
-                }
-                Ok(())
-            })
-            .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(
-                config,
-                evm_opts,
-                ExecutorBuilder::<BaseEvmNetwork>::new(),
-            ))
-            .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return Box::pin(async move {
-                let Some(prepared) = self
-                    .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
-                    .await?
-                else {
-                    return Ok(());
-                };
-                let bundled = match prepared {
-                    PreparedScript::Resume(bundled) => *bundled,
-                    PreparedScript::Simulate(state) => {
-                        state.fill_monad_metadata().await?.bundle().await?
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                let batch = self.batch;
+                Box::pin(async move {
+                    let bundled = match self
+                        .prepare_bundled::<TempoEvmNetwork>(
+                            config,
+                            evm_opts,
+                            ExecutorBuilder::<TempoEvmNetwork>::new(),
+                        )
+                        .await?
+                    {
+                        Some(bundled) => bundled,
+                        None => return Ok(()),
+                    };
+                    // batch mode owns its own pending recovery inside broadcast_batch(); running
+                    // the generic wait_for_pending() first would race with that and could
+                    // double-process an already-confirmed batch hash.
+                    let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
+                    let broadcasted = if batch {
+                        bundled.broadcast_batch().await?
+                    } else {
+                        bundled.broadcast().await?
+                    };
+                    if broadcasted.args.verify {
+                        broadcasted.verify().await?;
                     }
-                };
-                let Some(bundled) = Self::finish_bundle(bundled).await? else { return Ok(()) };
-                Self::broadcast_bundle(bundled).await
-            })
-            .await;
+                    Ok(())
+                })
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                Box::pin(self.run_generic_script::<BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
+                ))
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                Box::pin(async move {
+                    let Some(prepared) = self
+                        .prepare_script(config, evm_opts, ExecutorBuilder::<MonadEvmNetwork>::new())
+                        .await?
+                    else {
+                        return Ok(());
+                    };
+                    let bundled = match prepared {
+                        PreparedScript::Resume(bundled) => *bundled,
+                        PreparedScript::Simulate(state) => {
+                            state.fill_monad_metadata().await?.bundle().await?
+                        }
+                    };
+                    let Some(bundled) = Self::finish_bundle(bundled).await? else { return Ok(()) };
+                    Self::broadcast_bundle(bundled).await
+                })
+                .await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                Box::pin(self.run_generic_script::<OpEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
+                ))
+                .await
+            }
+            NetworkVariant::Ethereum => {
+                Box::pin(self.run_generic_script::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                ))
+                .await
+            }
         }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return Box::pin(self.run_generic_script::<OpEvmNetwork>(
-                config,
-                evm_opts,
-                ExecutorBuilder::<OpEvmNetwork>::new(),
-            ))
-            .await;
-        }
-
-        Box::pin(self.run_generic_script::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        ))
-        .await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -1289,7 +1289,6 @@ const fn script_trace_requirements(config: &Config, debug: bool) -> TraceRequire
 mod tests {
     use super::*;
     use alloy_chains::NamedChain;
-    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::address;
     use alloy_provider::Provider as _;
@@ -1336,7 +1335,7 @@ mod tests {
     async fn script_fork_context_is_re_resolved_for_a_new_rpc() {
         let (api_a, handle_a) = spawn(NodeConfig::test()).await;
         let (api_b, handle_b) = spawn(NodeConfig::test()).await;
-        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_a.anvil_mine(Some(U256::ONE), None).await.unwrap();
         api_b.anvil_mine(Some(U256::from(3)), None).await.unwrap();
 
         let evm_opts = EvmOpts {
@@ -1375,7 +1374,7 @@ mod tests {
     async fn script_explicit_network_is_preserved_for_a_new_rpc() {
         let (api_a, handle_a) = spawn(NodeConfig::test_monad()).await;
         let (api_b, handle_b) = spawn(NodeConfig::test_monad()).await;
-        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_a.anvil_mine(Some(U256::ONE), None).await.unwrap();
         api_b.anvil_mine(Some(U256::from(3)), None).await.unwrap();
 
         let evm_opts = EvmOpts {
@@ -1441,8 +1440,8 @@ mod tests {
     async fn script_explicit_fork_block_can_equal_previous_latest() {
         let (api_a, handle_a) = spawn(NodeConfig::test()).await;
         let (api_b, handle_b) = spawn(NodeConfig::test()).await;
-        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
-        api_b.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_a.anvil_mine(Some(U256::ONE), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::ONE), None).await.unwrap();
 
         let evm_opts = EvmOpts {
             fork_url: Some(handle_a.http_endpoint()),
@@ -1486,14 +1485,14 @@ mod tests {
         let (api_a, handle_a) = spawn(NodeConfig::test()).await;
         let (api_b, handle_b) = spawn(NodeConfig::test()).await;
         let state_address = address!("0000000000000000000000000000000000001337");
-        let balance_a = U256::from(1);
+        let balance_a = U256::ONE;
         let balance_b = U256::from(2);
         api_a.anvil_set_balance(state_address, balance_a).await.unwrap();
         api_b.anvil_set_balance(state_address, balance_b).await.unwrap();
         let original_prevrandao = B256::with_last_byte(0x42);
         api_a.anvil_set_next_block_prevrandao(original_prevrandao).await.unwrap();
-        api_a.anvil_mine(Some(U256::from(1)), None).await.unwrap();
-        api_b.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api_a.anvil_mine(Some(U256::ONE), None).await.unwrap();
+        api_b.anvil_mine(Some(U256::ONE), None).await.unwrap();
         let url_a = handle_a.http_endpoint();
         let url_b = handle_b.http_endpoint();
         let sender = handle_a.dev_accounts().next().unwrap();
@@ -1553,7 +1552,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn script_same_endpoint_does_not_advance_resolved_fork() {
         let (api, handle) = spawn(NodeConfig::test()).await;
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         let url = handle.http_endpoint();
         let evm_opts = EvmOpts {
             fork_url: Some(url.clone()),
@@ -1573,21 +1572,21 @@ mod tests {
         let resolved = config.resolved_fork.clone().unwrap();
         config._get_runner(None, false, false).await.unwrap();
 
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         config.set_fork_url(url.clone());
         let runner = config._get_runner(None, false, false).await.unwrap();
 
         assert_eq!(config.resolved_fork.as_ref(), Some(&resolved));
         assert!(config.backends.contains_key(&resolved));
         assert_eq!(config.backends.len(), 1);
-        assert_eq!(runner.executor.evm_env().block_env.number(), U256::from(1));
+        assert_eq!(runner.executor.evm_env().block_env.number(), U256::ONE);
         assert_eq!(config.evm_opts.fork_block_number, None);
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn script_fork_changed_headers_replace_cached_backend() {
         let (api, handle) = spawn(NodeConfig::test()).await;
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
         let url = handle.http_endpoint();
         let evm_opts = EvmOpts {
             fork_url: Some(url.clone()),
@@ -1696,7 +1695,7 @@ mod tests {
         let (api, handle) = spawn(NodeConfig::test()).await;
         let prevrandao = B256::with_last_byte(0x42);
         api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
-        api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        api.anvil_mine(Some(U256::ONE), None).await.unwrap();
 
         let evm_opts = EvmOpts {
             fork_url: Some(handle.http_endpoint()),
@@ -2008,7 +2007,7 @@ mod tests {
         let tx = TransactionRequest::default()
             .from(replacement_sender)
             .to(original_sender)
-            .value(U256::from(1));
+            .value(U256::ONE);
         provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
 
         let evm_opts = EvmOpts {
@@ -2034,14 +2033,7 @@ mod tests {
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
             .unwrap();
-        assert_eq!(
-            provider
-                .get_transaction_count(replacement_sender)
-                .block_id(BlockId::number(1))
-                .await
-                .unwrap(),
-            0
-        );
+        assert_eq!(provider.get_transaction_count(replacement_sender).number(1).await.unwrap(), 0);
 
         match config.update_sender(replacement_sender).await {
             Ok(()) => assert_eq!(config.sender_nonce, 1),
@@ -2197,7 +2189,7 @@ mod tests {
         let args =
             ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"]);
 
-        assert_eq!(args.tempo.nonce_key, Some(U256::from(1)));
+        assert_eq!(args.tempo.nonce_key, Some(U256::ONE));
     }
 
     #[test]
@@ -2209,13 +2201,13 @@ mod tests {
             SESSION_ID_HEX,
         ]);
 
-        assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
+        assert_eq!(args.tempo.session, Some(B256::repeat_byte(0x11)),);
     }
 
     #[tokio::test]
     async fn tempo_session_sets_script_sender_to_root_account() {
         let temp = tempdir().unwrap();
-        let session_id = B256::from([0x22; 32]);
+        let session_id = B256::repeat_byte(0x22);
         let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
@@ -2248,7 +2240,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_session_resume_multi_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
-        let session_id = B256::from([0x55; 32]);
+        let session_id = B256::repeat_byte(0x55);
         let root = session_root();
         let chain_id = 4217;
 
@@ -2279,7 +2271,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_session_resume_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
-        let session_id = B256::from([0x77; 32]);
+        let session_id = B256::repeat_byte(0x77);
         let root = session_root();
         let chain_id = 4217;
 
@@ -2309,7 +2301,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_session_non_resume_multi_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
-        let session_id = B256::from([0x66; 32]);
+        let session_id = B256::repeat_byte(0x66);
         let root = session_root();
         let chain_id = 4217;
 
@@ -2339,7 +2331,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_session_initial_broadcast_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
-        let session_id = B256::from([0x88; 32]);
+        let session_id = B256::repeat_byte(0x88);
         let root = session_root();
         let chain_id = 4217;
 
@@ -2399,7 +2391,7 @@ mod tests {
     async fn tempo_session_env_selects_tempo_network() {
         let temp = tempdir().unwrap();
         let _guard = TempoHomeGuard::set(temp.path()).await;
-        let session_id = B256::from([0x44; 32]);
+        let session_id = B256::repeat_byte(0x44);
         // SAFETY: serialized by TempoHomeGuard.
         unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
 
@@ -2413,7 +2405,7 @@ mod tests {
     #[tokio::test]
     async fn tempo_session_rejects_explicit_script_wallet_signer() {
         let temp = tempdir().unwrap();
-        let session_id = B256::from([0x33; 32]);
+        let session_id = B256::repeat_byte(0x33);
         let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 

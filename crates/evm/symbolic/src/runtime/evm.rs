@@ -29,9 +29,9 @@ pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
         return value;
     }
     let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
-    let sign_bit = U256::from(1) << bit_index;
-    let mask = sign_bit - U256::from(1);
-    if value & sign_bit == U256::ZERO { value & mask } else { value | !mask }
+    let sign_bit = U256::ONE << bit_index;
+    let mask = sign_bit - U256::ONE;
+    if (value & sign_bit).is_zero() { value & mask } else { value | !mask }
 }
 
 pub(crate) fn signextend_word(cx: &mut SymCx, byte_index: U256, value: SymExpr) -> SymExpr {
@@ -42,8 +42,8 @@ pub(crate) fn signextend_word(cx: &mut SymCx, byte_index: U256, value: SymExpr) 
         return SymExpr::constant(cx, signextend(byte_index, value));
     }
     let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
-    let sign_bit = U256::from(1) << bit_index;
-    let mask_value = sign_bit - U256::from(1);
+    let sign_bit = U256::ONE << bit_index;
+    let mask_value = sign_bit - U256::ONE;
     let sign_bit = SymExpr::constant(cx, sign_bit);
     let masked_sign = SymExpr::binop(cx, SymBinOp::And, value.clone(), sign_bit);
     let zero = SymExpr::zero(cx);

@@ -547,7 +547,7 @@ mod tests {
         let event = Event::parse("event Ev(uint256 id, address owner)").unwrap();
         let owner = Address::repeat_byte(0x22);
         let log = rpc_log(
-            vec![event.selector(), B256::from(U256::from(7))],
+            vec![event.selector(), B256::with_last_byte(7)],
             DynSolValue::Address(owner).abi_encode(),
         );
 
@@ -599,8 +599,7 @@ mod tests {
     #[test]
     fn format_log_params_mismatching_log() {
         let event = Event::parse("event Ev(uint256 indexed a, uint256 b)").unwrap();
-        let log =
-            rpc_log(vec![event.selector()], DynSolValue::Uint(U256::from(1), 256).abi_encode());
+        let log = rpc_log(vec![event.selector()], DynSolValue::Uint(U256::ONE, 256).abi_encode());
         assert_eq!(format_log_params(&event, &log), None);
     }
 
@@ -630,7 +629,7 @@ mod tests {
         let transfer_topic = B256::from_str(TRANSFER_TOPIC).unwrap();
         let addr: Address = ADDRESS.parse().unwrap();
         let other_addr: Address = OTHER_ADDRESS.parse().unwrap();
-        let addr_topic = Topic::from(B256::left_padding_from(addr.as_slice()));
+        let addr_topic = Topic::from(addr);
         let any = Topic::default;
 
         let from_block = Some(BlockNumberOrTag::from(1337));
@@ -668,7 +667,7 @@ mod tests {
                         .unwrap()
                         .selector()
                         .into(),
-                    B256::left_padding_from(addr.as_slice()).into(),
+                    addr.into(),
                     any(),
                     any(),
                 ],
@@ -701,22 +700,12 @@ mod tests {
             (
                 "event Anon(address indexed a, uint256 indexed b, uint256 c, address indexed d) anonymous",
                 &[ADDRESS, "7", ""],
-                [
-                    B256::left_padding_from(addr.as_slice()).into(),
-                    B256::from(U256::from(7)).into(),
-                    any(),
-                    any(),
-                ],
+                [addr.into(), B256::with_last_byte(7).into(), any(), any()],
             ),
             (
                 "event Anon(address indexed a, uint256 indexed b, uint256 indexed c, address indexed d) anonymous",
                 &[ADDRESS, "7", "", OTHER_ADDRESS],
-                [
-                    B256::left_padding_from(addr.as_slice()).into(),
-                    B256::from(U256::from(7)).into(),
-                    any(),
-                    B256::left_padding_from(other_addr.as_slice()).into(),
-                ],
+                [addr.into(), B256::with_last_byte(7).into(), any(), other_addr.into()],
             ),
         ];
         for (sig_or_topic, args, expected) in cases {

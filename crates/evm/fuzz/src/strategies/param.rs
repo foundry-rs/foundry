@@ -252,12 +252,12 @@ pub(crate) fn fuzz_param_from_state(
             1..=31 => value()
                 .prop_map(move |value| {
                     // Extract lower N bits
-                    let uint_n = U256::from_be_bytes(value.0) % U256::from(1).wrapping_shl(n);
+                    let uint_n = U256::from_be_bytes(value.0) % U256::ONE.wrapping_shl(n);
                     // Interpret as signed int (two's complement) --> check sign bit (bit N-1).
-                    let sign_bit = U256::from(1) << (n - 1);
+                    let sign_bit = U256::ONE << (n - 1);
                     let num = if uint_n >= sign_bit {
                         // Negative number in two's complement
-                        let modulus = U256::from(1) << n;
+                        let modulus = U256::ONE << n;
                         I256::from_raw(uint_n.wrapping_sub(modulus))
                     } else {
                         // Positive number
@@ -275,7 +275,7 @@ pub(crate) fn fuzz_param_from_state(
                 .boxed(),
             1..=31 => value()
                 .prop_map(move |value| {
-                    let uint = U256::from_be_bytes(value.0) % U256::from(1).wrapping_shl(n);
+                    let uint = U256::from_be_bytes(value.0) % U256::ONE.wrapping_shl(n);
                     DynSolValue::Uint(uint, n)
                 })
                 .boxed(),
@@ -561,7 +561,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::TestRunner,
     };
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::database::InMemoryDB;
     use std::collections::HashSet;
 
     #[test]
@@ -596,7 +596,7 @@ mod tests {
     fn can_fuzz_from_zero_capacity_dictionary() {
         let state = EvmFuzzState::new(
             &[],
-            &CacheDB::<EmptyDB>::default(),
+            &InMemoryDB::default(),
             FuzzDictionaryConfig { max_fuzz_dictionary_values: 0, ..Default::default() },
             None,
         );

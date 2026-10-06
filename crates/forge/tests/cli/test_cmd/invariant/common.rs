@@ -190,7 +190,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 fn invariant_calldata_dictionary(prj: _, cmd: _) {
     prj.insert_utils();
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.invariant.runs = 1000;
         config.invariant.depth = 20;
     });
@@ -446,7 +446,7 @@ fn invariant_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         // disable literals to test fixtures
         config.invariant.dictionary.max_fuzz_dictionary_literals = 0;
         config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
@@ -563,7 +563,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 #[forgetest_init]
 fn invariant_breaks_without_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.seed = Some(U256::ONE);
         config.invariant.runs = 1;
         config.invariant.depth = 100;
     });
@@ -2864,8 +2864,36 @@ contract Target {
 "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_zeroTimeDelay"]).assert_success();
-    cmd.forge_fuse().args(["test", "--mt", "invariant_zeroBlockDelay"]).assert_success();
+    cmd.args(["test", "--mt", "invariant_zeroTimeDelay"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantZeroDelay.t.sol:InvariantZeroDelay
+[PASS] invariant_zeroTimeDelay() (runs: 1, calls: 1, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Target   | touch    | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+    cmd.forge_fuse().args(["test", "--mt", "invariant_zeroBlockDelay"]).assert_success().stdout_eq(
+        str![[r#"
+...
+Ran 1 test for test/InvariantZeroDelay.t.sol:InvariantZeroDelay
+[PASS] invariant_zeroBlockDelay() (runs: 1, calls: 1, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Target   | touch    | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
 }
 
 // Test optimization mode with time-dependent logic using warp and fixed seed for reproducibility.
@@ -3358,6 +3386,83 @@ Ran 2 tests for test/HistoryTraceSeed.t.sol:HistoryTraceSeedTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+}
+
+// Handler calls are committed within a run, while invariant predicate writes are discarded and
+// each run starts again from the post-setup state.
+#[forgetest]
+fn invariant_checks_do_not_commit_state(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 4;
+        config.invariant.depth = 4;
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantCheckState.t.sol",
+        r#"
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract Handler {
+    uint256 public count;
+    bool public poisoned;
+
+    function step() external {
+        require(!poisoned, "predicate write leaked");
+        require(count < 4, "run baseline leaked");
+        count++;
+    }
+
+    function poison() external {
+        poisoned = true;
+    }
+}
+
+contract InvariantCheckStateTest {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function targetSelectors() public view returns (FuzzSelector[] memory targets) {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.step.selector;
+        targets = new FuzzSelector[](1);
+        targets[0] = FuzzSelector(address(handler), selectors);
+    }
+
+    function invariant_poison() public {
+        handler.poison();
+    }
+
+    function afterInvariant() public view {
+        require(handler.count() == 4, "handler state not retained");
+        require(!handler.poisoned(), "predicate write leaked at end");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantCheckState.t.sol:InvariantCheckStateTest
+[PASS] invariant_poison() (runs: 4, calls: 16, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Handler  | step     | 16    | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 }

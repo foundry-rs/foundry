@@ -36,7 +36,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, TxType, Typed2718,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
@@ -110,7 +110,7 @@ use futures::{
 };
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv},
+    context::BlockEnv,
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{HaltReason, Output},
@@ -185,6 +185,8 @@ pub struct EthApi<N: Network> {
     lifecycle_lock: Arc<tokio::sync::RwLock<()>>,
     /// Serializes reset preparation without blocking identity RPCs made by the target endpoint.
     reset_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes automatic nonce assignment through pool insertion for each sender.
+    nonce_locks: Arc<RwLock<HashMap<Address, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl<N: Network> Clone for EthApi<N> {
@@ -205,6 +207,7 @@ impl<N: Network> Clone for EthApi<N> {
             instance_id: self.instance_id.clone(),
             lifecycle_lock: self.lifecycle_lock.clone(),
             reset_lock: self.reset_lock.clone(),
+            nonce_locks: self.nonce_locks.clone(),
         }
     }
 }
@@ -241,6 +244,7 @@ impl<N: Network> EthApi<N> {
             instance_id: Arc::new(RwLock::new(B256::random())),
             lifecycle_lock: Arc::new(tokio::sync::RwLock::new(())),
             reset_lock: Arc::new(tokio::sync::Mutex::new(())),
+            nonce_locks: Default::default(),
         }
     }
 
@@ -1090,7 +1094,7 @@ impl<N: Network> EthApi<N> {
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
             BlockTransactions::Hashes(txs) => U256::from(txs.len()),
-            BlockTransactions::Uncle => U256::from(0),
+            BlockTransactions::Uncle => U256::ZERO,
         });
         Ok(txs)
     }
@@ -1185,8 +1189,7 @@ impl<N: Network> EthApi<N> {
         idx: Index,
     ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockHashAndIndex");
-        let number =
-            self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
+        let number = self.backend.ensure_block_number(Some(BlockId::hash(block_hash))).await?;
         if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(number)
         {
@@ -1577,7 +1580,7 @@ impl<N: Network> EthApi<N> {
         self.backend.trace_filter(filter).await
     }
 
-    /// Returns a transaction trace at a given index.
+    /// Returns the transaction trace at the given trace address.
     ///
     /// Handler for RPC call: `trace_get`.
     pub async fn trace_get(
@@ -1596,7 +1599,7 @@ impl<N: Network> EthApi<N> {
         &self,
         block: BlockNumber,
         trace_types: HashSet<TraceType>,
-    ) -> Result<Vec<TraceResultsWithTransactionHash>> {
+    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>> {
         node_info!("trace_replayBlockTransactions");
         self.backend.trace_replay_block_transactions(block, trace_types).await
     }
@@ -1608,7 +1611,7 @@ impl<N: Network> EthApi<N> {
         &self,
         transaction: B256,
         trace_types: HashSet<TraceType>,
-    ) -> Result<TraceResults> {
+    ) -> Result<Option<TraceResultsWithTransactionHash>> {
         node_info!("trace_replayTransaction");
         self.backend.trace_replay_transaction(transaction, trace_types).await
     }
@@ -1636,7 +1639,7 @@ impl EthApi<FoundryNetwork> {
         idx: Index,
     ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
-        if block == BlockNumber::Pending {
+        if block.is_pending() {
             return Ok(self.pending_block_full().await?.and_then(|block| {
                 let WithOtherFields { inner: block, .. } = block.0;
                 block.transactions.into_transactions().nth(idx.into())
@@ -1918,14 +1921,11 @@ impl EthApi<FoundryNetwork> {
             }
             if gas_price > 0 {
                 // Blob gas is paid on top of execution gas, so reserve its maximum cost first. Like
-                // the call itself, fall back to the block's blob gas price when no cap is given.
-                if inner.minimal_tx_type() == TxType::Eip4844
+                // the call itself, pay no blob fee when no cap is given.
+                if inner.minimal_tx_type().is_eip4844()
                     && let Some(hashes) = &inner.blob_versioned_hashes
                 {
-                    let max_fee_per_blob_gas = fees
-                        .max_fee_per_blob_gas
-                        .or_else(|| block_env.blob_gasprice())
-                        .unwrap_or_default();
+                    let max_fee_per_blob_gas = fees.max_fee_per_blob_gas.unwrap_or_default();
                     let blob_gas = U256::from(hashes.len() as u64 * DATA_GAS_PER_BLOB);
                     let blob_cost = blob_gas.saturating_mul(U256::from(max_fee_per_blob_gas));
                     if blob_cost >= available_funds {
@@ -2729,7 +2729,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
-        if number == BlockNumber::Pending {
+        if number.is_pending() {
             return Ok(Some(self.pending_block().await?));
         }
 
@@ -2744,7 +2744,7 @@ impl EthApi<FoundryNetwork> {
         number: BlockNumber,
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
-        if number == BlockNumber::Pending {
+        if number.is_pending() {
             let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
             return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
@@ -2760,7 +2760,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
-        if number == BlockNumber::Pending {
+        if number.is_pending() {
             return self.pending_block_full().await;
         }
         self.backend.block_by_number_full(number).await
@@ -2920,7 +2920,7 @@ impl EthApi<FoundryNetwork> {
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
-        if block_number == BlockNumber::Pending {
+        if block_number.is_pending() {
             let txs = self.pool.ready_transactions().collect();
             let block = self.backend.pending_block(txs).await?;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
@@ -2930,7 +2930,7 @@ impl EthApi<FoundryNetwork> {
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
             BlockTransactions::Hashes(txs) => U256::from(txs.len()),
-            BlockTransactions::Uncle => U256::from(0),
+            BlockTransactions::Uncle => U256::ZERO,
         });
         Ok(txs)
     }
@@ -3012,6 +3012,14 @@ impl EthApi<FoundryNetwork> {
         let from = request.from().map(Ok).unwrap_or_else(|| {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
+        // Keep nonce selection and pool insertion atomic with respect to other requests from
+        // this sender. Explicit nonces retain the pool's normal replacement behavior.
+        let _nonce_guard = if request.nonce().is_none() {
+            let lock = self.nonce_locks.write().entry(from).or_default().clone();
+            Some(lock.lock_owned().await)
+        } else {
+            None
+        };
         let nonce = self.request_nonce_for_transaction(&request, from).await?;
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
@@ -3665,13 +3673,9 @@ impl EthApi<FoundryNetwork> {
         overrides: EvmOverrides,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
-        self.do_estimate_gas(
-            request,
-            block_number.or_else(|| Some(BlockNumber::Pending.into())),
-            overrides,
-        )
-        .await
-        .map(U256::from)
+        self.do_estimate_gas(request, block_number.or_else(|| Some(BlockId::pending())), overrides)
+            .await
+            .map(U256::from)
     }
 
     /// Fills a transaction request with default values for missing fields.
@@ -3696,9 +3700,8 @@ impl EthApi<FoundryNetwork> {
 
         // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.gas_limit().is_none() {
-            let estimated_gas = self
-                .do_estimate_gas_typed(request.clone(), Some(BlockNumber::Pending.into()))
-                .await?;
+            let estimated_gas =
+                self.do_estimate_gas_typed(request.clone(), Some(BlockId::pending())).await?;
             request.set_gas_limit(estimated_gas as u64);
         }
 
@@ -4199,7 +4202,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
         let interval = interval.map(|i| i.saturating_to::<u64>());
-        let blocks = num_blocks.unwrap_or(U256::from(1));
+        let blocks = num_blocks.unwrap_or(U256::ONE);
         if blocks.is_zero() {
             return Ok(());
         }
@@ -4260,9 +4263,8 @@ impl EthApi<FoundryNetwork> {
                 continue;
             };
             for slot in &item.storage_keys {
-                let account_override = AccountOverride::default().with_state_diff(std::iter::once(
-                    (*slot, B256::from(expected_value.to_be_bytes())),
-                ));
+                let account_override = AccountOverride::default()
+                    .with_state_diff(std::iter::once((*slot, B256::from(expected_value))));
 
                 let state_override = StateOverridesBuilder::default()
                     .append(token_address, account_override)
@@ -4324,12 +4326,7 @@ impl EthApi<FoundryNetwork> {
             })?;
 
         // Set the storage slot to the desired balance
-        self.anvil_set_storage_at(
-            token_address,
-            U256::from_be_bytes(slot.0),
-            B256::from(balance.to_be_bytes()),
-        )
-        .await?;
+        self.anvil_set_storage_at(token_address, slot.into(), balance.into()).await?;
 
         Ok(())
     }
@@ -4377,12 +4374,7 @@ impl EthApi<FoundryNetwork> {
             })?;
 
         // Set the storage slot to the desired allowance
-        self.anvil_set_storage_at(
-            token_address,
-            U256::from_be_bytes(slot.0),
-            B256::from(amount.to_be_bytes()),
-        )
-        .await?;
+        self.anvil_set_storage_at(token_address, slot.into(), amount.into()).await?;
 
         Ok(())
     }
@@ -4964,7 +4956,7 @@ impl EthApi<FoundryNetwork> {
                     continue;
                 };
 
-                let receipts = match this.block_receipts(BlockId::Hash(block.hash.into())).await {
+                let receipts = match this.block_receipts(BlockId::hash(block.hash)).await {
                     Ok(Some(mut receipts)) => {
                         if let Some(hashes) = &hash_filter {
                             receipts.retain(|receipt| hashes.contains(&receipt.transaction_hash()));
@@ -5168,7 +5160,7 @@ impl EthApi<FoundryNetwork> {
         if let Some(nonce) = request.nonce {
             Ok(nonce)
         } else {
-            self.get_transaction_count(from, Some(BlockId::Number(BlockNumber::Pending))).await
+            self.get_transaction_count(from, Some(BlockId::pending())).await
         }
     }
 
@@ -5858,7 +5850,7 @@ mod tests {
 
         for percentiles in [vec![-0.5], vec![100.5], vec![50.0, 25.0], vec![50.0, 50.0]] {
             let err =
-                api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap_err();
+                api.fee_history(U256::ONE, BlockNumber::Latest, percentiles).await.unwrap_err();
             assert!(matches!(
                 err,
                 BlockchainError::FeeHistory(FeeHistoryError::InvalidRewardPercentiles)
@@ -5866,7 +5858,7 @@ mod tests {
         }
 
         for percentiles in [vec![], vec![0.0, 100.0]] {
-            api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap();
+            api.fee_history(U256::ONE, BlockNumber::Latest, percentiles).await.unwrap();
         }
     }
 

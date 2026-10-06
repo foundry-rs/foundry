@@ -22,7 +22,6 @@ use foundry_evm_core::{
         merge_child_state, prepare_child_state, with_inherited_evm,
     },
     precompiles::P256_VERIFY,
-    refresh_chain_journal,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -51,6 +50,9 @@ use std::{
 };
 
 use crate::executors::{EarlyExit, EvmExecutionCancellation, calculate_initial_gas};
+
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::refresh_chain_journal;
 
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -636,7 +638,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set the cancellation state checked during EVM execution.
     #[inline]
     pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
-        self.execution_cancellation = Some(EvmExecutionCancellation::early_exit(early_exit));
+        self.set_execution_cancellation(EvmExecutionCancellation::early_exit(early_exit));
     }
 
     /// Set the complete cancellation state checked during EVM execution.
@@ -1187,6 +1189,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 ecx.journal_mut(),
                 reserve_balance.expect("isolated transaction state was captured"),
             );
+            #[cfg(feature = "monad")]
             refresh_chain_journal(ecx);
             // Should we match, encode and propagate error as a revert reason?
             let result =
@@ -1244,6 +1247,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             ecx.journal_mut(),
             reserve_balance.expect("isolated transaction state was captured"),
         );
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ecx);
 
         let (result, address, output) = match res.result {
@@ -1260,6 +1264,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
             ExecutionResult::Revert { output, .. } => (InstructionResult::Revert, None, output),
         };
+        #[cfg(feature = "monad")]
         if rolled_back {
             refresh_chain_journal(ecx);
         }
@@ -1327,6 +1332,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
 
+        #[cfg(feature = "monad")]
         refresh_chain_journal(ecx);
     }
 
@@ -1800,7 +1806,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 ecx,
                 call,
                 self.inner,
-                isolate && call.scheme == CallScheme::Call,
+                isolate && call.scheme.is_call(),
             );
             ecx.cfg_env_mut().disable_fee_charge = execution_disable_fee_charge;
         }

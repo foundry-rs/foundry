@@ -32,7 +32,7 @@ impl<T> HashConsed<T> {
     /// for distinct nodes with the same hash; structurally equal values share one node.
     #[inline]
     pub(in crate::runtime::expr) fn identity_cmp(&self, other: &Self) -> Ordering {
-        self.inner.hash.cmp(&other.inner.hash).then_with(|| {
+        self.stable_hash_cmp(other).then_with(|| {
             let left = Arc::as_ptr(&self.inner);
             let right = Arc::as_ptr(&other.inner);
             left.cmp(&right)
