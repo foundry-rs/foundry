@@ -899,16 +899,35 @@ impl NodeConfig {
     /// and the create2 deployer in the genesis allocation.
     pub fn chain_spec(&self) -> Result<Arc<ChainSpec>> {
         let hardfork = self.get_hardfork()?;
+        // A loaded state continues at the block it was dumped at, with its block environment.
+        let init_block = self.init_state.as_ref().and_then(|state| state.block_env());
+        let init_number = self.init_state.as_ref().and_then(|state| state.head_number());
+        let timestamp = match (&init_block, self.genesis_timestamp) {
+            (Some(block), None) => block.timestamp.saturating_to::<u64>(),
+            _ => self.get_genesis_timestamp(),
+        };
+        let gas_limit = match (&init_block, self.gas_limit) {
+            (Some(block), None) => block.gas_limit,
+            _ => self.get_gas_limit(),
+        };
+        let base_fee = match (&init_block, self.base_fee) {
+            (Some(block), None) => block.basefee,
+            _ => self.get_base_fee(),
+        };
         let mut genesis = self
             .genesis
             .clone()
             .unwrap_or_default()
-            .with_timestamp(self.get_genesis_timestamp())
-            .with_gas_limit(self.get_gas_limit())
+            .with_timestamp(timestamp)
+            .with_gas_limit(gas_limit)
             .with_difficulty(U256::ZERO);
         genesis.config.chain_id = self.get_chain_id();
+        let number = init_number.unwrap_or_else(|| self.get_genesis_number());
+        if number > 0 {
+            genesis.number = Some(number);
+        }
         if hardfork >= EthereumHardfork::London {
-            genesis = genesis.with_base_fee(Some(self.get_base_fee().into()));
+            genesis = genesis.with_base_fee(Some(base_fee.into()));
         }
         if hardfork >= EthereumHardfork::Cancun {
             let excess_blob_gas = genesis.excess_blob_gas.unwrap_or_default();
@@ -934,6 +953,19 @@ impl NodeConfig {
                 GenesisAccount::default()
                     .with_code(Some(Bytes::from_static(DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE))),
             ));
+        }
+        if let Some(state) = &self.init_state {
+            alloc.extend(state.accounts.iter().map(|(address, record)| {
+                let storage = (!record.storage.is_empty()).then(|| record.storage.clone());
+                (
+                    *address,
+                    GenesisAccount::default()
+                        .with_nonce(Some(record.nonce))
+                        .with_balance(record.balance)
+                        .with_code((!record.code.is_empty()).then(|| record.code.clone()))
+                        .with_storage(storage),
+                )
+            }));
         }
         genesis = genesis.extend_accounts(alloc);
 

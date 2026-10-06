@@ -1,11 +1,13 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use eyre::{Result, WrapErr};
-use flate2::read::GzDecoder;
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use reth_ethereum::storage::errors::provider::ProviderResult;
+use revm::context::BlockEnv;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, Read, Write},
     path::Path,
 };
 
@@ -46,6 +48,24 @@ pub struct SerializableAccountRecord {
 }
 
 impl SerializableState {
+    /// Returns the block environment at the time of the dump, if the dump has one.
+    pub fn block_env(&self) -> Option<BlockEnv> {
+        self.block.clone().and_then(|block| serde_json::from_value(block).ok())
+    }
+
+    /// Returns the head block number at the time of the dump.
+    pub fn head_number(&self) -> Option<u64> {
+        self.best_block_number
+            .or_else(|| self.block_env().map(|block| block.number.saturating_to::<u64>()))
+    }
+
+    /// Encodes the dump as gzipped JSON, the wire format of `anvil_dumpState`.
+    pub fn encode(&self) -> Result<Bytes> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&serde_json::to_vec(self)?)?;
+        Ok(encoder.finish()?.into())
+    }
+
     /// Loads a state file. A directory resolves to `state.json` inside it.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let mut path = path.as_ref().to_path_buf();
@@ -103,4 +123,10 @@ impl StateFile {
         state.state = Some(SerializableState::load(&state.path).map_err(|err| err.to_string())?);
         Ok(state)
     }
+}
+
+/// Reads every account of the local state, for `anvil_dumpState`.
+pub trait AccountDump: Send + Sync {
+    /// Returns the accounts of the latest state, without the anvil state write overlay.
+    fn dump_accounts(&self) -> ProviderResult<BTreeMap<Address, SerializableAccountRecord>>;
 }

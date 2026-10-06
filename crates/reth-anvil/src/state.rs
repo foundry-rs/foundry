@@ -107,6 +107,11 @@ impl AnvilState {
         self.accounts.get(address)
     }
 
+    /// Returns every account overlay.
+    pub const fn accounts(&self) -> &HashMap<Address, AccountOverride> {
+        &self.accounts
+    }
+
     /// Returns the overridden bytecode for the given code hash, if any.
     pub fn bytecode_by_hash(&self, code_hash: &B256) -> Option<&Bytecode> {
         self.bytecodes.get(code_hash)

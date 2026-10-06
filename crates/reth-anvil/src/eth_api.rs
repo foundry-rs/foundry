@@ -113,6 +113,19 @@ impl EthApi {
         self.call("anvil_impersonateAccount", params![address]).await
     }
 
+    /// Returns the state of the chain as gzipped JSON.
+    pub async fn anvil_dump_state(
+        &self,
+        preserve_historical_states: Option<bool>,
+    ) -> Result<Bytes> {
+        self.call("anvil_dumpState", params![preserve_historical_states]).await
+    }
+
+    /// Applies a state dump on top of the current state.
+    pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
+        self.call("anvil_loadState", params![buf]).await
+    }
+
     /// Resets the chain to genesis, or to the fork block when forking.
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         self.call("anvil_reset", params![forking]).await

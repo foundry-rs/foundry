@@ -3,11 +3,14 @@ use crate::{
         ForkBackend, ForkStateProvider, LocalWrites, decode_remote_tx_number, remote_tx_number,
     },
     state::SharedAnvilState,
+    state_dump::{AccountDump, SerializableAccountRecord},
     state_provider::AnvilStateProvider,
 };
 use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
-use alloy_primitives::{Address, B256, BlockHash, BlockNumber, StorageKey, TxHash, TxNumber};
+use alloy_primitives::{
+    Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, TxHash, TxNumber,
+};
 use alloy_rpc_types_engine::ForkchoiceState;
 use reth_chain_state::{
     CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ExecutedBlock,
@@ -51,6 +54,7 @@ use reth_ethereum::{
 use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use std::{
+    collections::BTreeMap,
     ops::{RangeBounds, RangeInclusive},
     sync::Arc,
     time::Instant,
@@ -1246,5 +1250,80 @@ impl<DB: DBProvider + Send + Sync, N: reth_ethereum::primitives::NodePrimitives>
                     || account.storage.get(&slot).is_some_and(|value| value.is_changed())
             })
         }))
+    }
+}
+
+impl<N: AnvilNodeTypes> AccountDump for AnvilProvider<N> {
+    fn dump_accounts(&self) -> ProviderResult<BTreeMap<Address, SerializableAccountRecord>> {
+        let provider = self.inner.database_provider_ro()?;
+        let tx = provider.tx_ref();
+        let mut accounts = BTreeMap::new();
+
+        // The persisted plain state.
+        let mut cursor = tx.cursor_read::<tables::PlainAccountState>()?;
+        for entry in cursor.walk(None)? {
+            let (address, account) = entry?;
+            let code = match account.bytecode_hash {
+                Some(hash) => tx
+                    .get::<tables::Bytecodes>(hash)?
+                    .map(|code| code.original_bytes())
+                    .unwrap_or_default(),
+                None => Bytes::new(),
+            };
+            accounts.insert(
+                address,
+                SerializableAccountRecord {
+                    nonce: account.nonce,
+                    balance: account.balance,
+                    code,
+                    storage: BTreeMap::new(),
+                },
+            );
+        }
+        let mut cursor = tx.cursor_dup_read::<tables::PlainStorageState>()?;
+        for entry in cursor.walk(None)? {
+            let (address, slot) = entry?;
+            if slot.value.is_zero() {
+                continue;
+            }
+            if let Some(account) = accounts.get_mut(&address) {
+                account.storage.insert(slot.key, slot.value.into());
+            }
+        }
+
+        // The in-memory blocks, oldest first.
+        let mut states: Vec<_> = self.inner.canonical_in_memory_state().canonical_chain().collect();
+        states.reverse();
+        for state in states {
+            let bundle = &state.block_ref().execution_output.state;
+            for (address, account) in &bundle.state {
+                let Some(info) = &account.info else {
+                    accounts.remove(address);
+                    continue;
+                };
+                let record = accounts.entry(*address).or_default();
+                record.nonce = info.nonce;
+                record.balance = info.balance;
+                if let Some(code) = info.code.as_ref().filter(|code| !code.is_empty()) {
+                    record.code = code.original_bytes();
+                } else if let Some(code) = bundle.bytecode(&info.code_hash) {
+                    record.code = code.original_bytes();
+                } else if info.is_empty_code_hash() {
+                    record.code = Bytes::new();
+                }
+                if account.was_destroyed() {
+                    record.storage.clear();
+                }
+                for (slot, value) in &account.storage {
+                    let key = B256::from(*slot);
+                    if value.present_value.is_zero() {
+                        record.storage.remove(&key);
+                    } else {
+                        record.storage.insert(key, value.present_value.into());
+                    }
+                }
+            }
+        }
+        Ok(accounts)
     }
 }

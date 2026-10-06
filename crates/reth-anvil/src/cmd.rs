@@ -12,7 +12,12 @@ use foundry_common::shell;
 use foundry_config::Chain;
 use foundry_evm_hardforks::FoundryHardfork;
 use rand_08::{SeedableRng, rngs::StdRng};
-use std::{net::IpAddr, path::PathBuf, str::FromStr, time::Duration};
+use std::{
+    net::IpAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 
 /// The `anvil` node options.
 #[derive(Clone, Debug, Parser)]
@@ -325,17 +330,32 @@ impl NodeArgs {
 
     /// Runs the node until it exits.
     pub async fn run(self) -> Result<()> {
-        let dump_state =
-            self.dump_state.as_ref().or_else(|| self.state.as_ref().map(|s| &s.path)).cloned();
-        if dump_state.is_some() {
-            eyre::bail!("--state and --dump-state are not supported yet");
-        }
+        let dump_state = self
+            .dump_state
+            .as_ref()
+            .or_else(|| self.state.as_ref().map(|s| &s.path))
+            .cloned()
+            .map(|path| if path.is_dir() { path.join("state.json") } else { path });
+        let preserve_historical_states = self.preserve_historical_states;
+        let dump_interval =
+            self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
         let config = self.into_node_config()?;
-        if config.init_state.is_some() {
-            eyre::bail!("--load-state is not supported yet");
-        }
-        let (_api, handle) = crate::try_spawn(config).await?;
+        let (api, handle) = crate::try_spawn(config).await?;
         handle.print()?;
+
+        if let Some(path) = dump_state.clone() {
+            let api = api.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval_at(
+                    tokio::time::Instant::now() + dump_interval,
+                    dump_interval,
+                );
+                loop {
+                    interval.tick().await;
+                    dump_state_to(&api, &path, preserve_historical_states).await;
+                }
+            });
+        }
 
         let shutdown = async {
             #[cfg(unix)]
@@ -354,10 +374,33 @@ impl NodeArgs {
                 _ = tokio::signal::ctrl_c() => {}
             }
         };
-        tokio::select! {
+        let result = tokio::select! {
             result = handle.node_exit_future => result,
             _ = shutdown => Ok(()),
+        };
+        if let Some(path) = &dump_state {
+            dump_state_to(&api, path, preserve_historical_states).await;
         }
+        result
+    }
+}
+
+/// Default interval of `--state-interval`.
+const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Writes the state dump to `path` as JSON. Failures are logged, as the node keeps running.
+async fn dump_state_to(api: &crate::EthApi, path: &Path, preserve_historical_states: bool) {
+    let state = match api.anvil_dump_state(Some(preserve_historical_states)).await {
+        Ok(bytes) => SerializableState::decode(&bytes),
+        Err(error) => Err(error),
+    };
+    match state {
+        Ok(state) => {
+            if let Err(error) = foundry_common::fs::write_json_file(path, &state) {
+                tracing::error!(target: "node", ?path, %error, "failed to write state dump");
+            }
+        }
+        Err(error) => tracing::error!(target: "node", %error, "failed to dump state"),
     }
 }
 

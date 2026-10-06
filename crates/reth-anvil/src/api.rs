@@ -5,6 +5,7 @@ use crate::{
     mining::MiningController,
     snapshot::{Snapshot, SnapshotManager},
     state::{AnvilState, SharedAnvilState},
+    state_dump::{AccountDump, SerializableState},
     time::TimeManager,
     types::{ReorgOptions, TransactionData},
 };
@@ -19,6 +20,7 @@ use alloy_rpc_types_eth::{
     Block, TransactionRequest,
     state::{AccountOverride, StateOverridesBuilder},
 };
+use foundry_evm_core::utils::block_env_from_header;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -35,6 +37,7 @@ use reth_ethereum::{
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer};
+use revm::context::BlockEnv;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -232,6 +235,14 @@ pub trait AnvilApi {
         slot: U256,
         value: B256,
     ) -> RpcResult<bool>;
+
+    /// Returns the state of the chain as gzipped JSON.
+    #[method(name = "dumpState")]
+    async fn anvil_dump_state(&self, preserve_historical_states: Option<bool>) -> RpcResult<Bytes>;
+
+    /// Applies a state dump on top of the current state. Nonces take the higher value.
+    #[method(name = "loadState")]
+    async fn anvil_load_state(&self, buf: Bytes) -> RpcResult<bool>;
 }
 
 /// The `evm_*` methods that have no `anvil_*` counterpart.
@@ -300,7 +311,8 @@ where
     Provider: BlockNumReader
         + HeaderProvider<Header = alloy_consensus::Header>
         + TransactionsProvider
-        + StateProviderFactory,
+        + StateProviderFactory
+        + AccountDump,
     Eth: FullEthApiServer<NetworkTypes = Ethereum>,
 {
     fn best_block_number(&self) -> RpcResult<u64> {
@@ -419,6 +431,7 @@ where
         + HeaderProvider<Header = alloy_consensus::Header>
         + TransactionsProvider
         + StateProviderFactory
+        + AccountDump
         + Send
         + Sync
         + 'static,
@@ -870,6 +883,86 @@ where
         self.state.write().set_storage_at(address, slot.into(), value.into());
         Ok(true)
     }
+
+    async fn anvil_dump_state(
+        &self,
+        _preserve_historical_states: Option<bool>,
+    ) -> RpcResult<Bytes> {
+        let best = self.best_block_number()?;
+        let header = self.sealed_header(best)?;
+        let mut accounts = self
+            .provider
+            .dump_accounts()
+            .map_err(|error| internal_error(format!("failed to read accounts: {error}")))?;
+        // The anvil state writes not yet in a block.
+        {
+            let state = self.state.read();
+            for (address, account_override) in state.accounts() {
+                let record = accounts.entry(*address).or_default();
+                if let Some(balance) = account_override.balance() {
+                    record.balance = balance;
+                }
+                if let Some(nonce) = account_override.nonce() {
+                    record.nonce = nonce;
+                }
+                if let Some(code) =
+                    account_override.code_hash().and_then(|hash| state.bytecode_by_hash(&hash))
+                {
+                    record.code = code.original_bytes();
+                }
+                for (slot, value) in account_override.storage() {
+                    if value.is_zero() {
+                        record.storage.remove(slot);
+                    } else {
+                        record.storage.insert(*slot, (*value).into());
+                    }
+                }
+            }
+        }
+        let block = block_env_from_header::<BlockEnv>(header.header());
+        let state = SerializableState {
+            block: Some(
+                serde_json::to_value(block).map_err(|error| internal_error(error.to_string()))?,
+            ),
+            accounts,
+            best_block_number: Some(best),
+            ..Default::default()
+        };
+        state.encode().map_err(|error| internal_error(error.to_string()))
+    }
+
+    async fn anvil_load_state(&self, buf: Bytes) -> RpcResult<bool> {
+        let state = SerializableState::decode(&buf)
+            .map_err(|error| invalid_params(format!("invalid state dump: {error}")))?;
+        let latest = self
+            .provider
+            .latest()
+            .map_err(|error| internal_error(format!("failed to read state: {error}")))?;
+        // Read the current nonces before taking the write lock: the state provider reads the
+        // overlay under the same lock.
+        let mut nonces = Vec::with_capacity(state.accounts.len());
+        for (address, record) in &state.accounts {
+            let current_nonce = latest
+                .basic_account(address)
+                .map_err(|error| internal_error(format!("failed to read account: {error}")))?
+                .map(|account| account.nonce)
+                .unwrap_or_default();
+            nonces.push(record.nonce.max(current_nonce));
+        }
+        drop(latest);
+        let mut writes = self.state.write();
+        for ((address, record), nonce) in state.accounts.into_iter().zip(nonces) {
+            writes.set_nonce(address, nonce);
+            writes.set_balance(address, record.balance);
+            if !record.code.is_empty() {
+                writes.set_code(address, Bytecode::new_raw(record.code));
+            }
+            for (slot, value) in record.storage {
+                writes.set_storage_at(address, slot, value.into());
+            }
+        }
+        Ok(true)
+    }
 }
 
 #[async_trait]
@@ -880,6 +973,7 @@ where
         + HeaderProvider<Header = alloy_consensus::Header>
         + TransactionsProvider
         + StateProviderFactory
+        + AccountDump
         + Send
         + Sync
         + 'static,

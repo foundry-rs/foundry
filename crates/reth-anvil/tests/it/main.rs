@@ -1307,3 +1307,97 @@ async fn fork_logs_span_remote_and_local_blocks() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn dump_state_and_load_state_roundtrip() -> Result<()> {
+    let (_api, handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let target = Address::with_last_byte(0x42);
+    let slot = B256::with_last_byte(7);
+    let value = B256::with_last_byte(9);
+
+    client.request::<(), _>("anvil_setBalance", rpc_params![target, U256::from(1234u64)]).await?;
+    client.request::<(), _>("anvil_setCode", rpc_params![target, RETURN_42_CODE]).await?;
+    client
+        .request::<bool, _>("anvil_setStorageAt", rpc_params![target, U256::from(7), value])
+        .await?;
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![transfer(funder, Address::ZERO, gas_price)])
+        .await?;
+    wait_for_receipt(&client, tx_hash).await?;
+    assert_eq!(block_number(&client).await?, 1);
+
+    let dump: Bytes = client.request("anvil_dumpState", rpc_params![]).await?;
+    let state = reth_anvil::SerializableState::decode(&dump)?;
+    assert_eq!(state.best_block_number, Some(1));
+    let record = state.accounts.get(&target).ok_or_eyre("dumped target account")?;
+    assert_eq!(record.balance, U256::from(1234u64));
+    assert_eq!(record.code, RETURN_42_CODE);
+    assert_eq!(record.storage.get(&slot), Some(&value));
+    assert_eq!(state.accounts.get(&funder).map(|record| record.nonce), Some(1));
+    drop(handle);
+
+    // A node started from the dump continues at the dumped block with the dumped state.
+    let (_api, loaded_handle, loaded) =
+        spawn_with_client(NodeConfig::test().with_init_state(Some(state.clone()))).await?;
+    assert_eq!(block_number(&loaded).await?, 1);
+    assert_eq!(balance(&loaded, target, "latest").await?, U256::from(1234u64));
+    let code: Bytes = loaded.request("eth_getCode", rpc_params![target, "latest"]).await?;
+    assert_eq!(code, RETURN_42_CODE);
+    let stored: B256 =
+        loaded.request("eth_getStorageAt", rpc_params![target, U256::from(7), "latest"]).await?;
+    assert_eq!(stored, value);
+    let nonce: U256 =
+        loaded.request("eth_getTransactionCount", rpc_params![funder, "latest"]).await?;
+    assert_eq!(nonce, U256::from(1));
+    let (funder, gas_price) = funder_and_gas_price(&loaded).await?;
+    let tx_hash: B256 = loaded
+        .request("eth_sendTransaction", rpc_params![transfer(funder, Address::ZERO, gas_price)])
+        .await?;
+    wait_for_receipt(&loaded, tx_hash).await?;
+    assert_eq!(block_number(&loaded).await?, 2);
+    drop(loaded_handle);
+
+    // `anvil_loadState` applies the dump on top of a running node.
+    let (_api, _handle, fresh) = spawn_with_client(NodeConfig::test()).await?;
+    let loaded_ok: bool = fresh.request("anvil_loadState", rpc_params![dump]).await?;
+    assert!(loaded_ok);
+    assert_eq!(balance(&fresh, target, "latest").await?, U256::from(1234u64));
+    let code: Bytes = fresh.request("eth_getCode", rpc_params![target, "latest"]).await?;
+    assert_eq!(code, RETURN_42_CODE);
+    fresh.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let stored: B256 =
+        fresh.request("eth_getStorageAt", rpc_params![target, U256::from(7), "latest"]).await?;
+    assert_eq!(stored, value);
+
+    Ok(())
+}
+
+/// Regression test for foundry-rs/foundry#17428: anvil returned the intrinsic 21,000 gas for a
+/// value transfer to a new account on Amsterdam, which misses the EIP-8037 account creation state
+/// gas. Reth executes the transfer at 21,000 gas and only accepts that estimate when it succeeds.
+#[tokio::test]
+async fn estimate_gas_charges_account_creation_state_gas_on_amsterdam() -> Result<()> {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+    let (funder, _) = funder_and_gas_price(&client).await?;
+    let fresh = Address::with_last_byte(0xf1);
+
+    let request =
+        TransactionRequest::default().with_from(funder).with_to(fresh).with_value(U256::from(1));
+    let estimate: U256 = client.request("eth_estimateGas", rpc_params![request]).await?;
+    assert!(
+        estimate > U256::from(21_000u64),
+        "a transfer that creates an account costs more than the intrinsic gas on Amsterdam, got {estimate}"
+    );
+
+    // A transfer to an existing account costs no state gas. EIP-2780 lowers the intrinsic gas
+    // below 21,000 on Amsterdam.
+    let request =
+        TransactionRequest::default().with_from(funder).with_to(funder).with_value(U256::from(1));
+    let existing: U256 = client.request("eth_estimateGas", rpc_params![request]).await?;
+    assert!(existing <= U256::from(21_000u64), "got {existing}");
+    assert!(existing < estimate);
+
+    Ok(())
+}
