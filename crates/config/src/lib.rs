@@ -1264,8 +1264,8 @@ impl Config {
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(SolcReq::Version(version)) = &self.solc
-            && let Some(evm_version) = self.evm_version.normalize_version_solc(version)
+        if let Some(version) = self.solc_version()
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
         {
             return evm_version;
         }

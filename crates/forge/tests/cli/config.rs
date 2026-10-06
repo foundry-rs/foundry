@@ -922,12 +922,16 @@ fn non_compiling_commands_do_not_run_solc(prj: _, cmd: _) {
     write_recording_solc(&solc);
     prj.update_config(|config| config.solc = Some(SolcReq::Local(solc.clone())));
 
-    for args in
-        [&["config", "--json"][..], &["remappings"], &["tree"], &["fmt"], &["lint"], &["clean"]]
-    {
+    for args in [&["remappings"][..], &["tree"], &["fmt"], &["lint"], &["clean"]] {
         cmd.forge_fuse().args(args).assert_success();
         assert!(!solc.with_extension("invoked").exists(), "`forge {args:?}` invoked solc");
     }
+
+    // `forge config` normalizes the EVM version for the configured compiler.
+    let output =
+        cmd.forge_fuse().args(["config", "--json"]).assert_success().get_output().stdout_lossy();
+    let config: Config = serde_json::from_str(&output).unwrap();
+    assert_eq!(config.evm_version, EvmVersion::London);
 }
 
 // An explicit EVM version is preserved at runtime, even if the compiler does not support it.
