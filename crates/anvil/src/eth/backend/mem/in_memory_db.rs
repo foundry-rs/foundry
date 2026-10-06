@@ -759,7 +759,7 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: U256::from(100100),
-                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
+                code: contract_code.original_bytes(),
                 nonce: 100,
                 storage: new_storage,
             },

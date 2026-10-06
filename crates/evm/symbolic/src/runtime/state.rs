@@ -2388,10 +2388,7 @@ impl SymbolicBlock {
             .as_ref()
             .and_then(|cheats| cheats.block.as_ref())
             .unwrap_or(&evm_env.block_env);
-        let difficulty = block
-            .prevrandao()
-            .map(|hash| U256::from_be_bytes(hash.0))
-            .unwrap_or_else(|| block.difficulty());
+        let difficulty = block.prevrandao().map(Into::into).unwrap_or_else(|| block.difficulty());
 
         Self {
             chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),

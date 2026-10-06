@@ -2278,7 +2278,7 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
         && len <= bytes.len()
         && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
-        let hash = U256::from_be_bytes(keccak256(concrete).0);
+        let hash = Into::<U256>::into(keccak256(concrete));
         if len == 64 {
             cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
         }

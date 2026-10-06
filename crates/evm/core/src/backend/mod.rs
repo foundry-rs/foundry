@@ -940,7 +940,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the `id` is currently active
     pub fn is_active_fork(&self, id: LocalForkId) -> bool {
-        self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
+        self.active_fork_ids.is_some_and(|(i, _)| i == id)
     }
 
     /// Returns `true` if the `Backend` is currently in forking mode
@@ -2551,12 +2551,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         if let Some(acc) = journaled_state.state.get_mut(target) {
             if let Some(storage) = source.storage.as_ref() {
                 for (slot, value) in storage {
-                    let slot = U256::from_be_bytes(slot.0);
+                    let slot = (*slot).into();
                     acc.storage.insert(
                         slot,
                         EvmStorageSlot::new_changed(
                             acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
-                            U256::from_be_bytes(value.0),
+                            (*value).into(),
                             TransactionId::ZERO,
                         ),
                     );
@@ -3339,7 +3339,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
 
 /// Returns true of the address is a contract
 fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
-    evm_state.get(&acc).map(|acc| !acc.info.is_empty_code_hash()).unwrap_or_default()
+    evm_state.get(&acc).is_some_and(|acc| !acc.info.is_empty_code_hash())
 }
 
 /// Updates the evm env's block with the block's data
@@ -3634,14 +3634,7 @@ mod tests {
                 sender,
                 AccountInfo { balance: U256::from(10).pow(U256::from(18)), ..Default::default() },
             );
-            fork.db.insert_account_info(
-                recorder,
-                AccountInfo {
-                    code_hash: code.hash_slow(),
-                    code: Some(code.clone()),
-                    ..Default::default()
-                },
-            );
+            fork.db.insert_account_info(recorder, AccountInfo::default().with_code(code.clone()));
             for address in base_code_sentinel_addresses(BaseUpgrade::Beryl).chain([
                 Address::ZERO,
                 Predeploys::L1_BLOCK_INFO,
@@ -4187,33 +4180,12 @@ mod tests {
         let mut fork = fork_with_closed_backend();
         fork.db.insert_account_info(deposit_sender, AccountInfo::default());
         fork.db.insert_account_info(sender, AccountInfo::default());
-        fork.db.insert_account_info(
-            destroyer,
-            AccountInfo {
-                code_hash: destroyer_code.hash_slow(),
-                code: Some(destroyer_code),
-                ..Default::default()
-            },
-        );
-        fork.db.insert_account_info(
-            recorder,
-            AccountInfo {
-                code_hash: recorder_code.hash_slow(),
-                code: Some(recorder_code),
-                ..Default::default()
-            },
-        );
+        fork.db.insert_account_info(destroyer, AccountInfo::default().with_code(destroyer_code));
+        fork.db.insert_account_info(recorder, AccountInfo::default().with_code(recorder_code));
         let sentinel = revm::bytecode::Bytecode::new_legacy(Bytes::from_static(
             crate::constants::SYSTEM_PRECOMPILE_STUB,
         ));
-        fork.db.insert_account_info(
-            registry,
-            AccountInfo {
-                code_hash: sentinel.hash_slow(),
-                code: Some(sentinel),
-                ..Default::default()
-            },
-        );
+        fork.db.insert_account_info(registry, AccountInfo::default().with_code(sentinel));
         for address in base_code_sentinel_addresses(BaseUpgrade::Beryl).chain([
             Address::ZERO,
             Predeploys::L1_BLOCK_INFO,
