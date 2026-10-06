@@ -1064,7 +1064,7 @@ impl<'a> TestFunctionMatcher<'a> {
         };
         let fuzz = self
             .test_functions(contract_name.clone(), abi, |contract_id, func, kind| {
-                matches!(kind, TestFunctionKind::FuzzTest { .. })
+                kind.is_fuzz_test()
                     && filter.matches_test_function_kind_in_contract(contract_id, func, kind)
                     && matches_network_pass(func)
             })

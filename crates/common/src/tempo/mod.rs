@@ -283,7 +283,7 @@ where
     // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
     // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
     // the protocol still applies the account's stored fee-token preference when charging fees.
-    if !has_call_list && calls.iter().any(|(to, _)| matches!(to, TxKind::Create)) {
+    if !has_call_list && calls.iter().any(|(to, _)| to.is_create()) {
         return Ok(None);
     }
 

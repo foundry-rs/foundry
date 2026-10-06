@@ -537,7 +537,7 @@ async fn test_estimate_gas_block_precompile() {
     let valid_input = TransactionRequest::default()
         .with_from(from)
         .with_to(arbitrum::ARB_SYS_ADDRESS)
-        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR));
+        .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR));
     let gas = api
         .estimate_gas(WithOtherFields::new(valid_input), None, Default::default())
         .await

@@ -63,7 +63,7 @@ pub async fn probe_evm_version<N: Network, P: Provider<N>>(
         return None;
     };
     let mask = U256::from_be_bytes(word);
-    if mask >> PROBES.len() != U256::ZERO {
+    if !(mask >> PROBES.len()).is_zero() {
         trace!(%mask, "unexpected EVM version probe mask");
         return None;
     }
@@ -142,9 +142,7 @@ mod tests {
     use super::*;
     use alloy_primitives::TxKind;
     use revm::{
-        Context, ExecuteEvm, MainBuilder, MainContext,
-        context::TxEnv,
-        database::{CacheDB, EmptyDB},
+        Context, ExecuteEvm, MainBuilder, MainContext, context::TxEnv, database::InMemoryDB,
         primitives::hardfork::SpecId,
     };
 
@@ -160,7 +158,7 @@ mod tests {
         ] {
             let result = Context::mainnet()
                 .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))
-                .with_db(CacheDB::<EmptyDB>::default())
+                .with_db(InMemoryDB::default())
                 .build_mainnet()
                 .transact(
                     TxEnv::builder()

@@ -376,7 +376,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
         Ok(ScriptResult {
             returned: Bytes::new(),
-            success: address != Address::ZERO,
+            success: !address.is_zero(),
             gas_used,
             logs,
             debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),

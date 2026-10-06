@@ -344,7 +344,7 @@ async fn create_broadcasts_with_local_tempo_sponsor(prj: _, cmd: _) {
     let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
     let sender_key = hex::encode(wallets[0].credential().to_bytes());
     let sponsor_key =
-        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
     let sponsor = format!("{:?}", wallets[1].address());
 
     prj.update_config(|config| config.bytecode_hash = BytecodeHash::None);

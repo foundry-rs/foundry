@@ -4,7 +4,7 @@ use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
-    LocalSigner, MnemonicBuilder, PrivateKeySigner,
+    MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{
         ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
         Portuguese, Spanish, Wordlist,
@@ -166,7 +166,7 @@ impl Cheatcode for rememberKeys_1Call {
 
 fn inject_wallet<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
-    wallet: LocalSigner<SigningKey>,
+    wallet: PrivateKeySigner,
 ) -> Address {
     let address = wallet.address();
     state.wallets().add_local_signer(wallet);
@@ -590,7 +590,7 @@ fn encode_projective_point(point: ProjectivePoint) -> Result {
 }
 
 fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
-    ensure!(*private_key != U256::ZERO, "private key cannot be 0");
+    ensure!(!private_key.is_zero(), "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
         *private_key < order,
@@ -693,7 +693,7 @@ fn derive_wallets_str(
     path: &str,
     language: &str,
     count: u32,
-) -> Result<Vec<LocalSigner<SigningKey>>> {
+) -> Result<Vec<PrivateKeySigner>> {
     match language {
         "chinese_simplified" => derive_wallets::<ChineseSimplified>(mnemonic, path, count),
         "chinese_traditional" => derive_wallets::<ChineseTraditional>(mnemonic, path, count),
@@ -713,7 +713,7 @@ fn derive_wallets<W: Wordlist>(
     mnemonic: &str,
     path: &str,
     count: u32,
-) -> Result<Vec<LocalSigner<SigningKey>>> {
+) -> Result<Vec<PrivateKeySigner>> {
     foundry_common::wallet::validate_bip32_path(path).map_err(|e| fmt_err!("{e}"))?;
 
     let mut wallets = Vec::with_capacity(count as usize);

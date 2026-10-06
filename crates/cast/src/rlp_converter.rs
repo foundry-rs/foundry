@@ -101,7 +101,7 @@ impl fmt::Display for Item {
         let mut tasks = vec![Task::Item(self)];
         while let Some(task) = tasks.pop() {
             match task {
-                Task::Item(Self::Data(data)) => write!(f, "\"0x{}\"", hex::encode(data))?,
+                Task::Item(Self::Data(data)) => write!(f, "\"{}\"", hex::encode_prefixed(data))?,
                 Task::Item(Self::Array(items)) => {
                     f.write_str("[")?;
                     tasks.push(Task::Close);

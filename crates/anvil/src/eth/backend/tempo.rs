@@ -95,15 +95,7 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), TempoPrecompileError> {
-        self.db.insert_account(
-            address,
-            AccountInfo {
-                code_hash: code.hash_slow(),
-                code: Some(code),
-                nonce: 1,
-                ..Default::default()
-            },
-        );
+        self.db.insert_account(address, AccountInfo::from_bytecode(code));
         Ok(())
     }
 

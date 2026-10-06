@@ -314,6 +314,34 @@ Continue anyway? [y/N] Aborted.
 "#]]);
 }
 
+// Address-based authorizations are signed by the configured signer even when `--from` is set.
+#[casttest]
+fn call_eip7702_address_auth_with_from_uses_signer(cmd: _) {
+    cmd.args([
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+}
+
 #[casttest]
 fn call_eip7702_auth_disclosure_requires_signer(cmd: _) {
     cmd.args([
@@ -435,6 +463,29 @@ Continue anyway? [y/N] "#]]);
         .args(["--trace", "--access-list", "[]"])
         .assert_success()
         .stderr_eq(str![""]);
+
+    // With a pre-signed authorization, `ETH_FROM` is the sender and `ETH_KEYSTORE` is not used.
+    let keystore = format!(
+        "{}/tests/fixtures/keystore/UTC--2022-10-30T06-51-20.130356000Z--560d246fcddc9ea98a8b032c9a2f474efb493c28",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    cmd.cast_fuse().env("ETH_KEYSTORE", keystore);
+    cmd.env("ETH_FROM", signer.address().to_string());
+    cmd.args([
+        "call",
+        &signer.address().to_string(),
+        "--auth",
+        &encoded_auth,
+        "--force",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+    .stderr_eq(str![""]);
 }
 
 #[casttest]
@@ -642,6 +693,68 @@ async fn cast_call_delegate_msg_sender_is_from(cmd: _) {
 "#]]);
 }
 
+// https://github.com/foundry-rs/foundry/issues/17388
+// `--from` is the sender even when a keystore is configured.
+#[casttest]
+async fn cast_call_from_skips_keystore_unlock(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d9";
+    let to = "0x00000000000000000000000000000000000000da";
+    let keystore = format!(
+        "{}/tests/fixtures/keystore/UTC--2022-10-30T06-51-20.130356000Z--560d246fcddc9ea98a8b032c9a2f474efb493c28",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    // runtime: CALLER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), bytes!("0x3360005260206000f3")).await.unwrap();
+
+    cmd.cast_fuse().env("ETH_KEYSTORE", keystore);
+    cmd.args([
+        "call",
+        to,
+        "sender()(address)",
+        "--from",
+        from,
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000D9
+
+"#]]);
+}
+
+// A Tempo access key keeps its root account as the sender even when `--from` is set.
+#[casttest]
+async fn cast_call_tempo_access_key_root_account_overrides_from(cmd: _) {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let to = "0x00000000000000000000000000000000000000da";
+
+    // runtime: CALLER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), bytes!("0x3360005260206000f3")).await.unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "sender()(address)",
+            "--tempo.access-key",
+            "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
+            "--tempo.root-account",
+            "0x00000000000000000000000000000000000000d8",
+            "--from",
+            "0x00000000000000000000000000000000000000d9",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000d8
+
+"#]]);
+}
+
 // `--delegate` needs runtime code at the destination; a codeless address is an explicit error.
 #[casttest]
 async fn cast_call_delegate_no_code_destination(cmd: _) {
@@ -705,7 +818,7 @@ async fn cast_call_decodes_custom_error(prj: _, cmd: _) {
     let home = prj.root().join("home");
     let cache_dir = home.join(".foundry/cache");
     fs::create_dir_all(&cache_dir).unwrap();
-    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let selector = hex::encode_prefixed(&selector[..4]);
     let mut errors = serde_json::Map::new();
     errors.insert(selector, json!(signature));
     fs::write(
@@ -720,7 +833,7 @@ async fn cast_call_decodes_custom_error(prj: _, cmd: _) {
     .unwrap();
 
     let target = "0x000000000000000000000000000000000000dead";
-    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let code_override = format!("{target}:{}", hex::encode_prefixed(runtime));
     let endpoint = handle.http_endpoint();
 
     cmd.env("HOME", &home);
@@ -827,7 +940,7 @@ fn cast_call_can_override_state_diff(cmd: _) {
 "#]]);
     cmd.args(["--trace"]).assert_success().stdout_eq(str![[r#"
 Traces:
-  [7281] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
+  [7681] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
     ├─ [2275] 0xe537cb8a46Bd179c0C36aB7E3Fdecd759C8B80fc::fallback() [delegatecall]
     │   └─ ← [Return] 0x1337
     └─ ← [Return] 0x1337
@@ -1092,7 +1205,7 @@ fn curl_call_accepts_named_chain_config(prj: _, cmd: _) {
 // Tests that invalid hex with uppercase 0X prefix also produces clear error
 #[casttest]
 fn cast_call_invalid_hex_uppercase_prefix(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",
@@ -1112,7 +1225,7 @@ Error: Invalid hex calldata '0X1': odd number of digits
 // Tests that invalid hex calldata (odd length) produces a clear error message
 #[casttest]
 fn cast_call_invalid_hex_calldata_error(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",
@@ -1132,7 +1245,7 @@ Error: Invalid hex calldata '0x0': odd number of digits
 // Tests that valid hex calldata works correctly
 #[casttest]
 fn cast_call_valid_hex_calldata(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",

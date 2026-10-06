@@ -3,10 +3,8 @@ use hyper::HeaderMap;
 /// Helper function to determine if the Accept header indicates a preference for SSZ (octet-stream)
 /// over JSON.
 pub fn must_be_ssz(headers: &HeaderMap) -> bool {
-    headers
-        .get(axum::http::header::ACCEPT)
-        .and_then(|v| v.to_str().ok())
-        .map(|accept_str| {
+    headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(
+        |accept_str| {
             let mut octet_stream_q = 0.0;
             let mut json_q = 0.0;
 
@@ -34,6 +32,6 @@ pub fn must_be_ssz(headers: &HeaderMap) -> bool {
 
             // Prefer octet-stream if it has higher quality factor
             octet_stream_q > json_q
-        })
-        .unwrap_or(false)
+        },
+    )
 }

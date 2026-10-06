@@ -57,11 +57,7 @@ fn eip8130_envelope_with(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-        tx,
-        signature.as_bytes().to_vec().into(),
-        Bytes::new(),
-    ))
+    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn eip8130_envelope(signer: &PrivateKeySigner) -> FoundryTxEnvelope {
@@ -92,8 +88,7 @@ fn malformed_configured_eip8130_envelope_with_nonce(
         metadata: Bytes::new(),
         payer: None,
     };
-    let bare_auth =
-        signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes().to_vec().into();
+    let bare_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes().into();
     FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, bare_auth, Bytes::new()))
 }
 
@@ -135,11 +130,7 @@ fn eip8130_envelope_with_nonce_and_fee(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-        tx,
-        signature.as_bytes().to_vec().into(),
-        Bytes::new(),
-    ))
+    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn eip8130_envelope_with_channel_calls(
@@ -163,11 +154,7 @@ fn eip8130_envelope_with_channel_calls(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-        tx,
-        signature.as_bytes().to_vec().into(),
-        Bytes::new(),
-    ))
+    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn sponsored_eip8130_envelope(

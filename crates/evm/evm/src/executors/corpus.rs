@@ -1937,11 +1937,7 @@ mod tests {
     use foundry_evm_fuzz::strategies::{EvmFuzzState, TxGenerator};
     use proptest::prelude::{Just, Strategy};
     use rayon::prelude::*;
-    use revm::{
-        DatabaseRef,
-        bytecode::Bytecode,
-        database::{CacheDB, EmptyDB},
-    };
+    use revm::{DatabaseRef, bytecode::Bytecode, database::InMemoryDB};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1981,12 +1977,7 @@ mod tests {
     }
 
     fn empty_fuzz_state() -> EvmFuzzState {
-        EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
+        EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
     }
 
     fn temp_corpus_dir() -> PathBuf {
@@ -3078,7 +3069,7 @@ mod tests {
             depth: 1,
             caller: Address::repeat_byte(0xaa),
             target,
-            calldata: Bytes::from(selector.to_vec()),
+            calldata: selector.into(),
             value: None,
         }];
         let corpus_root = temp_corpus_dir();
@@ -3107,7 +3098,7 @@ mod tests {
             depth: 1,
             caller: Address::repeat_byte(0xaa),
             target,
-            calldata: Bytes::from(selector.to_vec()),
+            calldata: selector.into(),
             value: None,
         }];
 
@@ -3151,7 +3142,7 @@ mod tests {
             depth: 1,
             caller: sender,
             target,
-            calldata: Bytes::from(foo_selector.to_vec()),
+            calldata: foo_selector.into(),
             value: Some(U256::from(7)),
         };
         let cheatcode_call = |calldata| ObservedCall {
@@ -3489,7 +3480,7 @@ mod tests {
             depth: 1,
             caller,
             target,
-            calldata: Bytes::from(foo_selector.to_vec()),
+            calldata: foo_selector.into(),
             value: None,
         };
         let observed = [call(handler), call(allowed)];

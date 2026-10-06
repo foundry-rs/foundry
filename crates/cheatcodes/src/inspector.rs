@@ -5,10 +5,10 @@ use crate::{
     Vm::{self, AccountAccess},
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
-        mock::{MockCallDataContext, MockCallReturnData},
+        mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
-    expected_emit::ExpectedEmitTracker,
+    expected_emit::{self, ExpectedEmitTracker},
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
@@ -26,7 +26,7 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::AccessList;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{
@@ -65,7 +65,6 @@ use revm::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
         FrameInput, Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
-        return_ok,
     },
 };
 use serde_json::Value;
@@ -360,11 +359,13 @@ pub struct GasMetering {
     /// Gas used by `snapshotGasLastFrame`.
     pub(crate) last_frame_snapshot_gas_used: u64,
 
-    /// Post-refund gas used by the isolated transaction wrapping the current frame.
-    isolated_snapshot_gas_used: Option<u64>,
+    /// Post-refund gas used by the isolated transaction wrapping the current frame, and the
+    /// account-creation state gas in it that the outer opcode charged before entering the frame.
+    isolated_snapshot_gas_used: Option<(u64, u64)>,
 
-    /// Isolated transaction refund to exclude from the next region sample at the caller's depth.
-    pending_isolated_refund: Option<(usize, u64)>,
+    /// Caller depth, gas charged to the last isolated frame, and the transaction gas that replaces
+    /// it in the next region sample at that depth.
+    pending_isolated_region_gas: Option<(usize, u64, u64)>,
 
     /// True if gas recording is enabled.
     pub recording: bool,
@@ -379,7 +380,7 @@ impl GasMetering {
     pub const fn start(&mut self) {
         self.recording = true;
         self.last_gas_used = 0;
-        self.pending_isolated_refund = None;
+        self.pending_isolated_region_gas = None;
     }
 
     /// Stop the gas recording.
@@ -404,24 +405,29 @@ impl GasMetering {
         self.paused_frames.clear();
     }
 
-    /// Preserves the historical gas snapshot value for an isolated transaction.
-    pub const fn set_isolated_snapshot_gas_used(&mut self, gas_used: u64) {
-        self.isolated_snapshot_gas_used = Some(gas_used);
+    /// Preserves the receipt gas of an isolated transaction for gas snapshots.
+    ///
+    /// `precharged_state` is the account-creation state gas in `gas_used` that the outer opcode
+    /// already charged before entering the isolated frame.
+    pub const fn set_isolated_snapshot_gas_used(&mut self, gas_used: u64, precharged_state: u64) {
+        self.isolated_snapshot_gas_used = Some((gas_used, precharged_state));
     }
 
-    /// Preserve post-refund region snapshots without changing the interpreter's gross gas usage.
-    const fn record_isolated_refund(
-        &mut self,
-        depth: usize,
-        gas: &Gas,
-        snapshot_gas_used: Option<u64>,
-    ) {
-        if self.recording
-            && let Some(snapshot_gas_used) = snapshot_gas_used
-        {
-            self.pending_isolated_refund =
-                Some((depth, gas.total_gas_spent().saturating_sub(snapshot_gas_used)));
+    /// Takes the receipt gas of the isolated transaction that wrapped the ending frame.
+    ///
+    /// Region snapshots replace the gas charged to the frame with the transaction gas, without
+    /// changing the interpreter's gas. The transaction gas can be lower because of refunds, or
+    /// higher because of intrinsic gas that did not fit in the frame's budget.
+    const fn take_isolated_snapshot_gas_used(&mut self, depth: usize, gas: &Gas) -> Option<u64> {
+        let Some((gas_used, precharged_state)) = self.isolated_snapshot_gas_used.take() else {
+            return None;
+        };
+        if self.recording {
+            // The caller's sample already includes the precharged state gas.
+            self.pending_isolated_region_gas =
+                Some((depth, gas.total_gas_spent(), gas_used.saturating_sub(precharged_state)));
         }
+        Some(gas_used)
     }
 }
 
@@ -1463,10 +1469,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if prank.delegate_call
-                && curr_depth == prank.depth
-                && call.scheme == CallScheme::DelegateCall
-            {
+            if prank.delegate_call && curr_depth == prank.depth && call.scheme.is_delegate_call() {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
                 if let Some(new_origin) = prank.new_origin {
@@ -1503,19 +1506,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let input = call.input.bytes(ecx);
-            let value = call.transfer_value();
-            let ctx = MockCallDataContext { calldata: input.clone(), value };
-
-            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
-                Some(queue) => Some(queue),
-                None => mocks
-                    .iter_mut()
-                    .find(|(mock, _)| {
-                        input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|mock_value| Some(mock_value) == value)
-                    })
-                    .map(|(_, v)| v),
-            } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
+            if let Some(return_data_queue) =
+                mock::find_mock_returns(mocks, &input, call.transfer_value())
+                && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
             {
                 if let Some(value) = call.transfer_value() {
                     let checkpoint = ecx.journal_mut().checkpoint();
@@ -1548,10 +1541,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     }
                 }
 
-                // If the mocked calls stack has a single element in it, don't empty it
-                if return_data_queue.len() > 1 {
-                    return_data_queue.pop_front();
-                }
+                mock::advance_mock_returns(return_data_queue);
 
                 return Some(CallOutcome {
                     result: InterpreterResult {
@@ -2348,12 +2338,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
-        let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
-        self.gas_metering.record_isolated_refund(
-            ecx.journal().depth(),
-            &outcome.result.gas,
-            isolated_snapshot_gas_used,
-        );
+        let isolated_snapshot_gas_used = self
+            .gas_metering
+            .take_isolated_snapshot_gas_used(ecx.journal().depth(), &outcome.result.gas);
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -2447,7 +2434,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
-            let call_failed = !matches!(outcome.result.result, return_ok!());
+            let call_failed = !outcome.result.result.is_ok();
             if call_failed {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
@@ -2613,95 +2600,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        // At the end of the call,
-        // we need to check if we've found all the emits.
-        // We know we've found all the expected emits in the right order
-        // if the queue is fully matched.
-        // If it's not fully matched, then either:
-        // 1. Not enough events were emitted (we'll know this because the amount of times we
-        // inspected events will be less than the size of the queue) 2. The wrong events
-        // were emitted (The inspected events should match the size of the queue, but still some
-        // events will not be matched)
-
-        // First, check that we're at the call depth where the emits were declared from.
-        let should_check_emits = self
-            .expected_emits
-            .iter()
-            .any(|(expected, _)| {
-                let curr_depth = ecx.journal().depth();
-                expected.depth == curr_depth
-            }) &&
-            // Ignore staticcalls
-            !call.is_static;
-        if should_check_emits {
-            let expected_counts = self
-                .expected_emits
-                .iter()
-                .filter_map(|(expected, count_map)| {
-                    let count = match expected.address {
-                        Some(emitter) => match count_map.get(&emitter) {
-                            Some(log_count) => expected
-                                .log
-                                .as_ref()
-                                .map(|l| log_count.count(l))
-                                .unwrap_or_else(|| log_count.count_unchecked()),
-                            None => 0,
-                        },
-                        None => match &expected.log {
-                            Some(log) => count_map.values().map(|logs| logs.count(log)).sum(),
-                            None => count_map.values().map(|logs| logs.count_unchecked()).sum(),
-                        },
-                    };
-
-                    (count != expected.count).then_some((expected, count))
-                })
-                .collect::<Vec<_>>();
-
-            // Revert if not all emits expected were matched.
-            if let Some((expected, _)) = self
-                .expected_emits
-                .iter()
-                .find(|(expected, _)| !expected.found && expected.count > 0)
-            {
-                outcome.result.result = InstructionResult::Revert;
-                let mismatch_error = expected.mismatch_error.clone();
-                let expected_log = expected.log.clone();
-                let checks = expected.checks;
-                let anonymous = expected.anonymous;
-                let error_msg = mismatch_error
-                    .as_ref()
-                    .map(|mismatch| {
-                        mismatch.to_error_msg(
-                            || self.signatures_identifier(),
-                            checks,
-                            expected_log.as_ref(),
-                            anonymous,
-                        )
-                    })
-                    .unwrap_or_else(|| "log != expected log".to_string());
-                outcome.result.output = error_msg.abi_encode().into();
-                return;
-            }
-
-            if !expected_counts.is_empty() {
-                let msg = if outcome.result.is_ok() {
-                    let (expected, count) = expected_counts.first().unwrap();
-                    format!("log emitted {count} times, expected {}", expected.count)
-                } else {
-                    "expected an emit, but the call reverted instead. \
-                     ensure you're testing the happy path when using `expectEmit`"
-                        .to_string()
-                };
-
-                outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = Error::encode(msg);
-                return;
-            }
-
-            // All emits were found, we're good.
-            // Clear the queue, as we expect the user to declare more events for the next call
-            // if they wanna match further events.
-            self.expected_emits.clear()
+        if let Some(unmet) = expected_emit::check_call_emits(
+            &mut self.expected_emits,
+            ecx.journal().depth(),
+            call.is_static,
+            outcome.result.is_ok(),
+        ) {
+            outcome.result.result = InstructionResult::Revert;
+            outcome.result.output = unmet.encode(|| self.signatures_identifier());
+            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -2740,36 +2647,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
 
             // Check if we have any leftover expected emits
-            // First, if any emits were found at the root call, then we its ok and we remove them.
-            // For count=0 expectations, NOT being found is success, so mark them as found
-            for (expected, _) in &mut self.expected_emits {
-                if expected.count == 0 && !expected.found {
-                    expected.found = true;
-                }
-            }
-            self.expected_emits.retain(|(expected, _)| !expected.found);
-            // If not empty, we got mismatched emits
-            if !self.expected_emits.is_empty() {
-                let msg = if outcome.result.is_ok() {
-                    "expected an emit, but no logs were emitted afterwards. \
-                     you might have mismatched events or not enough events were emitted"
-                } else {
-                    "expected an emit, but the call reverted instead. \
-                     ensure you're testing the happy path when using `expectEmit`"
-                };
+            if let Some(msg) = expected_emit::first_unmet_root_emit(
+                &mut self.expected_emits,
+                outcome.result.is_ok(),
+            ) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
                 return;
             }
 
             // Check for leftover expected creates
-            if let Some(expected_create) = self.expected_creates.first() {
-                let msg = format!(
-                    "expected {} call by address {} for bytecode {} but not found",
-                    expected_create.create_scheme,
-                    hex::encode_prefixed(expected_create.deployer),
-                    hex::encode_prefixed(&expected_create.bytecode),
-                );
+            if let Some(msg) = expect::first_unmet_create(&self.expected_creates) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
             }
@@ -2926,12 +2814,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
-        let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
-        self.gas_metering.record_isolated_refund(
-            ecx.journal().depth(),
-            &outcome.result.gas,
-            isolated_snapshot_gas_used,
-        );
+        let isolated_snapshot_gas_used = self
+            .gas_metering
+            .take_isolated_snapshot_gas_used(ecx.journal().depth(), &outcome.result.gas);
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -3078,15 +2963,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             && let Ok(created_acc) = ecx.journal_mut().load_account(address)
         {
             let bytecode = created_acc.data.info.code.clone().unwrap_or_default().original_bytes();
-            if let Some((index, _)) =
-                self.expected_creates.iter().find_position(|expected_create| {
-                    expected_create.deployer == call.caller()
-                        && expected_create.create_scheme.eq(call.scheme().into())
-                        && expected_create.bytecode == bytecode
-                })
-            {
-                self.expected_creates.swap_remove(index);
-            }
+            expect::observe_create(
+                &mut self.expected_creates,
+                call.caller(),
+                || call.scheme().into(),
+                &bytecode,
+            );
         }
     }
 }
@@ -3149,23 +3031,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) {
         if interpreter.bytecode.action.as_ref().and_then(|i| i.instruction_result()).is_none() {
             let curr_depth = ecx.journal().depth();
-            let isolated_refund = match self.gas_metering.pending_isolated_refund {
-                Some((depth, refund)) if depth == curr_depth => {
-                    self.gas_metering.pending_isolated_refund = None;
-                    refund
+            let isolated_region_gas = match self.gas_metering.pending_isolated_region_gas {
+                Some((depth, charged, used)) if depth == curr_depth => {
+                    self.gas_metering.pending_isolated_region_gas = None;
+                    Some((charged, used))
                 }
-                _ => 0,
+                _ => None,
             };
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 if curr_depth == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
                     if self.gas_metering.last_gas_used != 0 {
-                        let gas_diff = interpreter
+                        let mut gas_diff = interpreter
                             .gas
                             .total_gas_spent()
-                            .saturating_sub(self.gas_metering.last_gas_used)
-                            .saturating_sub(isolated_refund);
+                            .saturating_sub(self.gas_metering.last_gas_used);
+                        if let Some((charged, used)) = isolated_region_gas {
+                            gas_diff = gas_diff.saturating_sub(charged).saturating_add(used);
+                        }
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 

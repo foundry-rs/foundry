@@ -561,7 +561,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::TestRunner,
     };
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::database::InMemoryDB;
     use std::collections::HashSet;
 
     #[test]
@@ -596,7 +596,7 @@ mod tests {
     fn can_fuzz_from_zero_capacity_dictionary() {
         let state = EvmFuzzState::new(
             &[],
-            &CacheDB::<EmptyDB>::default(),
+            &InMemoryDB::default(),
             FuzzDictionaryConfig { max_fuzz_dictionary_values: 0, ..Default::default() },
             None,
         );

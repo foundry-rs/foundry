@@ -947,11 +947,7 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
 
     let slot = U256::from(CANCUN_ERA_TIMESTAMP % HISTORY_BUFFER_LENGTH);
     let stored_timestamp = fork_api
-        .storage_at(
-            alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
-            slot,
-            Some(BlockId::Number(BlockNumberOrTag::Number(1))),
-        )
+        .storage_at(alloy_eips::eip4788::BEACON_ROOTS_ADDRESS, slot, Some(BlockId::number(1)))
         .await
         .unwrap();
     assert_eq!(stored_timestamp, B256::from(U256::from(CANCUN_ERA_TIMESTAMP)));
@@ -1408,8 +1404,8 @@ async fn test_fork_debug_trace_cache_includes_options() {
         .debug_trace_transaction(receipt.transaction_hash, call_tracer.clone())
         .await
         .unwrap();
-    assert!(matches!(default_trace, GethTrace::Default(_)));
-    assert!(matches!(call_trace, GethTrace::CallTracer(_)));
+    assert!(default_trace.is_default());
+    assert!(call_trace.is_call());
     assert_eq!(
         fork_provider
             .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())
@@ -1606,11 +1602,11 @@ async fn test_fork_eth_get_code_after_mine() {
 
     let address = Address::random();
 
-    let _code = provider.get_code_at(address).block_id(BlockId::number(1)).await.unwrap();
+    let _code = provider.get_code_at(address).number(1).await.unwrap();
 
     api.evm_mine(None).await.unwrap();
 
-    let _code = provider.get_code_at(address).block_id(BlockId::number(1)).await.unwrap();
+    let _code = provider.get_code_at(address).number(1).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1632,10 +1628,8 @@ async fn test_fork_eth_get_code() {
         address!("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
     ];
     for address in addresses {
-        let prev_code = api
-            .get_code(address, Some(BlockNumberOrTag::Number(BLOCK_NUMBER - 10).into()))
-            .await
-            .unwrap();
+        let prev_code =
+            api.get_code(address, Some(BlockId::number(BLOCK_NUMBER - 10))).await.unwrap();
         let code = api.get_code(address, None).await.unwrap();
         let provider_code = provider.get_code_at(address).await.unwrap();
         assert_eq!(code, prev_code);
@@ -2047,7 +2041,7 @@ async fn can_reset_properly() {
 // Ref: <https://github.com/foundry-rs/foundry/issues/8684>
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_fork_to_new_fork() {
-    let eth_rpc_url = next_rpc_endpoint(NamedChain::Mainnet);
+    let eth_rpc_url = next_http_rpc_endpoint();
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
     let provider = handle.http_provider();
 
@@ -2082,7 +2076,7 @@ async fn test_fork_timestamp() {
     let (api, handle) = spawn(fork_config()).await;
     let provider = handle.http_provider();
 
-    let block = provider.get_block(BlockId::Number(BLOCK_NUMBER.into())).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::number(BLOCK_NUMBER)).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -2108,7 +2102,7 @@ async fn test_fork_timestamp() {
     api.anvil_reset(Some(Forking { json_rpc_url: None, block_number: Some(BLOCK_NUMBER) }))
         .await
         .unwrap();
-    let block = provider.get_block(BlockId::Number(BLOCK_NUMBER.into())).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::number(BLOCK_NUMBER)).await.unwrap().unwrap();
     assert_eq!(block.header.timestamp, BLOCK_TIMESTAMP);
 
     let tx =
@@ -2424,7 +2418,7 @@ async fn test_fork_call() {
     let provider = http_provider(rpc::next_http_archive_rpc_url().as_str());
     let tx = TransactionRequest::default().to(to).with_input(input.clone());
     let tx = WithOtherFields::new(tx);
-    let res0 = provider.call(tx).block(BlockId::Number(block_number.into())).await.unwrap();
+    let res0 = provider.call(tx).number(block_number).await.unwrap();
 
     let (api, _) = spawn(fork_config().with_fork_block_number(Some(block_number))).await;
 
@@ -2625,17 +2619,16 @@ async fn test_block_receipts() {
     let (api, _) = spawn(fork_config()).await;
 
     // Receipts from the forked block (14608400)
-    let receipts = api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER).into()).await.unwrap();
+    let receipts = api.block_receipts(BlockId::number(BLOCK_NUMBER)).await.unwrap();
     assert!(receipts.is_some());
 
     // Receipts from a block in the future (14608401)
-    let receipts =
-        api.block_receipts(BlockNumberOrTag::Number(BLOCK_NUMBER + 1).into()).await.unwrap();
+    let receipts = api.block_receipts(BlockId::number(BLOCK_NUMBER + 1)).await.unwrap();
     assert!(receipts.is_none());
 
     // Receipts from a block hash (14608400)
     let hash = b256!("0x4c1c76f89cfe4eb503b09a0993346dd82865cac9d76034efc37d878c66453f0a");
-    let receipts = api.block_receipts(BlockId::Hash(hash.into())).await.unwrap();
+    let receipts = api.block_receipts(BlockId::hash(hash)).await.unwrap();
     assert!(receipts.is_some());
 }
 
@@ -2878,7 +2871,7 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
         let arb_request = WithOtherFields::new(
             TransactionRequest::default()
                 .with_to(arbitrum::ARB_SYS_ADDRESS)
-                .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                .with_input(Bytes::from(arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
         );
         let snapshot = api.evm_snapshot().await.unwrap();
         api.mine_one().await.unwrap();
@@ -3140,8 +3133,7 @@ async fn test_base_fork_gas_limit() {
     }
 
     let provider = handle.http_provider();
-    let block =
-        provider.get_block(BlockId::Number(BlockNumberOrTag::Latest)).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
 
     assert!(api.gas_limit() >= uint!(96_000_000_U256));
     assert!(block.header.gas_limit >= 96_000_000_u64);
@@ -3210,8 +3202,7 @@ async fn test_fork_query_at_fork_block() {
     api.evm_mine(None).await.unwrap();
     api.anvil_set_balance(address, balance + U256::ONE).await.unwrap();
 
-    let balance_before =
-        provider.get_balance(address).block_id(BlockId::number(number)).await.unwrap();
+    let balance_before = provider.get_balance(address).number(number).await.unwrap();
 
     assert_eq!(balance_before, balance);
 }

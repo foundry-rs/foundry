@@ -6551,9 +6551,9 @@ contract DeploySponsoredTempoAA is Script {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
-    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
     let sponsor_key =
-        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
     let sponsor = format!("{:?}", wallets[1].address());
 
     let assert = cmd
@@ -6611,9 +6611,9 @@ contract DeploySponsoredTempoAA is Script {
     .await;
     let wallets = handle.dev_wallets().take(2).collect::<Vec<_>>();
     let sender = wallets[0].address();
-    let sender_key = format!("0x{}", hex::encode(wallets[0].credential().to_bytes()));
+    let sender_key = hex::encode_prefixed(wallets[0].credential().to_bytes());
     let sponsor_key =
-        format!("private-key://0x{}", hex::encode(wallets[1].credential().to_bytes()));
+        format!("private-key://{}", hex::encode_prefixed(wallets[1].credential().to_bytes()));
     let sponsor = format!("{:?}", wallets[1].address());
     let path = prj.root().join("broadcast/DeploySponsoredTempoAA.s.sol/31337/run-latest.json");
 

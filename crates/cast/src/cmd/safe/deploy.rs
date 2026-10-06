@@ -83,7 +83,7 @@ impl CreateArgs {
             singleton.unwrap_or(if l1 || chain_id == 1 { SAFE_V1_4_1 } else { SAFE_L2_V1_4_1 });
         ensure_contract(&provider, singleton, "Safe singleton", "--singleton").await?;
         ensure_contract(&provider, factory, "SafeProxyFactory", "--factory").await?;
-        if fallback_handler != Address::ZERO {
+        if !fallback_handler.is_zero() {
             ensure_contract(
                 &provider,
                 fallback_handler,
@@ -140,7 +140,7 @@ fn validate_owners(owners: &[Address], threshold: Option<usize>) -> Result<usize
     );
     let mut unique = AddressHashSet::default();
     for owner in owners {
-        ensure!(*owner != Address::ZERO, "Safe owner cannot be the zero address");
+        ensure!(!owner.is_zero(), "Safe owner cannot be the zero address");
         ensure!(*owner != SENTINEL_OWNER, "Safe owner cannot be the sentinel address");
         ensure!(unique.insert(*owner), "duplicate Safe owner: {owner}");
     }

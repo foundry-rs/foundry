@@ -187,7 +187,7 @@ fn fuzz_minimize_pass<FEN: FoundryEvmNetwork>(
         runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
         for (suite, suite_result) in runner.test_collect(filter)? {
             for (test, test_result) in suite_result.test_results {
-                if test_result.status == TestStatus::Failure {
+                if test_result.status.is_failure() {
                     bail!(
                         "fuzz minimization replay failed for {suite}::{test}: {}",
                         test_result.reason.as_deref().unwrap_or("unknown error")
@@ -2089,16 +2089,15 @@ impl TestArgs {
                 .ok_or_else(|| eyre::eyre!("{no_tests}"))?;
         let contract = suite_name.split(':').next_back().unwrap();
         let test_name = test_name.trim_end_matches("()");
-        let (_, arena) = test_result
-            .traces
-            .iter_mut()
-            .find(|(kind, _)| *kind == TraceKind::Execution)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "cannot generate {label} for {contract}::{test_name}: no execution trace \
+        let (_, arena) =
+            test_result.traces.iter_mut().find(|(kind, _)| kind.is_execution()).ok_or_else(
+                || {
+                    eyre::eyre!(
+                        "cannot generate {label} for {contract}::{test_name}: no execution trace \
                      (test may have failed in setUp/constructor or been skipped)"
-                )
-            })?;
+                    )
+                },
+            )?;
         decode_trace_arena(arena, &decoder).await;
 
         match trace_output {
@@ -2600,7 +2599,7 @@ impl TestArgs {
 
                 // We shouldn't break out of the outer loop directly here so that we finish
                 // processing the remaining tests and print the suite summary.
-                any_test_failed |= result.status == TestStatus::Failure;
+                any_test_failed |= result.status.is_failure();
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
@@ -2652,7 +2651,7 @@ impl TestArgs {
                     && test_failed
                     && trace_verbosity >= 3
                     && let Some((_, arena)) =
-                        result.traces.iter().find(|(kind, _)| matches!(kind, TraceKind::Execution))
+                        result.traces.iter().find(|(kind, _)| kind.is_execution())
                 {
                     let builder = backtrace_builder.get_or_insert_with(|| {
                         BacktraceBuilder::new(
@@ -2677,7 +2676,7 @@ impl TestArgs {
                         // Re-execute setup and deployment traces to collect identities created in
                         // setUp and constructor.
                         for (kind, arena) in &result.traces {
-                            if !matches!(kind, TraceKind::Execution) {
+                            if !kind.is_execution() {
                                 decoder.identify_scoped(arena, &mut identifier);
                             }
                         }
@@ -3302,16 +3301,14 @@ fn matching_fuzz_replay_targets(
         let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
         for func in abi.functions() {
             let kind = matcher.test_function_kind(&contract, func, generated_symbolic_regression);
-            if !matches!(kind, TestFunctionKind::FuzzTest { .. })
+            if !kind.is_fuzz_test()
                 || !filter.matches_test_function_kind_in_contract(&contract, func, kind)
             {
                 continue;
             }
             let function_config = inline_config_for(config, inline_config, &contract, Some(func))?;
-            if matches!(
-                effective_test_function_kind(kind, &function_config, func),
-                TestFunctionKind::FuzzTest { .. }
-            ) && func.selector() == selector
+            if effective_test_function_kind(kind, &function_config, func).is_fuzz_test()
+                && func.selector() == selector
             {
                 targets.push((contract.clone(), func.signature()));
             }

@@ -43,7 +43,7 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, ContextTr, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    primitives::hardfork::SpecId,
     state::Account,
 };
 use std::{
@@ -838,7 +838,7 @@ impl Cheatcode for resetNonceCall {
         // Per EIP-161, EOA nonces start at 0, but contract nonces
         // start at 1. Comparing by code_hash instead of code
         // to avoid hitting the case where account's code is None.
-        let empty = account.info.code_hash == KECCAK_EMPTY;
+        let empty = account.info.is_empty_code_hash();
         let nonce = if empty { 0 } else { 1 };
         account.info.nonce = nonce;
         debug!(target: "cheatcodes", nonce, "reset");
@@ -1323,12 +1323,12 @@ impl Cheatcode for setBlockhashCall {
         let Self { blockNumber, blockHash } = *self;
         ensure!(blockNumber <= U256::from(u64::MAX), "blockNumber must be less than 2^64");
         ensure!(
-            blockNumber <= U256::from(ccx.block_number()),
+            blockNumber <= ccx.block_number(),
             "block number must be less than or equal to the current block number"
         );
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
-        let current_block = U256::from(ccx.block_number());
+        let current_block = ccx.block_number();
         if ccx.spec().into() >= SpecId::PRAGUE
             && blockNumber < current_block
             && current_block - blockNumber <= U256::from(HISTORY_SERVE_WINDOW)

@@ -2407,11 +2407,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::Config,
     };
-    use revm::{
-        bytecode::Bytecode,
-        context::Block,
-        database::{CacheDB, EmptyDB},
-    };
+    use revm::{bytecode::Bytecode, context::Block, database::InMemoryDB};
     use serde_json::json;
     use std::{sync::mpsc, thread};
 
@@ -2900,12 +2896,8 @@ mod tests {
         let config =
             InvariantConfig { runs: 1, depth: 1, show_metrics: false, ..Default::default() };
         let campaign_state = InvariantCampaignState::new(EarlyExit::new(false), None);
-        let fuzz_state = EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        );
+        let fuzz_state =
+            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None);
         let setup_contracts = ContractsByAddress::default();
         let project_contracts = ContractsByArtifact::default();
         let (result_tx, result_rx) = mpsc::channel();
