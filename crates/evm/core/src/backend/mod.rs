@@ -940,7 +940,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the `id` is currently active
     pub fn is_active_fork(&self, id: LocalForkId) -> bool {
-        self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
+        self.active_fork_ids.is_some_and(|(i, _)| i == id)
     }
 
     /// Returns `true` if the `Backend` is currently in forking mode
@@ -3339,7 +3339,7 @@ fn merge_db_account_data<ExtDB: DatabaseRef, N: Network, B: ForkBlockEnv>(
 
 /// Returns true of the address is a contract
 fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
-    evm_state.get(&acc).map(|acc| !acc.info.is_empty_code_hash()).unwrap_or_default()
+    evm_state.get(&acc).is_some_and(|acc| !acc.info.is_empty_code_hash())
 }
 
 /// Updates the evm env's block with the block's data
