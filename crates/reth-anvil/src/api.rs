@@ -3,15 +3,19 @@ use crate::{
     impersonation::ImpersonationState,
     mining::MiningController,
     snapshot::{Snapshot, SnapshotManager},
-    state::SharedAnvilState,
+    state::{AnvilState, SharedAnvilState},
     time::TimeManager,
+    types::{ReorgOptions, TransactionData},
 };
-use alloy_consensus::{BlockHeader, transaction::TxHashRef};
-use alloy_eips::BlockNumberOrTag;
-use alloy_network::Ethereum;
+use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
+use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::anvil::{Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo};
-use alloy_rpc_types_eth::Block;
+use alloy_rpc_types_eth::{
+    Block, TransactionRequest,
+    state::{AccountOverride, StateOverridesBuilder},
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -20,14 +24,18 @@ use jsonrpsee::{
         error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
     },
 };
+use parking_lot::RwLock;
 use reth_ethereum::{
-    chainspec::{ChainSpec, EthChainSpec},
+    chainspec::{ChainSpec, EthChainSpec, EthereumHardforks},
     pool::TransactionPool,
     primitives::{Bytecode, SealedHeader},
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -79,6 +87,54 @@ pub trait AnvilApi {
     /// Rewinds the chain by the given number of blocks.
     #[method(name = "rollback")]
     async fn anvil_rollback(&self, depth: Option<u64>) -> RpcResult<()>;
+
+    /// Rewinds the chain by `depth` blocks and mines `depth` blocks with the given transactions.
+    #[method(name = "reorg")]
+    async fn anvil_reorg(&self, options: ReorgOptions) -> RpcResult<()>;
+
+    /// Resets the chain to genesis. Forking is not supported yet.
+    #[method(name = "reset", aliases = ["hardhat_reset"])]
+    async fn anvil_reset(&self, forking: Option<serde_json::Value>) -> RpcResult<()>;
+
+    /// Sets the minimum gas price. Rejected while EIP-1559 is active, as in anvil.
+    #[method(name = "setMinGasPrice", aliases = ["hardhat_setMinGasPrice"])]
+    async fn anvil_set_min_gas_price(&self, gas_price: U256) -> RpcResult<()>;
+
+    /// Enables or disables transaction logging.
+    #[method(name = "setLoggingEnabled", aliases = ["hardhat_setLoggingEnabled"])]
+    async fn anvil_set_logging_enabled(&self, enabled: bool) -> RpcResult<()>;
+
+    /// Returns the wall clock time at which the last block was built.
+    #[method(name = "getLastBlockWallTime")]
+    async fn anvil_get_last_block_wall_time(&self) -> RpcResult<u64>;
+
+    /// Returns the pool blob with the given versioned hash.
+    #[method(name = "getBlobByHash")]
+    async fn anvil_get_blob_by_hash(&self, hash: B256) -> RpcResult<Option<Box<Blob>>>;
+
+    /// Returns the pool blobs of the given transaction.
+    #[method(name = "getBlobsByTransactionHash")]
+    async fn anvil_get_blobs_by_transaction_hash(&self, hash: B256)
+    -> RpcResult<Option<Vec<Blob>>>;
+
+    /// Sets the ERC20 balance of an account by finding and overriding the balance slot.
+    #[method(name = "dealERC20", aliases = ["hardhat_dealERC20", "anvil_setERC20Balance"])]
+    async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> RpcResult<()>;
+
+    /// Sets an ERC20 allowance by finding and overriding the allowance slot.
+    #[method(name = "setERC20Allowance")]
+    async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token_address: Address,
+        amount: U256,
+    ) -> RpcResult<()>;
 
     /// Removes a transaction from the pool.
     #[method(name = "dropTransaction", aliases = ["hardhat_dropTransaction"])]
@@ -136,6 +192,14 @@ pub trait AnvilApi {
     #[method(name = "setNextBlockBaseFeePerGas", aliases = ["hardhat_setNextBlockBaseFeePerGas"])]
     async fn anvil_set_next_block_base_fee_per_gas(&self, base_fee: U256) -> RpcResult<()>;
 
+    /// Sets the prevrandao of the next block.
+    #[method(name = "setNextBlockPrevRandao")]
+    async fn anvil_set_next_block_prev_randao(&self, prev_randao: B256) -> RpcResult<()>;
+
+    /// Sets the parent beacon block root of the next block.
+    #[method(name = "setNextBlockParentBeaconBlockRoot")]
+    async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> RpcResult<()>;
+
     /// Sets the balance of an account.
     #[method(name = "setBalance", aliases = ["hardhat_setBalance"])]
     async fn anvil_set_balance(&self, address: Address, balance: U256) -> RpcResult<()>;
@@ -180,7 +244,8 @@ pub struct AnvilRpc<Pool, Provider, Eth> {
     state: SharedAnvilState,
     snapshots: SnapshotManager,
     chain_spec: Arc<ChainSpec>,
-    instance_id: B256,
+    instance_id: Arc<RwLock<B256>>,
+    logging_enabled: Arc<AtomicBool>,
     pool: Pool,
     provider: Provider,
     eth: Eth,
@@ -189,7 +254,7 @@ pub struct AnvilRpc<Pool, Provider, Eth> {
 impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
     /// Creates the `anvil_*` namespace over the given node components.
     #[expect(clippy::too_many_arguments)]
-    pub const fn new(
+    pub fn new(
         impersonation: ImpersonationState,
         mining: MiningController,
         time: TimeManager,
@@ -210,7 +275,8 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
             state,
             snapshots,
             chain_spec,
-            instance_id,
+            instance_id: Arc::new(RwLock::new(instance_id)),
+            logging_enabled: Arc::new(AtomicBool::new(true)),
             pool,
             provider,
             eth,
@@ -281,6 +347,45 @@ where
             .map_err(|error| internal_error(format!("failed to read account: {error}")))?
             .unwrap_or_default()
             .balance)
+    }
+
+    /// Finds the storage slot of `token_address` that `calldata` reads, by checking which slot
+    /// from the access list changes the call result to `expected_value`.
+    async fn find_erc20_storage_slot(
+        &self,
+        token_address: Address,
+        calldata: Bytes,
+        expected_value: U256,
+    ) -> RpcResult<B256> {
+        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata);
+        let access_list =
+            EthApiServer::create_access_list(&self.eth, tx.clone(), None, None).await?.access_list;
+
+        for item in access_list.0 {
+            if item.address != token_address {
+                continue;
+            }
+            for slot in item.storage_keys {
+                let state_override = StateOverridesBuilder::default()
+                    .append(
+                        token_address,
+                        AccountOverride::default()
+                            .with_state_diff(std::iter::once((slot, expected_value.into()))),
+                    )
+                    .build();
+                let Ok(result) =
+                    EthApiServer::call(&self.eth, tx.clone(), None, Some(state_override), None)
+                        .await
+                else {
+                    continue;
+                };
+                if U256::from_be_slice(result.as_ref()) == expected_value {
+                    return Ok(slot);
+                }
+            }
+        }
+
+        Err(internal_error("Unable to find storage slot"))
     }
 
     /// Returns the lowercase name of the latest hardfork active at the given block.
@@ -414,6 +519,164 @@ where
         self.rewind_to(&header).await
     }
 
+    async fn anvil_reorg(&self, options: ReorgOptions) -> RpcResult<()> {
+        let ReorgOptions { depth, mut tx_block_pairs } = options;
+        if let Some((_, number)) = tx_block_pairs.iter().find(|(_, number)| *number >= depth) {
+            let Some(last_block) = depth.checked_sub(1) else {
+                return Err(invalid_params(
+                    "Reorg depth must be at least 1 to include transactions",
+                ));
+            };
+            return Err(invalid_params(format!(
+                "Block number for reorg tx will exceed the reorged chain height. Block number {number} must not exceed (depth-1) {last_block}"
+            )));
+        }
+        tx_block_pairs.sort_by_key(|(_, number)| *number);
+
+        let current_height = self.best_block_number()?;
+        let common_height = current_height.checked_sub(depth).ok_or_else(|| {
+            invalid_params(format!(
+                "Reorg depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            ))
+        })?;
+        let header = self.sealed_header(common_height)?;
+        self.rewind_to(&header).await?;
+
+        // Mine the blocks by hand so interval or automine blocks do not interleave.
+        let automine = self.mining.is_automine();
+        let interval = self.mining.interval_mining();
+        self.mining.set_interval_mining(0);
+        let mut pairs = tx_block_pairs.into_iter().peekable();
+        let mut result = Ok(());
+        for offset in 0..depth {
+            while let Some((tx, _)) = pairs.next_if(|(_, number)| *number == offset) {
+                let sent = match tx {
+                    TransactionData::JSON(request) => {
+                        EthApiServer::send_transaction(&self.eth, request).await
+                    }
+                    TransactionData::Raw(bytes) => {
+                        EthApiServer::send_raw_transaction(&self.eth, bytes).await
+                    }
+                };
+                if let Err(error) = sent {
+                    result = Err(error);
+                    break;
+                }
+            }
+            if result.is_err() {
+                break;
+            }
+            if let Err(error) = self.mining.mine_block().await {
+                result = Err(internal_error(error));
+                break;
+            }
+        }
+        if let Some(interval) = interval {
+            self.mining.set_interval_mining(interval);
+        }
+        self.mining.set_automine(automine);
+        result
+    }
+
+    async fn anvil_reset(&self, forking: Option<serde_json::Value>) -> RpcResult<()> {
+        if forking.is_some_and(|forking| !forking.is_null()) {
+            return Err(invalid_params("forking is not supported yet"));
+        }
+        let genesis = self.sealed_header(0)?;
+        self.rewind_to(&genesis).await?;
+        let hashes = self.pool.all_transaction_hashes();
+        if !hashes.is_empty() {
+            self.pool.remove_transactions(hashes.clone());
+            self.impersonation.forget_tx_senders(hashes);
+        }
+        *self.state.write() = AnvilState::default();
+        self.snapshots.clear();
+        self.time.set_time(self.chain_spec.genesis().timestamp);
+        self.time.remove_block_timestamp_interval();
+        self.block_env.restore(Default::default());
+        *self.instance_id.write() = B256::random();
+        Ok(())
+    }
+
+    async fn anvil_set_min_gas_price(&self, _gas_price: U256) -> RpcResult<()> {
+        if self.chain_spec.is_london_active_at_block(0) {
+            return Err(invalid_params(
+                "anvil_setMinGasPrice is not supported when EIP-1559 is active",
+            ));
+        }
+        Err(internal_error("anvil_setMinGasPrice is not supported yet before EIP-1559"))
+    }
+
+    async fn anvil_set_logging_enabled(&self, enabled: bool) -> RpcResult<()> {
+        self.logging_enabled.store(enabled, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn anvil_get_last_block_wall_time(&self) -> RpcResult<u64> {
+        Ok(self.time.last_block_wall_time())
+    }
+
+    async fn anvil_get_blob_by_hash(&self, hash: B256) -> RpcResult<Option<Box<Blob>>> {
+        let blobs = self
+            .pool
+            .get_blobs_for_versioned_hashes_v1(&[hash])
+            .map_err(|error| internal_error(format!("failed to read blobs: {error}")))?;
+        Ok(blobs.into_iter().flatten().next().map(|blob| blob.blob))
+    }
+
+    async fn anvil_get_blobs_by_transaction_hash(
+        &self,
+        hash: B256,
+    ) -> RpcResult<Option<Vec<Blob>>> {
+        let sidecar = self
+            .pool
+            .get_blob(hash)
+            .map_err(|error| internal_error(format!("failed to read blobs: {error}")))?;
+        Ok(sidecar.map(|sidecar| match sidecar.as_ref() {
+            BlobTransactionSidecarVariant::Eip4844(sidecar) => sidecar.blobs.clone(),
+            BlobTransactionSidecarVariant::Eip7594(sidecar) => sidecar.blobs.clone(),
+        }))
+    }
+
+    async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> RpcResult<()> {
+        const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
+        let mut calldata = Vec::with_capacity(4 + 32);
+        calldata.extend_from_slice(&BALANCE_OF_SELECTOR);
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(address.as_slice());
+
+        let slot = self.find_erc20_storage_slot(token_address, calldata.into(), balance).await?;
+        self.state.write().set_storage_at(token_address, slot, balance);
+        Ok(())
+    }
+
+    async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token_address: Address,
+        amount: U256,
+    ) -> RpcResult<()> {
+        const ALLOWANCE_SELECTOR: [u8; 4] = [0xdd, 0x62, 0xed, 0x3e];
+
+        let mut calldata = Vec::with_capacity(4 + 32 + 32);
+        calldata.extend_from_slice(&ALLOWANCE_SELECTOR);
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(owner.as_slice());
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(spender.as_slice());
+
+        let slot = self.find_erc20_storage_slot(token_address, calldata.into(), amount).await?;
+        self.state.write().set_storage_at(token_address, slot, amount);
+        Ok(())
+    }
+
     async fn anvil_drop_transaction(&self, tx_hash: B256) -> RpcResult<Option<B256>> {
         Ok(self.pool.remove_transaction(tx_hash).map(|_| {
             self.impersonation.forget_tx_sender(&tx_hash);
@@ -474,7 +737,7 @@ where
             client_semver: Some(env!("CARGO_PKG_VERSION").to_string()),
             client_commit_sha: None,
             chain_id: self.chain_spec.chain().id(),
-            instance_id: self.instance_id,
+            instance_id: *self.instance_id.read(),
             latest_block_number: latest.header.number,
             latest_block_hash: latest.header.hash,
             forked_network: None,
@@ -524,6 +787,16 @@ where
         let base_fee =
             base_fee.try_into().map_err(|_| invalid_params("base_fee exceeds u64::MAX"))?;
         self.block_env.set_next_base_fee(base_fee);
+        Ok(())
+    }
+
+    async fn anvil_set_next_block_prev_randao(&self, prev_randao: B256) -> RpcResult<()> {
+        self.block_env.set_next_prev_randao(prev_randao);
+        Ok(())
+    }
+
+    async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> RpcResult<()> {
+        self.block_env.set_next_parent_beacon_block_root(root);
         Ok(())
     }
 

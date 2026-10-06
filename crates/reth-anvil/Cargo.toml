@@ -18,6 +18,13 @@ name = "reth-anvil"
 path = "bin/main.rs"
 
 [dependencies]
+# foundry internal
+foundry-cli.workspace = true
+foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-evm-core.workspace = true
+foundry-evm-hardforks.workspace = true
+
 # reth
 reth-chain-state.workspace = true
 reth-db-api.workspace = true
@@ -37,27 +44,37 @@ alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-eips.workspace = true
 alloy-evm.workspace = true
+alloy-genesis.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
-alloy-rpc-types = { workspace = true, features = ["anvil"] }
+alloy-rpc-types = { workspace = true, features = ["anvil", "txpool"] }
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer.workspace = true
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # revm
 revm.workspace = true
 
 # misc
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+clap_complete.workspace = true
 eyre.workspace = true
+fdlimit = "0.3"
+flate2.workspace = true
 futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 parking_lot.workspace = true
+rand_08.workspace = true
 rocksdb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
 tokio-stream.workspace = true
 tracing.workspace = true
+yansi.workspace = true
 
 [dev-dependencies]
+alloy-chains.workspace = true
 jsonrpsee = { version = "0.26", features = ["http-client"] }
-serde_json.workspace = true

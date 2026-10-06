@@ -17,6 +17,8 @@ pub struct TimeManager {
     next_exact_timestamp: Arc<RwLock<Option<u64>>>,
     /// The interval to use when determining the next block's timestamp.
     interval: Arc<RwLock<Option<u64>>>,
+    /// The wall clock time at which the last block was built.
+    last_block_wall_time: Arc<RwLock<u64>>,
 }
 
 impl TimeManager {
@@ -27,6 +29,7 @@ impl TimeManager {
             last_timestamp: Default::default(),
             next_exact_timestamp: Default::default(),
             interval: Default::default(),
+            last_block_wall_time: Arc::new(RwLock::new(duration_since_unix_epoch().as_secs())),
         };
         time_manager.reset(start_timestamp);
         time_manager
@@ -110,7 +113,13 @@ impl TimeManager {
             *self.offset.write() = next_offset;
         }
         *self.last_timestamp.write() = next_timestamp;
+        *self.last_block_wall_time.write() = duration_since_unix_epoch().as_secs();
         next_timestamp
+    }
+
+    /// Returns the wall clock time at which the last block was built.
+    pub fn last_block_wall_time(&self) -> u64 {
+        *self.last_block_wall_time.read()
     }
 
     /// Captures the current settings.
@@ -147,6 +156,12 @@ impl TimeManager {
             attributes.timestamp = time.next_timestamp();
             if let Some(coinbase) = block_env.coinbase() {
                 attributes.suggested_fee_recipient = coinbase;
+            }
+            if let Some(prev_randao) = block_env.take_next_prev_randao() {
+                attributes.prev_randao = prev_randao;
+            }
+            if let Some(root) = block_env.take_next_parent_beacon_block_root() {
+                attributes.parent_beacon_block_root = Some(root);
             }
             attributes
         }

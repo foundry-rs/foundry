@@ -533,6 +533,7 @@ tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9d
     "std",
 ] }
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26", default-features = false, features = [
+    "reth-codec",
     "serde",
 ] }
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26", default-features = false }
@@ -565,18 +566,19 @@ base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "2aa
 base-execution-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 
 # reth
-reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-engine-util = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-node-events = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-stages-types = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-storage-overlay = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
-reth-tokio-util = { git = "https://github.com/paradigmxyz/reth", rev = "3d592ece6de8c4559987416a544fc215fd6d6921" }
+# Keep the rev string identical to the one the tempo crates pin, so Cargo resolves one reth.
+reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-engine-util = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-node-events = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-stages-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-storage-overlay = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-tokio-util = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 

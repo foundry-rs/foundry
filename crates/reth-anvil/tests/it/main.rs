@@ -10,11 +10,7 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
     rpc_params,
 };
-use reth_anvil::{RethAnvilConfig, launch};
-use reth_ethereum::{
-    node::core::args::RpcServerArgs,
-    tasks::{RuntimeBuilder, RuntimeConfig},
-};
+use reth_anvil::{EthApi, EthereumHardfork, NodeConfig, NodeHandle, spawn};
 use serde_json::Value;
 use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
@@ -24,24 +20,35 @@ where
     F: FnOnce(HttpClient) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
-    let config = RethAnvilConfig {
-        rpc: RpcServerArgs::default().with_unused_ports().with_http(),
-        ..Default::default()
-    };
-    let node = launch(config, runtime).await?;
-    let addr =
-        node.rpc_server_handles.rpc.http_local_addr().ok_or_eyre("http server did not start")?;
-    let client = HttpClientBuilder::default().build(format!("http://{addr}"))?;
+    let (_api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
     test(client).await
+}
+
+async fn spawn_with_client(config: NodeConfig) -> Result<(EthApi, NodeHandle, HttpClient)> {
+    let (api, handle) = spawn(config).await;
+    let client = HttpClientBuilder::default().build(handle.http_endpoint())?;
+    Ok((api, handle, client))
+}
+
+/// Fetches a receipt.
+///
+/// Reth recovers the sender from the signature when a transaction misses its RPC cache, which
+/// fails for an impersonated transaction until the node reuses cached senders there
+/// (<https://github.com/paradigmxyz/reth/pull/27757>). Treat that as "not indexed yet".
+async fn get_receipt(client: &HttpClient, tx_hash: B256) -> Result<Option<Value>> {
+    match client
+        .request::<Option<Value>, _>("eth_getTransactionReceipt", rpc_params![tx_hash])
+        .await
+    {
+        Ok(receipt) => Ok(receipt),
+        Err(error) if error.to_string().contains("invalid transaction signature") => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn wait_for_receipt(client: &HttpClient, tx_hash: B256) -> Result<Value> {
     for _ in 0..50 {
-        let receipt = client
-            .request::<Option<Value>, _>("eth_getTransactionReceipt", rpc_params![tx_hash])
-            .await?;
-        if let Some(receipt) = receipt {
+        if let Some(receipt) = get_receipt(client, tx_hash).await? {
             return Ok(receipt);
         }
         sleep(Duration::from_millis(100)).await;
@@ -52,10 +59,7 @@ async fn wait_for_receipt(client: &HttpClient, tx_hash: B256) -> Result<Value> {
 
 async fn assert_no_receipt(client: &HttpClient, tx_hash: B256, attempts: usize) -> Result<()> {
     for _ in 0..attempts {
-        let receipt = client
-            .request::<Option<Value>, _>("eth_getTransactionReceipt", rpc_params![tx_hash])
-            .await?;
-        if receipt.is_some() {
+        if get_receipt(client, tx_hash).await?.is_some() {
             bail!("unexpected receipt for {tx_hash}");
         }
         sleep(Duration::from_millis(100)).await;
@@ -429,7 +433,12 @@ async fn anvil_node_info_and_metadata_follow_latest_head() -> Result<()> {
         assert_eq!(node_info.current_block_number, expected_block_number);
         assert_eq!(node_info.current_block_timestamp, expected_timestamp);
         assert_eq!(node_info.current_block_hash, expected_hash);
-        assert_eq!(node_info.hard_fork, "osaka");
+        let expected_hardfork = EthereumHardfork::from_chain_and_timestamp(
+            alloy_chains::Chain::mainnet(),
+            expected_timestamp,
+        )
+        .unwrap_or(EthereumHardfork::Osaka);
+        assert_eq!(node_info.hard_fork, expected_hardfork.to_string().to_lowercase());
         assert_eq!(node_info.transaction_order, "fees");
         assert_eq!(node_info.environment.chain_id, metadata.chain_id);
         assert_eq!(node_info.environment.gas_price, expected_gas_price);
@@ -913,6 +922,240 @@ async fn safe_and_finalized_tags_follow_the_epoch_distance() -> Result<()> {
         let finalized = get_block(&client, "finalized").await?;
         assert_eq!(safe["number"].as_str(), Some(format!("0x{:x}", head - 32).as_str()));
         assert_eq!(finalized["number"].as_str(), Some("0x0"));
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn default_config_matches_anvil_defaults() -> Result<()> {
+    let (api, handle, client) = spawn_with_client(NodeConfig::test()).await?;
+
+    let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
+    assert_eq!(chain_id, U256::from(31337u64));
+    assert_eq!(api.chain_id().await?, chain_id);
+
+    let accounts: Vec<Address> = client.request("eth_accounts", rpc_params![]).await?;
+    let dev_accounts: Vec<Address> = handle.dev_accounts().collect();
+    assert_eq!(dev_accounts.len(), 10);
+    assert_eq!(&accounts[..10], &dev_accounts[..], "eth_accounts should list the dev accounts");
+    for account in &dev_accounts {
+        assert_eq!(api.balance(*account, None).await?, handle.genesis_balance());
+    }
+    assert_eq!(
+        handle.genesis_balance(),
+        U256::from(100u64) * U256::from(10u64).pow(U256::from(18))
+    );
+
+    let genesis = get_block(&client, "0x0").await?;
+    assert_eq!(genesis["gasLimit"].as_str(), Some("0x1c9c380"));
+    assert_eq!(genesis["baseFeePerGas"].as_str(), Some("0x3b9aca00"));
+
+    let create2_deployer: Bytes =
+        api.get_code("0x4e59b44847b379578588920cA78FbF26c0B4956C".parse()?, None).await?;
+    assert!(!create2_deployer.is_empty(), "the default create2 deployer should be deployed");
+
+    assert_eq!(api.block_number().await?, U256::ZERO);
+    api.mine_one().await?;
+    assert_eq!(api.block_number().await?, U256::ONE);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_overrides_apply_to_genesis() -> Result<()> {
+    let config = NodeConfig::test()
+        .with_chain_id(Some(1337u64))
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_gas_limit(Some(50_000_000))
+        .with_base_fee(Some(7))
+        .with_genesis_timestamp(Some(1_700_000_000u64))
+        .with_genesis_balance(U256::from(42u64))
+        .with_disable_default_create2_deployer(true);
+    let (api, handle, client) = spawn_with_client(config).await?;
+
+    assert_eq!(api.chain_id().await?, U256::from(1337u64));
+    let genesis = get_block(&client, "0x0").await?;
+    assert_eq!(genesis["gasLimit"].as_str(), Some("0x2faf080"));
+    assert_eq!(genesis["baseFeePerGas"].as_str(), Some("0x7"));
+    assert_eq!(genesis["timestamp"].as_str(), Some("0x6553f100"));
+    let node_info: NodeInfo = client.request("anvil_nodeInfo", rpc_params![]).await?;
+    assert_eq!(node_info.hard_fork, "prague");
+    let funder = handle.dev_accounts().next().ok_or_eyre("no dev account")?;
+    assert_eq!(api.balance(funder, None).await?, U256::from(42u64));
+    let create2_deployer: Bytes =
+        api.get_code("0x4e59b44847b379578588920cA78FbF26c0B4956C".parse()?, None).await?;
+    assert!(create2_deployer.is_empty(), "the create2 deployer should be disabled");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn no_mining_and_block_time_set_the_initial_mining_mode() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_no_mining(true)).await?;
+    let automine: bool = client.request("anvil_getAutomine", rpc_params![]).await?;
+    assert!(!automine, "no_mining should disable automine");
+
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_blocktime(Some(Duration::from_secs(1)))).await?;
+    let automine: bool = client.request("anvil_getAutomine", rpc_params![]).await?;
+    let interval: Option<u64> = client.request("anvil_getIntervalMining", rpc_params![]).await?;
+    assert!(!automine);
+    assert_eq!(interval, Some(1));
+    wait_for_block_number(&client, 1).await?;
+
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_mixed_mining(true, Some(Duration::from_secs(1))))
+            .await?;
+    let automine: bool = client.request("anvil_getAutomine", rpc_params![]).await?;
+    let interval: Option<u64> = client.request("anvil_getIntervalMining", rpc_params![]).await?;
+    assert!(automine, "mixed mining should report automine");
+    assert_eq!(interval, Some(1), "mixed mining should report the interval");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn auto_impersonate_config_signs_for_any_account() -> Result<()> {
+    let (api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_auto_impersonate(true)).await?;
+    let sender = Address::repeat_byte(0xA7);
+    api.anvil_set_balance(sender, U256::from(10u64).pow(U256::from(18))).await?;
+    let (_, gas_price) = funder_and_gas_price(&client).await?;
+    let tx_hash =
+        api.send_transaction(transfer(sender, Address::repeat_byte(0xA8), gas_price)).await?;
+    let receipt = api.transaction_receipt(tx_hash).await?;
+    let receipt = match receipt {
+        Some(receipt) => receipt,
+        None => {
+            wait_for_receipt(&client, tx_hash).await?;
+            api.transaction_receipt(tx_hash).await?.ok_or_eyre("missing receipt")?
+        }
+    };
+    assert!(receipt.status(), "the impersonated transfer should succeed");
+    assert_eq!(api.balance(Address::repeat_byte(0xA8), None).await?, U256::from(1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn anvil_reorg_rewinds_and_mines_the_given_transactions() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let recipient = Address::repeat_byte(0x7E);
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(3u64)]).await?;
+        let height = block_number(&client).await?;
+
+        let tx = transfer(funder, recipient, gas_price);
+        client
+            .request::<(), _>(
+                "anvil_reorg",
+                rpc_params![serde_json::json!({ "depth": 2, "tx_block_pairs": [[tx, 1]] })],
+            )
+            .await?;
+
+        assert_eq!(block_number(&client).await?, height, "the reorg keeps the chain height");
+        let first = get_block(&client, format!("0x{:x}", height - 1)).await?;
+        assert_eq!(first["transactions"].as_array().map(Vec::len), Some(0));
+        let second = get_block(&client, format!("0x{height:x}")).await?;
+        assert_eq!(second["transactions"].as_array().map(Vec::len), Some(1));
+        let balance: U256 =
+            client.request("eth_getBalance", rpc_params![recipient, "latest"]).await?;
+        assert_eq!(balance, U256::from(1));
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_reset_returns_to_genesis() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let recipient = Address::repeat_byte(0x5E);
+        let tx_hash: B256 = client
+            .request("eth_sendTransaction", rpc_params![transfer(funder, recipient, gas_price)])
+            .await?;
+        wait_for_receipt(&client, tx_hash).await?;
+        client.request::<(), _>("anvil_setBalance", rpc_params![recipient, U256::from(5)]).await?;
+        let before: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
+
+        client.request::<(), _>("anvil_reset", rpc_params![]).await?;
+
+        assert_eq!(block_number(&client).await?, 0);
+        let balance: U256 =
+            client.request("eth_getBalance", rpc_params![recipient, "latest"]).await?;
+        assert_eq!(balance, U256::ZERO, "reset should drop state writes and mined transfers");
+        let after: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
+        assert_ne!(before.instance_id, after.instance_id, "reset should pick a new instance id");
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, 1);
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_deal_erc20_and_allowance_override_token_storage() -> Result<()> {
+    with_test_client(|client| async move {
+        let token = Address::repeat_byte(0xD0);
+        let holder = Address::repeat_byte(0xD1);
+        let spender = Address::repeat_byte(0xD4);
+        let balance = U256::from(500u64);
+        let allowance = U256::from(777u64);
+
+        client.request::<(), _>("anvil_setCode", rpc_params![token, SLOAD_ZERO_CODE]).await?;
+
+        client.request::<(), _>("anvil_dealERC20", rpc_params![holder, token, balance]).await?;
+        let mut calldata = vec![0x70, 0xa0, 0x82, 0x31];
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(holder.as_slice());
+        let call = TransactionRequest::default().with_to(token).with_input(Bytes::from(calldata));
+        let result: Bytes = client.request("eth_call", rpc_params![call, "latest"]).await?;
+        assert_eq!(U256::from_be_slice(result.as_ref()), balance);
+
+        client
+            .request::<(), _>(
+                "anvil_setERC20Allowance",
+                rpc_params![holder, spender, token, allowance],
+            )
+            .await?;
+        let mut calldata = vec![0xdd, 0x62, 0xed, 0x3e];
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(holder.as_slice());
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(spender.as_slice());
+        let call = TransactionRequest::default().with_to(token).with_input(Bytes::from(calldata));
+        let result: Bytes = client.request("eth_call", rpc_params![call, "latest"]).await?;
+        assert_eq!(U256::from_be_slice(result.as_ref()), allowance);
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn misc_anvil_methods_match_anvil() -> Result<()> {
+    with_test_client(|client| async move {
+        let err = client
+            .request::<(), _>("anvil_setMinGasPrice", rpc_params![U256::from(1)])
+            .await
+            .expect_err("setMinGasPrice is rejected after London");
+        assert!(err.to_string().contains("EIP-1559"), "{err}");
+
+        client.request::<(), _>("anvil_setLoggingEnabled", rpc_params![false]).await?;
+
+        let before: u64 = client.request("anvil_getLastBlockWallTime", rpc_params![]).await?;
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        let after: u64 = client.request("anvil_getLastBlockWallTime", rpc_params![]).await?;
+        assert!(after >= before);
+
+        let blobs: Option<Vec<alloy_consensus::Blob>> =
+            client.request("anvil_getBlobsByTransactionHash", rpc_params![B256::ZERO]).await?;
+        assert!(blobs.is_none());
 
         Ok(())
     })

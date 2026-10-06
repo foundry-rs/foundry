@@ -47,6 +47,11 @@ impl SnapshotManager {
         Some(snapshot)
     }
 
+    /// Removes every snapshot.
+    pub fn clear(&self) {
+        self.inner.write().snapshots.clear();
+    }
+
     /// Returns the block number and hash of every snapshot.
     pub fn metadata(&self) -> BTreeMap<U256, (u64, B256)> {
         self.inner

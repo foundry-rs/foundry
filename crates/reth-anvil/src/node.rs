@@ -1,28 +1,32 @@
 use crate::{
     api::{AnvilApiServer, AnvilRpc, EvmApiServer},
     block_env::BlockEnvOverrides,
+    config::NodeConfig,
+    eth_api::EthApi,
     evm::AnvilExecutorBuilder,
     impersonation::{ImpersonatedSigner, ImpersonationState},
     launcher::AnvilNodeLauncher,
     miner::AnvilMiner,
-    mining::{MiningController, run_automine_task, run_interval_mining_task},
+    mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
     pool::AnvilPoolBuilder,
     provider::AnvilProvider,
+    signer::DevSigner,
     snapshot::SnapshotManager,
     state::{AnvilState, SharedAnvilState},
     time::TimeManager,
 };
 use alloy_consensus::BlockHeader;
-use alloy_primitives::B256;
-use eyre::Result;
+use alloy_primitives::{Address, B256, U256};
+use alloy_signer_local::PrivateKeySigner;
+use eyre::{Result, WrapErr};
+use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use reth_ethereum::{
-    chainspec::{ChainSpec, DEV},
     engine::local::LocalPayloadAttributesBuilder,
     node::{
         EthereumNode,
         api::NodeTypesWithDBAdapter,
         builder::{
-            LaunchNode, NodeBuilder, NodeHandle,
+            LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle,
             components::{NoopConsensusBuilder, NoopNetworkBuilder},
             rpc::RethRpcServerHandles,
         },
@@ -30,7 +34,7 @@ use reth_ethereum::{
             args::{DatadirArgs, RpcServerArgs, StorageArgs},
             dirs::{DataDirPath, MaybePlatformPath},
             exit::NodeExitFuture,
-            node_config::NodeConfig,
+            node_config::NodeConfig as RethNodeConfig,
         },
         node::EthereumAddOns,
     },
@@ -41,64 +45,131 @@ use reth_ethereum::{
             mdbx::{DatabaseArguments, GIGABYTE, MEGABYTE},
         },
     },
+    rpc::builder::RpcModuleSelection,
     storage::BlockNumReader,
-    tasks::Runtime,
+    tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
-use std::sync::Arc;
+use std::{
+    net::{SocketAddr, TcpListener},
+    sync::{Arc, Mutex},
+};
 use tempfile::TempDir;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::{runtime::Handle, sync::broadcast::error::RecvError};
 
 /// The reth node types used by reth-anvil.
 type AnvilNodeTypes = NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>;
 
-/// The number of slots in an epoch, which sets the distance of the `safe` and `finalized` tags
-/// from the head.
-pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
-
-/// Launch options for a reth-anvil node.
-#[derive(Clone, Debug)]
-pub struct RethAnvilConfig {
-    /// The chain to run.
-    pub chain_spec: Arc<ChainSpec>,
-    /// The RPC server settings.
-    pub rpc: RpcServerArgs,
-    /// The number of slots in an epoch.
-    pub slots_in_an_epoch: u64,
-}
-
-impl Default for RethAnvilConfig {
-    fn default() -> Self {
-        Self {
-            chain_spec: DEV.clone(),
-            rpc: RpcServerArgs::default().with_http(),
-            slots_in_an_epoch: DEFAULT_SLOTS_IN_AN_EPOCH,
-        }
-    }
-}
-
-/// A running reth-anvil node.
+/// A running node.
 #[derive(Debug)]
-pub struct RethAnvilHandle {
+pub struct NodeHandle {
+    config: NodeConfig,
+    address: SocketAddr,
     /// The RPC server handles.
     pub rpc_server_handles: RethRpcServerHandles,
     /// Resolves when the node exits.
     pub node_exit_future: NodeExitFuture,
-    /// Owns the temporary data directory for the lifetime of the node.
     _datadir: TempDir,
+    _runtime: Runtime,
 }
 
-/// Launches a reth dev node with the `anvil_*` namespace and anvil's mining, time, and
+impl NodeHandle {
+    /// Returns the node config.
+    pub const fn config(&self) -> &NodeConfig {
+        &self.config
+    }
+
+    /// Returns the address the RPC server listens on.
+    pub const fn socket_address(&self) -> &SocketAddr {
+        &self.address
+    }
+
+    /// Returns the HTTP endpoint.
+    pub fn http_endpoint(&self) -> String {
+        format!("http://{}", self.address)
+    }
+
+    /// Returns the WebSocket endpoint.
+    pub fn ws_endpoint(&self) -> String {
+        format!("ws://{}", self.address)
+    }
+
+    /// Returns a provider for the HTTP endpoint.
+    pub fn http_provider(&self) -> RetryProvider {
+        ProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build HTTP provider")
+    }
+
+    /// Returns a provider for the WebSocket endpoint.
+    pub fn ws_provider(&self) -> RetryProvider {
+        ProviderBuilder::new(&self.ws_endpoint()).build().expect("failed to build WS provider")
+    }
+
+    /// Returns the accounts the node signs for.
+    pub fn dev_accounts(&self) -> impl Iterator<Item = Address> + '_ {
+        self.config.signer_accounts.iter().map(|wallet| wallet.address())
+    }
+
+    /// Returns the wallets the node signs with.
+    pub fn dev_wallets(&self) -> impl Iterator<Item = PrivateKeySigner> + '_ {
+        self.config.signer_accounts.iter().cloned()
+    }
+
+    /// Returns the accounts funded in genesis.
+    pub fn genesis_accounts(&self) -> impl Iterator<Item = Address> + '_ {
+        self.config.genesis_accounts.iter().map(|wallet| wallet.address())
+    }
+
+    /// Returns the balance of every genesis account.
+    pub const fn genesis_balance(&self) -> U256 {
+        self.config.genesis_balance
+    }
+
+    /// Prints the startup banner and the listening address, unless the config is silent.
+    pub fn print(&self) -> Result<()> {
+        self.config.print()?;
+        if !self.config.silent {
+            if let Some(ipc_path) = self.config.get_ipc_path() {
+                foundry_common::sh_println!("IPC path: {ipc_path}")?;
+            }
+            foundry_common::sh_println!("Listening on {}", self.address)?;
+        }
+        Ok(())
+    }
+}
+
+/// Launches a node and panics on failure. See [`try_spawn`].
+pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+    try_spawn(config).await.expect("failed to spawn node")
+}
+
+/// Launches a reth dev node with the `anvil_*` namespace and anvil's mining, time, state, and
 /// impersonation controls.
 ///
 /// The node runs on a fresh MDBX database in a temporary directory that is removed when the
-/// returned handle drops.
-pub async fn launch(config: RethAnvilConfig, runtime: Runtime) -> Result<RethAnvilHandle> {
-    let RethAnvilConfig { chain_spec, rpc, slots_in_an_epoch } = config;
+/// returned handle drops. The node tasks run on the current tokio runtime.
+pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+    let runtime = RuntimeBuilder::new(
+        RuntimeConfig::default().with_tokio(TokioConfig::ExistingHandle(Handle::current())),
+    )
+    .build()?;
+    let chain_spec = config.chain_spec()?;
+    let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
+
     let datadir = tempfile::tempdir()?;
-    let node_config = NodeConfig::new(chain_spec.clone())
-        .dev()
+    let node_config = RethNodeConfig::new(chain_spec.clone())
         .with_storage(StorageArgs { v2: false })
-        .with_rpc(rpc)
+        .with_rpc(RpcServerArgs {
+            http: true,
+            http_addr: address.ip(),
+            http_port: address.port(),
+            http_corsdomain: Some("*".to_string()),
+            ws: true,
+            ws_addr: address.ip(),
+            ws_port: address.port(),
+            ws_allowed_origins: Some("*".to_string()),
+            ipcdisable: true,
+            disable_auth_server: true,
+            ..Default::default()
+        })
         .with_datadir_args(DatadirArgs {
             datadir: MaybePlatformPath::<DataDirPath>::from(datadir.path().to_path_buf()),
             ..Default::default()
@@ -111,17 +182,20 @@ pub async fn launch(config: RethAnvilConfig, runtime: Runtime) -> Result<RethAnv
     let db = init_db(node_config.datadir().db(), db_args)?;
 
     let impersonation = ImpersonationState::default();
-    let (mining, miner_requests) = MiningController::new();
+    impersonation.set_auto_impersonate(config.enable_auto_impersonate);
+    let (mining, miner_requests) = MiningController::new(initial_mining_mode(&config));
     let time = TimeManager::new(chain_spec.genesis_timestamp());
     let block_env = BlockEnvOverrides::default();
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
+    let instance_id = B256::random();
+    let rpc_module = Arc::new(Mutex::new(None));
     let launcher = AnvilNodeLauncher::new(
-        runtime,
+        runtime.clone(),
         node_config.datadir(),
         node_config.tree_config(),
         anvil_state.clone(),
-        slots_in_an_epoch,
+        config.slots_in_an_epoch,
     );
 
     let builder = NodeBuilder::new(node_config)
@@ -146,12 +220,15 @@ pub async fn launch(config: RethAnvilConfig, runtime: Runtime) -> Result<RethAnv
             let anvil_state = anvil_state.clone();
             let snapshots = snapshots.clone();
             let chain_spec = chain_spec.clone();
+            let signer_accounts = config.signer_accounts.clone();
+            let rpc_module = rpc_module.clone();
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
-                eth_api
-                    .signers()
-                    .write()
-                    .push(Box::new(ImpersonatedSigner::new(impersonation.clone())));
+                {
+                    let mut signers = eth_api.signers().write();
+                    signers.push(Box::new(DevSigner::new(signer_accounts)));
+                    signers.push(Box::new(ImpersonatedSigner::new(impersonation.clone())));
+                }
                 let rpc = AnvilRpc::new(
                     impersonation,
                     mining,
@@ -160,17 +237,26 @@ pub async fn launch(config: RethAnvilConfig, runtime: Runtime) -> Result<RethAnv
                     anvil_state,
                     snapshots,
                     chain_spec,
-                    B256::random(),
+                    instance_id,
                     ctx.pool().clone(),
                     ctx.provider().clone(),
                     eth_api,
                 );
-                ctx.modules.merge_configured(AnvilApiServer::into_rpc(rpc.clone()))?;
-                ctx.modules.merge_configured(EvmApiServer::into_rpc(rpc))?;
+                let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
+                let evm_module = EvmApiServer::into_rpc(rpc);
+
+                // The in-process API calls the same handlers the servers do.
+                let mut module = ctx.registry.module_for(&RpcModuleSelection::All);
+                module.merge(anvil_module.clone())?;
+                module.merge(evm_module.clone())?;
+                *rpc_module.lock().expect("rpc module lock") = Some(module);
+
+                ctx.modules.merge_configured(anvil_module)?;
+                ctx.modules.merge_configured(evm_module)?;
                 Ok(())
             }
         });
-    let NodeHandle { node, node_exit_future } = launcher.launch_node(builder).await?;
+    let RethNodeHandle { node, node_exit_future } = launcher.launch_node(builder).await?;
 
     let head = node
         .provider
@@ -187,7 +273,6 @@ pub async fn launch(config: RethAnvilConfig, runtime: Runtime) -> Result<RethAnv
         miner_requests,
     );
     node.task_executor.spawn_critical_task("reth-anvil miner", miner.run());
-
     node.task_executor.spawn_critical_task(
         "reth-anvil automine",
         run_automine_task(node.pool.clone(), mining.clone()),
@@ -199,11 +284,47 @@ pub async fn launch(config: RethAnvilConfig, runtime: Runtime) -> Result<RethAnv
         clear_applied_state_writes(node.provider.subscribe_to_canonical_state(), anvil_state),
     );
 
-    Ok(RethAnvilHandle {
-        rpc_server_handles: node.rpc_server_handles.clone(),
-        node_exit_future,
-        _datadir: datadir,
-    })
+    let module = rpc_module
+        .lock()
+        .expect("rpc module lock")
+        .take()
+        .ok_or_else(|| eyre::eyre!("the rpc modules were not built"))?;
+    let address = node
+        .add_ons_handle
+        .rpc_server_handles
+        .rpc
+        .http_local_addr()
+        .ok_or_else(|| eyre::eyre!("the http server did not start"))?;
+
+    Ok((
+        EthApi::new(module, instance_id),
+        NodeHandle {
+            config,
+            address,
+            rpc_server_handles: node.add_ons_handle.rpc_server_handles,
+            node_exit_future,
+            _datadir: datadir,
+            _runtime: runtime,
+        },
+    ))
+}
+
+/// Returns the configured port, or a free port when the config asks for port zero.
+fn rpc_port(port: u16) -> Result<u16> {
+    if port != 0 {
+        return Ok(port);
+    }
+    let listener = TcpListener::bind(("127.0.0.1", 0)).wrap_err("failed to pick a free port")?;
+    Ok(listener.local_addr()?.port())
+}
+
+const fn initial_mining_mode(config: &NodeConfig) -> MiningMode {
+    match (config.no_mining, config.block_time, config.mixed_mining) {
+        (true, _, _) => MiningMode::Manual,
+        (false, Some(block_time), true) => MiningMode::Mixed(block_time),
+        (false, Some(block_time), false) => MiningMode::Interval(block_time),
+        (false, None, _) => MiningMode::Automine,
+    }
 }
 
 /// Drops the read overlay for state writes once the block that applied them is canonical.

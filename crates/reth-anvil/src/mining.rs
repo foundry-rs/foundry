@@ -22,6 +22,8 @@ pub enum MiningMode {
     Manual,
     /// Mine a block at a fixed interval.
     Interval(Duration),
+    /// Mine a block per transaction and at a fixed interval.
+    Mixed(Duration),
 }
 
 /// A request for the miner task.
@@ -41,33 +43,36 @@ pub struct MiningController {
 }
 
 impl MiningController {
-    /// Creates a controller and the request stream the miner task consumes.
-    pub fn new() -> (Self, UnboundedReceiver<MinerRequest>) {
-        let (mode_tx, _) = channel(MiningMode::Automine);
+    /// Creates a controller in the given mode and the request stream the miner task consumes.
+    pub fn new(mode: MiningMode) -> (Self, UnboundedReceiver<MinerRequest>) {
+        let (mode_tx, _) = channel(mode);
         let (requests, rx) = unbounded_channel();
         (Self { mode_tx, requests }, rx)
     }
 
     /// Returns whether automine is enabled.
     pub fn is_automine(&self) -> bool {
-        matches!(*self.mode_tx.borrow(), MiningMode::Automine)
+        matches!(*self.mode_tx.borrow(), MiningMode::Automine | MiningMode::Mixed(_))
     }
 
     /// Returns the interval mining period in seconds, if interval mining is enabled.
     pub fn interval_mining(&self) -> Option<u64> {
         match *self.mode_tx.borrow() {
-            MiningMode::Interval(duration) => Some(duration.as_secs()),
+            MiningMode::Interval(duration) | MiningMode::Mixed(duration) => {
+                Some(duration.as_secs())
+            }
             MiningMode::Automine | MiningMode::Manual => None,
         }
     }
 
-    /// Enables or disables automine.
+    /// Enables or disables automine. The interval, if any, stays.
     pub fn set_automine(&self, enabled: bool) {
         let next_mode = match (*self.mode_tx.borrow(), enabled) {
-            (MiningMode::Automine, true) => return,
             (MiningMode::Automine, false) => MiningMode::Manual,
-            (_, true) => MiningMode::Automine,
-            (_, false) => return,
+            (MiningMode::Mixed(duration), false) => MiningMode::Interval(duration),
+            (MiningMode::Manual, true) => MiningMode::Automine,
+            (MiningMode::Interval(duration), true) => MiningMode::Mixed(duration),
+            _ => return,
         };
 
         self.mode_tx.send_replace(next_mode);
@@ -137,7 +142,7 @@ pub async fn run_interval_mining_task(mining: MiningController) {
                     return;
                 }
             }
-            MiningMode::Interval(duration) => {
+            MiningMode::Interval(duration) | MiningMode::Mixed(duration) => {
                 select! {
                     changed = mode_rx.changed() => {
                         if changed.is_err() {
@@ -145,7 +150,7 @@ pub async fn run_interval_mining_task(mining: MiningController) {
                         }
                     }
                     _ = sleep(duration) => {
-                        if matches!(*mode_rx.borrow(), MiningMode::Interval(_)) {
+                        if matches!(*mode_rx.borrow(), MiningMode::Interval(_) | MiningMode::Mixed(_)) {
                             mining.trigger();
                         }
                     }

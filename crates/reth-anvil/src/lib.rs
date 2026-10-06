@@ -3,19 +3,35 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod api;
+pub mod args;
 mod block_env;
+pub mod cmd;
+mod config;
+mod eth_api;
 mod evm;
 mod impersonation;
 mod launcher;
 mod miner;
 mod mining;
 mod node;
+pub mod opts;
 mod pool;
 mod provider;
+mod signer;
 mod snapshot;
 mod state;
+mod state_dump;
 mod state_provider;
 mod time;
+mod types;
 
 pub use api::{AnvilApiServer, AnvilRpc, EvmApiServer};
-pub use node::{DEFAULT_SLOTS_IN_AN_EPOCH, RethAnvilConfig, RethAnvilHandle, launch};
+pub use config::{
+    AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, DEFAULT_IPC_ENDPOINT, DEFAULT_MNEMONIC,
+    DEFAULT_SLOTS_IN_AN_EPOCH, INITIAL_BASE_FEE, NODE_PORT, NodeConfig,
+};
+pub use eth_api::EthApi;
+pub use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
+pub use node::{NodeHandle, spawn, try_spawn};
+pub use state_dump::{SerializableAccountRecord, SerializableState, StateFile};
+pub use types::{ForkUrl, ReorgOptions, TransactionData, TransactionOrder};

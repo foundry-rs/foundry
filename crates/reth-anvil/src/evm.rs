@@ -22,7 +22,7 @@ use reth_ethereum::{
         EthEvmConfig,
         primitives::{
             ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-            NextBlockEnvAttributes, execute::BlockAssembler,
+            NextBlockEnvAttributes, SenderRecoveryCache, execute::BlockAssembler,
         },
     },
     node::builder::{BuilderContext, FullNodeTypes, NodeTypes, components::ExecutorBuilder},
@@ -45,6 +45,9 @@ pub struct AnvilEvmConfig<Evm: ConfigureEvm> {
     executor_factory: AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
     state: ImpersonationState,
     block_env: BlockEnvOverrides,
+    /// The node's sender cache. Impersonated senders are recorded here so RPC lookups that
+    /// recover senders through the cache report the impersonated account.
+    sender_cache: Option<SenderRecoveryCache>,
 }
 
 impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
@@ -54,10 +57,11 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
         state: ImpersonationState,
         block_env: BlockEnvOverrides,
         anvil_state: SharedAnvilState,
+        sender_cache: Option<SenderRecoveryCache>,
     ) -> Self {
         let executor_factory =
             AnvilBlockExecutorFactory::new(inner.block_executor_factory().clone(), anvil_state);
-        Self { inner, executor_factory, state, block_env }
+        Self { inner, executor_factory, state, block_env, sender_cache }
     }
 }
 
@@ -150,12 +154,21 @@ where
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
         let txs = payload.payload.transactions().clone();
         let state = self.state.clone();
+        let sender_cache = self.sender_cache.clone();
 
         let convert = move |raw: Bytes| {
             let tx = TransactionSigned::decode_2718_exact(raw.as_ref()).map_err(AnyError::new)?;
             let signer = match state.tx_sender(&tx.recalculate_hash()) {
-                Some(sender) => sender,
-                None => tx.try_recover().map_err(AnyError::new)?,
+                Some(sender) => {
+                    if let Some(cache) = &sender_cache {
+                        let _ = cache.recover_with(&tx, |_| Ok(sender));
+                    }
+                    sender
+                }
+                None => match &sender_cache {
+                    Some(cache) => cache.recover(&tx).map_err(AnyError::new)?,
+                    None => tx.try_recover().map_err(AnyError::new)?,
+                },
             };
             Ok::<_, AnyError>(tx.with_signer(signer))
         };
@@ -299,6 +312,7 @@ where
             self.state,
             self.block_env,
             self.anvil_state,
+            ctx.sender_recovery_cache().cloned(),
         ))
     }
 }

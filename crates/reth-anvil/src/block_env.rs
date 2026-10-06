@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -12,6 +12,8 @@ pub struct BlockEnvOverrides {
     gas_limit: Arc<RwLock<Option<u64>>>,
     coinbase: Arc<RwLock<Option<Address>>>,
     next_base_fee: Arc<RwLock<Option<u64>>>,
+    next_prev_randao: Arc<RwLock<Option<B256>>>,
+    next_parent_beacon_block_root: Arc<RwLock<Option<B256>>>,
 }
 
 impl BlockEnvOverrides {
@@ -45,12 +47,34 @@ impl BlockEnvOverrides {
         self.next_base_fee.write().take()
     }
 
+    /// Sets the prevrandao of the next block only.
+    pub fn set_next_prev_randao(&self, prev_randao: B256) {
+        *self.next_prev_randao.write() = Some(prev_randao);
+    }
+
+    /// Takes the next block prevrandao override, consuming it.
+    pub fn take_next_prev_randao(&self) -> Option<B256> {
+        self.next_prev_randao.write().take()
+    }
+
+    /// Sets the parent beacon block root of the next block only.
+    pub fn set_next_parent_beacon_block_root(&self, root: B256) {
+        *self.next_parent_beacon_block_root.write() = Some(root);
+    }
+
+    /// Takes the next block parent beacon block root override, consuming it.
+    pub fn take_next_parent_beacon_block_root(&self) -> Option<B256> {
+        self.next_parent_beacon_block_root.write().take()
+    }
+
     /// Captures the current overrides.
     pub fn snapshot(&self) -> BlockEnvSnapshot {
         BlockEnvSnapshot {
             gas_limit: *self.gas_limit.read(),
             coinbase: *self.coinbase.read(),
             next_base_fee: *self.next_base_fee.read(),
+            next_prev_randao: *self.next_prev_randao.read(),
+            next_parent_beacon_block_root: *self.next_parent_beacon_block_root.read(),
         }
     }
 
@@ -59,13 +83,17 @@ impl BlockEnvOverrides {
         *self.gas_limit.write() = snapshot.gas_limit;
         *self.coinbase.write() = snapshot.coinbase;
         *self.next_base_fee.write() = snapshot.next_base_fee;
+        *self.next_prev_randao.write() = snapshot.next_prev_randao;
+        *self.next_parent_beacon_block_root.write() = snapshot.next_parent_beacon_block_root;
     }
 }
 
 /// A copy of the block environment overrides.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct BlockEnvSnapshot {
     gas_limit: Option<u64>,
     coinbase: Option<Address>,
     next_base_fee: Option<u64>,
+    next_prev_randao: Option<B256>,
+    next_parent_beacon_block_root: Option<B256>,
 }
