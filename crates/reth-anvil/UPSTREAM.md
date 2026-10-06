@@ -51,6 +51,15 @@ be free if reth had a dev mode:
   from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
   on top of it, like anvil's pending block, and a call at an older block replays that block.
 
+## What Tempo needs
+
+`tempo-node` hard-wires its EVM config: `TempoPayloadBuilder`, `TempoPoolBuilder`, and
+`TempoPayloadBuilderBuilder` name `TempoEvmConfig`, and `TempoBlockAssembler` only implements
+`BlockAssembler<TempoEvmConfig>`. reth-anvil installs its anvil behaviour by wrapping a network's
+`ConfigureEvm`, so Tempo cannot run here until those builders take the EVM config as a type
+parameter, like reth's `EthereumPayloadBuilder` and `EthereumPoolBuilder` do. The alternative is to
+copy the three builders and the assembler into this crate, about 1.5k lines.
+
 ## Things reth already fixes
 
 Bugs open on anvil that reth-anvil does not have, because the logic is reth's:
