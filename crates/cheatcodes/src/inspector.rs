@@ -5,7 +5,7 @@ use crate::{
     Vm::{self, AccountAccess},
     evm::{
         DealRecord, GasRecord, RecordAccess, journaled_account,
-        mock::{MockCallDataContext, MockCallReturnData},
+        mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
     expected_emit::ExpectedEmitTracker,
@@ -1499,19 +1499,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let input = call.input.bytes(ecx);
-            let value = call.transfer_value();
-            let ctx = MockCallDataContext { calldata: input.clone(), value };
-
-            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
-                Some(queue) => Some(queue),
-                None => mocks
-                    .iter_mut()
-                    .find(|(mock, _)| {
-                        input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|mock_value| Some(mock_value) == value)
-                    })
-                    .map(|(_, v)| v),
-            } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
+            if let Some(return_data_queue) =
+                mock::find_mock_returns(mocks, &input, call.transfer_value())
+                && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
             {
                 if let Some(value) = call.transfer_value() {
                     let checkpoint = ecx.journal_mut().checkpoint();
@@ -1544,10 +1534,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     }
                 }
 
-                // If the mocked calls stack has a single element in it, don't empty it
-                if return_data_queue.len() > 1 {
-                    return_data_queue.pop_front();
-                }
+                mock::advance_mock_returns(return_data_queue);
 
                 return Some(CallOutcome {
                     result: InterpreterResult {
