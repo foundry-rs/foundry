@@ -247,7 +247,11 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// Whether to dynamically link tests.
     pub dynamic_test_linking: bool,
-    /// Whether to allow linked libraries.
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// Defaults to `true`. Internal libraries and dynamic test linking remain available when
+    /// disabled. Configured library addresses are withheld from solc so actual dependencies
+    /// remain visible in its link references.
     pub allow_linked_libraries: bool,
     /// Where the gas snapshots are stored.
     pub snapshots: PathBuf,
@@ -2042,7 +2046,7 @@ impl Config {
         Libraries::parse(&self.libraries)
     }
 
-    /// Returns all libraries with applied remappings. Same as `self.solc_settings()?.libraries`.
+    /// Returns all configured libraries with applied remappings.
     pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
         let paths: ProjectPathsConfig = self.project_paths();
         Ok(self.parsed_libraries()?.apply(|libs| paths.apply_lib_remappings(libs)))
@@ -2063,8 +2067,15 @@ impl Config {
             model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
         }
 
+        // Keep configured addresses out of solc's input when linking is forbidden. Otherwise
+        // solc consumes the link references, making actual dependencies invisible to the check.
+        let mut libraries = self.libraries_with_remappings()?;
+        if !self.allow_linked_libraries {
+            libraries.libs.clear();
+        }
+
         let mut settings = Settings {
-            libraries: self.libraries_with_remappings()?,
+            libraries,
             optimizer: self.optimizer(),
             evm_version: Some(self.evm_version),
             metadata: Some(SettingsMetadata {
@@ -9467,5 +9478,38 @@ mod tests {
         std::os::unix::fs::symlink(root.join("src"), root.join("cache")).unwrap();
         let config = Config::with_root(root);
         assert!(config.coverage_cache_path().is_none());
+    }
+
+    #[test]
+    fn linked_library_policy_settings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                libraries = ["src/Lib.sol:Lib:0x0000000000000000000000000000000000000001"]
+                [profile.ci]
+                allow_linked_libraries = false
+            "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(config.allow_linked_libraries);
+            assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(!config.allow_linked_libraries);
+            assert!(config.dynamic_test_linking);
+            assert!(!config.libraries_with_remappings().unwrap().libs.is_empty());
+            assert!(config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            let roundtrip = Config::from_provider(&config).unwrap();
+            assert!(!roundtrip.allow_linked_libraries);
+
+            jail.set_env("FOUNDRY_ALLOW_LINKED_LIBRARIES", "true");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert!(config.allow_linked_libraries);
+            assert!(!config.solc_settings().unwrap().settings.libraries.libs.is_empty());
+            Ok(())
+        });
     }
 }

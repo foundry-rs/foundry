@@ -39,8 +39,10 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_dynamic_test_linking: bool,
 
-    /// Whether to disallow linked libraries. If present, build will fail if any contract uses
-    /// linked libraries.
+    /// Reject contracts that depend on externally linked Solidity libraries.
+    ///
+    /// Internal libraries and dynamic test linking remain available. Overrides
+    /// `allow_linked_libraries` in configuration and environment variables.
     #[arg(long, help_heading = "Linker options")]
     #[serde(skip)]
     pub disallow_linked_libraries: bool,
@@ -289,10 +291,6 @@ impl Provider for BuildOpts {
             dict.insert("dynamic_test_linking".to_string(), false.into());
         }
 
-        if self.disallow_linked_libraries {
-            dict.insert("allow_linked_libraries".to_string(), false.into());
-        }
-
         if self.build_info {
             dict.insert("build_info".to_string(), self.build_info.into());
         }
@@ -333,6 +331,13 @@ impl Provider for BuildOpts {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
         }
 
-        Ok(Map::from([(Config::selected_profile(), dict)]))
+        let mut data = Map::from([(Config::selected_profile(), dict)]);
+        if self.disallow_linked_libraries {
+            // Environment variables use the global profile, which wins over named profiles.
+            data.entry(Profile::Global)
+                .or_default()
+                .insert("allow_linked_libraries".to_string(), false.into());
+        }
+        Ok(data)
     }
 }

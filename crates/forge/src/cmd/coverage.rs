@@ -320,6 +320,7 @@ impl CoverageArgs {
         });
         let compile = |project: &Project| {
             let mut compiler = ProjectCompiler::new()
+                .allow_linked_libraries(config.allow_linked_libraries)
                 .external_compilers(config)
                 .external_artifacts(false)
                 .dynamic_test_linking(config.dynamic_test_linking);

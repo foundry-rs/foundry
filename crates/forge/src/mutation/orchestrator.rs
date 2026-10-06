@@ -162,6 +162,7 @@ pub async fn run_mutation_testing(
     // Determine which paths to mutate
     let mutate_paths = resolve_mutate_paths(&config, output, &mutation_config)?;
     let execution_cache_output = ProjectCompiler::new()
+        .allow_linked_libraries(config.allow_linked_libraries)
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(json_output)
         .files(
