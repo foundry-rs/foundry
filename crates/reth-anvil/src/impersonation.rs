@@ -27,9 +27,22 @@ struct Inner {
     /// Maps impersonated transaction hashes to the intended sender so the engine can attribute
     /// them during payload execution.
     tx_senders: HashMap<B256, Address>,
+    /// Transactions that a revert removed from the chain. The pool rejects them so a reorg does
+    /// not bring them back.
+    dropped_txs: HashSet<B256>,
 }
 
 impl ImpersonationState {
+    /// Marks transactions that a revert removed from the chain.
+    pub fn drop_txs(&self, hashes: impl IntoIterator<Item = B256>) {
+        self.inner.write().dropped_txs.extend(hashes);
+    }
+
+    /// Returns whether a revert removed the given transaction from the chain.
+    pub fn is_dropped(&self, hash: &B256) -> bool {
+        self.inner.read().dropped_txs.contains(hash)
+    }
+
     /// Starts impersonating the given account.
     pub fn impersonate(&self, address: Address) {
         self.inner.write().accounts.insert(address);

@@ -44,4 +44,28 @@ impl BlockEnvOverrides {
     pub fn take_next_base_fee(&self) -> Option<u64> {
         self.next_base_fee.write().take()
     }
+
+    /// Captures the current overrides.
+    pub fn snapshot(&self) -> BlockEnvSnapshot {
+        BlockEnvSnapshot {
+            gas_limit: *self.gas_limit.read(),
+            coinbase: *self.coinbase.read(),
+            next_base_fee: *self.next_base_fee.read(),
+        }
+    }
+
+    /// Restores the given overrides.
+    pub fn restore(&self, snapshot: BlockEnvSnapshot) {
+        *self.gas_limit.write() = snapshot.gas_limit;
+        *self.coinbase.write() = snapshot.coinbase;
+        *self.next_base_fee.write() = snapshot.next_base_fee;
+    }
+}
+
+/// A copy of the block environment overrides.
+#[derive(Clone, Copy, Debug)]
+pub struct BlockEnvSnapshot {
+    gas_limit: Option<u64>,
+    coinbase: Option<Address>,
+    next_base_fee: Option<u64>,
 }

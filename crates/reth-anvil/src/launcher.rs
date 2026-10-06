@@ -64,6 +64,7 @@ pub struct AnvilNodeLauncher {
     ctx: LaunchContext,
     engine_tree_config: TreeConfig,
     state: SharedAnvilState,
+    slots_in_an_epoch: u64,
 }
 
 impl AnvilNodeLauncher {
@@ -73,8 +74,14 @@ impl AnvilNodeLauncher {
         data_dir: ChainPath<DataDirPath>,
         engine_tree_config: TreeConfig,
         state: SharedAnvilState,
+        slots_in_an_epoch: u64,
     ) -> Self {
-        Self { ctx: LaunchContext::new(task_executor, data_dir), engine_tree_config, state }
+        Self {
+            ctx: LaunchContext::new(task_executor, data_dir),
+            engine_tree_config,
+            state,
+            slots_in_an_epoch,
+        }
     }
 
     async fn launch_node<N, DB, T, CB, AO>(
@@ -93,7 +100,7 @@ impl AnvilNodeLauncher {
         AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>
             + EngineValidatorAddOn<NodeAdapter<T, CB::Components>>,
     {
-        let Self { ctx, engine_tree_config, state } = self;
+        let Self { ctx, engine_tree_config, state, slots_in_an_epoch } = self;
         let NodeBuilderWithComponents {
             adapter: NodeTypesAdapter { database },
             rocksdb_provider,
@@ -137,7 +144,11 @@ impl AnvilNodeLauncher {
             })
             .with_metrics_task()
             .with_blockchain_db::<T, _>(move |provider_factory| {
-                Ok(AnvilProvider::new(BlockchainProvider::new(provider_factory)?, state))
+                Ok(AnvilProvider::new(
+                    BlockchainProvider::new(provider_factory)?,
+                    state,
+                    slots_in_an_epoch,
+                ))
             })?
             .with_components(components_builder, on_component_initialized).await?;
 

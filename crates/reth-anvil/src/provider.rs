@@ -1,11 +1,12 @@
 use crate::{state::SharedAnvilState, state_provider::AnvilStateProvider};
-use alloy_consensus::transaction::TransactionMeta;
+use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use alloy_rpc_types_engine::ForkchoiceState;
 use reth_chain_state::{
     CanonStateNotifications, CanonStateSubscriptions, ExecutedBlock, ForkChoiceNotifications,
-    ForkChoiceSubscriptions, PersistedBlockNotifications, PersistedBlockSubscriptions,
+    ForkChoiceSubscriptions, NewCanonicalChain, PersistedBlockNotifications,
+    PersistedBlockSubscriptions,
 };
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
 use reth_ethereum::{
@@ -13,21 +14,24 @@ use reth_ethereum::{
     node::api::{BlockTy, HeaderTy, ReceiptTy, TxTy},
     primitives::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry},
     provider::{
-        BlockSource, ExecutionOutcome, RecoveredBlockAndExecutionOutput, RocksDBProviderFactory,
-        StaticFileProviderFactory, StaticFileSegment, TransactionVariant,
+        BlockExecutionOutput, BlockExecutionResult, BlockSource, ExecutionOutcome, ProviderError,
+        RecoveredBlockAndExecutionOutput, RocksDBProviderFactory, StaticFileProviderFactory,
+        StaticFileSegment, TransactionVariant,
         providers::{
             BlockchainProvider, ProviderNodeTypes, RocksDBProvider, StaticFileProvider,
             StaticFileProviderRWRefMut,
         },
     },
     storage::{
-        BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader, BlockIdReader,
-        BlockNumReader, BlockReader, BlockReaderIdExt, CanonChainTracker, ChangeSetReader,
-        DatabaseProviderFactory, HeaderProvider, NodePrimitivesProvider, PruneCheckpointReader,
-        ReceiptProvider, ReceiptProviderIdExt, StageCheckpointReader, StateProviderBox,
-        StateProviderFactory, StateRangeProviderFactory, StateRangeView, StateReader,
-        StorageChangeSetReader, TransactionsProvider, errors::provider::ProviderResult,
+        BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockExecutionWriter,
+        BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt,
+        CanonChainTracker, ChangeSetReader, DBProvider, DatabaseProviderFactory, HeaderProvider,
+        NodePrimitivesProvider, PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt,
+        StageCheckpointReader, StateProviderBox, StateProviderFactory, StateRangeProviderFactory,
+        StateRangeView, StateReader, StorageChangeSetReader, TransactionsProvider,
+        errors::provider::ProviderResult,
     },
+    trie::ComputedTrieData,
 };
 use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
@@ -47,18 +51,87 @@ use std::{
 pub struct AnvilProvider<N: ProviderNodeTypes> {
     inner: BlockchainProvider<N>,
     state: SharedAnvilState,
+    slots_in_an_epoch: u64,
 }
 
 impl<N: ProviderNodeTypes> Clone for AnvilProvider<N> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone(), state: self.state.clone() }
+        Self {
+            inner: self.inner.clone(),
+            state: self.state.clone(),
+            slots_in_an_epoch: self.slots_in_an_epoch,
+        }
     }
 }
 
 impl<N: ProviderNodeTypes> AnvilProvider<N> {
     /// Wraps the given provider.
-    pub const fn new(inner: BlockchainProvider<N>, state: SharedAnvilState) -> Self {
-        Self { inner, state }
+    pub const fn new(
+        inner: BlockchainProvider<N>,
+        state: SharedAnvilState,
+        slots_in_an_epoch: u64,
+    ) -> Self {
+        Self { inner, state, slots_in_an_epoch }
+    }
+
+    /// Rewinds the canonical chain to the given header.
+    ///
+    /// This drops the in-memory blocks above the header and removes the persisted blocks above it,
+    /// so reads see the rewound chain at once. The engine learns about the rewind when the next
+    /// block builds on the header: it then reorgs its own view onto that block.
+    pub fn rewind_to(&self, header: &SealedHeader<HeaderTy<N>>) -> ProviderResult<()> {
+        let in_memory = self.inner.canonical_in_memory_state();
+        let old: Vec<_> = in_memory
+            .canonical_chain()
+            .filter(|state| state.number() > header.number())
+            .map(|state| state.block())
+            .collect();
+        let target = match in_memory.state_by_number(header.number()) {
+            Some(state) => state.block(),
+            None => self.executed_block_from_storage(header)?,
+        };
+        in_memory.update_chain(NewCanonicalChain::Reorg { new: Vec::new(), old: old.clone() });
+
+        if self.inner.last_block_number()? > header.number() {
+            let provider = self.inner.database_provider_rw()?;
+            provider.remove_block_and_execution_above(header.number())?;
+            provider.commit()?;
+        }
+
+        in_memory.set_canonical_head(header.clone());
+        // Subscribers such as the RPC caches and the pool learn about the rewind the same way
+        // they learn about a reorg.
+        let reorg = NewCanonicalChain::Reorg { new: vec![target], old };
+        in_memory.notify_canon_state(reorg.to_chain_notification());
+        Ok(())
+    }
+
+    /// Rebuilds the executed block for a persisted canonical header.
+    fn executed_block_from_storage(
+        &self,
+        header: &SealedHeader<HeaderTy<N>>,
+    ) -> ProviderResult<ExecutedBlock<N::Primitives>> {
+        let block = self
+            .inner
+            .recovered_block(header.hash().into(), TransactionVariant::WithHash)?
+            .ok_or(ProviderError::BlockHashNotFound(header.hash()))?;
+        let outcome = self.inner.get_state(header.number())?.unwrap_or_default();
+        let output = BlockExecutionOutput {
+            state: outcome.bundle,
+            result: BlockExecutionResult {
+                receipts: outcome.receipts.into_iter().next().unwrap_or_default(),
+                requests: outcome.requests.into_iter().next().unwrap_or_default(),
+                gas_used: header.gas_used(),
+                blob_gas_used: header.blob_gas_used().unwrap_or_default(),
+            },
+        };
+        Ok(ExecutedBlock::new(Arc::new(block), Arc::new(output), ComputedTrieData::default()))
+    }
+
+    /// Returns the canonical block `depth` blocks behind the head, or genesis.
+    fn num_hash_at_depth(&self, depth: u64) -> ProviderResult<Option<BlockNumHash>> {
+        let number = self.inner.best_block_number()?.saturating_sub(depth);
+        Ok(self.inner.block_hash(number)?.map(|hash| BlockNumHash::new(number, hash)))
     }
 
     /// Returns the wrapped provider.
@@ -235,12 +308,14 @@ impl<N: ProviderNodeTypes> BlockIdReader for AnvilProvider<N> {
         self.inner.pending_block_num_hash()
     }
 
+    /// The engine never finalizes blocks, so snapshots can rewind to any block. The `safe` and
+    /// `finalized` tags follow anvil instead: one and two epochs behind the head.
     fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        self.inner.safe_block_num_hash()
+        self.num_hash_at_depth(self.slots_in_an_epoch)
     }
 
     fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        self.inner.finalized_block_num_hash()
+        self.num_hash_at_depth(self.slots_in_an_epoch * 2)
     }
 }
 

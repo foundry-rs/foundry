@@ -15,11 +15,17 @@ use reth_ethereum::{
     pool::{
         CoinbaseTipOrdering, EthPooledTransaction, EthTransactionValidator, Pool, PoolTransaction,
         TransactionOrigin, TransactionValidationOutcome, TransactionValidationTaskExecutor,
-        TransactionValidator, blobstore::DiskFileBlobStore, validate::ValidTransaction,
+        TransactionValidator,
+        blobstore::DiskFileBlobStore,
+        error::{InvalidPoolTransactionError, PoolTransactionError},
+        validate::ValidTransaction,
     },
     primitives::{BlockBody, SealedBlock},
 };
-use std::fmt::{self, Debug};
+use std::{
+    any::Any,
+    fmt::{self, Debug, Display},
+};
 
 /// Wraps the standard Ethereum validator and short-circuits validation for impersonated
 /// accounts.
@@ -47,6 +53,12 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> TransactionValidationOutcome<Self::Transaction> {
+        if self.state.is_dropped(transaction.hash()) {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::Other(Box::new(RevertedTransaction)),
+            );
+        }
         if self.state.is_impersonated(&transaction.sender()) {
             self.state.remember_tx_sender(*transaction.hash(), transaction.sender());
             return TransactionValidationOutcome::Valid {
@@ -66,6 +78,28 @@ where
         self.state
             .forget_tx_senders(new_tip_block.body().transactions().iter().map(|tx| *tx.tx_hash()));
         self.inner.on_new_head_block(new_tip_block);
+    }
+}
+
+/// The pool error for a transaction that a revert removed from the chain.
+#[derive(Debug)]
+struct RevertedTransaction;
+
+impl Display for RevertedTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("transaction was removed from the chain by a revert")
+    }
+}
+
+impl std::error::Error for RevertedTransaction {}
+
+impl PoolTransactionError for RevertedTransaction {
+    fn is_bad_transaction(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

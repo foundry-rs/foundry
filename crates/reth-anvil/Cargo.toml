@@ -25,6 +25,7 @@ reth-engine-tree.workspace = true
 reth-engine-util.workspace = true
 reth-ethereum = { workspace = true, features = ["exex", "node", "node-api"] }
 reth-node-events.workspace = true
+reth-payload-builder.workspace = true
 reth-prune-types.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-stages-types.workspace = true

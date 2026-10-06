@@ -1,8 +1,12 @@
 use crate::{
-    block_env::BlockEnvOverrides, impersonation::ImpersonationState, mining::MiningController,
-    state::SharedAnvilState, time::TimeManager,
+    block_env::BlockEnvOverrides,
+    impersonation::ImpersonationState,
+    mining::MiningController,
+    snapshot::{Snapshot, SnapshotManager},
+    state::SharedAnvilState,
+    time::TimeManager,
 };
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -19,12 +23,11 @@ use jsonrpsee::{
 use reth_ethereum::{
     chainspec::{ChainSpec, EthChainSpec},
     pool::TransactionPool,
-    primitives::Bytecode,
-    storage::{BlockNumReader, HeaderProvider, StateProviderFactory},
+    primitives::{Bytecode, SealedHeader},
+    storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
-use tokio::time::sleep;
+use std::sync::Arc;
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -64,6 +67,18 @@ pub trait AnvilApi {
     /// Mines blocks and returns them with full transactions.
     #[method(name = "mine_detailed", aliases = ["evm_mine_detailed"])]
     async fn anvil_mine_detailed(&self, opts: Option<MineOptions>) -> RpcResult<Vec<Block>>;
+
+    /// Snapshots the chain head and the anvil settings. Returns the snapshot id.
+    #[method(name = "snapshot", aliases = ["evm_snapshot"])]
+    async fn anvil_snapshot(&self) -> RpcResult<U256>;
+
+    /// Reverts the chain to the given snapshot. Returns whether the snapshot existed.
+    #[method(name = "revert", aliases = ["evm_revert"])]
+    async fn anvil_revert(&self, id: U256) -> RpcResult<bool>;
+
+    /// Rewinds the chain by the given number of blocks.
+    #[method(name = "rollback")]
+    async fn anvil_rollback(&self, depth: Option<u64>) -> RpcResult<()>;
 
     /// Removes a transaction from the pool.
     #[method(name = "dropTransaction", aliases = ["hardhat_dropTransaction"])]
@@ -147,6 +162,14 @@ pub trait AnvilApi {
     ) -> RpcResult<bool>;
 }
 
+/// The `evm_*` methods that have no `anvil_*` counterpart.
+#[rpc(server, namespace = "evm")]
+pub trait EvmApi {
+    /// Mines blocks and returns `"0x0"`, as Hardhat does.
+    #[method(name = "mine")]
+    async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String>;
+}
+
 /// Implementation of the `anvil_*` RPC namespace.
 #[derive(Debug, Clone)]
 pub struct AnvilRpc<Pool, Provider, Eth> {
@@ -155,6 +178,7 @@ pub struct AnvilRpc<Pool, Provider, Eth> {
     time: TimeManager,
     block_env: BlockEnvOverrides,
     state: SharedAnvilState,
+    snapshots: SnapshotManager,
     chain_spec: Arc<ChainSpec>,
     instance_id: B256,
     pool: Pool,
@@ -171,6 +195,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
         time: TimeManager,
         block_env: BlockEnvOverrides,
         state: SharedAnvilState,
+        snapshots: SnapshotManager,
         chain_spec: Arc<ChainSpec>,
         instance_id: B256,
         pool: Pool,
@@ -183,6 +208,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
             time,
             block_env,
             state,
+            snapshots,
             chain_spec,
             instance_id,
             pool,
@@ -194,7 +220,10 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
 
 impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth>
 where
-    Provider: BlockNumReader + StateProviderFactory,
+    Provider: BlockNumReader
+        + HeaderProvider<Header = alloy_consensus::Header>
+        + TransactionsProvider
+        + StateProviderFactory,
     Eth: FullEthApiServer<NetworkTypes = Ethereum>,
 {
     fn best_block_number(&self) -> RpcResult<u64> {
@@ -203,15 +232,11 @@ where
             .map_err(|error| internal_error(format!("failed to read latest block number: {error}")))
     }
 
-    async fn wait_for_block_number(&self, expected: u64) -> RpcResult<()> {
-        for _ in 0..200 {
-            if self.best_block_number()? >= expected {
-                return Ok(());
-            }
-            sleep(Duration::from_millis(100)).await;
-        }
-
-        Err(internal_error(format!("timed out waiting for block {expected}")))
+    fn sealed_header(&self, number: u64) -> RpcResult<SealedHeader> {
+        self.provider
+            .sealed_header(number)
+            .map_err(|error| internal_error(format!("failed to read header {number}: {error}")))?
+            .ok_or_else(|| internal_error(format!("missing block header {number}")))
     }
 
     async fn block_by_number(&self, number: u64, full: bool) -> RpcResult<Block> {
@@ -226,21 +251,25 @@ where
 
     /// Mines `blocks` blocks and returns their numbers.
     async fn mine_blocks(&self, blocks: u64) -> RpcResult<Vec<u64>> {
-        if blocks == 0 {
-            return Ok(Vec::new());
-        }
-
-        let start = self.best_block_number()?;
+        let mut mined = Vec::with_capacity(blocks as usize);
         for _ in 0..blocks {
-            self.mining.trigger();
+            mined.push(self.mining.mine_block().await.map_err(internal_error)?.number);
         }
+        Ok(mined)
+    }
 
-        // This assumes dev mining advances the canonical chain one block per trigger with no
-        // intervening head changes, which holds for the local dev path.
-        let end = start.saturating_add(blocks);
-        self.wait_for_block_number(end).await?;
-
-        Ok(((start + 1)..=end).collect())
+    /// Rewinds the chain to the given canonical header and drops the transactions of the removed
+    /// blocks, so the pool does not mine them again.
+    async fn rewind_to(&self, header: &SealedHeader) -> RpcResult<()> {
+        let best = self.best_block_number()?;
+        if header.number < best {
+            let removed = self
+                .provider
+                .transactions_by_block_range(header.number + 1..=best)
+                .map_err(|error| internal_error(format!("failed to read transactions: {error}")))?;
+            self.impersonation.drop_txs(removed.into_iter().flatten().map(|tx| *tx.tx_hash()));
+        }
+        self.mining.rewind(header.clone()).await.map_err(internal_error)
     }
 
     /// Returns the balance of the account in the latest state, including anvil state writes.
@@ -270,7 +299,13 @@ where
 impl<Pool, Provider, Eth> AnvilApiServer for AnvilRpc<Pool, Provider, Eth>
 where
     Pool: TransactionPool + Send + Sync + 'static,
-    Provider: BlockNumReader + HeaderProvider + StateProviderFactory + Send + Sync + 'static,
+    Provider: BlockNumReader
+        + HeaderProvider<Header = alloy_consensus::Header>
+        + TransactionsProvider
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
     Eth: FullEthApiServer<NetworkTypes = Ethereum>,
 {
     async fn anvil_impersonate_account(&self, address: Address) -> RpcResult<()> {
@@ -347,6 +382,38 @@ where
         Ok(mined)
     }
 
+    async fn anvil_snapshot(&self) -> RpcResult<U256> {
+        let header = self.sealed_header(self.best_block_number()?)?;
+        let snapshot = Snapshot {
+            header,
+            state: self.state.read().clone(),
+            time: self.time.snapshot(),
+            block_env: self.block_env.snapshot(),
+        };
+        Ok(self.snapshots.insert(snapshot))
+    }
+
+    async fn anvil_revert(&self, id: U256) -> RpcResult<bool> {
+        let Some(snapshot) = self.snapshots.take(id) else {
+            return Ok(false);
+        };
+        self.rewind_to(&snapshot.header).await?;
+        *self.state.write() = snapshot.state;
+        self.time.restore(snapshot.time);
+        self.block_env.restore(snapshot.block_env);
+        Ok(true)
+    }
+
+    async fn anvil_rollback(&self, depth: Option<u64>) -> RpcResult<()> {
+        let depth = depth.unwrap_or(1);
+        let best = self.best_block_number()?;
+        let target = best.checked_sub(depth).ok_or_else(|| {
+            invalid_params(format!("cannot roll back {depth} blocks from {best}"))
+        })?;
+        let header = self.sealed_header(target)?;
+        self.rewind_to(&header).await
+    }
+
     async fn anvil_drop_transaction(&self, tx_hash: B256) -> RpcResult<Option<B256>> {
         Ok(self.pool.remove_transaction(tx_hash).map(|_| {
             self.impersonation.forget_tx_sender(&tx_hash);
@@ -411,7 +478,7 @@ where
             latest_block_number: latest.header.number,
             latest_block_hash: latest.header.hash,
             forked_network: None,
-            snapshots: BTreeMap::new(),
+            snapshots: self.snapshots.metadata(),
         })
     }
 
@@ -490,6 +557,25 @@ where
     ) -> RpcResult<bool> {
         self.state.write().set_storage_at(address, slot.into(), value.into());
         Ok(true)
+    }
+}
+
+#[async_trait]
+impl<Pool, Provider, Eth> EvmApiServer for AnvilRpc<Pool, Provider, Eth>
+where
+    Pool: TransactionPool + Send + Sync + 'static,
+    Provider: BlockNumReader
+        + HeaderProvider<Header = alloy_consensus::Header>
+        + TransactionsProvider
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+{
+    async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String> {
+        self.anvil_mine_detailed(opts).await?;
+        Ok("0x0".to_string())
     }
 }
 

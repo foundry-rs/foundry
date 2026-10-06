@@ -1,19 +1,13 @@
-use futures::Stream;
-use reth_ethereum::pool::{TransactionListenerKind, TransactionPool};
-use std::{
-    pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    task::{Context, Poll},
-    time::Duration,
+use reth_ethereum::{
+    pool::{TransactionListenerKind, TransactionPool},
+    primitives::SealedHeader,
 };
+use std::time::Duration;
 use tokio::{
     select,
     sync::{
-        Notify,
-        futures::OwnedNotified,
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+        oneshot,
         watch::{Receiver, Sender, channel},
     },
     time::sleep,
@@ -30,21 +24,30 @@ pub enum MiningMode {
     Interval(Duration),
 }
 
-/// Controls the local miner: the mining mode and on-demand block triggers.
+/// A request for the miner task.
+#[derive(Debug)]
+pub enum MinerRequest {
+    /// Builds and inserts one block. The sender, if any, receives the mined header.
+    Mine(Option<oneshot::Sender<Result<SealedHeader, String>>>),
+    /// Rewinds the chain head to the given canonical header.
+    Rewind(Box<SealedHeader>, oneshot::Sender<Result<(), String>>),
+}
+
+/// Controls the miner task: the mining mode, block requests, and head rewinds.
 #[derive(Debug, Clone)]
 pub struct MiningController {
     mode_tx: Sender<MiningMode>,
-    triggers: MiningTriggers,
-}
-
-impl Default for MiningController {
-    fn default() -> Self {
-        let (mode_tx, _) = channel(MiningMode::Automine);
-        Self { mode_tx, triggers: MiningTriggers::default() }
-    }
+    requests: UnboundedSender<MinerRequest>,
 }
 
 impl MiningController {
+    /// Creates a controller and the request stream the miner task consumes.
+    pub fn new() -> (Self, UnboundedReceiver<MinerRequest>) {
+        let (mode_tx, _) = channel(MiningMode::Automine);
+        let (requests, rx) = unbounded_channel();
+        (Self { mode_tx, requests }, rx)
+    }
+
     /// Returns whether automine is enabled.
     pub fn is_automine(&self) -> bool {
         matches!(*self.mode_tx.borrow(), MiningMode::Automine)
@@ -84,74 +87,27 @@ impl MiningController {
         self.mode_tx.subscribe()
     }
 
-    /// Requests one block.
+    /// Requests one block without waiting for it.
     pub fn trigger(&self) {
-        self.triggers.trigger();
+        let _ = self.requests.send(MinerRequest::Mine(None));
     }
 
-    /// Returns the stream of block requests consumed by the local miner.
-    pub fn trigger_stream(&self) -> MiningTriggerStream {
-        self.triggers.stream()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct MiningTriggers {
-    pending: Arc<AtomicUsize>,
-    notify: Arc<Notify>,
-}
-
-impl MiningTriggers {
-    fn trigger(&self) {
-        self.pending.fetch_add(1, Ordering::AcqRel);
-        self.notify.notify_one();
+    /// Mines one block and returns its header.
+    pub async fn mine_block(&self) -> Result<SealedHeader, String> {
+        let (tx, rx) = oneshot::channel();
+        self.requests
+            .send(MinerRequest::Mine(Some(tx)))
+            .map_err(|_| "the miner task has stopped".to_string())?;
+        rx.await.map_err(|_| "the miner task has stopped".to_string())?
     }
 
-    fn stream(&self) -> MiningTriggerStream {
-        MiningTriggerStream {
-            pending: Arc::clone(&self.pending),
-            notify: Arc::clone(&self.notify),
-            notified: None,
-        }
-    }
-}
-
-/// Yields one item per requested block.
-#[derive(Debug)]
-pub struct MiningTriggerStream {
-    pending: Arc<AtomicUsize>,
-    notify: Arc<Notify>,
-    notified: Option<Pin<Box<OwnedNotified>>>,
-}
-
-impl Stream for MiningTriggerStream {
-    type Item = ();
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            let pending = self.pending.load(Ordering::Acquire);
-            if pending > 0 {
-                if self
-                    .pending
-                    .compare_exchange(pending, pending - 1, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-                {
-                    return Poll::Ready(Some(()));
-                }
-                continue;
-            }
-
-            if self.notified.is_none() {
-                self.notified = Some(Box::pin(Arc::clone(&self.notify).notified_owned()));
-            }
-
-            if self.notified.as_mut().unwrap().as_mut().poll(cx).is_ready() {
-                self.notified = None;
-                continue;
-            }
-
-            return Poll::Pending;
-        }
+    /// Rewinds the chain head to the given canonical header.
+    pub async fn rewind(&self, header: SealedHeader) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        self.requests
+            .send(MinerRequest::Rewind(Box::new(header), tx))
+            .map_err(|_| "the miner task has stopped".to_string())?;
+        rx.await.map_err(|_| "the miner task has stopped".to_string())?
     }
 }
 

@@ -113,6 +113,24 @@ impl TimeManager {
         next_timestamp
     }
 
+    /// Captures the current settings.
+    pub fn snapshot(&self) -> TimeSnapshot {
+        TimeSnapshot {
+            offset: *self.offset.read(),
+            last_timestamp: *self.last_timestamp.read(),
+            next_exact_timestamp: *self.next_exact_timestamp.read(),
+            interval: *self.interval.read(),
+        }
+    }
+
+    /// Restores the given settings.
+    pub fn restore(&self, snapshot: TimeSnapshot) {
+        *self.offset.write() = snapshot.offset;
+        *self.last_timestamp.write() = snapshot.last_timestamp;
+        *self.next_exact_timestamp.write() = snapshot.next_exact_timestamp;
+        *self.interval.write() = snapshot.interval;
+    }
+
     /// Returns the current timestamp for read-only calls without consuming overrides.
     pub fn current_call_timestamp(&self) -> u64 {
         self.compute_next_timestamp().0
@@ -133,6 +151,15 @@ impl TimeManager {
             attributes
         }
     }
+}
+
+/// A copy of the time manager settings.
+#[derive(Clone, Copy, Debug)]
+pub struct TimeSnapshot {
+    offset: i128,
+    last_timestamp: u64,
+    next_exact_timestamp: Option<u64>,
+    interval: Option<u64>,
 }
 
 fn duration_since_unix_epoch() -> Duration {

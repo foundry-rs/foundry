@@ -757,3 +757,164 @@ async fn anvil_set_storage_at_is_visible_to_eth_get_storage_at_and_eth_call() ->
     })
     .await
 }
+
+#[tokio::test]
+async fn anvil_snapshot_and_revert_restore_state_and_settings() -> Result<()> {
+    with_test_client(|client| async move {
+        let account = Address::repeat_byte(0x5A);
+        let original_balance = U256::from(123u64);
+        let original_gas_limit = U256::from(25_000_000u64);
+        let replacement_gas_limit = U256::from(30_000_000u64);
+
+        client.request::<(), _>("anvil_setBalance", rpc_params![account, original_balance]).await?;
+        client
+            .request::<bool, _>("anvil_setBlockGasLimit", rpc_params![original_gas_limit])
+            .await?;
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+
+        let snapshot: U256 = client.request("evm_snapshot", rpc_params![]).await?;
+        assert_eq!(snapshot, U256::ZERO, "the first snapshot id should be zero");
+        let snapshot_block_number = block_number(&client).await?;
+        let snapshot_block = get_block(&client, "latest").await?;
+        let snapshot_block_hash =
+            B256::from_str(snapshot_block["hash"].as_str().ok_or_eyre("missing snapshot hash")?)?;
+        let metadata: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
+        assert_eq!(
+            metadata.snapshots.get(&snapshot),
+            Some(&(snapshot_block_number, snapshot_block_hash))
+        );
+
+        client.request::<(), _>("anvil_setBalance", rpc_params![account, U256::from(1u64)]).await?;
+        client
+            .request::<bool, _>("evm_setBlockGasLimit", rpc_params![replacement_gas_limit])
+            .await?;
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(3u64)]).await?;
+        assert_eq!(block_number(&client).await?, snapshot_block_number + 3);
+
+        let reverted: bool = client.request("evm_revert", rpc_params![snapshot]).await?;
+        assert!(reverted, "revert should return true for a known snapshot");
+        assert_eq!(block_number(&client).await?, snapshot_block_number);
+        let head = get_block(&client, "latest").await?;
+        assert_eq!(head["hash"].as_str(), Some(format!("{snapshot_block_hash:#x}").as_str()));
+
+        let balance: U256 =
+            client.request("eth_getBalance", rpc_params![account, "latest"]).await?;
+        assert_eq!(balance, original_balance, "the revert should restore the snapshot balance");
+
+        let second_revert: bool = client.request("anvil_revert", rpc_params![snapshot]).await?;
+        assert!(!second_revert, "snapshot ids are invalid after a revert");
+        let metadata: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
+        assert!(!metadata.snapshots.contains_key(&snapshot));
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, snapshot_block_number + 1);
+        let mined = get_block(&client, "latest").await?;
+        let gas_limit = U256::from_str(mined["gasLimit"].as_str().ok_or_eyre("missing gasLimit")?)?;
+        assert_eq!(
+            gas_limit, original_gas_limit,
+            "the revert should restore the block env overrides"
+        );
+        assert_eq!(
+            mined["parentHash"].as_str(),
+            Some(format!("{snapshot_block_hash:#x}").as_str())
+        );
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_revert_drops_mined_transactions() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let recipient = Address::repeat_byte(0x9A);
+
+        let snapshot: U256 = client.request("anvil_snapshot", rpc_params![]).await?;
+        let snapshot_block_number = block_number(&client).await?;
+
+        let tx_hash: B256 = client
+            .request("eth_sendTransaction", rpc_params![transfer(funder, recipient, gas_price)])
+            .await?;
+        wait_for_receipt(&client, tx_hash).await?;
+        let balance: U256 =
+            client.request("eth_getBalance", rpc_params![recipient, "latest"]).await?;
+        assert_eq!(balance, U256::from(1));
+
+        let reverted: bool = client.request("anvil_revert", rpc_params![snapshot]).await?;
+        assert!(reverted);
+        assert_eq!(block_number(&client).await?, snapshot_block_number);
+
+        let balance: U256 =
+            client.request("eth_getBalance", rpc_params![recipient, "latest"]).await?;
+        assert_eq!(balance, U256::ZERO, "the revert should undo the transfer");
+        let receipt: Option<Value> =
+            client.request("eth_getTransactionReceipt", rpc_params![tx_hash]).await?;
+        let tx: Option<Value> =
+            client.request("eth_getTransactionByHash", rpc_params![tx_hash]).await?;
+        assert!(tx.is_none(), "the reverted transaction should be unknown");
+        assert!(receipt.is_none(), "the reverted transaction should have no receipt");
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_no_receipt(&client, tx_hash, 5).await?;
+        let balance: U256 =
+            client.request("eth_getBalance", rpc_params![recipient, "latest"]).await?;
+        assert_eq!(balance, U256::ZERO, "the reverted transaction must not be mined again");
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_rollback_rewinds_the_given_number_of_blocks() -> Result<()> {
+    with_test_client(|client| async move {
+        let initial_block = block_number(&client).await?;
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(4u64)]).await?;
+        assert_eq!(block_number(&client).await?, initial_block + 4);
+
+        client.request::<(), _>("anvil_rollback", rpc_params![2u64]).await?;
+        assert_eq!(block_number(&client).await?, initial_block + 2);
+
+        client.request::<(), _>("anvil_rollback", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, initial_block + 1);
+
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, initial_block + 2);
+
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn evm_mine_returns_hardhat_result() -> Result<()> {
+    with_test_client(|client| async move {
+        let initial_block = block_number(&client).await?;
+        let result: String = client.request("evm_mine", rpc_params![]).await?;
+        assert_eq!(result, "0x0");
+        assert_eq!(block_number(&client).await?, initial_block + 1);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn safe_and_finalized_tags_follow_the_epoch_distance() -> Result<()> {
+    with_test_client(|client| async move {
+        let safe = get_block(&client, "safe").await?;
+        let finalized = get_block(&client, "finalized").await?;
+        assert_eq!(safe["number"].as_str(), Some("0x0"));
+        assert_eq!(finalized["number"].as_str(), Some("0x0"));
+
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(40u64)]).await?;
+        let head = block_number(&client).await?;
+        let safe = get_block(&client, "safe").await?;
+        let finalized = get_block(&client, "finalized").await?;
+        assert_eq!(safe["number"].as_str(), Some(format!("0x{:x}", head - 32).as_str()));
+        assert_eq!(finalized["number"].as_str(), Some("0x0"));
+
+        Ok(())
+    })
+    .await
+}

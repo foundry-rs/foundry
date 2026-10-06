@@ -7,13 +7,15 @@ mod block_env;
 mod evm;
 mod impersonation;
 mod launcher;
+mod miner;
 mod mining;
 mod node;
 mod pool;
 mod provider;
+mod snapshot;
 mod state;
 mod state_provider;
 mod time;
 
-pub use api::{AnvilApiServer, AnvilRpc};
-pub use node::{RethAnvilConfig, RethAnvilHandle, launch};
+pub use api::{AnvilApiServer, AnvilRpc, EvmApiServer};
+pub use node::{DEFAULT_SLOTS_IN_AN_EPOCH, RethAnvilConfig, RethAnvilHandle, launch};

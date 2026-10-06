@@ -11321,6 +11321,7 @@ dependencies = [
  "reth-engine-util",
  "reth-ethereum",
  "reth-node-events",
+ "reth-payload-builder",
  "reth-prune-types 2.7.0",
  "reth-rpc-eth-api",
  "reth-stages-types 2.7.0",

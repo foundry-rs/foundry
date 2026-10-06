@@ -29,7 +29,7 @@ pub enum StateOverride {
 /// queued write at the start of the next built block, so the write enters the block's state
 /// changes and state root. Once that block is canonical, the overlay entry is dropped and the
 /// chain state serves the value.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AnvilState {
     accounts: HashMap<Address, AccountOverride>,
     bytecodes: HashMap<B256, Bytecode>,
