@@ -8,7 +8,7 @@ use crate::{
         mock::{self, MockCallDataContext, MockCallReturnData},
         prank::Prank,
     },
-    expected_emit::ExpectedEmitTracker,
+    expected_emit::{self, ExpectedEmitTracker},
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
     test::{
@@ -26,7 +26,7 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::AccessList;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
     mapping_slots::{
@@ -2596,95 +2596,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        // At the end of the call,
-        // we need to check if we've found all the emits.
-        // We know we've found all the expected emits in the right order
-        // if the queue is fully matched.
-        // If it's not fully matched, then either:
-        // 1. Not enough events were emitted (we'll know this because the amount of times we
-        // inspected events will be less than the size of the queue) 2. The wrong events
-        // were emitted (The inspected events should match the size of the queue, but still some
-        // events will not be matched)
-
-        // First, check that we're at the call depth where the emits were declared from.
-        let should_check_emits = self
-            .expected_emits
-            .iter()
-            .any(|(expected, _)| {
-                let curr_depth = ecx.journal().depth();
-                expected.depth == curr_depth
-            }) &&
-            // Ignore staticcalls
-            !call.is_static;
-        if should_check_emits {
-            let expected_counts = self
-                .expected_emits
-                .iter()
-                .filter_map(|(expected, count_map)| {
-                    let count = match expected.address {
-                        Some(emitter) => match count_map.get(&emitter) {
-                            Some(log_count) => expected
-                                .log
-                                .as_ref()
-                                .map(|l| log_count.count(l))
-                                .unwrap_or_else(|| log_count.count_unchecked()),
-                            None => 0,
-                        },
-                        None => match &expected.log {
-                            Some(log) => count_map.values().map(|logs| logs.count(log)).sum(),
-                            None => count_map.values().map(|logs| logs.count_unchecked()).sum(),
-                        },
-                    };
-
-                    (count != expected.count).then_some((expected, count))
-                })
-                .collect::<Vec<_>>();
-
-            // Revert if not all emits expected were matched.
-            if let Some((expected, _)) = self
-                .expected_emits
-                .iter()
-                .find(|(expected, _)| !expected.found && expected.count > 0)
-            {
-                outcome.result.result = InstructionResult::Revert;
-                let mismatch_error = expected.mismatch_error.clone();
-                let expected_log = expected.log.clone();
-                let checks = expected.checks;
-                let anonymous = expected.anonymous;
-                let error_msg = mismatch_error
-                    .as_ref()
-                    .map(|mismatch| {
-                        mismatch.to_error_msg(
-                            || self.signatures_identifier(),
-                            checks,
-                            expected_log.as_ref(),
-                            anonymous,
-                        )
-                    })
-                    .unwrap_or_else(|| "log != expected log".to_string());
-                outcome.result.output = error_msg.abi_encode().into();
-                return;
-            }
-
-            if !expected_counts.is_empty() {
-                let msg = if outcome.result.is_ok() {
-                    let (expected, count) = expected_counts.first().unwrap();
-                    format!("log emitted {count} times, expected {}", expected.count)
-                } else {
-                    "expected an emit, but the call reverted instead. \
-                     ensure you're testing the happy path when using `expectEmit`"
-                        .to_string()
-                };
-
-                outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = Error::encode(msg);
-                return;
-            }
-
-            // All emits were found, we're good.
-            // Clear the queue, as we expect the user to declare more events for the next call
-            // if they wanna match further events.
-            self.expected_emits.clear()
+        if let Some(unmet) = expected_emit::check_call_emits(
+            &mut self.expected_emits,
+            ecx.journal().depth(),
+            call.is_static,
+            outcome.result.is_ok(),
+        ) {
+            outcome.result.result = InstructionResult::Revert;
+            outcome.result.output = unmet.encode(|| self.signatures_identifier());
+            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -2723,23 +2643,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
 
             // Check if we have any leftover expected emits
-            // First, if any emits were found at the root call, then we its ok and we remove them.
-            // For count=0 expectations, NOT being found is success, so mark them as found
-            for (expected, _) in &mut self.expected_emits {
-                if expected.count == 0 && !expected.found {
-                    expected.found = true;
-                }
-            }
-            self.expected_emits.retain(|(expected, _)| !expected.found);
-            // If not empty, we got mismatched emits
-            if !self.expected_emits.is_empty() {
-                let msg = if outcome.result.is_ok() {
-                    "expected an emit, but no logs were emitted afterwards. \
-                     you might have mismatched events or not enough events were emitted"
-                } else {
-                    "expected an emit, but the call reverted instead. \
-                     ensure you're testing the happy path when using `expectEmit`"
-                };
+            if let Some(msg) = expected_emit::first_unmet_root_emit(
+                &mut self.expected_emits,
+                outcome.result.is_ok(),
+            ) {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
                 return;
