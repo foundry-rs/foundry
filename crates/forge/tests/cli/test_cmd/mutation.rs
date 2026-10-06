@@ -1921,14 +1921,14 @@ MUTATION TESTING RESULTS
 ╞══════════╪═══════════╪════════════╡
 │ Survived ┆ 3         ┆ 5.7%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 48        ┆ 90.6%      │
+│ Killed   ┆ 50        ┆ 94.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 2         ┆ 3.8%       │
+│ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 94.1% (48/51 mutants killed); [ELAPSED]
+Mutation Score: 94.3% (50/53 mutants killed); [ELAPSED]
 ...
 "#]]);
 }
@@ -1990,4 +1990,66 @@ MUTATION TESTING RESULTS
 ════════════════════════════════════════════════════════════
 ...
 "#]]);
+}
+
+// Mutants on nested and shared spans must give the same results for every worker count and
+// schedule.
+#[forgetest_init]
+fn mutation_testing_results_do_not_depend_on_worker_count(prj: _, cmd: _) {
+    prj.add_source(
+        "Nested.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Nested {
+    function mix(uint256 a, uint256 b) public pure returns (uint256) {
+        return (a + b) * (a > b ? a - b : b - a) + (a * 3) / (b + 1);
+    }
+
+    function clamp(uint256 x, uint256 lo, uint256 hi) public pure returns (uint256) {
+        if (x < lo) return lo + (hi - lo) * 0;
+        if (x > hi) return hi - (hi - lo) * 0;
+        return x;
+    }
+
+    function score(uint256 x) public pure returns (uint256) {
+        return (x % 7 == 0 ? x / 7 : x * 2) + (x > 100 ? 1 : 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Nested.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Nested.sol";
+
+contract NestedTest {
+    Nested private nested = new Nested();
+
+    function testWeak() public view {
+        assert(nested.clamp(5, 1, 10) == 5);
+        assert(nested.mix(2, 2) > 0);
+    }
+}
+"#,
+    );
+
+    let mut run = |jobs: &str| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Nested.sol", "--mutation-jobs", jobs, "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut result = serde_json::from_str::<serde_json::Value>(output.trim()).unwrap();
+        result["summary"].as_object_mut().unwrap().remove("duration_secs");
+        result
+    };
+    let serial = run("1");
+    assert!(serial["summary"]["survived"].as_u64().unwrap() > 0, "{serial}");
+    assert_eq!(run("4"), serial);
+    assert_eq!(run("8"), serial);
 }
