@@ -525,16 +525,12 @@ fn try_rewrite_target(
     // Use raw (download) URLs for image assets so they render inline rather
     // than pointing at the GitHub blob viewer page.
     let repo = repo?;
-    let is_image = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|ext| {
-            matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico"
-            )
-        })
-        .unwrap_or(false);
+    let is_image = path.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+        matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico"
+        )
+    });
     let mut url = if is_image {
         git_raw_url(repo, commit.unwrap_or("HEAD"), root, &abs)?
     } else {
