@@ -1,11 +1,13 @@
 //! Engine-free matching for the `expectEmit` cheatcodes.
 
+use crate::Error;
 use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{
-    Address, Log, LogData as RawLog, hex,
+    Address, Bytes, Log, LogData as RawLog, hex,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
+use alloy_sol_types::SolValue;
 use foundry_common::{abi::get_indexed_event, fmt::format_token};
 use foundry_evm_traces::{DecodedCallLog, identifier::SignaturesIdentifier};
 use std::collections::VecDeque;
@@ -515,10 +517,136 @@ fn checked_topic_count(log: &RawLog, is_anonymous: bool) -> usize {
     if is_anonymous { log.topics().len() } else { log.topics().len().saturating_sub(1) }
 }
 
+/// Why the expected emits declared at a call's depth were not satisfied when it ended.
+#[derive(Debug)]
+pub(crate) enum UnmetEmit {
+    /// An expected log was never matched.
+    Unmatched(ExpectedEmit),
+    /// A log was emitted a different number of times than expected.
+    Count { expected: u64, actual: u64 },
+    /// The call did not succeed while logs were expected.
+    Failed,
+}
+
+impl UnmetEmit {
+    /// Encodes the revert data, calling `identifier` only when event signatures are needed.
+    pub(crate) fn encode<'a>(
+        self,
+        identifier: impl FnOnce() -> Option<&'a SignaturesIdentifier>,
+    ) -> Bytes {
+        match self {
+            Self::Unmatched(expected) => {
+                let error_msg = expected
+                    .mismatch_error
+                    .as_ref()
+                    .map(|mismatch| {
+                        mismatch.to_error_msg(
+                            identifier,
+                            expected.checks,
+                            expected.log.as_ref(),
+                            expected.anonymous,
+                        )
+                    })
+                    .unwrap_or_else(|| "log != expected log".to_string());
+                error_msg.abi_encode().into()
+            }
+            Self::Count { expected, actual } => {
+                Error::encode(format!("log emitted {actual} times, expected {expected}"))
+            }
+            Self::Failed => Error::encode(
+                "expected an emit, but the call reverted instead. \
+                 ensure you're testing the happy path when using `expectEmit`",
+            ),
+        }
+    }
+}
+
+/// Checks the expected emits declared at `depth` when a non-reverted call at that depth ends.
+///
+/// Clears the tracker if they are all satisfied.
+pub(crate) fn check_call_emits(
+    tracker: &mut ExpectedEmitTracker,
+    depth: usize,
+    is_static: bool,
+    succeeded: bool,
+) -> Option<UnmetEmit> {
+    let should_check_emits =
+        tracker.iter().any(|(expected, _)| expected.depth == depth) && !is_static;
+    if !should_check_emits {
+        return None;
+    }
+
+    let expected_counts = tracker
+        .iter()
+        .filter_map(|(expected, count_map)| {
+            let count = match expected.address {
+                Some(emitter) => match count_map.get(&emitter) {
+                    Some(log_count) => expected
+                        .log
+                        .as_ref()
+                        .map(|l| log_count.count(l))
+                        .unwrap_or_else(|| log_count.count_unchecked()),
+                    None => 0,
+                },
+                None => match &expected.log {
+                    Some(log) => count_map.values().map(|logs| logs.count(log)).sum(),
+                    None => count_map.values().map(|logs| logs.count_unchecked()).sum(),
+                },
+            };
+
+            (count != expected.count).then_some((expected, count))
+        })
+        .collect::<Vec<_>>();
+
+    if let Some((expected, _)) =
+        tracker.iter().find(|(expected, _)| !expected.found && expected.count > 0)
+    {
+        return Some(UnmetEmit::Unmatched(expected.clone()));
+    }
+
+    if let Some((expected, count)) = expected_counts.first() {
+        return Some(if succeeded {
+            UnmetEmit::Count { expected: expected.count, actual: *count }
+        } else {
+            UnmetEmit::Failed
+        });
+    }
+
+    // Later calls need their own expectations.
+    tracker.clear();
+    None
+}
+
+/// Checks for leftover expected emits when the root call ends without reverting.
+///
+/// Returns the failure message if any expectation is still unmatched.
+pub(crate) fn first_unmet_root_emit(
+    tracker: &mut ExpectedEmitTracker,
+    succeeded: bool,
+) -> Option<&'static str> {
+    // A count=0 expectation is met when its log was never emitted.
+    for (expected, _) in tracker.iter_mut() {
+        if expected.count == 0 && !expected.found {
+            expected.found = true;
+        }
+    }
+    tracker.retain(|(expected, _)| !expected.found);
+    if tracker.is_empty() {
+        return None;
+    }
+    Some(if succeeded {
+        "expected an emit, but no logs were emitted afterwards. \
+         you might have mismatched events or not enough events were emitted"
+    } else {
+        "expected an emit, but the call reverted instead. \
+         ensure you're testing the happy path when using `expectEmit`"
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{B256, Bytes, address, b256};
+    use alloy_primitives::{B256, address, b256};
 
     const EMITTER: Address = address!("0x00000000000000000000000000000000000000aa");
     const OTHER: Address = address!("0x00000000000000000000000000000000000000bb");
@@ -752,5 +880,65 @@ mod tests {
     /// Signatures are only resolved for non-anonymous log mismatches.
     fn unused_identifier<'a>() -> Option<&'a SignaturesIdentifier> {
         panic!("signatures identifier must not be resolved")
+    }
+
+    #[test]
+    fn call_end_reports_logs_counted_across_emitters() {
+        // Found after two logs from one emitter, with a third from another emitter.
+        let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let mut tracker = ExpectedEmitTracker::new();
+        expect_with(&mut tracker, Some(&a), ALL, None, 2, false);
+        let (expected, count_map) = &mut tracker[0];
+        expected.found = true;
+        for (emitter, logs) in [(EMITTER, 2), (OTHER, 1)] {
+            let mut counts = LogCountMap::new(expected);
+            for _ in 0..logs {
+                counts.insert(&a.data);
+            }
+            count_map.insert(emitter, counts);
+        }
+
+        let unmet = check_call_emits(&mut tracker.clone(), 0, false, true).unwrap();
+        assert_eq!(
+            unmet.encode(unused_identifier),
+            Error::encode("log emitted 3 times, expected 2")
+        );
+
+        let unmet = check_call_emits(&mut tracker, 0, false, false).unwrap();
+        assert_eq!(
+            unmet.encode(unused_identifier),
+            Error::encode(
+                "expected an emit, but the call reverted instead. \
+                 ensure you're testing the happy path when using `expectEmit`"
+            )
+        );
+    }
+
+    #[test]
+    fn root_end_reports_leftover_expectations() {
+        let a = log(EMITTER, vec![TOPIC_A], b"a");
+        let mut tracker = ExpectedEmitTracker::new();
+        expect_with(&mut tracker, Some(&a), ALL, None, 0, false);
+        expect(&mut tracker, Some(&a), ALL);
+        tracker[1].0.found = true;
+
+        assert_eq!(first_unmet_root_emit(&mut tracker, true), None);
+        assert!(tracker.is_empty());
+
+        expect(&mut tracker, Some(&a), ALL);
+        assert_eq!(
+            first_unmet_root_emit(&mut tracker.clone(), true),
+            Some(
+                "expected an emit, but no logs were emitted afterwards. \
+                 you might have mismatched events or not enough events were emitted"
+            )
+        );
+        assert_eq!(
+            first_unmet_root_emit(&mut tracker, false),
+            Some(
+                "expected an emit, but the call reverted instead. \
+                 ensure you're testing the happy path when using `expectEmit`"
+            )
+        );
     }
 }
