@@ -117,7 +117,7 @@ use revm::{
     },
     database::CacheDB,
     interpreter::{InstructionResult, SuccessOrHalt, return_ok, return_revert},
-    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
+    primitives::{eip7702::PER_EMPTY_ACCOUNT_COST, hardfork::SpecId},
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
@@ -1966,6 +1966,10 @@ impl EthApi<FoundryNetwork> {
                 && inner.authorization_list.is_none()
                 && inner.access_list.is_none()
                 && inner.blob_versioned_hashes.is_none();
+            // Under EIP-8037, a value transfer to an empty account also pays new-account state
+            // gas, so it must execute.
+            let may_create_account = self.backend.spec_id() >= SpecId::AMSTERDAM
+                && inner.value.is_some_and(|value| !value.is_zero());
 
             // A priced transfer below the base fee falls through, so execution rejects it. Before
             // London there is no protocol base fee to check.
@@ -1978,6 +1982,10 @@ impl EthApi<FoundryNetwork> {
                 && !self.backend.is_precompile(to, &block_env)
                 && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
                 && target_code.as_ref().is_empty()
+                && (!may_create_account
+                    || state
+                        .basic_ref(*to)
+                        .is_ok_and(|account| account.is_some_and(|account| !account.is_empty())))
             {
                 return Ok(MIN_TRANSACTION_GAS);
             }

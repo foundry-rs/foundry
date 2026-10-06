@@ -3,7 +3,7 @@
 use crate::utils::http_provider_with_signer;
 use alloy_chains::NamedChain;
 use alloy_genesis::Genesis;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -580,6 +580,43 @@ async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path()
     let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
 
     assert_eq!(gas, U256::from(GAS_TRANSFER));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/17428>
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_amsterdam_transfer_to_new_account() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let from = accounts.next().unwrap();
+    let existing = accounts.next().unwrap();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(existing).with_value(U256::ONE);
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+    assert_eq!(gas, U256::from(GAS_TRANSFER));
+
+    // A value transfer to an empty account also pays the EIP-8037 new-account state gas.
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(Address::random())
+        .with_value(U256::ONE);
+    let gas = api
+        .estimate_gas(WithOtherFields::new(tx.clone()), None, Default::default())
+        .await
+        .unwrap()
+        .to::<u64>();
+    assert_eq!(gas, 204_600);
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx.with_gas_limit(gas)))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.gas_used, gas);
 }
 
 #[tokio::test(flavor = "multi_thread")]
