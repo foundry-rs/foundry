@@ -445,6 +445,9 @@ if grep -q '"round": 2' "$1"; then
     echo "generator quota exceeded" >&2
     exit 3
 fi
+grep -q '"likely_equivalent": "the comparisons agree when the operand is unsigned"' "$1"
+grep -q '"check_command"' "$1"
+grep -q 'CANDIDATE_JSON' "$1"
 cat > "$2" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
@@ -465,6 +468,10 @@ library Fee {
     function fee(uint256 amount) internal pure returns (uint256 f) {
         f = amount / 100;
         if (f > 10 ether) f = 10 ether;
+    }
+
+    function charges(uint256 amount) internal pure returns (bool) {
+        return amount / 100 > 0;
     }
 }
 "#,
@@ -529,4 +536,72 @@ Error: generator failed in round 2 (exit status: 3): generator quota exceeded
     assert_eq!(rounds.as_array().unwrap().len(), 1);
     assert_eq!(rounds[0]["possible_bugs"].as_array().unwrap().len(), 1);
     assert!(!prj.root().join("test/generated/FeeCap.t.sol").exists());
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn properties_check_reports_candidate_result(prj: _, cmd: _) {
+    prj.add_source(
+        "Fee.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+library Fee {
+    function fee(uint256 amount) internal pure returns (uint256) {
+        return amount / 100;
+    }
+}
+"#,
+    );
+    let candidate = |content: &str| {
+        serde_json::json!({
+            "schema": "foundry/properties-candidate-v1",
+            "rationale": "fee is 1% rounded down",
+            "files": [{"path": "test/generated/FeeCheck.t.sol", "content": content}],
+            "tests": [{"path": "test/generated/FeeCheck.t.sol", "contract": "FeeCheckTest", "name": "testFee"}]
+        })
+        .to_string()
+    };
+    fs::write(
+        prj.root().join("passing.json"),
+        candidate(
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        prj.root().join("broken.json"),
+        candidate("pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function testFee() public {\n        missing();\n    }\n}\n"),
+    )
+    .unwrap();
+
+    cmd.args(["properties", "--check", "passing.json", "--seed", "1", "--seed", "2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "passed": true,
+  "reasons": [],
+  "possible_bugs": []
+}
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["properties", "--check", "broken.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "FeeCheckTest::testFee failed on seed 1: [..]",
+    "FeeCheckTest::testFee failed on seed 2: [..]"
+  ],
+  "possible_bugs": []
+}
+
+"#]])
+        .stderr_eq(str![[r#"
+Error: candidate check failed
+
+"#]]);
+    assert!(!prj.root().join("test/generated/FeeCheck.t.sol").exists());
 }
