@@ -1,3 +1,4 @@
+use alloy_consensus::Header;
 use reth_ethereum::{
     pool::{TransactionListenerKind, TransactionPool},
     primitives::SealedHeader,
@@ -28,23 +29,29 @@ pub enum MiningMode {
 
 /// A request for the miner task.
 #[derive(Debug)]
-pub enum MinerRequest {
+pub enum MinerRequest<H = Header> {
     /// Builds and inserts one block. The sender, if any, receives the mined header.
-    Mine(Option<oneshot::Sender<Result<SealedHeader, String>>>),
+    Mine(Option<oneshot::Sender<Result<SealedHeader<H>, String>>>),
     /// Rewinds the chain head to the given canonical header.
-    Rewind(Box<SealedHeader>, oneshot::Sender<Result<(), String>>),
+    Rewind(Box<SealedHeader<H>>, oneshot::Sender<Result<(), String>>),
 }
 
 /// Controls the miner task: the mining mode, block requests, and head rewinds.
-#[derive(Debug, Clone)]
-pub struct MiningController {
+#[derive(Debug)]
+pub struct MiningController<H = Header> {
     mode_tx: Sender<MiningMode>,
-    requests: UnboundedSender<MinerRequest>,
+    requests: UnboundedSender<MinerRequest<H>>,
 }
 
-impl MiningController {
+impl<H> Clone for MiningController<H> {
+    fn clone(&self) -> Self {
+        Self { mode_tx: self.mode_tx.clone(), requests: self.requests.clone() }
+    }
+}
+
+impl<H> MiningController<H> {
     /// Creates a controller in the given mode and the request stream the miner task consumes.
-    pub fn new(mode: MiningMode) -> (Self, UnboundedReceiver<MinerRequest>) {
+    pub fn new(mode: MiningMode) -> (Self, UnboundedReceiver<MinerRequest<H>>) {
         let (mode_tx, _) = channel(mode);
         let (requests, rx) = unbounded_channel();
         (Self { mode_tx, requests }, rx)
@@ -98,7 +105,7 @@ impl MiningController {
     }
 
     /// Mines one block and returns its header.
-    pub async fn mine_block(&self) -> Result<SealedHeader, String> {
+    pub async fn mine_block(&self) -> Result<SealedHeader<H>, String> {
         let (tx, rx) = oneshot::channel();
         self.requests
             .send(MinerRequest::Mine(Some(tx)))
@@ -107,7 +114,7 @@ impl MiningController {
     }
 
     /// Rewinds the chain head to the given canonical header.
-    pub async fn rewind(&self, header: SealedHeader) -> Result<(), String> {
+    pub async fn rewind(&self, header: SealedHeader<H>) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         self.requests
             .send(MinerRequest::Rewind(Box::new(header), tx))
@@ -117,7 +124,7 @@ impl MiningController {
 }
 
 /// Requests a block for every pool transaction while automine is enabled.
-pub async fn run_automine_task<Pool>(pool: Pool, mining: MiningController)
+pub async fn run_automine_task<Pool, H>(pool: Pool, mining: MiningController<H>)
 where
     Pool: TransactionPool + Clone + Unpin + Send + Sync + 'static,
 {
@@ -131,7 +138,7 @@ where
 }
 
 /// Requests a block at the configured interval while interval mining is enabled.
-pub async fn run_interval_mining_task(mining: MiningController) {
+pub async fn run_interval_mining_task<H>(mining: MiningController<H>) {
     let mut mode_rx = mining.subscribe_mode();
 
     loop {

@@ -3,7 +3,6 @@ use crate::{
     impersonation::ImpersonationState,
     state::{SharedAnvilState, StateOverride},
 };
-use alloy_consensus::Header;
 use alloy_eips::Decodable2718;
 use alloy_evm::{
     Evm, EvmFactory,
@@ -16,17 +15,15 @@ use alloy_primitives::{Bytes, U256};
 use alloy_rpc_types_engine::ExecutionData;
 use eyre::Result;
 use reth_ethereum::{
-    Block, EthPrimitives, TransactionSigned,
-    chainspec::EthereumHardforks,
-    evm::{
-        EthEvmConfig,
-        primitives::{
-            ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-            NextBlockEnvAttributes, SenderRecoveryCache, execute::BlockAssembler,
-        },
+    evm::primitives::{
+        ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
+        NextBlockEnvAttributes, SenderRecoveryCache, execute::BlockAssembler,
     },
-    node::builder::{BuilderContext, FullNodeTypes, NodeTypes, components::ExecutorBuilder},
-    primitives::{SealedBlock, SealedHeader, SignedTransaction},
+    node::{
+        api::{BlockTy, NodePrimitives, PayloadTypes},
+        builder::{BuilderContext, FullNodeTypes, NodeTypes, components::ExecutorBuilder},
+    },
+    primitives::{Recovered, SealedBlock, SealedHeader, SignedTransaction},
     storage::errors::any::AnyError,
 };
 use revm::{
@@ -35,6 +32,30 @@ use revm::{
     state::{Account, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{collections::hash_map::Entry, fmt::Debug};
+
+/// Next-block attributes whose gas limit the block environment overrides can set.
+pub trait AnvilNextBlockEnv: Clone {
+    /// Sets the block gas limit.
+    fn set_gas_limit(&mut self, gas_limit: u64);
+}
+
+impl AnvilNextBlockEnv for NextBlockEnvAttributes {
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.gas_limit = gas_limit;
+    }
+}
+
+/// Execution payloads whose raw transactions the engine EVM config can decode.
+pub trait AnvilExecutionPayload {
+    /// Returns the encoded transactions of the payload.
+    fn raw_transactions(&self) -> Vec<Bytes>;
+}
+
+impl AnvilExecutionPayload for ExecutionData {
+    fn raw_transactions(&self) -> Vec<Bytes> {
+        self.payload.transactions().clone()
+    }
+}
 
 /// Wraps an inner EVM config to override sender recovery for impersonated transactions during
 /// engine payload execution, and to apply the block environment overrides for the gas limit and
@@ -68,12 +89,11 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
 impl<Evm> ConfigureEvm for AnvilEvmConfig<Evm>
 where
     Evm: ConfigureEvm<
-            Primitives = EthPrimitives,
-            NextBlockEnvCtx = NextBlockEnvAttributes,
+            NextBlockEnvCtx: AnvilNextBlockEnv,
             BlockExecutorFactory: Clone + Debug + Send + Sync + Unpin,
             BlockAssembler: BlockAssembler<
                 AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
-                Block = Block,
+                Block = <Evm::Primitives as NodePrimitives>::Block,
             >,
         >,
 {
@@ -91,18 +111,21 @@ where
         self.inner.block_assembler()
     }
 
-    fn evm_env(&self, header: &Header) -> Result<EvmEnvFor<Self>, Self::Error> {
+    fn evm_env(
+        &self,
+        header: &<Evm::Primitives as NodePrimitives>::BlockHeader,
+    ) -> Result<EvmEnvFor<Self>, Self::Error> {
         self.inner.evm_env(header)
     }
 
     fn next_evm_env(
         &self,
-        parent: &Header,
+        parent: &<Evm::Primitives as NodePrimitives>::BlockHeader,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnvFor<Self>, Self::Error> {
         let mut attributes = attributes.clone();
         if let Some(gas_limit) = self.block_env.gas_limit() {
-            attributes.gas_limit = gas_limit;
+            attributes.set_gas_limit(gas_limit);
         }
         let mut env = self.inner.next_evm_env(parent, &attributes)?;
         env.set_base_fee_opt(self.block_env.take_next_base_fee());
@@ -111,53 +134,54 @@ where
 
     fn context_for_block<'a>(
         &self,
-        block: &'a SealedBlock<Block>,
+        block: &'a SealedBlock<<Evm::Primitives as NodePrimitives>::Block>,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
         self.inner.context_for_block(block)
     }
 
     fn context_for_next_block(
         &self,
-        parent: &SealedHeader,
+        parent: &SealedHeader<<Evm::Primitives as NodePrimitives>::BlockHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
         self.inner.context_for_next_block(parent, attributes)
     }
 }
 
-impl<Evm> ConfigureEngineEvm<ExecutionData> for AnvilEvmConfig<Evm>
+impl<Evm, Payload> ConfigureEngineEvm<Payload> for AnvilEvmConfig<Evm>
 where
     Evm: ConfigureEvm<
-            Primitives = EthPrimitives,
-            NextBlockEnvCtx = NextBlockEnvAttributes,
+            NextBlockEnvCtx: AnvilNextBlockEnv,
             BlockExecutorFactory: Clone + Debug + Send + Sync + Unpin,
             BlockAssembler: BlockAssembler<
                 AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
-                Block = Block,
+                Block = <Evm::Primitives as NodePrimitives>::Block,
             >,
-        > + ConfigureEngineEvm<ExecutionData>,
+        > + ConfigureEngineEvm<Payload>,
+    Payload: AnvilExecutionPayload,
 {
-    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
+    fn evm_env_for_payload(&self, payload: &Payload) -> Result<EvmEnvFor<Self>, Self::Error> {
         self.inner.evm_env_for_payload(payload)
     }
 
     fn context_for_payload<'a>(
         &self,
-        payload: &'a ExecutionData,
+        payload: &'a Payload,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
         self.inner.context_for_payload(payload)
     }
 
     fn tx_iterator_for_payload(
         &self,
-        payload: &ExecutionData,
+        payload: &Payload,
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
-        let txs = payload.payload.transactions().clone();
+        let txs = payload.raw_transactions();
         let state = self.state.clone();
         let sender_cache = self.sender_cache.clone();
 
         let convert = move |raw: Bytes| {
-            let tx = TransactionSigned::decode_2718_exact(raw.as_ref()).map_err(AnyError::new)?;
+            let tx = <Evm::Primitives as NodePrimitives>::SignedTx::decode_2718_exact(raw.as_ref())
+                .map_err(AnyError::new)?;
             let signer = match state.tx_sender(&tx.recalculate_hash()) {
                 Some(sender) => {
                     if let Some(cache) = &sender_cache {
@@ -170,7 +194,7 @@ where
                     None => tx.try_recover().map_err(AnyError::new)?,
                 },
             };
-            Ok::<_, AnyError>(tx.with_signer(signer))
+            Ok::<_, AnyError>(Recovered::new_unchecked(tx, signer))
         };
 
         Ok((txs, convert))
@@ -277,9 +301,11 @@ where
     }
 }
 
-/// Executor builder that produces an [`AnvilEvmConfig`].
+/// Executor builder that wraps a network's executor builder in an [`AnvilEvmConfig`].
 #[derive(Debug, Clone)]
-pub struct AnvilExecutorBuilder {
+pub struct AnvilExecutorBuilder<Inner> {
+    /// The network's executor builder.
+    pub inner: Inner,
     /// The shared impersonation state.
     pub state: ImpersonationState,
     /// The shared block environment overrides.
@@ -288,27 +314,30 @@ pub struct AnvilExecutorBuilder {
     pub anvil_state: SharedAnvilState,
 }
 
-impl<Types, Node> ExecutorBuilder<Node> for AnvilExecutorBuilder
+/// The execution payload of a node.
+type ExecutionDataOf<Node> =
+    <<<Node as FullNodeTypes>::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData;
+
+impl<Node, Inner> ExecutorBuilder<Node> for AnvilExecutorBuilder<Inner>
 where
-    Types: NodeTypes<ChainSpec: EthereumHardforks + Clone + Debug, Primitives = EthPrimitives>,
-    Node: FullNodeTypes<Types = Types>,
-    EthEvmConfig<Types::ChainSpec>: ConfigureEvm<
-            Primitives = EthPrimitives,
-            NextBlockEnvCtx = NextBlockEnvAttributes,
+    Node: FullNodeTypes,
+    Inner: ExecutorBuilder<Node>,
+    Inner::EVM: ConfigureEvm<
+            Primitives = <Node::Types as NodeTypes>::Primitives,
+            NextBlockEnvCtx: AnvilNextBlockEnv,
             BlockExecutorFactory: Clone + Debug + Send + Sync + Unpin,
             BlockAssembler: BlockAssembler<
-                AnvilBlockExecutorFactory<
-                    <EthEvmConfig<Types::ChainSpec> as ConfigureEvm>::BlockExecutorFactory,
-                >,
-                Block = Block,
+                AnvilBlockExecutorFactory<<Inner::EVM as ConfigureEvm>::BlockExecutorFactory>,
+                Block = BlockTy<Node::Types>,
             >,
-        > + ConfigureEngineEvm<ExecutionData>,
+        > + ConfigureEngineEvm<ExecutionDataOf<Node>>,
+    ExecutionDataOf<Node>: AnvilExecutionPayload,
 {
-    type EVM = AnvilEvmConfig<EthEvmConfig<Types::ChainSpec>>;
+    type EVM = AnvilEvmConfig<Inner::EVM>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
         Ok(AnvilEvmConfig::new(
-            EthEvmConfig::new(ctx.chain_spec()),
+            self.inner.build_evm(ctx).await?,
             self.state,
             self.block_env,
             self.anvil_state,

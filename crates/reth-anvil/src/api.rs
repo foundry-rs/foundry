@@ -1,6 +1,6 @@
 use crate::{
     block_env::BlockEnvOverrides,
-    fork::ForkBackend,
+    fork::ForkInfo,
     impersonation::ImpersonationState,
     logging::LoggingState,
     mining::MiningController,
@@ -12,13 +12,14 @@ use crate::{
 };
 use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
-use alloy_network::{Ethereum, TransactionBuilder};
+use alloy_json_rpc::RpcObject;
+use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_eth::{
-    Block, TransactionRequest,
+    TransactionRequest,
     state::{AccountOverride, StateOverridesBuilder},
 };
 use foundry_evm_core::utils::block_env_from_header;
@@ -32,18 +33,18 @@ use jsonrpsee::{
 };
 use parking_lot::RwLock;
 use reth_ethereum::{
-    chainspec::{ChainSpec, EthChainSpec, EthereumHardforks},
+    chainspec::{EthChainSpec, EthereumHardforks, Hardforks},
     pool::TransactionPool,
     primitives::{Bytecode, SealedHeader},
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
-use reth_rpc_eth_api::{EthApiServer, FullEthApiServer};
+use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcTxReq, RpcTypes};
 use revm::context::BlockEnv;
 use std::sync::Arc;
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
-pub trait AnvilApi {
+pub trait AnvilApi<B: RpcObject, TxReq: RpcObject> {
     /// Impersonates the given account for `eth_sendTransaction`.
     #[method(name = "impersonateAccount", aliases = ["hardhat_impersonateAccount"])]
     async fn anvil_impersonate_account(&self, address: Address) -> RpcResult<()>;
@@ -78,7 +79,7 @@ pub trait AnvilApi {
 
     /// Mines blocks and returns them with full transactions.
     #[method(name = "mine_detailed", aliases = ["evm_mine_detailed"])]
-    async fn anvil_mine_detailed(&self, opts: Option<MineOptions>) -> RpcResult<Vec<Block>>;
+    async fn anvil_mine_detailed(&self, opts: Option<MineOptions>) -> RpcResult<Vec<B>>;
 
     /// Snapshots the chain head and the anvil settings. Returns the snapshot id.
     #[method(name = "snapshot", aliases = ["evm_snapshot"])]
@@ -94,7 +95,7 @@ pub trait AnvilApi {
 
     /// Rewinds the chain by `depth` blocks and mines `depth` blocks with the given transactions.
     #[method(name = "reorg")]
-    async fn anvil_reorg(&self, options: ReorgOptions) -> RpcResult<()>;
+    async fn anvil_reorg(&self, options: ReorgOptions<TxReq>) -> RpcResult<()>;
 
     /// Resets the chain to genesis, or to the fork block when forking. Changing the fork endpoint
     /// or block is not supported yet.
@@ -261,10 +262,10 @@ pub trait EvmApi {
 
 /// The `eth_*` methods anvil adds on top of the standard namespace.
 #[rpc(server, namespace = "eth")]
-pub trait EthExtApi {
+pub trait EthExtApi<TxReq: RpcObject> {
     /// Sends a transaction from `from` without a signature, as if the account were impersonated.
     #[method(name = "sendUnsignedTransaction")]
-    async fn eth_send_unsigned_transaction(&self, request: TransactionRequest) -> RpcResult<B256>;
+    async fn eth_send_unsigned_transaction(&self, request: TxReq) -> RpcResult<B256>;
 }
 
 /// The `personal_*` namespace.
@@ -275,40 +276,43 @@ pub trait PersonalApi {
     async fn personal_sign(&self, message: Bytes, address: Address) -> RpcResult<Bytes>;
 }
 
+/// The header type of a provider.
+type HeaderOf<Provider> = <Provider as HeaderProvider>::Header;
+
 /// Implementation of the `anvil_*` RPC namespace.
 #[derive(Debug, Clone)]
-pub struct AnvilRpc<Pool, Provider, Eth> {
+pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     impersonation: ImpersonationState,
-    mining: MiningController,
+    mining: MiningController<HeaderOf<Provider>>,
     time: TimeManager,
     block_env: BlockEnvOverrides,
     state: SharedAnvilState,
-    snapshots: SnapshotManager,
-    chain_spec: Arc<ChainSpec>,
+    snapshots: SnapshotManager<HeaderOf<Provider>>,
+    chain_spec: Arc<Spec>,
     instance_id: Arc<RwLock<B256>>,
     logging: LoggingState,
     transaction_order: TransactionOrder,
-    fork: Option<Arc<ForkBackend>>,
+    fork: Option<Arc<dyn ForkInfo>>,
     pool: Pool,
     provider: Provider,
     eth: Eth,
 }
 
-impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
+impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec> {
     /// Creates the `anvil_*` namespace over the given node components.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         impersonation: ImpersonationState,
-        mining: MiningController,
+        mining: MiningController<HeaderOf<Provider>>,
         time: TimeManager,
         block_env: BlockEnvOverrides,
         state: SharedAnvilState,
-        snapshots: SnapshotManager,
-        chain_spec: Arc<ChainSpec>,
+        snapshots: SnapshotManager<HeaderOf<Provider>>,
+        chain_spec: Arc<Spec>,
         instance_id: B256,
         logging: LoggingState,
         transaction_order: TransactionOrder,
-        fork: Option<Arc<ForkBackend>>,
+        fork: Option<Arc<dyn ForkInfo>>,
         pool: Pool,
         provider: Provider,
         eth: Eth,
@@ -332,14 +336,12 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
     }
 }
 
-impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth>
+impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
 where
-    Provider: BlockNumReader
-        + HeaderProvider<Header = alloy_consensus::Header>
-        + TransactionsProvider
-        + StateProviderFactory
-        + AccountDump,
-    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+    Provider:
+        BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + AccountDump,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Spec: EthChainSpec + EthereumHardforks + Hardforks,
 {
     fn best_block_number(&self) -> RpcResult<u64> {
         self.provider
@@ -347,20 +349,24 @@ where
             .map_err(|error| internal_error(format!("failed to read latest block number: {error}")))
     }
 
-    fn sealed_header(&self, number: u64) -> RpcResult<SealedHeader> {
+    fn sealed_header(&self, number: u64) -> RpcResult<SealedHeader<HeaderOf<Provider>>> {
         self.provider
             .sealed_header(number)
             .map_err(|error| internal_error(format!("failed to read header {number}: {error}")))?
             .ok_or_else(|| internal_error(format!("missing block header {number}")))
     }
 
-    async fn block_by_number(&self, number: u64, full: bool) -> RpcResult<Block> {
+    async fn block_by_number(
+        &self,
+        number: u64,
+        full: bool,
+    ) -> RpcResult<RpcBlock<Eth::NetworkTypes>> {
         EthApiServer::block_by_number(&self.eth, BlockNumberOrTag::Number(number), full)
             .await?
             .ok_or_else(|| internal_error(format!("missing block {number}")))
     }
 
-    async fn latest_block(&self) -> RpcResult<Block> {
+    async fn latest_block(&self) -> RpcResult<RpcBlock<Eth::NetworkTypes>> {
         self.block_by_number(self.best_block_number()?, false).await
     }
 
@@ -368,19 +374,19 @@ where
     async fn mine_blocks(&self, blocks: u64) -> RpcResult<Vec<u64>> {
         let mut mined = Vec::with_capacity(blocks as usize);
         for _ in 0..blocks {
-            mined.push(self.mining.mine_block().await.map_err(internal_error)?.number);
+            mined.push(self.mining.mine_block().await.map_err(internal_error)?.number());
         }
         Ok(mined)
     }
 
     /// Rewinds the chain to the given canonical header and drops the transactions of the removed
     /// blocks, so the pool does not mine them again.
-    async fn rewind_to(&self, header: &SealedHeader) -> RpcResult<()> {
+    async fn rewind_to(&self, header: &SealedHeader<HeaderOf<Provider>>) -> RpcResult<()> {
         let best = self.best_block_number()?;
-        if header.number < best {
+        if header.number() < best {
             let removed = self
                 .provider
-                .transactions_by_block_range(header.number + 1..=best)
+                .transactions_by_block_range(header.number() + 1..=best)
                 .map_err(|error| internal_error(format!("failed to read transactions: {error}")))?;
             self.impersonation.drop_txs(removed.into_iter().flatten().map(|tx| *tx.tx_hash()));
         }
@@ -406,7 +412,8 @@ where
         calldata: Bytes,
         expected_value: U256,
     ) -> RpcResult<B256> {
-        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata);
+        let mut tx = RpcTxReq::<Eth::NetworkTypes>::default();
+        *tx.as_mut() = TransactionRequest::default().with_to(token_address).with_input(calldata);
         let access_list =
             EthApiServer::create_access_list(&self.eth, tx.clone(), None, None).await?.access_list;
 
@@ -440,7 +447,6 @@ where
     /// Returns the lowercase name of the latest hardfork active at the given block.
     fn hardfork_name(&self, timestamp: u64, number: u64) -> String {
         self.chain_spec
-            .hardforks
             .forks_iter()
             .filter(|(_, condition)| condition.active_at_timestamp_or_number(timestamp, number))
             .last()
@@ -450,18 +456,21 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth> AnvilApiServer for AnvilRpc<Pool, Provider, Eth>
+impl<Pool, Provider, Eth, Spec>
+    AnvilApiServer<RpcBlock<Eth::NetworkTypes>, RpcTxReq<Eth::NetworkTypes>>
+    for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool + Send + Sync + 'static,
     Provider: BlockNumReader
-        + HeaderProvider<Header = alloy_consensus::Header>
+        + HeaderProvider
         + TransactionsProvider
         + StateProviderFactory
         + AccountDump
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Spec: EthChainSpec + EthereumHardforks + Hardforks + Send + Sync + 'static,
 {
     async fn anvil_impersonate_account(&self, address: Address) -> RpcResult<()> {
         self.impersonation.impersonate(address);
@@ -520,7 +529,10 @@ where
         Ok(())
     }
 
-    async fn anvil_mine_detailed(&self, opts: Option<MineOptions>) -> RpcResult<Vec<Block>> {
+    async fn anvil_mine_detailed(
+        &self,
+        opts: Option<MineOptions>,
+    ) -> RpcResult<Vec<RpcBlock<Eth::NetworkTypes>>> {
         let (timestamp, blocks) = match opts.unwrap_or_default() {
             MineOptions::Options { timestamp, blocks } => (timestamp, blocks.unwrap_or(1)),
             MineOptions::Timestamp(timestamp) => (timestamp, 1),
@@ -569,7 +581,10 @@ where
         self.rewind_to(&header).await
     }
 
-    async fn anvil_reorg(&self, options: ReorgOptions) -> RpcResult<()> {
+    async fn anvil_reorg(
+        &self,
+        options: ReorgOptions<RpcTxReq<Eth::NetworkTypes>>,
+    ) -> RpcResult<()> {
         let ReorgOptions { depth, mut tx_block_pairs } = options;
         if let Some((_, number)) = tx_block_pairs.iter().find(|(_, number)| *number >= depth) {
             let Some(last_block) = depth.checked_sub(1) else {
@@ -643,7 +658,7 @@ where
                 ));
             }
         }
-        let genesis = self.sealed_header(self.chain_spec.genesis_header().number)?;
+        let genesis = self.sealed_header(self.chain_spec.genesis_header().number())?;
         self.rewind_to(&genesis).await?;
         let hashes = self.pool.all_transaction_hashes();
         if !hashes.is_empty() {
@@ -781,22 +796,22 @@ where
         let gas_price = EthApiServer::gas_price(&self.eth).await?;
 
         Ok(NodeInfo {
-            current_block_number: latest.header.number,
-            current_block_timestamp: latest.header.timestamp,
-            current_block_hash: latest.header.hash,
-            hard_fork: self.hardfork_name(latest.header.timestamp, latest.header.number),
+            current_block_number: latest.header.number(),
+            current_block_timestamp: latest.header.timestamp(),
+            current_block_hash: latest.header.hash(),
+            hard_fork: self.hardfork_name(latest.header.timestamp(), latest.header.number()),
             transaction_order: self.transaction_order.to_string(),
             environment: NodeEnvironment {
-                base_fee: latest.header.base_fee_per_gas.unwrap_or_default().into(),
+                base_fee: latest.header.base_fee_per_gas().unwrap_or_default().into(),
                 chain_id: self.chain_spec.chain().id(),
-                gas_limit: latest.header.gas_limit,
+                gas_limit: latest.header.gas_limit(),
                 gas_price: gas_price.to(),
             },
             fork_config: self.fork.as_ref().map_or_else(NodeForkConfig::default, |fork| {
                 NodeForkConfig {
                     fork_url: Some(fork.url()),
                     fork_block_number: Some(fork.block_number()),
-                    fork_retry_backoff: Some(fork.settings().backoff.as_millis()),
+                    fork_retry_backoff: Some(fork.retry_backoff().as_millis()),
                 }
             }),
             network: None,
@@ -812,8 +827,8 @@ where
             client_commit_sha: None,
             chain_id: self.chain_spec.chain().id(),
             instance_id: *self.instance_id.read(),
-            latest_block_number: latest.header.number,
-            latest_block_hash: latest.header.hash,
+            latest_block_number: latest.header.number(),
+            latest_block_hash: latest.header.hash(),
             forked_network: self.fork.as_ref().map(|fork| ForkedNetwork {
                 chain_id: fork.chain_id(),
                 fork_block_number: fork.block_number(),
@@ -1004,18 +1019,19 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth> EvmApiServer for AnvilRpc<Pool, Provider, Eth>
+impl<Pool, Provider, Eth, Spec> EvmApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool + Send + Sync + 'static,
     Provider: BlockNumReader
-        + HeaderProvider<Header = alloy_consensus::Header>
+        + HeaderProvider
         + TransactionsProvider
         + StateProviderFactory
         + AccountDump
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Spec: EthChainSpec + EthereumHardforks + Hardforks + Send + Sync + 'static,
 {
     async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String> {
         self.anvil_mine_detailed(opts).await?;
@@ -1024,14 +1040,19 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth> EthExtApiServer for AnvilRpc<Pool, Provider, Eth>
+impl<Pool, Provider, Eth, Spec> EthExtApiServer<RpcTxReq<Eth::NetworkTypes>>
+    for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: Send + Sync + 'static,
-    Provider: Send + Sync + 'static,
-    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+    Provider: HeaderProvider + Send + Sync + 'static,
+    Eth: FullEthApiServer,
+    Spec: Send + Sync + 'static,
 {
-    async fn eth_send_unsigned_transaction(&self, request: TransactionRequest) -> RpcResult<B256> {
-        let from = request.from.ok_or_else(|| invalid_params("missing `from` address"))?;
+    async fn eth_send_unsigned_transaction(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<B256> {
+        let from = request.as_ref().from.ok_or_else(|| invalid_params("missing `from` address"))?;
         let impersonated = self.impersonation.is_impersonated(&from);
         if !impersonated {
             self.impersonation.impersonate(from);
@@ -1045,11 +1066,12 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth> PersonalApiServer for AnvilRpc<Pool, Provider, Eth>
+impl<Pool, Provider, Eth, Spec> PersonalApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: Send + Sync + 'static,
-    Provider: Send + Sync + 'static,
-    Eth: FullEthApiServer<NetworkTypes = Ethereum>,
+    Provider: HeaderProvider + Send + Sync + 'static,
+    Eth: FullEthApiServer,
+    Spec: Send + Sync + 'static,
 {
     async fn personal_sign(&self, message: Bytes, address: Address) -> RpcResult<Bytes> {
         EthApiServer::sign(&self.eth, address, message).await

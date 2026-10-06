@@ -3,14 +3,13 @@ use crate::{
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     eth_api::EthApi,
-    evm::AnvilExecutorBuilder,
-    fork::ForkBackend,
+    fork::ForkInfo,
     impersonation::{ImpersonatedSigner, ImpersonationState},
     launcher::AnvilNodeLauncher,
-    logging::{LoggingState, NodeInfoLayer, log_mined_blocks},
+    logging::{LoggingState, log_mined_blocks},
     miner::AnvilMiner,
     mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
-    pool::AnvilPoolBuilder,
+    network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
     provider::AnvilProvider,
     signer::DevSigner,
     snapshot::SnapshotManager,
@@ -22,15 +21,13 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_evm_networks::NetworkVariant;
 use reth_ethereum::{
-    engine::local::LocalPayloadAttributesBuilder,
+    chainspec::EthChainSpec,
     node::{
-        EthereumNode,
-        api::NodeTypesWithDBAdapter,
+        api::NodeTypes,
         builder::{
-            LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle,
-            components::{NoopConsensusBuilder, NoopNetworkBuilder},
-            rpc::RethRpcServerHandles,
+            LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle, rpc::RethRpcServerHandles,
         },
         core::{
             args::{DatadirArgs, RpcServerArgs, StorageArgs},
@@ -38,12 +35,12 @@ use reth_ethereum::{
             exit::NodeExitFuture,
             node_config::NodeConfig as RethNodeConfig,
         },
-        node::EthereumAddOns,
     },
+    primitives::NodePrimitives,
     provider::{
         CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
         db::{
-            ClientVersion, DatabaseEnv, init_db,
+            ClientVersion, init_db,
             mdbx::{DatabaseArguments, GIGABYTE, MEGABYTE},
         },
     },
@@ -51,15 +48,13 @@ use reth_ethereum::{
     storage::BlockNumReader,
     tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
+use reth_rpc_eth_api::helpers::EthTransactions;
 use std::{
     net::{SocketAddr, TcpListener},
     sync::{Arc, Mutex},
 };
 use tempfile::TempDir;
 use tokio::{runtime::Handle, sync::broadcast::error::RecvError};
-
-/// The reth node types used by reth-anvil.
-type AnvilNodeTypes = NodeTypesWithDBAdapter<EthereumNode, Arc<DatabaseEnv>>;
 
 /// A running node.
 #[derive(Debug)]
@@ -148,19 +143,22 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 ///
 /// The node runs on a fresh MDBX database in a temporary directory that is removed when the
 /// returned handle drops. The node tasks run on the current tokio runtime.
-pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+    match config.networks.resolved_network().unwrap_or_default() {
+        NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
+        network => eyre::bail!("the {network:?} network is not supported yet"),
+    }
+}
+
+/// Launches a node of the given network.
+pub(crate) async fn launch<Net: AnvilNetwork>(
+    mut config: NodeConfig,
+) -> Result<(EthApi, NodeHandle)> {
     let runtime = RuntimeBuilder::new(
         RuntimeConfig::default().with_tokio(TokioConfig::ExistingHandle(Handle::current())),
     )
     .build()?;
-    let (fork, chain_spec) = if config.is_fork() {
-        let (fork, accounts) = ForkBackend::setup(&config).await?;
-        config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
-        let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
-        (Some(fork), chain_spec)
-    } else {
-        (None, config.chain_spec()?)
-    };
+    let Prepared { chain_spec, fork } = Net::prepare(&mut config).await?;
     let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
 
     let datadir = tempfile::tempdir()?;
@@ -196,11 +194,11 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     let impersonation = ImpersonationState::default();
     impersonation.set_auto_impersonate(config.enable_auto_impersonate);
     let (mining, miner_requests) = MiningController::new(initial_mining_mode(&config));
-    let time = TimeManager::new(chain_spec.genesis_timestamp());
+    let time = TimeManager::new(chain_spec.genesis().timestamp);
     let block_env = BlockEnvOverrides::default();
     if fork.is_some()
         && let Some(gas_limit) = config.gas_limit
-        && gas_limit != chain_spec.genesis_header().gas_limit
+        && gas_limit != chain_spec.genesis_header().gas_limit()
     {
         block_env.set_gas_limit(gas_limit);
     }
@@ -217,27 +215,18 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         config.slots_in_an_epoch,
         fork.clone(),
     );
+    let anvil = AnvilComponents {
+        impersonation: impersonation.clone(),
+        block_env: block_env.clone(),
+        anvil_state: anvil_state.clone(),
+        config: config.clone(),
+    };
 
     let builder = NodeBuilder::new(node_config)
         .with_database(Arc::new(db))
-        .with_types_and_provider::<EthereumNode, AnvilProvider<AnvilNodeTypes>>()
-        .with_components(
-            EthereumNode::components()
-                .network(NoopNetworkBuilder::eth())
-                .pool(AnvilPoolBuilder {
-                    state: impersonation.clone(),
-                    order: config.transaction_order,
-                })
-                .executor(AnvilExecutorBuilder {
-                    state: impersonation.clone(),
-                    block_env: block_env.clone(),
-                    anvil_state: anvil_state.clone(),
-                })
-                .consensus(NoopConsensusBuilder),
-        )
-        .with_add_ons(
-            EthereumAddOns::default().with_rpc_middleware(NodeInfoLayer::new(logging.clone())),
-        )
+        .with_types_and_provider::<Net::Node, AnvilProvider<AnvilTypes<Net::Node>>>()
+        .with_components(Net::components(&anvil))
+        .with_add_ons(Net::add_ons(logging.clone()))
         .extend_rpc_modules({
             let mining = mining.clone();
             let time = time.clone();
@@ -268,7 +257,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
                     instance_id,
                     logging,
                     transaction_order,
-                    fork,
+                    fork.map(|fork| fork as Arc<dyn ForkInfo>),
                     ctx.pool().clone(),
                     ctx.provider().clone(),
                     eth_api,
@@ -301,10 +290,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         .ok_or_else(|| eyre::eyre!("missing head header"))?;
     let rewind_provider = node.provider.clone();
     let insert_provider = node.provider.clone();
-    let miner = AnvilMiner::new(
+    let miner = AnvilMiner::<<Net::Node as NodeTypes>::Payload>::new(
         node.add_ons_handle.beacon_engine_handle.clone(),
         node.payload_builder_handle.clone(),
-        LocalPayloadAttributesBuilder::new(chain_spec),
+        Net::payload_attributes(chain_spec),
         time.payload_attributes_hook(block_env),
         move |header| Ok(rewind_provider.rewind_to(header)?),
         move || Ok(insert_provider.materialize_fork_reads()?),
@@ -371,8 +360,8 @@ const fn initial_mining_mode(config: &NodeConfig) -> MiningMode {
 }
 
 /// Drops the read overlay for state writes once the block that applied them is canonical.
-async fn clear_applied_state_writes(
-    mut notifications: CanonStateNotifications,
+async fn clear_applied_state_writes<N: NodePrimitives>(
+    mut notifications: CanonStateNotifications<N>,
     state: SharedAnvilState,
 ) {
     loop {

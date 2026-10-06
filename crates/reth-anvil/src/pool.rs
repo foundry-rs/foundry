@@ -1,6 +1,6 @@
 use crate::{impersonation::ImpersonationState, types::TransactionOrder};
 use alloy_consensus::{Transaction, transaction::TxHashRef};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, Signature, U256};
 use eyre::Result;
 use parking_lot::Mutex;
 use reth_ethereum::{
@@ -34,6 +34,18 @@ use std::{
     },
 };
 
+/// Transactions whose ECDSA signature `anvil_impersonateSignature` can override.
+pub trait TxSignature {
+    /// Returns the signature, if the transaction carries an ECDSA signature.
+    fn ecdsa_signature(&self) -> Option<&Signature>;
+}
+
+impl TxSignature for TransactionSigned {
+    fn ecdsa_signature(&self) -> Option<&Signature> {
+        Some(self.signature())
+    }
+}
+
 /// Wraps the standard Ethereum validator and short-circuits validation for impersonated
 /// accounts.
 pub struct AnvilValidator<V> {
@@ -50,7 +62,7 @@ impl<V: Debug> Debug for AnvilValidator<V> {
 impl<V> TransactionValidator for AnvilValidator<V>
 where
     V: TransactionValidator,
-    V::Transaction: PoolTransaction<Consensus = TransactionSigned>,
+    V::Transaction: PoolTransaction<Consensus: TxSignature>,
 {
     type Transaction = V::Transaction;
     type Block = V::Block;
@@ -69,7 +81,10 @@ where
         // A signature override attributes the transaction to the chosen sender. The pool keeps
         // the recovered sender for ordering; execution and lookups use the override.
         let signature_sender = if self.state.has_signature_overrides() {
-            self.state.signature_override(transaction.clone_into_consensus().signature())
+            transaction
+                .clone_into_consensus()
+                .ecdsa_signature()
+                .and_then(|signature| self.state.signature_override(signature))
         } else {
             None
         };

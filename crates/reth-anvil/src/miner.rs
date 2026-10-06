@@ -1,13 +1,11 @@
 use crate::mining::MinerRequest;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use alloy_rpc_types_engine::ForkchoiceState;
 use eyre::{OptionExt, Result, ensure};
 use reth_ethereum::{
-    chainspec::ChainSpec,
-    engine::local::LocalPayloadAttributesBuilder,
-    node::{
-        EthEngineTypes,
-        api::{ConsensusEngineHandle, PayloadAttributesBuilder, PayloadKind},
+    node::api::{
+        BuiltPayload, ConsensusEngineHandle, NodePrimitives, PayloadAttributesBuilder, PayloadKind,
+        PayloadTypes,
     },
     primitives::SealedHeader,
 };
@@ -15,26 +13,30 @@ use reth_payload_builder::PayloadBuilderHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::error;
 
+/// The header type of the blocks a payload type builds.
+pub type PayloadHeader<T> =
+    <<<T as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::BlockHeader;
+
 /// Rewinds the chain to the given header. See [`AnvilMiner::new`].
-pub type RewindFn = Box<dyn Fn(&SealedHeader) -> Result<()> + Send + Sync>;
+pub type RewindFn<H> = Box<dyn Fn(&SealedHeader<H>) -> Result<()> + Send + Sync>;
 
 /// Builds blocks on demand through the engine API and keeps track of the chain head.
 ///
 /// Unlike reth's local miner, this miner never finalizes blocks, so a snapshot revert can rewind
 /// the head to any earlier block.
-pub struct AnvilMiner {
-    engine: ConsensusEngineHandle<EthEngineTypes>,
-    payload_builder: PayloadBuilderHandle<EthEngineTypes>,
-    attributes: LocalPayloadAttributesBuilder<ChainSpec>,
-    map_attributes: Box<dyn Fn(PayloadAttributes) -> PayloadAttributes + Send + Sync>,
-    rewind: RewindFn,
+pub struct AnvilMiner<T: PayloadTypes> {
+    engine: ConsensusEngineHandle<T>,
+    payload_builder: PayloadBuilderHandle<T>,
+    attributes: Box<dyn PayloadAttributesBuilder<T::PayloadAttributes, PayloadHeader<T>>>,
+    map_attributes: Box<dyn Fn(T::PayloadAttributes) -> T::PayloadAttributes + Send + Sync>,
+    rewind: RewindFn<PayloadHeader<T>>,
     /// Runs after a payload is built and before the engine validates it.
     before_insert: Box<dyn Fn() -> Result<()> + Send + Sync>,
-    last_header: SealedHeader,
-    requests: UnboundedReceiver<MinerRequest>,
+    last_header: SealedHeader<PayloadHeader<T>>,
+    requests: UnboundedReceiver<MinerRequest<PayloadHeader<T>>>,
 }
 
-impl AnvilMiner {
+impl<T: PayloadTypes> AnvilMiner<T> {
     /// Creates a miner that extends the chain from `head`.
     ///
     /// `rewind` rewinds the chain state to a header; the miner runs it between blocks so a rewind
@@ -42,19 +44,19 @@ impl AnvilMiner {
     /// engine validates it.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        engine: ConsensusEngineHandle<EthEngineTypes>,
-        payload_builder: PayloadBuilderHandle<EthEngineTypes>,
-        attributes: LocalPayloadAttributesBuilder<ChainSpec>,
-        map_attributes: impl Fn(PayloadAttributes) -> PayloadAttributes + Send + Sync + 'static,
-        rewind: impl Fn(&SealedHeader) -> Result<()> + Send + Sync + 'static,
+        engine: ConsensusEngineHandle<T>,
+        payload_builder: PayloadBuilderHandle<T>,
+        attributes: impl PayloadAttributesBuilder<T::PayloadAttributes, PayloadHeader<T>>,
+        map_attributes: impl Fn(T::PayloadAttributes) -> T::PayloadAttributes + Send + Sync + 'static,
+        rewind: impl Fn(&SealedHeader<PayloadHeader<T>>) -> Result<()> + Send + Sync + 'static,
         before_insert: impl Fn() -> Result<()> + Send + Sync + 'static,
-        head: SealedHeader,
-        requests: UnboundedReceiver<MinerRequest>,
+        head: SealedHeader<PayloadHeader<T>>,
+        requests: UnboundedReceiver<MinerRequest<PayloadHeader<T>>>,
     ) -> Self {
         Self {
             engine,
             payload_builder,
-            attributes,
+            attributes: Box::new(attributes),
             map_attributes: Box::new(map_attributes),
             rewind: Box::new(rewind),
             before_insert: Box::new(before_insert),
@@ -101,7 +103,7 @@ impl AnvilMiner {
     /// After a rewind the engine still sees the old head. The forkchoice update then targets a
     /// canonical ancestor with payload attributes, which the engine serves by building on that
     /// ancestor; inserting the built block reorgs the engine onto the rewound chain.
-    async fn advance(&mut self) -> Result<SealedHeader> {
+    async fn advance(&mut self) -> Result<SealedHeader<PayloadHeader<T>>> {
         let attributes = (self.map_attributes)(self.attributes.build(&self.last_header));
         let response =
             self.engine.fork_choice_updated(self.forkchoice_state(), Some(attributes)).await?;

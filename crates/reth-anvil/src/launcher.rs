@@ -4,7 +4,11 @@
 //! context receives: reth constructs its `BlockchainProvider` directly, and this launcher wraps it
 //! in the [`AnvilProvider`] so anvil state writes reach RPC and pool reads.
 
-use crate::{fork::ForkBackend, provider::AnvilProvider, state::SharedAnvilState};
+use crate::{
+    fork::{AnvilPrimitives, ForkOf},
+    provider::AnvilProvider,
+    state::SharedAnvilState,
+};
 use alloy_consensus::BlockHeader;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
 use reth_engine_tree::{
@@ -15,7 +19,6 @@ use reth_engine_tree::{
 };
 use reth_engine_util::EngineMessageStreamExt;
 use reth_ethereum::{
-    EthPrimitives,
     chainspec::{EthChainSpec, EthereumHardforks},
     exex::ExExManagerHandle,
     network::{
@@ -28,7 +31,7 @@ use reth_ethereum::{
         builder::{
             AddOns, AddOnsContext, FullNode, LaunchContext, LaunchNode, Node, NodeAdapter,
             NodeBuilderWithComponents, NodeComponents, NodeComponentsBuilder, NodeHandle,
-            NodeTypesAdapter, RethFullAdapter,
+            NodeTypesAdapter,
             common::{Attached, LaunchContextWith, WithConfigs},
             hooks::NodeHooks,
             rpc::{
@@ -61,15 +64,15 @@ use tracing::{debug, error, info};
 
 /// The engine node launcher with the [`AnvilProvider`] installed.
 #[derive(Debug)]
-pub struct AnvilNodeLauncher {
+pub struct AnvilNodeLauncher<P: AnvilPrimitives> {
     ctx: LaunchContext,
     engine_tree_config: TreeConfig,
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
-    fork: Option<Arc<ForkBackend>>,
+    fork: Option<Arc<ForkOf<P>>>,
 }
 
-impl AnvilNodeLauncher {
+impl<P: AnvilPrimitives> AnvilNodeLauncher<P> {
     /// Creates a new launcher.
     pub const fn new(
         task_executor: TaskExecutor,
@@ -77,7 +80,7 @@ impl AnvilNodeLauncher {
         engine_tree_config: TreeConfig,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
-        fork: Option<Arc<ForkBackend>>,
+        fork: Option<Arc<ForkOf<P>>>,
     ) -> Self {
         Self {
             ctx: LaunchContext::new(task_executor, data_dir),
@@ -93,9 +96,7 @@ impl AnvilNodeLauncher {
         target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB::Components>, AO>>
     where
-        N: Node<RethFullAdapter<DB, N>>
-            + NodeTypesForProvider
-            + NodeTypes<Primitives = EthPrimitives>,
+        N: Node<T> + NodeTypesForProvider + NodeTypes<Primitives = P>,
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<
                 Types = N,
@@ -444,11 +445,12 @@ impl AnvilNodeLauncher {
     }
 }
 
-impl<N, DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for AnvilNodeLauncher
+impl<P, N, DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for AnvilNodeLauncher<P>
 where
-    N: NodeTypes<Primitives = EthPrimitives>,
+    P: AnvilPrimitives,
+    N: NodeTypes<Primitives = P>,
     T: FullNodeTypes<Types = N, DB = DB, Provider = AnvilProvider<NodeTypesWithDBAdapter<N, DB>>>,
-    N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+    N: Node<T> + NodeTypesForProvider,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: NodeComponentsBuilder<T> + 'static,
     AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>

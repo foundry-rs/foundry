@@ -98,20 +98,21 @@ impl FromStr for ForkUrl {
 
 /// Parameters of `anvil_reorg`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ReorgOptions {
+#[serde(bound(deserialize = "TxReq: serde::de::DeserializeOwned", serialize = "TxReq: Serialize"))]
+pub struct ReorgOptions<TxReq = TransactionRequest> {
     /// The number of blocks to rewind and mine again.
     pub depth: u64,
     /// Transactions to include in the mined blocks, by block offset from the common ancestor.
-    pub tx_block_pairs: Vec<(TransactionData, u64)>,
+    pub tx_block_pairs: Vec<(TransactionData<TxReq>, u64)>,
 }
 
 /// A transaction given to `anvil_reorg`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-#[expect(clippy::large_enum_variant)]
-pub enum TransactionData {
+#[serde(bound(deserialize = "TxReq: serde::de::DeserializeOwned", serialize = "TxReq: Serialize"))]
+pub enum TransactionData<TxReq = TransactionRequest> {
     /// A transaction request the node signs for.
-    JSON(TransactionRequest),
+    JSON(TxReq),
     /// A signed transaction.
     Raw(Bytes),
 }

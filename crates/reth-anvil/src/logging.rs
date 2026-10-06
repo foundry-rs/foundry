@@ -2,7 +2,7 @@
 //!
 //! `--silent` disables the output at startup; `anvil_setLoggingEnabled` toggles it at runtime.
 
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
+use alloy_consensus::{BlockHeader, Transaction, TxReceipt, transaction::TxHashRef};
 use alloy_primitives::TxKind;
 use chrono::{DateTime, Datelike, Utc};
 use jsonrpsee::{
@@ -11,7 +11,10 @@ use jsonrpsee::{
     server::middleware::rpc::RpcServiceT,
     types::Request,
 };
-use reth_ethereum::{primitives::SignerRecoverable, provider::CanonStateNotifications};
+use reth_ethereum::{
+    primitives::{BlockBody, NodePrimitives, SignerRecoverable},
+    provider::CanonStateNotifications,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -50,7 +53,12 @@ fn node_info(logging: &LoggingState, line: impl AsRef<str>) {
 }
 
 /// Prints every mined block and its transactions, as anvil does.
-pub async fn log_mined_blocks(mut notifications: CanonStateNotifications, logging: LoggingState) {
+pub async fn log_mined_blocks<N>(
+    mut notifications: CanonStateNotifications<N>,
+    logging: LoggingState,
+) where
+    N: NodePrimitives<SignedTx: Transaction + SignerRecoverable + TxHashRef, Receipt: TxReceipt>,
+{
     loop {
         match notifications.recv().await {
             Ok(notification) => {
@@ -61,7 +69,7 @@ pub async fn log_mined_blocks(mut notifications: CanonStateNotifications, loggin
                     }
                     node_info(&logging, "");
                     let mut previous_gas = 0u64;
-                    for (tx, receipt) in block.body().transactions().zip(receipts) {
+                    for (tx, receipt) in block.body().transactions().iter().zip(receipts) {
                         node_info(&logging, format!("    Transaction: {:?}", tx.tx_hash()));
                         if tx.kind() == TxKind::Create
                             && let Ok(sender) = tx.recover_signer_unchecked()

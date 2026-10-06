@@ -1,4 +1,5 @@
 use crate::block_env::BlockEnvOverrides;
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use parking_lot::RwLock;
 use std::{
@@ -147,24 +148,54 @@ impl TimeManager {
 
     /// Returns the local miner payload attribute mapper for this time manager and the given block
     /// environment overrides. The coinbase override maps to `suggested_fee_recipient`.
-    pub fn payload_attributes_hook(
+    pub fn payload_attributes_hook<A: AnvilPayloadAttributes>(
         &self,
         block_env: BlockEnvOverrides,
-    ) -> impl Fn(PayloadAttributes) -> PayloadAttributes + Send + Sync + 'static {
+    ) -> impl Fn(A) -> A + Send + Sync + 'static {
         let time = self.clone();
-        move |mut attributes: PayloadAttributes| {
-            attributes.timestamp = time.next_timestamp();
+        move |mut attributes: A| {
+            attributes.set_timestamp(time.next_timestamp());
             if let Some(coinbase) = block_env.coinbase() {
-                attributes.suggested_fee_recipient = coinbase;
+                attributes.set_suggested_fee_recipient(coinbase);
             }
             if let Some(prev_randao) = block_env.take_next_prev_randao() {
-                attributes.prev_randao = prev_randao;
+                attributes.set_prev_randao(prev_randao);
             }
             if let Some(root) = block_env.take_next_parent_beacon_block_root() {
-                attributes.parent_beacon_block_root = Some(root);
+                attributes.set_parent_beacon_block_root(root);
             }
             attributes
         }
+    }
+}
+
+/// Payload attributes the time manager and the block environment overrides can adjust.
+pub trait AnvilPayloadAttributes: Send + 'static {
+    /// Sets the block timestamp.
+    fn set_timestamp(&mut self, timestamp: u64);
+    /// Sets the fee recipient.
+    fn set_suggested_fee_recipient(&mut self, recipient: Address);
+    /// Sets the prev randao.
+    fn set_prev_randao(&mut self, prev_randao: B256);
+    /// Sets the parent beacon block root.
+    fn set_parent_beacon_block_root(&mut self, root: B256);
+}
+
+impl AnvilPayloadAttributes for PayloadAttributes {
+    fn set_timestamp(&mut self, timestamp: u64) {
+        self.timestamp = timestamp;
+    }
+
+    fn set_suggested_fee_recipient(&mut self, recipient: Address) {
+        self.suggested_fee_recipient = recipient;
+    }
+
+    fn set_prev_randao(&mut self, prev_randao: B256) {
+        self.prev_randao = prev_randao;
+    }
+
+    fn set_parent_beacon_block_root(&mut self, root: B256) {
+        self.parent_beacon_block_root = Some(root);
     }
 }
 

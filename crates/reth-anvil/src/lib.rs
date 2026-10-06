@@ -15,6 +15,7 @@ mod launcher;
 mod logging;
 mod miner;
 mod mining;
+mod network;
 mod node;
 pub mod opts;
 mod pool;

@@ -1,6 +1,7 @@
 use crate::{
     fork::{
-        ForkBackend, ForkStateProvider, LocalWrites, decode_remote_tx_number, remote_tx_number,
+        AnvilPrimitives, ForkOf, ForkStateProvider, LocalWrites, decode_remote_tx_number,
+        remote_tx_number,
     },
     state::SharedAnvilState,
     state_dump::{AccountDump, SerializableAccountRecord},
@@ -27,10 +28,9 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_ethereum::{
-    EthPrimitives,
     chainspec::{ChainInfo, ChainSpecProvider},
     node::api::{BlockTy, HeaderTy, ReceiptTy, TxTy},
-    primitives::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry},
+    primitives::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry},
     provider::{
         BlockExecutionOutput, BlockExecutionResult, BlockSource, ExecutionOutcome, ProviderError,
         RecoveredBlockAndExecutionOutput, RocksDBProviderFactory, StaticFileProviderFactory,
@@ -60,11 +60,14 @@ use std::{
     time::Instant,
 };
 
-/// The node types the provider supports: Ethereum primitives, so the remote fork data converts
-/// into the local types.
-pub trait AnvilNodeTypes: ProviderNodeTypes<Primitives = EthPrimitives> {}
+/// The node types the provider supports: primitives with a fork network, so remote fork data
+/// converts into the local types.
+pub trait AnvilNodeTypes: ProviderNodeTypes<Primitives: AnvilPrimitives> {}
 
-impl<N: ProviderNodeTypes<Primitives = EthPrimitives>> AnvilNodeTypes for N {}
+impl<N: ProviderNodeTypes<Primitives: AnvilPrimitives>> AnvilNodeTypes for N {}
+
+/// The fork backend of the given node types.
+pub type NodeFork<N> = ForkOf<<N as reth_ethereum::node::api::NodeTypes>::Primitives>;
 
 /// The node provider: reth's [`BlockchainProvider`] with anvil state writes served on top of the
 /// latest and pending state, and with a remote fork below the local chain.
@@ -80,7 +83,7 @@ pub struct AnvilProvider<N: AnvilNodeTypes> {
     inner: BlockchainProvider<N>,
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
-    fork: Option<Arc<ForkBackend>>,
+    fork: Option<Arc<NodeFork<N>>>,
 }
 
 impl<N: AnvilNodeTypes> Clone for AnvilProvider<N> {
@@ -100,18 +103,18 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         inner: BlockchainProvider<N>,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
-        fork: Option<Arc<ForkBackend>>,
+        fork: Option<Arc<NodeFork<N>>>,
     ) -> Self {
         Self { inner, state, slots_in_an_epoch, fork }
     }
 
     /// Returns the fork when the block with the given number is below the fork block.
-    fn remote_for(&self, number: BlockNumber) -> Option<&Arc<ForkBackend>> {
+    fn remote_for(&self, number: BlockNumber) -> Option<&Arc<NodeFork<N>>> {
         self.fork.as_ref().filter(|fork| fork.predates_fork(number))
     }
 
     /// Returns the fork when the block with the given hash is a remote block below the fork block.
-    fn remote_for_hash(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<ForkBackend>>> {
+    fn remote_for_hash(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
         let Some(fork) = &self.fork else { return Ok(None) };
         if self.inner.block_number(hash)?.is_some() {
             return Ok(None);
@@ -123,7 +126,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     }
 
     /// Returns the fork when the block id names a remote block below the fork block.
-    fn remote_for_id(&self, id: BlockHashOrNumber) -> ProviderResult<Option<&Arc<ForkBackend>>> {
+    fn remote_for_id(&self, id: BlockHashOrNumber) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
         match id {
             BlockHashOrNumber::Hash(hash) => self.remote_for_hash(hash),
             BlockHashOrNumber::Number(number) => Ok(self.remote_for(number)),
@@ -155,7 +158,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     /// Returns the remote state at `block`, which is below the fork block.
     fn remote_state(
         &self,
-        fork: &Arc<ForkBackend>,
+        fork: &Arc<NodeFork<N>>,
         block: BlockNumber,
     ) -> ProviderResult<StateProviderBox> {
         Ok(Box::new(ForkStateProvider::new(fork.clone(), None, block)?))
@@ -683,7 +686,7 @@ impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
         match (decode_remote_tx_number(id), &self.fork) {
             (Some((block, index)), Some(fork)) => Ok(fork
                 .block_by_number(block)?
-                .and_then(|block| block.body().transactions.get(index as usize).cloned())),
+                .and_then(|block| block.body().transactions().get(index as usize).cloned())),
             _ => self.inner.transaction_by_id(id),
         }
     }
@@ -726,7 +729,7 @@ impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
         id: BlockHashOrNumber,
     ) -> ProviderResult<Option<Vec<Self::Transaction>>> {
         match self.remote_for_id(id)? {
-            Some(fork) => Ok(fork.block(id)?.map(|block| block.body().transactions.clone())),
+            Some(fork) => Ok(fork.block(id)?.map(|block| block.body().transactions().to_vec())),
             None => self.inner.transactions_by_block(id),
         }
     }
@@ -740,7 +743,7 @@ impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
         if let (Some(remote), Some(fork)) = (remote, &self.fork) {
             for number in remote {
                 txs.extend(
-                    fork.block_by_number(number)?.map(|block| block.body().transactions.clone()),
+                    fork.block_by_number(number)?.map(|block| block.body().transactions().to_vec()),
                 );
             }
         }
@@ -859,7 +862,7 @@ impl<N: AnvilNodeTypes> BlockBodyIndicesProvider for AnvilProvider<N> {
         match self.remote_for(number) {
             Some(fork) => Ok(fork.block_by_number(number)?.map(|block| StoredBlockBodyIndices {
                 first_tx_num: remote_tx_number(number, 0),
-                tx_count: block.body().transactions.len() as u64,
+                tx_count: block.body().transactions().len() as u64,
             })),
             None => self.inner.block_body_indices(number),
         }

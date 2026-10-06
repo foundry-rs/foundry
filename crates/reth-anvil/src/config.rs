@@ -13,6 +13,7 @@ use foundry_evm_core::constants::{
     DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
 };
 use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
+use foundry_evm_networks::NetworkConfigs;
 use rand_08::thread_rng;
 use reth_ethereum::{
     chainspec::{Chain, ChainSpec, ChainSpecBuilder, ForkCondition},
@@ -177,6 +178,8 @@ pub struct NodeConfig {
     pub no_cors: bool,
     /// Disable the request body size limit.
     pub no_request_size_limit: bool,
+    /// The network the node runs.
+    pub networks: NetworkConfigs,
 }
 
 impl Default for NodeConfig {
@@ -238,6 +241,7 @@ impl Default for NodeConfig {
             allow_origin: "*".to_string(),
             no_cors: false,
             no_request_size_limit: false,
+            networks: NetworkConfigs::default(),
         }
     }
 }
@@ -247,6 +251,25 @@ impl NodeConfig {
     #[doc(hidden)]
     pub fn test() -> Self {
         Self { port: 0, silent: true, ..Default::default() }
+    }
+
+    /// Returns a test config for the Tempo network.
+    #[doc(hidden)]
+    pub fn test_tempo() -> Self {
+        Self { networks: NetworkConfigs::with_tempo(), ..Self::test() }
+    }
+
+    /// Returns a test config for the Monad network.
+    #[cfg(feature = "monad")]
+    #[doc(hidden)]
+    pub fn test_monad() -> Self {
+        Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
+    }
+
+    /// Sets the network the node runs.
+    pub const fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+        self.networks = networks;
+        self
     }
 
     /// Sets the chain id.
