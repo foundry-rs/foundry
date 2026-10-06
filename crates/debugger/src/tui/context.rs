@@ -1811,6 +1811,7 @@ mod tests {
             "Test".to_string(),
             vec![ArtifactData {
                 source_map: None,
+                source_map_runtime_raw: None,
                 source_map_runtime: Some(
                     Parser::new("0:8:0;9:8:0;18:10:0").collect::<Result<_, _>>().unwrap(),
                 ),

@@ -38,6 +38,14 @@ impl DebuggerLayout {
     }
 }
 
+/// Debugger used by `--debug`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum DebuggerKind {
+    #[default]
+    Foundry,
+    Soldb,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DebuggerStats {
     /// Sum of root-call gas used across every trace arena passed to the debugger.

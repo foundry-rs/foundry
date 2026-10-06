@@ -185,6 +185,28 @@ impl DebuggerBuilder {
             layout,
         )
     }
+
+    /// Runs SolDB on the last trace added; local variables are shown only without `via_ir`.
+    pub fn run_soldb(self, via_ir: bool) -> eyre::Result<()> {
+        let Self { trace_arenas, identified_contracts, known_contracts, sources, .. } = self;
+        let mut arena =
+            trace_arenas.into_iter().last().ok_or_else(|| eyre::eyre!("debug arena is empty"))?;
+        let mut identified_code = HashMap::default();
+        let names = arena
+            .nodes_mut()
+            .iter_mut()
+            .map(|node| {
+                identify_node(
+                    node,
+                    &known_contracts,
+                    &identified_contracts,
+                    &sources,
+                    &mut identified_code,
+                )
+            })
+            .collect::<Vec<_>>();
+        crate::soldb::run(&arena, &names, &sources, &known_contracts, via_ir)
+    }
 }
 
 /// Identifies the contract executed by `node` from its recorded bytecode, since an address can

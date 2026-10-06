@@ -325,6 +325,8 @@ fn span_to_range(
 pub struct ArtifactData {
     pub source_map: Option<SourceMap>,
     pub source_map_runtime: Option<SourceMap>,
+    /// Unparsed runtime source map, as SolDB reads it.
+    pub source_map_runtime_raw: Option<String>,
     pub pc_ic_map: Option<PcIcMap>,
     pub pc_ic_map_runtime: Option<PcIcMap>,
     pub build_id: String,
@@ -352,6 +354,12 @@ impl ArtifactData {
 
             source_map.map(|source_map| (source_map, pc_ic_map))
         };
+        let source_map_runtime_raw = bytecode
+            .deployed_bytecode
+            .bytecode
+            .as_ref()
+            .and_then(|b| b.source_map.clone())
+            .filter(|s| !s.is_empty());
         let (source_map, pc_ic_map) = parse(&bytecode.bytecode, "creation")?;
         let (source_map_runtime, pc_ic_map_runtime) = bytecode
             .deployed_bytecode
@@ -359,7 +367,15 @@ impl ArtifactData {
             .map(|b| parse(&b, "runtime"))
             .unwrap_or_else(|| Ok((None, None)))?;
 
-        Ok(Self { source_map, source_map_runtime, pc_ic_map, pc_ic_map_runtime, build_id, file_id })
+        Ok(Self {
+            source_map,
+            source_map_runtime,
+            source_map_runtime_raw,
+            pc_ic_map,
+            pc_ic_map_runtime,
+            build_id,
+            file_id,
+        })
     }
 }
 

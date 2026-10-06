@@ -115,6 +115,8 @@ allow-git = [
     "https://github.com/paradigmxyz/solar",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",
+    # SolDB
+    "https://github.com/walnuthq/soldb",
     # Tempo
     "https://github.com/tempoxyz/tempo",
     "https://github.com/tempoxyz/mpp-rs",

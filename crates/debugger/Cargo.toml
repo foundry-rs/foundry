@@ -29,6 +29,13 @@ ratatui = { workspace = true, features = ["crossterm"] }
 revm.workspace = true
 tracing.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+
+soldb-core.workspace = true
+soldb-debugger.workspace = true
+soldb-ethdebug.workspace = true
+soldb-repl.workspace = true
+soldb-tui.workspace = true
 
 [features]
 default = ["optimism"]

@@ -540,6 +540,13 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 
+# SolDB
+soldb-core = { git = "https://github.com/walnuthq/soldb", rev = "8cf6132203beb55a80978012a09b4af4a1a611e7" }
+soldb-debugger = { git = "https://github.com/walnuthq/soldb", rev = "8cf6132203beb55a80978012a09b4af4a1a611e7" }
+soldb-ethdebug = { git = "https://github.com/walnuthq/soldb", rev = "8cf6132203beb55a80978012a09b4af4a1a611e7" }
+soldb-repl = { git = "https://github.com/walnuthq/soldb", rev = "8cf6132203beb55a80978012a09b4af4a1a611e7" }
+soldb-tui = { git = "https://github.com/walnuthq/soldb", rev = "8cf6132203beb55a80978012a09b4af4a1a611e7" }
+
 # Monad
 alloy-monad-evm = { version = "0.8.0", default-features = false, features = [
     "std",

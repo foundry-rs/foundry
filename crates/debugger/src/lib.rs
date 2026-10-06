@@ -19,9 +19,10 @@ mod dump;
 mod tui;
 
 mod node;
+mod soldb;
 
 pub use node::DebugNode;
 
 pub use builder::DebuggerBuilder;
-pub use debugger::{Debugger, DebuggerLayout};
+pub use debugger::{Debugger, DebuggerKind, DebuggerLayout};
 pub use tui::{ExitReason, TUI};

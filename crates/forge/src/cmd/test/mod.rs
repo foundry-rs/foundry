@@ -64,7 +64,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::{Debugger, DebuggerLayout};
+use foundry_debugger::{Debugger, DebuggerKind, DebuggerLayout};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
@@ -513,6 +513,16 @@ pub struct TestArgs {
     /// Debugger layout to use.
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
     debug_layout: Option<DebuggerLayout>,
+
+    /// Debugger to open the test in.
+    #[arg(
+        long,
+        requires = "debug",
+        conflicts_with = "dump",
+        value_enum,
+        default_value_t = DebuggerKind::Foundry
+    )]
+    debugger: DebuggerKind,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
@@ -1227,6 +1237,10 @@ impl TestArgs {
         if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
             config.extra_output.push(ContractOutputSelection::StorageLayout);
         }
+        // Disable dynamic test linking: it compiles rewritten test sources, not the files on disk.
+        if self.debug && self.debugger == DebuggerKind::Soldb {
+            config.dynamic_test_linking = false;
+        }
     }
 
     /// Disables gas report sampling unless a gas report is requested, in which case isolation is
@@ -1875,6 +1889,7 @@ impl TestArgs {
         // network so unrelated inline overrides cannot erase the fork's EVM family.
         config.networks = evm_opts.networks;
         let verbosity = evm_opts.verbosity;
+        let via_ir = config.via_ir;
 
         // Box each network's run so the dispatch arms' locals stay off this frame.
         dispatch_network!(&evm_opts, |Net| {
@@ -1995,11 +2010,15 @@ impl TestArgs {
                     if let Some(known_contracts) = &outcome.known_contracts {
                         builder = builder.known_contracts(known_contracts);
                     }
-                    let mut debugger = builder.build();
-                    if let Some(dump_path) = &self.dump {
-                        debugger.dump_to_file(dump_path)?;
+                    if self.debugger == DebuggerKind::Soldb {
+                        builder.run_soldb(via_ir)?;
                     } else {
-                        debugger.try_run_tui()?;
+                        let mut debugger = builder.build();
+                        if let Some(dump_path) = &self.dump {
+                            debugger.dump_to_file(dump_path)?;
+                        } else {
+                            debugger.try_run_tui()?;
+                        }
                     }
                 }
 
