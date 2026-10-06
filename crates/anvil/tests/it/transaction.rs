@@ -587,7 +587,7 @@ async fn can_call_greeter_historic() {
 
     // returns previous state
     let greeting =
-        greeter_contract.greet().block(BlockId::Number(block_number.into())).call().await.unwrap();
+        greeter_contract.greet().block(BlockId::number(block_number)).call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 }
 
@@ -693,12 +693,11 @@ async fn call_past_state() {
     assert_eq!(value, "hi");
 
     // assert previous value
-    let value =
-        contract.getValue().block(BlockId::Number(deployed_block.into())).call().await.unwrap();
+    let value = contract.getValue().block(BlockId::number(deployed_block)).call().await.unwrap();
     assert_eq!(value, "initial value");
 
-    let hash = provider.get_block(BlockId::Number(1.into())).await.unwrap().unwrap().header.hash;
-    let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
+    let hash = provider.get_block(BlockId::number(1)).await.unwrap().unwrap().header.hash;
+    let value = contract.getValue().block(BlockId::hash(hash)).call().await.unwrap();
     assert_eq!(value, "initial value");
 }
 
@@ -1165,6 +1164,68 @@ async fn includes_pending_tx_for_transaction_count() {
     assert_eq!(nonce, tx_count);
 }
 
+// <https://github.com/foundry-rs/foundry/issues/17354>
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_unlocked_transactions_assign_unique_pending_nonces() {
+    assert_concurrent_unlocked_transactions(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_unlocked_transactions_assign_unique_nonces_with_automining() {
+    assert_concurrent_unlocked_transactions(true).await;
+}
+
+async fn assert_concurrent_unlocked_transactions(automine: bool) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+    let to = Address::random();
+
+    // Start from a mined nonce to exercise both chain state and the pending pool.
+    let initial = WithOtherFields::new(TransactionRequest::default().from(from).to(to));
+    provider.send_transaction(initial).await.unwrap().get_receipt().await.unwrap();
+    api.anvil_set_auto_mine(automine).await.unwrap();
+
+    let tx_count = 32u64;
+    let requests = (1..=tx_count).map(|value| {
+        let request = TransactionRequest::default().from(from).to(to).value(U256::from(value));
+        // Send raw RPC requests so client nonce fillers cannot hide server-side races.
+        provider.raw_request::<_, TxHash>("eth_sendTransaction".into(), (request,))
+    });
+    let hashes = timeout(Duration::from_secs(30), join_all(requests)).await.unwrap();
+    let hashes = hashes.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
+    assert_eq!(hashes.iter().copied().collect::<B256HashSet>().len(), tx_count as usize);
+
+    let mut nonces = Vec::new();
+    for hash in &hashes {
+        let tx = provider.get_transaction_by_hash(*hash).await.unwrap().unwrap();
+        assert_eq!(tx.from(), from);
+        nonces.push(tx.nonce());
+    }
+    nonces.sort_unstable();
+    assert_eq!(nonces, (1..=tx_count).collect::<Vec<_>>());
+
+    if !automine {
+        assert_eq!(provider.get_transaction_count(from).await.unwrap(), 1);
+        assert_eq!(
+            provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap(),
+            tx_count + 1
+        );
+        api.mine_one().await.unwrap();
+    }
+
+    for hash in hashes {
+        let receipt = PendingTransactionBuilder::new(provider.root().clone(), hash)
+            .with_timeout(Some(Duration::from_secs(30)))
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+    }
+    assert_eq!(provider.get_transaction_count(from).await.unwrap(), tx_count + 1);
+    assert_eq!(provider.get_balance(to).await.unwrap(), U256::from(tx_count * (tx_count + 1) / 2));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_historic_info() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -1180,14 +1241,13 @@ async fn can_get_historic_info() {
     let tx = provider.send_transaction(tx).await.unwrap();
     let _ = tx.get_receipt().await.unwrap();
 
-    let nonce_pre =
-        provider.get_transaction_count(from).block_id(BlockId::number(0)).await.unwrap();
+    let nonce_pre = provider.get_transaction_count(from).number(0).await.unwrap();
 
     let nonce_post = provider.get_transaction_count(from).await.unwrap();
 
     assert!(nonce_pre < nonce_post);
 
-    let balance_pre = provider.get_balance(from).block_id(BlockId::number(0)).await.unwrap();
+    let balance_pre = provider.get_balance(from).number(0).await.unwrap();
 
     let balance_post = provider.get_balance(from).await.unwrap();
 
@@ -1473,7 +1533,7 @@ async fn test_tx_access_list() {
     let reverter_call_tx = TransactionRequest::default()
         .from(funded_sender)
         .to(reverter)
-        .input(Bytes::from(slot.to_vec()).into());
+        .input(Bytes::from(slot).into());
     let reverter_call_tx = WithOtherFields::new(reverter_call_tx);
     let access_list = provider.create_access_list(&reverter_call_tx).await.unwrap();
 

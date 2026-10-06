@@ -645,7 +645,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes};
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{prelude::Just, strategy::Strategy};
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::database::InMemoryDB;
     use std::path::PathBuf;
 
     fn sentinel(runner: &mut TestRunner) -> u64 {
@@ -688,13 +688,8 @@ mod tests {
     }
 
     fn state() -> FuzzState {
-        EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        )
-        .stateless_worker()
+        EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None)
+            .stateless_worker()
     }
 
     fn generator_tx(sender: u8) -> TxGenerator {

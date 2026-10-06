@@ -164,7 +164,7 @@ impl PathState {
     }
 
     fn mark_input_modified(&mut self, input: CalldataInput) {
-        if !self.modified_inputs.contains(&input) {
+        if self.input_unmodified(input) {
             self.modified_inputs.push(input);
             self.modified_inputs.sort_unstable();
         }

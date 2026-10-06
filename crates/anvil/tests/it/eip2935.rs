@@ -521,9 +521,9 @@ async fn geth_block_replay_discards_partial_results_on_execution_error() {
             Err(error) => TraceResult::Error { error: error.to_string(), tx_hash: Some(hash) },
         });
     }
-    assert!(matches!(expected[0], TraceResult::Success { .. }));
-    assert!(matches!(expected[1], TraceResult::Error { .. }));
-    assert!(matches!(expected[2], TraceResult::Error { .. }));
+    assert!(expected[0].is_success());
+    assert!(expected[1].is_error());
+    assert!(expected[2].is_error());
     assert_eq!(
         api.backend.debug_trace_block_by_number(block_number.into(), options).await.unwrap(),
         expected,

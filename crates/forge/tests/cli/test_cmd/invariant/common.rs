@@ -3389,3 +3389,80 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 }
+
+// Handler calls are committed within a run, while invariant predicate writes are discarded and
+// each run starts again from the post-setup state.
+#[forgetest]
+fn invariant_checks_do_not_commit_state(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.invariant.runs = 4;
+        config.invariant.depth = 4;
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantCheckState.t.sol",
+        r#"
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract Handler {
+    uint256 public count;
+    bool public poisoned;
+
+    function step() external {
+        require(!poisoned, "predicate write leaked");
+        require(count < 4, "run baseline leaked");
+        count++;
+    }
+
+    function poison() external {
+        poisoned = true;
+    }
+}
+
+contract InvariantCheckStateTest {
+    Handler handler;
+
+    function setUp() public {
+        handler = new Handler();
+    }
+
+    function targetSelectors() public view returns (FuzzSelector[] memory targets) {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.step.selector;
+        targets = new FuzzSelector[](1);
+        targets[0] = FuzzSelector(address(handler), selectors);
+    }
+
+    function invariant_poison() public {
+        handler.poison();
+    }
+
+    function afterInvariant() public view {
+        require(handler.count() == 4, "handler state not retained");
+        require(!handler.poisoned(), "predicate write leaked at end");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantCheckState.t.sol:InvariantCheckStateTest
+[PASS] invariant_poison() (runs: 4, calls: 16, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Handler  | step     | 16    | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+}

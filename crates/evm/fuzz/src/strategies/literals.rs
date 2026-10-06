@@ -348,7 +348,7 @@ impl LiteralsCollector {
         match &expr.kind {
             ast::ExprKind::Lit(lit, _) => match &lit.kind {
                 // Sub-denominations (e.g. `ether`, `days`) are already folded into the value.
-                ast::LitKind::Number(n) => Some(Num::untyped(U256::from(*n))),
+                ast::LitKind::Number(n) => Some(Num::untyped(*n)),
                 _ => None,
             },
             ast::ExprKind::Unary(op, inner) => {
@@ -406,7 +406,7 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
         match &expr.kind {
             // Handle plain literals.
             ast::ExprKind::Lit(lit, _) => match &lit.kind {
-                ast::LitKind::Number(n) => self.seed_uint(U256::from(*n)),
+                ast::LitKind::Number(n) => self.seed_uint(*n),
                 ast::LitKind::Address(addr) => {
                     self.insert_word(DynSolType::Address, addr.into_word())
                 }

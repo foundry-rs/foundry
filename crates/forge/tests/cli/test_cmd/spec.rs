@@ -67,11 +67,6 @@ fn address_and_flags(address: alloy_primitives::Address, flags: u64) -> alloy_pr
 }
 
 #[cfg(feature = "monad")]
-fn storage_value(value: alloy_primitives::U256) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from(value.to_be_bytes::<32>())
-}
-
-#[cfg(feature = "monad")]
 fn override_rpc_transaction_chain_id(value: &mut serde_json::Value, target: &str, chain_id: &str) {
     match value {
         serde_json::Value::Array(values) => {
@@ -1855,14 +1850,14 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_id_key(BLOCK_AUTHOR),
-        storage_value(left_aligned_u64(VALIDATOR_ID)),
+        left_aligned_u64(VALIDATOR_ID).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 0),
-        storage_value(alloy_primitives::U256::from(100) * mon),
+        (alloy_primitives::U256::from(100) * mon).into(),
     )
     .await
     .unwrap();
@@ -1876,7 +1871,7 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x09, VALIDATOR_ID, 6),
-        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        address_and_flags(VALIDATOR_AUTH, 0).into(),
     )
     .await
     .unwrap();

@@ -1,12 +1,10 @@
 use super::TempoOpts;
+use crate::utils::now;
 use alloy_primitives::{Address, B256};
 use eyre::{Result, WrapErr};
 use foundry_common::tempo::{ResolvedSessionSigner, resolve_live_session_signer};
 use foundry_wallets::{MultiWalletOpts, WalletOpts};
-use std::{
-    str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::str::FromStr;
 
 /// Environment variable used to pass a Tempo wallet session to child commands.
 pub const TEMPO_SESSION_ID_ENV: &str = "TEMPO_SESSION_ID";
@@ -125,8 +123,7 @@ fn resolve_session_signer(
 }
 
 fn resolve_session(session_id: B256) -> Result<ResolvedSessionSigner> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-    resolve_live_session_signer(session_id, now.as_secs())?
+    resolve_live_session_signer(session_id, now().as_secs())?
         .ok_or_else(|| eyre::eyre!("Tempo session {session_id:?} is not active or has no live key"))
 }
 

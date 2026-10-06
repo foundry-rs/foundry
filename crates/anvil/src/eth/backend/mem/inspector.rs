@@ -18,8 +18,8 @@ use revm::{
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, CreateScheme,
-        Interpreter, interpreter::EthInterpreter,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
+        interpreter::EthInterpreter,
     },
 };
 use revm_inspectors::transfer::{TRANSFER_EVENT_TOPIC, TRANSFER_LOG_EMITTER, TransferInspector};
@@ -335,7 +335,7 @@ where
         if let Some(collector) = &mut self.simulation_logs {
             collector.sync_journal_logs(ecx.journal().logs());
             collector.frame_start();
-            if matches!(inputs.scheme, CallScheme::Call)
+            if inputs.scheme.is_call()
                 && let Some(value) = inputs.transfer_value()
             {
                 collector.push_transfer(inputs.transfer_from(), inputs.transfer_to(), value);
