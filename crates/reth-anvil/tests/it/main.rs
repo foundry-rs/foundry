@@ -1,9 +1,12 @@
 //! Integration tests for the `anvil_*` namespace served by reth-anvil.
 
-use alloy_network::{TransactionBuilder, TransactionResponse};
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
+use alloy_eips::Encodable2718;
+use alloy_network::{TransactionBuilder, TransactionResponse, TxSignerSync};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::anvil::{Metadata, MineOptions, NodeInfo};
 use alloy_rpc_types_eth::{Block, TransactionRequest, state::StateOverridesBuilder};
+use alloy_signer_local::PrivateKeySigner;
 use eyre::{OptionExt, Result, bail};
 use jsonrpsee::{
     core::{ClientError, client::ClientT},
@@ -1251,6 +1254,9 @@ async fn fork_mines_and_reverts_on_top_of_remote_state() -> Result<()> {
     let dead = Address::from_str("0x000000000000000000000000000000000000dEaD")?;
     let remote_balance = U256::from(DEAD_BALANCE_AT_FORK_BLOCK);
     let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    // The dev accounts have a history on the forked chain.
+    let remote_nonce: U256 =
+        client.request("eth_getTransactionCount", rpc_params![funder, "latest"]).await?;
 
     let snapshot: U256 = client.request("evm_snapshot", rpc_params![]).await?;
 
@@ -1267,7 +1273,7 @@ async fn fork_mines_and_reverts_on_top_of_remote_state() -> Result<()> {
     assert_eq!(balance(&client, dead, format!("0x{FORK_BLOCK_NUMBER:x}")).await?, remote_balance);
     let nonce: U256 =
         client.request("eth_getTransactionCount", rpc_params![funder, "latest"]).await?;
-    assert_eq!(nonce, U256::from(1));
+    assert_eq!(nonce, remote_nonce + U256::from(1));
 
     // A call that reads the remote balance through the EVM sees the local write.
     let reader = Address::with_last_byte(0xbe);
@@ -1283,7 +1289,7 @@ async fn fork_mines_and_reverts_on_top_of_remote_state() -> Result<()> {
     assert_eq!(balance(&client, dead, "latest").await?, remote_balance);
     let nonce: U256 =
         client.request("eth_getTransactionCount", rpc_params![funder, "latest"]).await?;
-    assert_eq!(nonce, U256::ZERO);
+    assert_eq!(nonce, remote_nonce);
 
     Ok(())
 }
@@ -1577,5 +1583,156 @@ async fn ipc_endpoint_is_created() -> Result<()> {
     let (_api, _handle, client) = spawn_with_client(config).await?;
     assert_eq!(block_number(&client).await?, 0);
     assert!(path.exists(), "the ipc socket exists at {}", path.display());
+    Ok(())
+}
+
+/// Init code that returns 32 KiB of zero bytes as the runtime code: `PUSH3 0x8000 PUSH1 0 RETURN`.
+const LARGE_CONTRACT_INIT_CODE: &str = "0x620080006000f3";
+
+/// Runtime code that stores one word at offset 0x1000: `PUSH1 1 PUSH2 0x1000 MSTORE STOP`.
+const MSTORE_FAR_CODE: &str = "0x60016110005200";
+
+const U64_MAX_HEX: &str = "0xffffffffffffffff";
+
+#[tokio::test]
+async fn disabled_block_gas_limit_mines_above_the_default_limit() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().disable_block_gas_limit(true)).await?;
+    assert_eq!(get_block(&client, "latest").await?["gasLimit"].as_str(), Some(U64_MAX_HEX));
+
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let tx = transfer(funder, Address::repeat_byte(0x33), gas_price).with_gas_limit(30_000_001);
+    let tx_hash: B256 = client.request("eth_sendTransaction", rpc_params![tx]).await?;
+    let receipt = wait_for_receipt(&client, tx_hash).await?;
+    assert_eq!(receipt["status"], "0x1");
+    assert_eq!(get_block(&client, "latest").await?["gasLimit"].as_str(), Some(U64_MAX_HEX));
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_gas_limit_persists_across_blocks() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_gas_limit(Some(50_000_000))).await?;
+    client.request::<(), _>("anvil_mine", rpc_params![U256::from(2), U256::ZERO]).await?;
+    let block = get_block(&client, "latest").await?;
+    assert_eq!(block["number"].as_str(), Some("0x2"));
+    assert_eq!(block["gasLimit"].as_str(), Some("0x2faf080"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn tx_gas_limit_cap_is_enforced_only_when_enabled() -> Result<()> {
+    const ABOVE_CAP: u64 = 16_777_217;
+    let osaka = || NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
+
+    let (_api, _handle, client) = spawn_with_client(osaka()).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let tx = transfer(funder, Address::repeat_byte(0x34), gas_price).with_gas_limit(ABOVE_CAP);
+    let tx_hash: B256 = client.request("eth_sendTransaction", rpc_params![tx]).await?;
+    assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
+
+    let (_api, _handle, client) = spawn_with_client(osaka().enable_tx_gas_limit(true)).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let tx = transfer(funder, Address::repeat_byte(0x34), gas_price).with_gas_limit(ABOVE_CAP);
+    let err = client.request::<B256, _>("eth_sendTransaction", rpc_params![tx]).await.unwrap_err();
+    assert!(err.to_string().contains("gas limit"), "{err}");
+    Ok(())
+}
+
+/// Funds a fresh account and, before the funding is mined, spends from it. Returns the funding
+/// hash and the result of submitting the spend.
+async fn spend_before_funding(
+    client: &HttpClient,
+) -> Result<(B256, std::result::Result<B256, ClientError>)> {
+    client.request::<(), _>("anvil_setAutomine", rpc_params![false]).await?;
+    let (funder, gas_price) = funder_and_gas_price(client).await?;
+    let spender = PrivateKeySigner::random();
+    let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
+    let one_ether = U256::from(10u64).pow(U256::from(18));
+
+    // The funding pays the higher tip, so it is mined first.
+    let funding = transfer(funder, spender.address(), gas_price * 2).with_value(one_ether);
+    let funding_tx: B256 = client.request("eth_sendTransaction", rpc_params![funding]).await?;
+
+    let mut spend = TxEip1559 {
+        chain_id: chain_id.to(),
+        nonce: 0,
+        gas_limit: 21_000,
+        max_fee_per_gas: gas_price,
+        max_priority_fee_per_gas: 1,
+        to: Address::repeat_byte(0x35).into(),
+        value: one_ether / U256::from(2),
+        ..Default::default()
+    };
+    let signature = spender.sign_transaction_sync(&mut spend)?;
+    let envelope: TxEnvelope = spend.into_signed(signature).into();
+    let raw = Bytes::from(envelope.encoded_2718());
+    let spend_tx = client.request::<B256, _>("eth_sendRawTransaction", rpc_params![raw]).await;
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    Ok((funding_tx, spend_tx))
+}
+
+#[tokio::test]
+async fn pool_balance_checks_can_be_disabled() -> Result<()> {
+    let (_api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let (_, spend) = spend_before_funding(&client).await?;
+    let err = spend.unwrap_err().to_string();
+    assert!(err.contains("insufficient funds"), "{err}");
+
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_disable_pool_balance_checks(true)).await?;
+    let (funding, spend) = spend_before_funding(&client).await?;
+    let funding = wait_for_receipt(&client, funding).await?;
+    let spend = wait_for_receipt(&client, spend?).await?;
+    assert_eq!(spend["status"], "0x1");
+    assert_eq!(spend["blockNumber"], funding["blockNumber"]);
+    Ok(())
+}
+
+async fn deploy_large_contract(client: &HttpClient) -> Result<Value> {
+    let (funder, gas_price) = funder_and_gas_price(client).await?;
+    let tx = TransactionRequest::default()
+        .with_from(funder)
+        .with_gas_price(gas_price)
+        .with_gas_limit(10_000_000)
+        .with_deploy_code(Bytes::from_str(LARGE_CONTRACT_INIT_CODE)?);
+    let tx_hash: B256 = client.request("eth_sendTransaction", rpc_params![tx]).await?;
+    wait_for_receipt(client, tx_hash).await
+}
+
+#[tokio::test]
+async fn code_size_limit_can_be_set_and_disabled() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_code_size_limit(Some(1024))).await?;
+    assert_eq!(deploy_large_contract(&client).await?["status"], "0x0");
+
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().disable_code_size_limit(true)).await?;
+    let receipt = deploy_large_contract(&client).await?;
+    assert_eq!(receipt["status"], "0x1");
+    let contract = receipt["contractAddress"].as_str().ok_or_eyre("missing contract address")?;
+    let code: Bytes = client.request("eth_getCode", rpc_params![contract, "latest"]).await?;
+    assert_eq!(code.len(), 0x8000);
+    Ok(())
+}
+
+async fn call_mstore_far(client: &HttpClient) -> std::result::Result<Bytes, ClientError> {
+    let contract = Address::repeat_byte(0x36);
+    let overrides = StateOverridesBuilder::default()
+        .with_code(contract, Bytes::from_str(MSTORE_FAR_CODE).unwrap())
+        .build();
+    let call = TransactionRequest::default().with_to(contract);
+    client.request("eth_call", rpc_params![call, "latest", overrides]).await
+}
+
+#[tokio::test]
+async fn memory_limit_applies_to_calls() -> Result<()> {
+    let (_api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    call_mstore_far(&client).await?;
+
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_memory_limit(Some(1024))).await?;
+    let err = call_mstore_far(&client).await.unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("memory"), "{err}");
     Ok(())
 }

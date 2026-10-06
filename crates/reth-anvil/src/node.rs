@@ -30,7 +30,7 @@ use reth_ethereum::{
             LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle, rpc::RethRpcServerHandles,
         },
         core::{
-            args::{DatadirArgs, RpcServerArgs, StorageArgs},
+            args::{DatadirArgs, PayloadBuilderArgs, RpcServerArgs, StorageArgs},
             dirs::{DataDirPath, MaybePlatformPath},
             exit::NodeExitFuture,
             node_config::NodeConfig as RethNodeConfig,
@@ -162,26 +162,35 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
     let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
 
     let datadir = tempfile::tempdir()?;
+    let mut rpc_args = RpcServerArgs {
+        http: true,
+        http_addr: address.ip(),
+        http_port: address.port(),
+        http_corsdomain: Some("*".to_string()),
+        http_api: Some(RpcModuleSelection::All),
+        ws: true,
+        ws_addr: address.ip(),
+        ws_port: address.port(),
+        ws_allowed_origins: Some("*".to_string()),
+        ws_api: Some(RpcModuleSelection::All),
+        ipcdisable: config.ipc_path.is_none(),
+        ipcpath: config.ipc_path.clone().unwrap_or_default(),
+        disable_auth_server: true,
+        ..Default::default()
+    };
+    if let Some(memory_limit) = config.memory_limit {
+        rpc_args.rpc_evm_memory_limit = memory_limit;
+    }
     let node_config = RethNodeConfig::new(chain_spec.clone())
         .with_storage(StorageArgs { v2: false })
-        .with_rpc(RpcServerArgs {
-            http: true,
-            http_addr: address.ip(),
-            http_port: address.port(),
-            http_corsdomain: Some("*".to_string()),
-            http_api: Some(RpcModuleSelection::All),
-            ws: true,
-            ws_addr: address.ip(),
-            ws_port: address.port(),
-            ws_allowed_origins: Some("*".to_string()),
-            ws_api: Some(RpcModuleSelection::All),
-            ipcdisable: config.ipc_path.is_none(),
-            ipcpath: config.ipc_path.clone().unwrap_or_default(),
-            disable_auth_server: true,
-            ..Default::default()
-        })
+        .with_rpc(rpc_args)
         .with_datadir_args(DatadirArgs {
             datadir: MaybePlatformPath::<DataDirPath>::from(datadir.path().to_path_buf()),
+            ..Default::default()
+        })
+        // Pin the block gas limit, so blocks do not drift towards reth's default limit.
+        .with_payload_builder(PayloadBuilderArgs {
+            gas_limit: Some(config.get_gas_limit()),
             ..Default::default()
         });
     // Reth reserves an 8 TiB map by default, which fails once a few dev nodes run side by side.
@@ -196,7 +205,9 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
     let (mining, miner_requests) = MiningController::new(initial_mining_mode(&config));
     let time = TimeManager::new(chain_spec.genesis().timestamp);
     let block_env = BlockEnvOverrides::default();
-    if fork.is_some()
+    if config.disable_block_gas_limit {
+        block_env.set_gas_limit(u64::MAX);
+    } else if fork.is_some()
         && let Some(gas_limit) = config.gas_limit
         && gas_limit != chain_spec.genesis_header().gas_limit()
     {
@@ -271,13 +282,16 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
                 let mut module = ctx.registry.module_for(&RpcModuleSelection::All);
                 module.merge(anvil_module.clone())?;
                 module.merge(evm_module.clone())?;
+                for name in eth_module.method_names() {
+                    module.remove_method(name);
+                }
                 module.merge(eth_module.clone())?;
                 module.merge(personal_module.clone())?;
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
                 ctx.modules.merge_configured(anvil_module)?;
                 ctx.modules.merge_configured(evm_module)?;
-                ctx.modules.merge_configured(eth_module)?;
+                ctx.modules.replace_configured(eth_module)?;
                 ctx.modules.merge_configured(personal_module)?;
                 Ok(())
             }

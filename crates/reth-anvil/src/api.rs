@@ -14,7 +14,7 @@ use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
 use alloy_json_rpc::RpcObject;
 use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
@@ -260,9 +260,17 @@ pub trait EvmApi {
     async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String>;
 }
 
-/// The `eth_*` methods anvil adds on top of the standard namespace.
+/// The `eth_*` methods anvil adds on top of the standard namespace, or replaces.
 #[rpc(server, namespace = "eth")]
 pub trait EthExtApi<TxReq: RpcObject> {
+    /// Signs and sends a transaction from a dev account. A request without `to` deploys a
+    /// contract.
+    ///
+    /// Replaces reth's method, which rejects a request without `to`, because a create recipient
+    /// serializes as `null` and reads back as missing.
+    #[method(name = "sendTransaction")]
+    async fn eth_send_transaction(&self, request: TxReq) -> RpcResult<B256>;
+
     /// Sends a transaction from `from` without a signature, as if the account were impersonated.
     #[method(name = "sendUnsignedTransaction")]
     async fn eth_send_unsigned_transaction(&self, request: TxReq) -> RpcResult<B256>;
@@ -278,6 +286,14 @@ pub trait PersonalApi {
 
 /// The header type of a provider.
 type HeaderOf<Provider> = <Provider as HeaderProvider>::Header;
+
+/// Marks a request without `to` as a contract creation, so the signer can build it.
+fn with_recipient<TxReq: AsMut<TransactionRequest>>(mut request: TxReq) -> TxReq {
+    if request.as_mut().to.is_none() {
+        request.as_mut().to = Some(TxKind::Create);
+    }
+    request
+}
 
 /// Implementation of the `anvil_*` RPC namespace.
 #[derive(Debug, Clone)]
@@ -1048,6 +1064,10 @@ where
     Eth: FullEthApiServer,
     Spec: Send + Sync + 'static,
 {
+    async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
+        EthApiServer::send_transaction(&self.eth, with_recipient(request)).await
+    }
+
     async fn eth_send_unsigned_transaction(
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
@@ -1057,7 +1077,7 @@ where
         if !impersonated {
             self.impersonation.impersonate(from);
         }
-        let result = EthApiServer::send_transaction(&self.eth, request).await;
+        let result = EthApiServer::send_transaction(&self.eth, with_recipient(request)).await;
         if !impersonated {
             self.impersonation.stop_impersonating(from);
         }

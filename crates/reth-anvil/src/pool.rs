@@ -1,4 +1,4 @@
-use crate::{impersonation::ImpersonationState, types::TransactionOrder};
+use crate::{config::NodeConfig, impersonation::ImpersonationState, types::TransactionOrder};
 use alloy_consensus::{Transaction, transaction::TxHashRef};
 use alloy_primitives::{B256, Signature, U256};
 use eyre::Result;
@@ -51,6 +51,7 @@ impl TxSignature for TransactionSigned {
 pub struct AnvilValidator<V> {
     inner: V,
     state: ImpersonationState,
+    disable_balance_checks: bool,
 }
 
 impl<V: Debug> Debug for AnvilValidator<V> {
@@ -119,7 +120,15 @@ where
             };
         }
 
-        self.inner.validate_transaction(origin, transaction).await
+        let mut outcome = self.inner.validate_transaction(origin, transaction).await;
+        if self.disable_balance_checks
+            && let TransactionValidationOutcome::Valid { balance, .. } = &mut outcome
+        {
+            // The pool parks transactions the sender cannot afford. Report an unlimited balance,
+            // so a transaction funded earlier in the same block is mined.
+            *balance = U256::MAX;
+        }
+        outcome
     }
 
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
@@ -218,6 +227,28 @@ where
     }
 }
 
+/// The pool validation knobs anvil exposes.
+#[derive(Clone, Copy, Debug)]
+pub struct PoolSettings {
+    /// The block gas limit the validator enforces until the first block is mined.
+    pub block_gas_limit: u64,
+    /// Whether the validator skips the sender balance check.
+    pub disable_balance_checks: bool,
+    /// Whether the pool enforces no minimum priority fee.
+    pub disable_min_priority_fee: bool,
+}
+
+impl PoolSettings {
+    /// Reads the settings from the node config.
+    pub fn from_config(config: &NodeConfig) -> Self {
+        Self {
+            block_gas_limit: config.get_gas_limit(),
+            disable_balance_checks: config.disable_pool_balance_checks,
+            disable_min_priority_fee: config.disable_min_priority_fee,
+        }
+    }
+}
+
 /// Pool builder that wraps the default Ethereum pool builder and decorates the validator with
 /// impersonation support.
 #[derive(Debug, Clone)]
@@ -226,6 +257,8 @@ pub struct AnvilPoolBuilder {
     pub state: ImpersonationState,
     /// How the pool orders transactions.
     pub order: TransactionOrder,
+    /// The validation knobs.
+    pub settings: PoolSettings,
 }
 
 /// The transaction pool type produced by [`AnvilPoolBuilder`].
@@ -252,17 +285,31 @@ where
         let pool_config = ctx.pool_config();
         let blob_store = create_blob_store_with_cache(ctx, None)?;
 
-        let validator =
+        let minimum_priority_fee = if self.settings.disable_min_priority_fee {
+            None
+        } else {
+            ctx.config().txpool.minimum_priority_fee
+        };
+        let mut validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .kzg_settings(ctx.kzg_settings()?)
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
                 .with_local_transactions_config(pool_config.local_transactions_config.clone())
                 .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
                 .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
-                .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
+                .with_minimum_priority_fee(minimum_priority_fee)
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
-                .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(|inner| AnvilValidator { inner, state: self.state.clone() });
+                .set_block_gas_limit(self.settings.block_gas_limit);
+        if self.settings.disable_balance_checks {
+            validator = validator.disable_balance_check();
+        }
+        let validator = validator
+            .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
+            .map(|inner| AnvilValidator {
+                inner,
+                state: self.state.clone(),
+                disable_balance_checks: self.settings.disable_balance_checks,
+            });
 
         TxPoolBuilder::new(ctx)
             .with_validator(validator)

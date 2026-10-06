@@ -3,10 +3,10 @@
 use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, Prepared};
 use crate::{
     config::NodeConfig,
-    evm::AnvilExecutorBuilder,
+    evm::{AnvilExecutorBuilder, EvmSettings},
     fork::ForkBackend,
     logging::{LoggingState, NodeInfoLayer},
-    pool::AnvilPoolBuilder,
+    pool::{AnvilPoolBuilder, PoolSettings},
 };
 use eyre::Result;
 use reth_ethereum::{
@@ -67,12 +67,14 @@ impl AnvilNetwork for Ethereum {
             .pool(AnvilPoolBuilder {
                 state: anvil.impersonation.clone(),
                 order: anvil.config.transaction_order,
+                settings: PoolSettings::from_config(&anvil.config),
             })
             .executor(AnvilExecutorBuilder {
                 inner: EthereumExecutorBuilder::default(),
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
                 anvil_state: anvil.anvil_state.clone(),
+                settings: EvmSettings::from_config(&anvil.config),
             })
             .consensus(NoopConsensusBuilder)
     }

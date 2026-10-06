@@ -1,5 +1,6 @@
 use crate::{
     block_env::BlockEnvOverrides,
+    config::NodeConfig,
     impersonation::ImpersonationState,
     state::{SharedAnvilState, StateOverride},
 };
@@ -28,7 +29,7 @@ use reth_ethereum::{
 };
 use revm::{
     Inspector,
-    context::Block as _,
+    context::{Block as _, CfgEnv},
     state::{Account, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{collections::hash_map::Entry, fmt::Debug};
@@ -57,15 +58,58 @@ impl AnvilExecutionPayload for ExecutionData {
     }
 }
 
+/// The EVM limits anvil relaxes or tightens: the contract code size limit, the memory limit, the
+/// block gas limit check, and the per-transaction gas limit cap.
+///
+/// Applied to every EVM environment the node builds, so block execution and RPC calls agree.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EvmSettings {
+    /// The contract code size limit. `None` keeps the hardfork's limit.
+    pub code_size_limit: Option<usize>,
+    /// The EVM memory limit in bytes. `None` keeps revm's default.
+    pub memory_limit: Option<u64>,
+    /// Whether a transaction may use more gas than the block gas limit.
+    pub disable_block_gas_limit: bool,
+    /// Whether the per-transaction gas limit cap of EIP-7825 is enforced.
+    pub enable_tx_gas_limit: bool,
+}
+
+impl EvmSettings {
+    /// Reads the settings from the node config.
+    pub const fn from_config(config: &NodeConfig) -> Self {
+        Self {
+            code_size_limit: config.code_size_limit,
+            memory_limit: config.memory_limit,
+            disable_block_gas_limit: config.disable_block_gas_limit,
+            enable_tx_gas_limit: config.enable_tx_gas_limit,
+        }
+    }
+
+    /// Applies the settings to an EVM configuration environment.
+    pub const fn apply<Spec>(&self, cfg: &mut CfgEnv<Spec>) {
+        cfg.limit_contract_code_size = self.code_size_limit;
+        // Accounts with code may send transactions, so impersonated contracts work.
+        cfg.disable_eip3607 = true;
+        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        if !self.enable_tx_gas_limit {
+            cfg.tx_gas_limit_cap = Some(u64::MAX);
+        }
+        if let Some(memory_limit) = self.memory_limit {
+            cfg.memory_limit = memory_limit;
+        }
+    }
+}
+
 /// Wraps an inner EVM config to override sender recovery for impersonated transactions during
-/// engine payload execution, and to apply the block environment overrides for the gas limit and
-/// the base fee.
+/// engine payload execution, to apply the block environment overrides for the gas limit and the
+/// base fee, and to apply the [`EvmSettings`].
 #[derive(Debug, Clone)]
 pub struct AnvilEvmConfig<Evm: ConfigureEvm> {
     inner: Evm,
     executor_factory: AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
     state: ImpersonationState,
     block_env: BlockEnvOverrides,
+    settings: EvmSettings,
     /// The node's sender cache. Impersonated senders are recorded here so RPC lookups that
     /// recover senders through the cache report the impersonated account.
     sender_cache: Option<SenderRecoveryCache>,
@@ -78,11 +122,12 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
         state: ImpersonationState,
         block_env: BlockEnvOverrides,
         anvil_state: SharedAnvilState,
+        settings: EvmSettings,
         sender_cache: Option<SenderRecoveryCache>,
     ) -> Self {
         let executor_factory =
             AnvilBlockExecutorFactory::new(inner.block_executor_factory().clone(), anvil_state);
-        Self { inner, executor_factory, state, block_env, sender_cache }
+        Self { inner, executor_factory, state, block_env, settings, sender_cache }
     }
 }
 
@@ -115,7 +160,9 @@ where
         &self,
         header: &<Evm::Primitives as NodePrimitives>::BlockHeader,
     ) -> Result<EvmEnvFor<Self>, Self::Error> {
-        self.inner.evm_env(header)
+        let mut env = self.inner.evm_env(header)?;
+        self.settings.apply(&mut env.cfg_env);
+        Ok(env)
     }
 
     fn next_evm_env(
@@ -129,6 +176,7 @@ where
         }
         let mut env = self.inner.next_evm_env(parent, &attributes)?;
         env.set_base_fee_opt(self.block_env.take_next_base_fee());
+        self.settings.apply(&mut env.cfg_env);
         Ok(env)
     }
 
@@ -161,7 +209,9 @@ where
     Payload: AnvilExecutionPayload,
 {
     fn evm_env_for_payload(&self, payload: &Payload) -> Result<EvmEnvFor<Self>, Self::Error> {
-        self.inner.evm_env_for_payload(payload)
+        let mut env = self.inner.evm_env_for_payload(payload)?;
+        self.settings.apply(&mut env.cfg_env);
+        Ok(env)
     }
 
     fn context_for_payload<'a>(
@@ -312,6 +362,8 @@ pub struct AnvilExecutorBuilder<Inner> {
     pub block_env: BlockEnvOverrides,
     /// The shared anvil state writes.
     pub anvil_state: SharedAnvilState,
+    /// The EVM limits.
+    pub settings: EvmSettings,
 }
 
 /// The execution payload of a node.
@@ -341,6 +393,7 @@ where
             self.state,
             self.block_env,
             self.anvil_state,
+            self.settings,
             ctx.sender_recovery_cache().cloned(),
         ))
     }

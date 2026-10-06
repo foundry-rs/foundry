@@ -184,7 +184,8 @@ pub struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        let genesis_accounts = AccountGenerator::new(10).generate().expect("valid mnemonic");
+        let genesis_accounts =
+            AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).generate().expect("valid mnemonic");
         Self {
             chain_id: None,
             gas_limit: None,
@@ -293,6 +294,9 @@ impl NodeConfig {
 
     /// Returns the block gas limit.
     pub fn get_gas_limit(&self) -> u64 {
+        if self.disable_block_gas_limit {
+            return u64::MAX;
+        }
         self.gas_limit
             .or_else(|| self.genesis.as_ref().map(|genesis| genesis.gas_limit))
             .unwrap_or(DEFAULT_GAS_LIMIT)

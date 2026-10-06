@@ -22,6 +22,9 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Rewrites the EVM config to override gas limit, base fee, prevrandao, and beacon root per block | `src/evm.rs`, `src/block_env.rs`, `src/time.rs` | ~150 | `LocalPayloadAttributesBuilder` and `NextBlockEnvAttributes` accepting per-block overrides, so a dev node can set them without a config wrapper |
 | Owns the miner: FCU with attributes, payload resolve, `newPayload`, FCU, with automine, interval, and manual modes | `src/miner.rs`, `src/mining.rs` | ~300 | A dev mining mode in reth's local miner (`--dev.block-time` exists; automine on pool events and manual `mine` do not) |
 | Builds the `anvil_*`, `evm_*`, `hardhat_*`, and `personal_*` namespaces | `src/api.rs` | ~1000 | A `dev_*` namespace in reth with the same methods, which reth-anvil would alias to the anvil names |
+| Replaces `eth_sendTransaction`, because reth rejects a request without `to`: alloy serializes a create recipient as `null`, which reads back as missing, and the dev signer then fails to build the transaction | `src/api.rs` (`EthExtApi`) | ~20 | Treat a missing `to` as a contract creation in `send_transaction_request` |
+| Reports an unlimited balance for every valid transaction when `--disable-pool-balance-checks` is set, because the validator's `disable_balance_check` still reports the real balance and the pool parks a transaction the sender cannot afford yet | `src/pool.rs` (`AnvilValidator`) | ~10 | Let `disable_balance_check` also skip the pool's balance-based parking |
+| Rewrites every EVM environment to set the code size limit, the memory limit, EIP-3607, the block gas limit check, and the EIP-7825 cap | `src/evm.rs` (`EvmSettings`) | ~40 | A `CfgEnv` overrides hook on `ConfigureEvm`, or dev-mode flags for these limits |
 
 ## Gaps that are not hooks
 
@@ -33,6 +36,13 @@ be free if reth had a dev mode:
 - Forking at a transaction hash, which replays the transactions before it in the fork block.
 - `BLOCKHASH` of pre-fork blocks during block execution: the engine's state provider cannot reach the
   remote endpoint for block hashes.
+- `--disable-block-gas-limit` sets the block gas limit to `u64::MAX` instead of only skipping the
+  check, because reth's payload builder and pool enforce the header's limit.
+- `--disable-min-priority-fee` only affects the pool: reth's gas price oracle suggests its own tip,
+  so `eth_gasPrice` keeps a priority fee.
+- `--max-transactions`: reth's payload builder has no cap on the number of transactions per block.
+- Dev accounts keep their history on a forked chain: anvil resets their nonces and balances in the
+  fork genesis, reth-anvil only sets the balances.
 - Networks: Optimism and Base through `op-reth` node types, Tempo through `tempo-node`, Monad through
   a `ConfigureEvm` built on `monad-revm`.
 
