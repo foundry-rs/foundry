@@ -227,6 +227,29 @@ contract BroadcastRawTransactionTest is Test {
 
         assertEq(revertedMintToken.balanceOf(address(this)), 0);
     }
+
+    function mintThenSucceedSignedTxThenRevert() external {
+        revertedMintToken.mint(1, address(this));
+        vm.broadcastRawTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+        revert();
+    }
+
+    function test_successful_signed_tx_does_not_leak_reverted_state() public {
+        vm.fee(1);
+        vm.chainId(1);
+        vm.deal(0x5316812db67073C4d4af8BB3000C5B86c2877e94, 1 ether);
+        try this.mintThenSucceedSignedTxThenRevert() {} catch {}
+
+        // A successful signed tx reloads every journaled account from the backend.
+        vm.deal(0x7ED31830602f9F7419307235c0610Fb262AA0375, 1 ether);
+        vm.broadcastRawTransaction(
+            hex"f8a5806483030d40945bf11839f61ef5cceeaf1f4153e44df5d02825f780b844095ea7b300000000000000000000000070cf146ab98ffd5de24e75dd7423f16181da8e13000000000000000000000000000000000000000000000000000000000000003225a0e25b9ef561d9a413b21755cc0e4bb6e80f2a88a8a52305690956130d612074dfa07bfd418bc2ad3c3f435fa531cdcdc64887f64ed3fb0d347d6b0086e320ad4eb1"
+        );
+
+        assertEq(revertedMintToken.balanceOf(address(this)), 0);
+    }
 }
 
 contract MyERC20 {
