@@ -345,11 +345,14 @@ impl FuzzImproveArgs {
                 .current_dir(&config.root)
                 .output()
                 .wrap_err("failed to invoke generator")?;
-            let proposal = if output.status.success() {
-                read_candidate(&candidate_path, &generated_tests)
-            } else {
-                Err(eyre!("generator failed: {}", stderr(&output)))
-            };
+            if !output.status.success() {
+                fs::write(
+                    cache_root.join("rounds.json"),
+                    serde_json::to_vec_pretty(&evaluations)?,
+                )?;
+                eyre::bail!("generator failed in round {round}: {}", stderr(&output));
+            }
+            let proposal = read_candidate(&candidate_path, &generated_tests);
             let evaluation = match proposal {
                 Ok(proposal) => match accumulate_candidate(
                     current_candidate.as_ref(),
