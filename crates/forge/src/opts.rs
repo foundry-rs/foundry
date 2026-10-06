@@ -2,8 +2,9 @@ use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
-    lint::LintArgs, lsp::LspArgs, reinit::ReinitArgs, remappings::RemappingArgs,
-    remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
+    lint::LintArgs, lsp::LspArgs, properties::PropertiesArgs, reinit::ReinitArgs,
+    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
+    soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -43,6 +44,13 @@ pub enum ForgeSubcommand {
 
     /// Run and manage Forge fuzzing corpora.
     Fuzz(FuzzArgs),
+
+    /// Generate test properties and keep only those that reproducibly kill mutation survivors
+    ///
+    /// Examples:
+    /// - forge properties --mutate src/A.sol --brief b.md --generator ./gen.sh --seed 1 --seed 2
+    #[command(verbatim_doc_comment)]
+    Properties(PropertiesArgs),
 
     /// Run a smart contract as a script, building transactions that can be sent onchain
     ///

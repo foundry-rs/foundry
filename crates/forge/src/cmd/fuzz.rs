@@ -36,10 +36,6 @@ use std::{
 };
 use tempfile::{Builder as TempDirBuilder, TempDir};
 
-mod improve;
-
-use improve::FuzzImproveArgs;
-
 type FuzzOutcomeFuture = Pin<Box<dyn Future<Output = Result<TestOutcome>>>>;
 
 /// Run and manage Forge fuzzing corpora.
@@ -70,10 +66,6 @@ impl FuzzArgs {
                 args.run().await?;
                 Ok(TestOutcome::empty(None, true))
             }),
-            FuzzSubcommands::Improve(args) => Box::pin(async move {
-                args.run()?;
-                Ok(TestOutcome::empty(None, true))
-            }),
         }
     }
 
@@ -81,10 +73,7 @@ impl FuzzArgs {
         match &self.command {
             FuzzSubcommands::Run(args) => args.junit,
             FuzzSubcommands::Replay(args) => args.is_junit(),
-            FuzzSubcommands::Show(_)
-            | FuzzSubcommands::Cmin(_)
-            | FuzzSubcommands::Tmin(_)
-            | FuzzSubcommands::Improve(_) => false,
+            FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) | FuzzSubcommands::Tmin(_) => false,
         }
     }
 }
@@ -102,8 +91,6 @@ pub enum FuzzSubcommands {
     Cmin(FuzzCminArgs),
     /// Minimize one corpus entry while preserving its failure or coverage.
     Tmin(FuzzTminArgs),
-    /// Generate and retain fuzz properties that improve mutation coverage.
-    Improve(FuzzImproveArgs),
 }
 
 /// Run only fuzz and invariant tests.
