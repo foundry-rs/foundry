@@ -317,7 +317,7 @@ impl PathState {
 
     pub(crate) fn inherit_branch_target_progress(&mut self, child: &Self) {
         if self.branch_target == child.branch_target && child.branch_target_reached {
-            self.branch_target_reached = true;
+            self.mark_branch_target_reached();
         }
     }
 
@@ -1070,10 +1070,10 @@ impl ExpectedRevert {
                     return None;
                 }
                 let prefix_len = SymExpr::constant(cx, U256::from(prefix.len()));
-                conditions.push(SymBoolExpr::cmp(
+                conditions.push(SymBoolExpr::cmp_word_expr(
                     cx,
                     SymCmpOp::Uge,
-                    return_data.len_word.clone(),
+                    &return_data.len_word,
                     prefix_len,
                 ));
                 conditions.extend((0..prefix.len()).map(|offset| {
@@ -2364,7 +2364,7 @@ pub(crate) struct SymbolicBlock {
 impl SymbolicBlock {
     pub(crate) fn new(cx: &mut SymCx) -> Self {
         Self {
-            chain_id: SymExpr::constant(cx, U256::ONE),
+            chain_id: SymExpr::one(cx),
             coinbase: Address::ZERO,
             timestamp: SymExpr::zero(cx),
             number: SymExpr::zero(cx),
@@ -2388,10 +2388,7 @@ impl SymbolicBlock {
             .as_ref()
             .and_then(|cheats| cheats.block.as_ref())
             .unwrap_or(&evm_env.block_env);
-        let difficulty = block
-            .prevrandao()
-            .map(|hash| U256::from_be_bytes(hash.0))
-            .unwrap_or_else(|| block.difficulty());
+        let difficulty = block.prevrandao().map(Into::into).unwrap_or_else(|| block.difficulty());
 
         Self {
             chain_id: SymExpr::constant(cx, U256::from(evm_env.cfg_env.chain_id)),

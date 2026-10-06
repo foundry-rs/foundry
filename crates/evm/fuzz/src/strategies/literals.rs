@@ -348,7 +348,7 @@ impl LiteralsCollector {
         match &expr.kind {
             ast::ExprKind::Lit(lit, _) => match &lit.kind {
                 // Sub-denominations (e.g. `ether`, `days`) are already folded into the value.
-                ast::LitKind::Number(n) => Some(Num::untyped(U256::from(*n))),
+                ast::LitKind::Number(n) => Some(Num::untyped(*n)),
                 _ => None,
             },
             ast::ExprKind::Unary(op, inner) => {
@@ -378,7 +378,7 @@ impl LiteralsCollector {
                     }
                     ast::ExprKind::Ident(id) if id.as_str() == "keccak256" => {
                         let bytes = lit_bytes(arg)?;
-                        Some(Num::untyped(U256::from_be_bytes(keccak256(bytes).0)))
+                        Some(Num::untyped(keccak256(bytes).into()))
                     }
                     _ => None,
                 }
@@ -406,7 +406,7 @@ impl<'ast> ast::Visit<'ast> for LiteralsCollector {
         match &expr.kind {
             // Handle plain literals.
             ast::ExprKind::Lit(lit, _) => match &lit.kind {
-                ast::LitKind::Number(n) => self.seed_uint(U256::from(*n)),
+                ast::LitKind::Number(n) => self.seed_uint(*n),
                 ast::LitKind::Address(addr) => {
                     self.insert_word(DynSolType::Address, addr.into_word())
                 }
@@ -829,9 +829,8 @@ mod tests {
 
         // `bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)` folds to the
         // well-known EIP-1967 implementation slot.
-        let slot = B256::from(
-            U256::from_be_bytes(keccak256("eip1967.proxy.implementation").0) - U256::ONE,
-        );
+        let slot =
+            B256::from(Into::<U256>::into(keccak256("eip1967.proxy.implementation")) - U256::ONE);
         assert_word(
             &map,
             DynSolType::FixedBytes(32),

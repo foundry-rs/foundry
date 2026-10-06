@@ -1366,7 +1366,7 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
+        self.visit_bool(|expr| expr.is_raw_gasleft())
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
@@ -1750,7 +1750,7 @@ impl SymExpr {
         context: &[SymBoolExpr],
     ) -> Option<U256> {
         let mask = masked_expr_matches(self.kind(), expr)?;
-        if value & !mask != U256::ZERO || !context_forces_masked_expr(context, expr, mask) {
+        if !(value & !mask).is_zero() || !context_forces_masked_expr(context, expr, mask) {
             return None;
         }
         Some(value)
@@ -2278,7 +2278,7 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
         && len <= bytes.len()
         && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
-        let hash = U256::from_be_bytes(keccak256(concrete).0);
+        let hash = Into::<U256>::into(keccak256(concrete));
         if len == 64 {
             cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
         }
@@ -2358,8 +2358,8 @@ pub(crate) fn compute_create2_address_word(
     if let (Some(deployer), Some(salt), Some(init_code_hash)) =
         (deployer_concrete, salt_concrete, init_code_hash_concrete)
     {
-        let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
-        let address = deployer.create2(B256::from(salt.to_be_bytes::<32>()), init_code_hash);
+        let init_code_hash = B256::from(init_code_hash);
+        let address = deployer.create2(B256::from(salt), init_code_hash);
         return Ok(SymExpr::constant(cx, address_word(address)));
     }
 
@@ -2368,7 +2368,7 @@ pub(crate) fn compute_create2_address_word(
         .unwrap_or_else(|| format!("{deployer:?}"));
     let init_code_hash_identity = init_code_hash_concrete
         .map(|init_code_hash| {
-            let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
+            let init_code_hash = B256::from(init_code_hash);
             format!("{init_code_hash:?}")
         })
         .unwrap_or_else(|| format!("{init_code_hash:?}"));

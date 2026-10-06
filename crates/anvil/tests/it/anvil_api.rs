@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::{eip2718::Decodable2718, eip4788::BEACON_ROOTS_ADDRESS};
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -847,7 +847,7 @@ async fn test_set_next_block_prevrandao_evm() {
 
     // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
     let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from_be_bytes(prevrandao.0));
+    assert_eq!(difficulty, Into::<U256>::into(prevrandao));
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));
@@ -903,6 +903,110 @@ async fn test_set_next_block_prevrandao_restored_on_revert() {
     assert_eq!(block.header.mix_hash, Some(prevrandao));
 }
 
+// Tests that `anvil_setNextBlockParentBeaconBlockRoot` sets the parent beacon block root of the
+// next mined block only, and that the EIP-4788 contract stores it for that block's timestamp.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, Some(root));
+    let stored = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .to(BEACON_ROOTS_ADDRESS)
+                .input(U256::from(block.header.timestamp).to_be_bytes::<32>().to_vec().into()),
+        ))
+        .block(BlockId::latest())
+        .await
+        .unwrap();
+    assert_eq!(stored, Bytes::from(root.0));
+
+    api.mine_one().await.unwrap();
+    let next = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(next.header.parent_beacon_block_root, Some(B256::ZERO));
+}
+
+// Tests that the pending block sees a parent beacon block root override without consuming it, so
+// pending calls observe the root the next mined block will use.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_pending() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    // Pin the next timestamp: the pending block and the pending call each read it, and the
+    // EIP-4788 contract stores the root under it.
+    let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.evm_set_next_block_timestamp(latest.header.timestamp + 100).unwrap();
+
+    let pending = api.block_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending.header.parent_beacon_block_root, Some(root));
+    let stored = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .to(BEACON_ROOTS_ADDRESS)
+                .input(U256::from(pending.header.timestamp).to_be_bytes::<32>().to_vec().into()),
+        ))
+        .block(BlockId::pending())
+        .await
+        .unwrap();
+    assert_eq!(stored, Bytes::from(root.0));
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, Some(root));
+}
+
+// Tests that a parent beacon block root override is dropped by `evm_revert` when set after the
+// snapshot and by `anvil_reset`, and restored by `evm_revert` when set before the snapshot.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_reset_and_revert() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    let mined_root = async || {
+        let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+        block.header.parent_beacon_block_root
+    };
+
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(B256::ZERO));
+
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(root));
+
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+    api.mine_one().await.unwrap();
+    assert_eq!(mined_root().await, Some(B256::ZERO));
+}
+
+// Tests that blocks before Cancun have no parent beacon block root to override.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_pre_cancun() {
+    let config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Shanghai.into()));
+    let (api, _handle) = spawn(config).await;
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, None);
+}
+
 // test that after a snapshot revert, the env block is reset
 // to its correct value (block number, etc.)
 #[tokio::test(flavor = "multi_thread")]
@@ -925,7 +1029,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
     let difficulty = multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
+    assert_eq!(difficulty, latest_block.header.difficulty);
 
     let gaslimit = multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
@@ -2035,7 +2139,7 @@ async fn can_get_default_base_fee_tempo_t0() {
 
     api.mine_one().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(
         block.header.base_fee_per_gas,
         Some(10_000_000_000),

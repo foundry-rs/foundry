@@ -252,7 +252,7 @@ pub(crate) fn fuzz_param_from_state(
             1..=31 => value()
                 .prop_map(move |value| {
                     // Extract lower N bits
-                    let uint_n = U256::from_be_bytes(value.0) % U256::ONE.wrapping_shl(n);
+                    let uint_n = Into::<U256>::into(value) % U256::ONE.wrapping_shl(n);
                     // Interpret as signed int (two's complement) --> check sign bit (bit N-1).
                     let sign_bit = U256::ONE << (n - 1);
                     let num = if uint_n >= sign_bit {
@@ -270,12 +270,10 @@ pub(crate) fn fuzz_param_from_state(
             _ => unreachable!(),
         },
         DynSolType::Uint(n @ 8..=256) => match n / 8 {
-            32 => value()
-                .prop_map(move |value| DynSolValue::Uint(U256::from_be_bytes(value.0), 256))
-                .boxed(),
+            32 => value().prop_map(move |value| DynSolValue::Uint(value.into(), 256)).boxed(),
             1..=31 => value()
                 .prop_map(move |value| {
-                    let uint = U256::from_be_bytes(value.0) % U256::ONE.wrapping_shl(n);
+                    let uint = Into::<U256>::into(value) % U256::ONE.wrapping_shl(n);
                     DynSolValue::Uint(uint, n)
                 })
                 .boxed(),
@@ -561,7 +559,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::TestRunner,
     };
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::database::InMemoryDB;
     use std::collections::HashSet;
 
     #[test]
@@ -596,7 +594,7 @@ mod tests {
     fn can_fuzz_from_zero_capacity_dictionary() {
         let state = EvmFuzzState::new(
             &[],
-            &CacheDB::<EmptyDB>::default(),
+            &InMemoryDB::default(),
             FuzzDictionaryConfig { max_fuzz_dictionary_values: 0, ..Default::default() },
             None,
         );

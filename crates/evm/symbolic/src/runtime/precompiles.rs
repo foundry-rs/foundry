@@ -219,10 +219,7 @@ pub(crate) fn concrete_precompile_word_at(
     let mut bytes = [0u8; 32];
     for (idx, byte) in bytes.iter_mut().enumerate() {
         let word = input.byte(cx, offset + idx);
-        *byte = word
-            .as_const()
-            .ok_or(SymbolicError::Unsupported("symbolic precompile length header"))?
-            .to::<u8>();
+        *byte = word.as_const_or("symbolic precompile length header")?.to::<u8>();
     }
     Ok(U256::from_be_bytes(bytes))
 }

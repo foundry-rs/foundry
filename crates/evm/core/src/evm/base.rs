@@ -373,10 +373,7 @@ mod tests {
         let code = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00, 0x00]));
         let code_hash = code.hash_slow();
         let mut db = Backend::<BaseEvmNetwork>::spawn(None).unwrap();
-        db.insert_account_info(
-            address,
-            AccountInfo { code_hash, code: Some(code.clone()), ..Default::default() },
-        );
+        db.insert_account_info(address, AccountInfo::default().with_code(code.clone()));
         let mut evm = BaseEvmFactory::default().create_foundry_evm_with_inspector(
             &mut db,
             base_env(8453, BaseUpgrade::Beryl),

@@ -299,7 +299,7 @@ impl<'a> TUIContext<'a> {
             .find_source_mapping(
                 contract_name,
                 self.current_step().pc as u32,
-                self.debug_call().kind.is_any_create(),
+                self.call_kind().is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
@@ -1091,10 +1091,7 @@ impl TUIContext<'_> {
     fn cycle_layout(&mut self) {
         let layout = self.debugger_context.layout.next();
         self.debugger_context.layout = layout;
-        self.status = Some(StatusMessage {
-            kind: StatusKind::Info,
-            text: format!("Debugger layout: {}", layout.as_str()),
-        });
+        self.set_info(format!("Debugger layout: {}", layout.as_str()));
     }
 }
 
@@ -1690,7 +1687,7 @@ pub(super) fn pretty_opcode(step: &CallTraceStep) -> String {
 
 pub(super) fn write_pretty_opcode(buf: &mut String, step: &CallTraceStep) {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
-        write!(buf, "{}(0x{})", step.op, hex::encode(immediate)).unwrap();
+        write!(buf, "{}({})", step.op, hex::encode_prefixed(immediate)).unwrap();
     } else {
         write!(buf, "{}", step.op).unwrap();
     }
@@ -1841,18 +1838,18 @@ mod tests {
         let mut tui = TUIContext::new(&mut context);
         tui.init();
 
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Auto);
+        assert_eq!(tui.layout(), DebuggerLayout::Auto);
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.layout(), DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Vertical);
+        assert_eq!(tui.layout(), DebuggerLayout::Vertical);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: vertical");
 
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
-        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.layout(), DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
     }
 
@@ -2369,7 +2366,7 @@ mod tests {
                 },
             )]),
         }));
-        let data_slot = U256::from_be_bytes(keccak256(B256::ZERO).0);
+        let data_slot = keccak256(B256::ZERO).into();
         let mut data_access = step(1);
         data_access.storage_change = Some(Box::new(StorageChange {
             key: data_slot,

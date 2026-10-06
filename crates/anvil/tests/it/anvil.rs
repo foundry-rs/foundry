@@ -125,17 +125,13 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
         api.config().unwrap().current.precompiles.values().find(|&&address| address == P256_VERIFY),
         Some(&P256_VERIFY)
     );
-    for block in [
-        BlockId::Number(BlockNumberOrTag::Latest),
-        BlockId::Number(0_u64.into()),
-        BlockId::pending(),
-    ] {
+    for block in [BlockId::latest(), BlockId::number(0_u64), BlockId::pending()] {
         let output = provider.call(tx.clone().into()).block(block).await.unwrap();
         assert_eq!(output.as_ref(), B256::with_last_byte(1).as_slice());
     }
 
     let caller = Address::random();
-    api.anvil_set_code(caller, P256_CALLER_CODE.to_vec().into()).await.unwrap();
+    api.anvil_set_code(caller, P256_CALLER_CODE.into()).await.unwrap();
     let from = handle.dev_accounts().next().unwrap();
     let receipt = provider
         .send_transaction(

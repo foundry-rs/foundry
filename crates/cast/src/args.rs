@@ -267,7 +267,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let val =
                 serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
             let item = crate::rlp_converter::Item::value_to_item(&val)?;
-            print_scalar(format!("0x{}", hex::encode(alloy_rlp::encode(item))))?;
+            print_scalar(hex::encode_prefixed(alloy_rlp::encode(item)))?;
         }
         CastSubcommand::Conversion(ConversionSubcommand::ToHex(ToBaseArgs { value, base_in })) => {
             let value = stdin::unwrap_line(value)?;

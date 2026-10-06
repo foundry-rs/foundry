@@ -49,7 +49,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::executors::{EarlyExit, EvmExecutionCancellation, calculate_stipend};
+use crate::executors::{EarlyExit, EvmExecutionCancellation, calculate_initial_gas};
 
 #[cfg(feature = "monad")]
 use foundry_evm_core::evm::refresh_chain_journal;
@@ -638,7 +638,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set the cancellation state checked during EVM execution.
     #[inline]
     pub(crate) fn set_early_exit(&mut self, early_exit: EarlyExit) {
-        self.execution_cancellation = Some(EvmExecutionCancellation::early_exit(early_exit));
+        self.set_execution_cancellation(EvmExecutionCancellation::early_exit(early_exit));
     }
 
     /// Set the complete cancellation state checked during EVM execution.
@@ -1041,12 +1041,20 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx.tx_mut().set_data(input);
         ecx.tx_mut().set_enveloped_tx(Bytes::new());
         ecx.tx_mut().set_value(value);
-        let initial_gas = calculate_stipend(ecx.tx(), ecx.cfg());
+        let initial_gas = calculate_initial_gas(ecx.tx(), ecx.cfg());
         // Preserve the frame's regular gas and reservoir across the synthetic transaction
         // boundary. The extra state gas offsets the account-creation charge already paid by the
         // outer opcode.
-        let regular_gas_limit = regular_limit.saturating_add(initial_gas);
+        let regular_gas_limit = regular_limit.saturating_add(initial_gas.initial_total_gas());
         ecx.cfg_env_mut().tx_gas_limit_cap = Some(regular_gas_limit);
+        // revm rejects transactions whose gas limit is below the EIP-7623 calldata floor. Raising
+        // the limit would give the frame more gas than it was forwarded, so skip that check and
+        // apply the floor to the transaction result instead.
+        let floor_gas =
+            (initial_gas.floor_gas() > regular_gas_limit).then_some(initial_gas.floor_gas());
+        if floor_gas.is_some() {
+            ecx.cfg_env_mut().disable_eip7623 = true;
+        }
         let mut tx_gas_limit = regular_gas_limit.saturating_add(reservoir);
         if let Some(precharged_state) = precharged_state {
             tx_gas_limit = tx_gas_limit.saturating_add(precharged_state);
@@ -1148,6 +1156,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
             restored_evm_env.cfg_env.disable_fee_charge = cached_evm_env.cfg_env.disable_fee_charge;
             restored_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
+            restored_evm_env.cfg_env.disable_eip7623 = cached_evm_env.cfg_env.disable_eip7623;
             ecx.set_evm(restored_evm_env);
             ecx.set_tx(cached_tx_env);
 
@@ -1188,20 +1197,28 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return (result, None, was_precompile_called);
         };
 
-        let transaction_gas = res.result.gas();
-        let mut state_gas_used = transaction_gas.block_state_gas_used();
-        if let Some(precharged_state) = precharged_state {
-            state_gas_used = state_gas_used.saturating_sub(precharged_state);
+        let mut transaction_gas = *res.result.gas();
+        if let Some(floor_gas) = floor_gas {
+            transaction_gas = transaction_gas.with_floor_gas(floor_gas);
         }
-        if state_gas_used == 0 {
-            let mut snapshot_gas = Gas::new(regular_limit);
-            let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
-            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-                cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
-            }
+        let tx_state_gas_used = transaction_gas.block_state_gas_used();
+        // A failed frame refunds the account-creation charge to the outer opcode, and its
+        // transaction does not charge that state gas either.
+        let precharged_state = precharged_state.map_or(0, |gas| gas.min(tx_state_gas_used));
+        let state_gas_used = tx_state_gas_used - precharged_state;
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats
+                .gas_metering
+                .set_isolated_snapshot_gas_used(transaction_gas.tx_gas_used(), precharged_state);
         }
-        let _ = gas.record_state_cost(state_gas_used);
-        let _ = gas.record_regular_cost(transaction_gas.block_regular_gas_used());
+        // The transaction also pays its intrinsic gas and calldata floor, which can exceed the
+        // gas forwarded to the frame. The frame then consumes its whole regular budget, as on an
+        // exceptional halt.
+        if !(gas.record_state_cost(state_gas_used)
+            && gas.record_regular_cost(transaction_gas.block_regular_gas_used()))
+        {
+            gas.spend_all();
+        }
 
         let rolled_back = !res.result.is_success();
 
@@ -1234,8 +1251,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         refresh_chain_journal(ecx);
 
         let (result, address, output) = match res.result {
-            ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
-                gas.set_refund(result_gas.final_refunded() as i64);
+            ExecutionResult::Success { reason, gas: _, logs: _, output } => {
+                gas.set_refund(transaction_gas.final_refunded() as i64);
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
@@ -1789,7 +1806,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 ecx,
                 call,
                 self.inner,
-                isolate && call.scheme == CallScheme::Call,
+                isolate && call.scheme.is_call(),
             );
             ecx.cfg_env_mut().disable_fee_charge = execution_disable_fee_charge;
         }
@@ -2362,7 +2379,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
     buf[8..16].copy_from_slice(&chain_id.to_be_bytes());
     buf[16..24].copy_from_slice(&nonce.to_be_bytes());
     buf[24..32].copy_from_slice(&counter.to_be_bytes());
-    U256::from_be_bytes(keccak256(buf).0)
+    keccak256(buf).into()
 }
 
 #[cfg(test)]

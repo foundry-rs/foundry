@@ -897,7 +897,7 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = if matches!(rhs.kind, ast::ExprKind::Binary(..))
+        let rhs_size = if is_binary_expr(&rhs.kind)
             && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
         {
             self.estimate_binary_size(rhs)
@@ -980,7 +980,7 @@ impl<'ast> State<'_, 'ast> {
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
                         // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                        if is_call(&lhs.kind) {
                             self.s.ibox(-self.ind);
                             print_inline(self);
                             self.end();
@@ -2410,7 +2410,7 @@ impl<'ast> State<'_, 'ast> {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
             let allow_break = overflows && fits_alone;
 
-            self.return_bin_expr = matches!(expr.kind, ast::ExprKind::Binary(..));
+            self.return_bin_expr = is_binary_expr(&expr.kind);
             self.s.ibox(if is_simple || allow_break { self.ind } else { 0 });
 
             self.print_word("return");
@@ -2574,7 +2574,7 @@ impl<'ast> State<'_, 'ast> {
                 self.neverbreak();
                 self.print_sep(Separator::Nbsp);
             } else if inline
-                && matches!(cond.kind, ast::ExprKind::Call(..))
+                && is_call(&cond.kind)
                 && matches!(
                     self.config.single_line_statement_blocks,
                     config::SingleLineBlockStyle::Preserve
@@ -3458,9 +3458,7 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 }
 
                 // Chainned calls are not traversed, and instead just the member identifier is used
-                ast::ExprKind::Member(child, ..)
-                    if !matches!(&child.kind, ast::ExprKind::Call(..)) =>
-                {
+                ast::ExprKind::Member(child, ..) if !is_call(&child.kind) => {
                     get_callee_head_size(base) + 1 + member_ident.as_str().len()
                 }
                 _ => member_ident.as_str().len(),

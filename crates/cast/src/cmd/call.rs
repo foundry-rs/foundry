@@ -369,7 +369,7 @@ impl CallArgs {
         let sender = if self.browser.browser {
             None
         } else {
-            Some(SenderKind::from_wallet_opts(self.wallet.clone()).await?)
+            Some(SenderKind::from_wallet_opts(self.wallet.clone(), &self.tx.auth).await?)
         };
         let browser_sender = SenderKind::from(self.wallet.from.unwrap_or_default());
         let validation_sender = sender.as_ref().unwrap_or(&browser_sender);
@@ -449,7 +449,7 @@ impl CallArgs {
                     Some(chain) => chain.id(),
                     None => provider.get_chain_id().await?,
                 };
-                read_only_sender::<FEN::Network>(&browser, wallet, &tx.tempo, chain_id).await?.0
+                read_only_sender::<FEN::Network>(&browser, wallet, &tx, chain_id).await?.0
             }
         };
         let from = sender.address();
