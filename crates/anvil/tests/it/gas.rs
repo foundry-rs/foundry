@@ -766,3 +766,37 @@ async fn priced_calls_below_base_fee_are_rejected() {
     let traced = api.trace_call(tipped, trace(), latest).await.unwrap();
     assert_eq!(U256::from_be_slice(&traced.output), U256::from(base_fee));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn priced_calls_below_base_fee_are_rejected_after_zero_base_fee() {
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(0))).await;
+    let from = handle.dev_wallets().next().unwrap().address();
+    let to = handle.dev_accounts().nth(1).unwrap();
+    let call = WithOtherFields::new(TransactionRequest::default().from(from).to(to).gas_price(1));
+
+    // A zero base fee disables the check for this call only.
+    api.call(call.clone(), Some(BlockId::latest()), Default::default()).await.unwrap();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(INITIAL_BASE_FEE)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let err = api.call(call, Some(BlockId::latest()), Default::default()).await.unwrap_err();
+    assert!(matches!(
+        err,
+        BlockchainError::InvalidTransaction(InvalidTransactionError::FeeCapTooLow)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn priced_calls_skip_base_fee_check_before_london() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Berlin.into()))).await;
+    let from = handle.dev_wallets().next().unwrap().address();
+    let to = handle.dev_accounts().nth(1).unwrap();
+    let transfer =
+        WithOtherFields::new(TransactionRequest::default().from(from).to(to).gas_price(1));
+    let latest = Some(BlockId::latest());
+
+    api.call(transfer.clone(), latest, Default::default()).await.unwrap();
+    let gas = api.estimate_gas(transfer, latest, Default::default()).await.unwrap();
+    assert_eq!(gas, U256::from(21_000));
+}

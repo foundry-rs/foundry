@@ -3166,6 +3166,10 @@ impl<N: Network> Backend<N> {
         if gas_price == 0 {
             evm_env.block_env.basefee = 0;
         }
+        // Set the check on every call, because a cloned base environment can carry a disabled
+        // check. Pre-London blocks have no protocol base fee, so they skip the check too.
+        evm_env.cfg_env.disable_base_fee =
+            evm_env.block_env.basefee == 0 || evm_env.cfg_env.spec < SpecId::LONDON;
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
@@ -3201,12 +3205,6 @@ impl<N: Network> Backend<N> {
 
         if let Some(nonce) = nonce {
             tx_env.nonce = nonce;
-        }
-
-        if evm_env.block_env.basefee == 0 {
-            // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
-            // 0 is only possible if it's manually set
-            evm_env.cfg_env.disable_base_fee = true;
         }
 
         // Deposit transaction? (only valid when a deposit-capable network is active)
