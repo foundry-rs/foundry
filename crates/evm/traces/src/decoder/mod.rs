@@ -1917,9 +1917,14 @@ fn constructor_signature(constructor: &Constructor) -> String {
 mod tests {
     use super::*;
     use crate::CallKind;
-    use alloy_primitives::{address, aliases::U96, hex};
+    use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
+    #[cfg(feature = "monad")]
+    use monad_revm::{
+        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
+        staking::interface::IMonadStaking::getEpochCall,
+    };
     use std::borrow::Cow;
     use tempo_precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
@@ -1929,8 +1934,6 @@ mod tests {
 
     #[cfg(feature = "base")]
     use foundry_evm_hardforks::BaseUpgrade;
-    #[cfg(feature = "base")]
-    use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
 
     #[cfg(feature = "monad")]
     fn function_abi_items(functions: impl IntoIterator<Item = Function>) -> Vec<(String, String)> {
@@ -2076,7 +2079,7 @@ mod tests {
         let collision = Function::parse("gasprice_bit_ether(int128)").unwrap();
         assert_eq!(transfer.selector(), collision.selector());
         let collision_data =
-            [collision.selector().as_slice(), &U256::from(1).to_be_bytes::<32>()].concat();
+            [collision.selector().as_slice(), B256::with_last_byte(1).as_slice()].concat();
         decoder.push_function(transfer.clone());
         decoder.push_function(collision);
         decoder.push_address_function(scoped, transfer);
@@ -2142,8 +2145,10 @@ mod tests {
 
         // Create a mock trace with calldata that matches func1
         let trace = CallTrace {
-            address: Address::from([0x12; 20]),
-            data: hex!("23b872dd000000000000000000000000000000000000000000000000000000000000012300000000000000000000000000000000000000000000000000000000000004560000000000000000000000000000000000000000000000000000000000000064").to_vec().into(),
+            address: Address::repeat_byte(0x12),
+            data: bytes!(
+                "23b872dd000000000000000000000000000000000000000000000000000000000000012300000000000000000000000000000000000000000000000000000000000004560000000000000000000000000000000000000000000000000000000000000064"
+            ),
             ..Default::default()
         };
 
@@ -2168,10 +2173,10 @@ mod tests {
 
         // Create a mock trace with calldata that matches func2
         let trace = CallTrace {
-            address: Address::from([0x12; 20]),
-            data: hex!("23b872dd0000000000000000000000000000000000000000000000000000000000000064")
-                .to_vec()
-                .into(),
+            address: Address::repeat_byte(0x12),
+            data: bytes!(
+                "23b872dd0000000000000000000000000000000000000000000000000000000000000064"
+            ),
             ..Default::default()
         };
 
@@ -2224,7 +2229,7 @@ mod tests {
             .abi_encode_input(&[
                 DynSolValue::Bytes(vec![0x0b]),
                 DynSolValue::Array(vec![DynSolValue::Bytes(vec![0x01; 3])]),
-                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ONE, 256),
             ])
             .unwrap();
         let call_data = decoder.decode_function(&trace(&[&data, &tag])).await.call_data.unwrap();
@@ -2281,7 +2286,7 @@ mod tests {
 
     #[tokio::test]
     async fn identified_event_does_not_shadow_builtin_metadata() {
-        let address = Address::from([0x12; 20]);
+        let address = Address::repeat_byte(0x12);
         let mut decoder = CallTraceDecoder::new().clone();
         let abi = JsonAbi::parse(["event log_string(string)"]).unwrap();
         decoder.collect_abi(&abi, Some(address), true);
@@ -2299,7 +2304,7 @@ mod tests {
 
     #[tokio::test]
     async fn address_scoped_abis_decode_all_registered_events() {
-        let address = Address::from([0x12; 20]);
+        let address = Address::repeat_byte(0x12);
         let proxy = JsonAbi::parse(["event ProxyEvent()"]).unwrap();
         let implementation = JsonAbi::parse(["event ImplementationEvent()"]).unwrap();
         let decoder = CallTraceDecoderBuilder::new()
@@ -2317,7 +2322,7 @@ mod tests {
 
     #[tokio::test]
     async fn clearing_addresses_removes_regular_and_anonymous_events() {
-        let address = Address::from([0x12; 20]);
+        let address = Address::repeat_byte(0x12);
         let abi = JsonAbi::parse([
             "event ScopedValue(uint256 value)",
             "event AnonymousValue(uint256 value) anonymous",
@@ -2351,14 +2356,14 @@ mod tests {
 
     #[tokio::test]
     async fn canonical_address_events_require_a_unique_match() {
-        let address = Address::from([0x12; 20]);
+        let address = Address::repeat_byte(0x12);
         let implementation =
             JsonAbi::parse(["event Value(address indexed who, uint256 amount)"]).unwrap();
         let proxy = JsonAbi::parse(["event Value(address who, uint256 indexed amount)"]).unwrap();
         let event = proxy.events().next().unwrap();
         let log = LogData::new_unchecked(
             vec![event.selector(), U256::from(42).into()],
-            (Address::from([0x34; 20]),).abi_encode().into(),
+            (Address::repeat_byte(0x34),).abi_encode().into(),
         );
         let decoder = CallTraceDecoderBuilder::new()
             .with_address_events(address, &implementation)
@@ -2382,9 +2387,9 @@ mod tests {
         .unwrap();
         assert_eq!(known.selector(), emitted.selector());
 
-        let address = Address::from([0x12; 20]);
-        let from = Address::from([0x34; 20]);
-        let to = Address::from([0x56; 20]);
+        let address = Address::repeat_byte(0x12);
+        let from = Address::repeat_byte(0x34);
+        let to = Address::repeat_byte(0x56);
         let amount = U256::from(42);
         let log = LogData::new_unchecked(
             vec![emitted.selector(), to.into_word(), amount.into()],
@@ -2416,7 +2421,7 @@ mod tests {
         abi.events.insert(event.name.clone(), vec![event.clone()]);
         let log = LogData::new_unchecked(
             vec![event.selector(), U256::from(42).into()],
-            (Address::from([0x34; 20]),).abi_encode().into(),
+            (Address::repeat_byte(0x34),).abi_encode().into(),
         );
         let identifier = SignaturesIdentifier::new_offline_with_abis([&abi]).unwrap();
         let decoder = CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
@@ -2431,7 +2436,7 @@ mod tests {
 
     #[tokio::test]
     async fn address_scoped_anonymous_events_require_a_unique_match() {
-        let address = Address::from([0x12; 20]);
+        let address = Address::repeat_byte(0x12);
         let abi = JsonAbi::parse(["event AnonymousValue(uint256 value) anonymous"]).unwrap();
         let log = LogData::new_unchecked(Vec::new(), (U256::from(7),).abi_encode().into());
         let decoded = CallTraceDecoderBuilder::new()
@@ -2485,7 +2490,7 @@ mod tests {
 
     #[test]
     fn compact_labels_hide_address_in_trace_parameters() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let value = DynSolValue::Address(address);
         let tracing = TracingConfig {
             labels: AddressHashMap::from_iter([(address, "Alice".to_string())]),
@@ -2554,7 +2559,7 @@ mod tests {
     #[test]
     fn test_should_redact() {
         let mut decoder = CallTraceDecoder::new().clone();
-        decoder.labels.insert(Address::from([0x22; 20]), "signer".to_string());
+        decoder.labels.insert(Address::repeat_byte(0x22), "signer".to_string());
 
         let expected_revert_bytes4 = vec![0xde, 0xad, 0xbe, 0xef];
         let expect_revert_bytes4_data = Function::parse("expectRevert(bytes4)")
@@ -2576,7 +2581,7 @@ mod tests {
             .abi_encode_input(&[DynSolValue::Bytes(expected_revert_bytes.clone())])
             .unwrap();
 
-        let reverter = Address::from([0x11; 20]);
+        let reverter = Address::repeat_byte(0x11);
         let expect_revert_bytes4_address_data = Function::parse("expectRevert(bytes4,address)")
             .unwrap()
             .abi_encode_input(&[
@@ -3198,8 +3203,8 @@ mod tests {
 
         // signEd25519 redacts the trailing private key argument.
         let call = Vm::signEd25519Call {
-            namespace: b"ns".to_vec().into(),
-            message: b"msg".to_vec().into(),
+            namespace: b"ns".into(),
+            message: b"msg".into(),
             privateKey: B256::from(pk),
         };
         let decoded = decoder.decode_function(&cheatcode_trace(call.abi_encode())).await;
@@ -3452,9 +3457,7 @@ mod tests {
     async fn test_decodes_monad_staking_precompile_call() {
         let trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
-            data: monad_revm::staking::interface::IMonadStaking::getEpochCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: getEpochCall::SELECTOR.into(),
             output:
                 monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
                     &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
@@ -3479,7 +3482,7 @@ mod tests {
     #[tokio::test]
     #[cfg(feature = "monad")]
     async fn test_decodes_monad_staking_syscall() {
-        let block_author = Address::from([0x42; 20]);
+        let block_author = Address::repeat_byte(0x42);
         let trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
             data: monad::IMonadStakingSyscalls::syscallRewardCall { blockAuthor: block_author }
@@ -3504,9 +3507,7 @@ mod tests {
     async fn test_decodes_monad_reserve_balance_precompile_call() {
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3528,7 +3529,7 @@ mod tests {
             "event Delegate(uint64 indexed validatorId,address indexed delegator,uint256 amount,uint64 activationEpoch)",
         )
         .unwrap();
-        let delegator = Address::from([0x11; 20]);
+        let delegator = Address::repeat_byte(0x11);
         let log = LogData::new_unchecked(
             vec![event.selector(), topic_from_u64(7), topic_from_address(delegator)],
             (U256::from(1000), 9_u64).abi_encode().into(),
@@ -3568,9 +3569,7 @@ mod tests {
 
         let staking_trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
-            data: monad_revm::staking::interface::IMonadStaking::getEpochCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: getEpochCall::SELECTOR.into(),
             output:
                 monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
                     &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
@@ -3590,9 +3589,7 @@ mod tests {
 
         let reserve_trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3611,7 +3608,7 @@ mod tests {
             vec![
                 event.selector(),
                 topic_from_u64(7),
-                topic_from_address(Address::from([0x11; 20])),
+                topic_from_address(Address::repeat_byte(0x11)),
             ],
             (U256::from(1000), 9_u64).abi_encode().into(),
         );
@@ -3648,9 +3645,7 @@ mod tests {
 
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3682,9 +3677,7 @@ mod tests {
     async fn test_monad_metadata_refreshes_across_hardforks() {
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
-                .to_vec()
-                .into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3840,7 +3833,7 @@ mod tests {
         arena.nodes_mut()[0].trace = CallTrace {
             address: P256_VERIFY,
             maybe_precompile: Some(false),
-            data: function.selector().to_vec().into(),
+            data: function.selector().into(),
             success: true,
             ..Default::default()
         };
@@ -3865,7 +3858,7 @@ mod tests {
         let decoder = CallTraceDecoder::new();
 
         let mut arena = CallTraceArena::default();
-        let regular_addr = Address::from([0x42; 20]);
+        let regular_addr = Address::repeat_byte(0x42);
         arena.nodes_mut()[0].trace.address = regular_addr;
 
         // Standard EVM precompile flagged by the inspector.
@@ -3914,7 +3907,7 @@ mod tests {
         );
 
         let mut arena = CallTraceArena::default();
-        let regular_addr = Address::from([0x42; 20]);
+        let regular_addr = Address::repeat_byte(0x42);
         arena.nodes_mut()[0].trace.address = regular_addr;
 
         // Tempo precompile — not flagged by inspector, caught by is_known_precompile
@@ -4030,8 +4023,9 @@ mod tests {
                 .build()
                 .precompile_labels()
         };
+        let base_precompiles = NetworkConfigs::with_base().precompiles(None);
         let base_label_count = |labels: &AddressHashMap<String>| {
-            BASE_PRECOMPILE_ADDRESSES.iter().filter(|address| labels.contains_key(*address)).count()
+            base_precompiles.values().filter(|address| labels.contains_key(*address)).count()
         };
 
         assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Azul)), 0);
@@ -4051,7 +4045,7 @@ mod tests {
             .unwrap();
         let trace = CallTrace {
             address: CURRENT_COMMITTEE_ADDRESS,
-            data: function.selector().to_vec().into(),
+            data: function.selector().into(),
             output: output.into(),
             success: true,
             ..Default::default()
@@ -4208,7 +4202,7 @@ mod tests {
         let function = Function::parse("claim(address,bytes)").unwrap();
         let data = function
             .abi_encode_input(&[
-                DynSolValue::Address(Address::from([0x11; 20])),
+                DynSolValue::Address(Address::repeat_byte(0x11)),
                 DynSolValue::Bytes(vec![0x12, 0x34]),
             ])
             .unwrap();
@@ -4435,7 +4429,7 @@ mod tests {
 
         let decoded = decoder
             .decode_function(&CallTrace {
-                address: Address::from([0x77; 20]),
+                address: Address::repeat_byte(0x77),
                 data: claim.abi_encode().into(),
                 success: true,
                 ..Default::default()
@@ -4465,7 +4459,7 @@ mod tests {
         assert!(receipt.1.contains("kind: 0"));
 
         let decoded =
-            decoder.decode_event_with_address(Address::from([0x77; 20]), &blocked_log).await;
+            decoder.decode_event_with_address(Address::repeat_byte(0x77), &blocked_log).await;
         assert_eq!(decoded.name.as_deref(), Some("TransferBlocked"));
         let params = decoded.params.expect("TransferBlocked params should decode");
         let receipt = params.iter().find(|(name, _)| name == "receipt").unwrap();
@@ -4483,7 +4477,7 @@ mod tests {
             .build();
 
         let mut arena = CallTraceArena::default();
-        let regular_addr = Address::from([0x42; 20]);
+        let regular_addr = Address::repeat_byte(0x42);
         arena.nodes_mut()[0].trace.address = regular_addr;
 
         arena.nodes_mut().push(CallTraceNode {
@@ -4512,7 +4506,7 @@ mod tests {
         decoder.chain_id = Some(1);
 
         let mut arena = CallTraceArena::default();
-        let regular_addr = Address::from([0x42; 20]);
+        let regular_addr = Address::repeat_byte(0x42);
         arena.nodes_mut()[0].trace.address = regular_addr;
 
         let tempo_precompile = TEMPO_PRECOMPILE_ADDRESSES[0];
@@ -4540,7 +4534,7 @@ mod tests {
         let decoder = monad_decoder(MonadHardfork::MonadNine);
 
         let mut arena = CallTraceArena::default();
-        let regular_addr = Address::from([0x42; 20]);
+        let regular_addr = Address::repeat_byte(0x42);
         arena.nodes_mut()[0].trace.address = regular_addr;
 
         arena.nodes_mut().push(CallTraceNode {
@@ -4576,7 +4570,7 @@ mod tests {
         let decoder = CallTraceDecoderBuilder::new().with_chain_id(Some(1)).build();
 
         let mut arena = CallTraceArena::default();
-        let regular_addr = Address::from([0x42; 20]);
+        let regular_addr = Address::repeat_byte(0x42);
         arena.nodes_mut()[0].trace.address = regular_addr;
 
         arena.nodes_mut().push(CallTraceNode {

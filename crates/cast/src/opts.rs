@@ -1559,10 +1559,10 @@ mod tests {
                     slots,
                     vec![
                         B256::ZERO,
-                        U256::from(1).into(),
+                        U256::ONE.into(),
                         B256::ZERO,
-                        U256::from(1).into(),
-                        U256::from(1).into()
+                        U256::ONE.into(),
+                        U256::ONE.into()
                     ]
                 );
             }

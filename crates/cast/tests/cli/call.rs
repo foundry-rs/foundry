@@ -1,6 +1,7 @@
 //! CLI tests for call commands.
 
 use super::*;
+use alloy_primitives::bytes;
 
 #[forgetest_init]
 async fn cast_call_custom_override(prj: _, cmd: _) {
@@ -342,13 +343,13 @@ async fn call_eip7702_auth_disclosure_accepted_and_forced(cmd: _) {
     let (api, handle) =
         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
     let endpoint = handle.http_endpoint();
-    let delegate_code = "0x602a5f5260205ff3".parse().unwrap();
+    let delegate_code = bytes!("0x602a5f5260205ff3");
     api.anvil_set_code(address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"), delegate_code)
         .await
         .unwrap();
     api.anvil_set_code(
         address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
-        "0x602a5f5260205ff3".parse().unwrap(),
+        bytes!("0x602a5f5260205ff3"),
     )
     .await
     .unwrap();
@@ -575,9 +576,7 @@ async fn cast_call_delegate_fetches_code_from_node(cmd: _) {
     let to = "0x00000000000000000000000000000000000000d5";
 
     // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
-    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
-        .await
-        .unwrap();
+    api.anvil_set_code(to.parse().unwrap(), bytes!("0x60005460005260206000f3")).await.unwrap();
     api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
         .await
         .unwrap();
@@ -603,7 +602,7 @@ async fn cast_call_delegate_fetches_code_from_node(cmd: _) {
     // no on-chain code, but the delegate override guarantees executable code.
     let void = "0x00000000000000000000000000000000000000d6";
     // runtime: STOP
-    api.anvil_set_code(void.parse().unwrap(), "0x00".parse().unwrap()).await.unwrap();
+    api.anvil_set_code(void.parse().unwrap(), bytes!("0x00")).await.unwrap();
     cmd.cast_fuse()
         .args(["call", void, "--from", from, "--delegate", "--rpc-url", &handle.http_endpoint()])
         .assert_success()
@@ -623,7 +622,7 @@ async fn cast_call_delegate_msg_sender_is_from(cmd: _) {
     let to = "0x00000000000000000000000000000000000000da";
 
     // runtime: CALLER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
-    api.anvil_set_code(to.parse().unwrap(), "0x3360005260206000f3".parse().unwrap()).await.unwrap();
+    api.anvil_set_code(to.parse().unwrap(), bytes!("0x3360005260206000f3")).await.unwrap();
 
     cmd.cast_fuse()
         .args([
@@ -706,7 +705,7 @@ async fn cast_call_decodes_custom_error(prj: _, cmd: _) {
     let home = prj.root().join("home");
     let cache_dir = home.join(".foundry/cache");
     fs::create_dir_all(&cache_dir).unwrap();
-    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let selector = hex::encode_prefixed(&selector[..4]);
     let mut errors = serde_json::Map::new();
     errors.insert(selector, json!(signature));
     fs::write(
@@ -721,7 +720,7 @@ async fn cast_call_decodes_custom_error(prj: _, cmd: _) {
     .unwrap();
 
     let target = "0x000000000000000000000000000000000000dead";
-    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let code_override = format!("{target}:{}", hex::encode_prefixed(runtime));
     let endpoint = handle.http_endpoint();
 
     cmd.env("HOME", &home);
@@ -1093,7 +1092,7 @@ fn curl_call_accepts_named_chain_config(prj: _, cmd: _) {
 // Tests that invalid hex with uppercase 0X prefix also produces clear error
 #[casttest]
 fn cast_call_invalid_hex_uppercase_prefix(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",
@@ -1113,7 +1112,7 @@ Error: Invalid hex calldata '0X1': odd number of digits
 // Tests that invalid hex calldata (odd length) produces a clear error message
 #[casttest]
 fn cast_call_invalid_hex_calldata_error(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",
@@ -1133,7 +1132,7 @@ Error: Invalid hex calldata '0x0': odd number of digits
 // Tests that valid hex calldata works correctly
 #[casttest]
 fn cast_call_valid_hex_calldata(cmd: _) {
-    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    let rpc = next_http_rpc_endpoint();
     cmd.args([
         "call",
         "0xdead000000000000000000000000000000000000",

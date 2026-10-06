@@ -104,7 +104,8 @@ pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> 
 /// Writes an object as pretty JSON with owner-only permissions on Unix.
 pub fn write_sensitive_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let mut options = File::options();
-    options.write(true).create(true).truncate(true);
+    // Truncate only after restricting permissions so a failed `chmod` preserves existing contents.
+    options.write(true).create(true).truncate(false);
     #[cfg(unix)]
     options.mode(0o600);
 
@@ -112,6 +113,7 @@ pub fn write_sensitive_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<(
     #[cfg(unix)]
     file.set_permissions(fs::Permissions::from_mode(0o600))
         .map_err(|err| FsPathError::write(err, path))?;
+    file.set_len(0).map_err(|err| FsPathError::write(err, path))?;
 
     write_pretty_json(path, obj, file)
 }

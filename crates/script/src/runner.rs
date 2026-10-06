@@ -174,7 +174,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                             self.evm_opts.sender,
                             create2_deployer,
                             calldata.clone().into(),
-                            U256::from(0),
+                            U256::ZERO,
                         )
                         .map_err(|err| eyre::eyre!("couldn't deploy library: {err}"))?;
 
@@ -376,7 +376,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
         Ok(ScriptResult {
             returned: Bytes::new(),
-            success: address != Address::ZERO,
+            success: !address.is_zero(),
             gas_used,
             logs,
             debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),

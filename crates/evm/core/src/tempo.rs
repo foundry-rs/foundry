@@ -48,29 +48,6 @@ pub use tempo_precompiles::{
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
-/// Initialize Tempo precompiles and contracts using a storage provider.
-///
-/// This is the core initialization logic that sets up Tempo-specific precompiles,
-/// fee tokens (PathUSD, AlphaUSD, BetaUSD, ThetaUSD), and standard contracts.
-///
-/// This function should be called during genesis setup when running in Tempo mode.
-/// It uses the `StorageCtx` pattern to work with any storage backend that implements
-/// `PrecompileStorageProvider`.
-///
-/// # Arguments
-/// * `storage` - A mutable reference to a storage provider implementing `PrecompileStorageProvider`
-/// * `admin` - The admin address that will have control over tokens and config
-/// * `recipient` - The address that will receive minted tokens
-///
-/// Ref: <https://github.com/tempoxyz/tempo/blob/main/xtask/src/genesis_args.rs>
-pub fn initialize_tempo_genesis(
-    storage: &mut impl PrecompileStorageProvider,
-    admin: Address,
-    recipient: Address,
-) -> Result<(), TempoPrecompileError> {
-    initialize_tempo_genesis_at_hardfork(storage, admin, recipient, TempoHardfork::default())
-}
-
 /// Initialize Tempo precompiles and contracts for a specific active hardfork.
 pub fn initialize_tempo_genesis_at_hardfork(
     storage: &mut impl PrecompileStorageProvider,

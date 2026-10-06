@@ -110,7 +110,7 @@ async fn nested_custom_chain_celo_fork_preserves_execution_profile() {
     assert_eq!(nested_api.anvil_node_info().await.unwrap().network.as_deref(), Some("celo"));
     assert_eq!(
         nested_api.config().unwrap().current.precompiles.get("celo transfer"),
-        Some(&address!("00000000000000000000000000000000000000fd"))
+        Some(&Address::with_last_byte(0xfd))
     );
 }
 
@@ -555,11 +555,7 @@ async fn test_can_set_storage_bsc_fork() {
 
     let busd_contract = BUSD::new(busd_addr, &provider);
 
-    let balance = busd_contract
-        .balanceOf(address!("0x0000000000000000000000000000000000000000"))
-        .call()
-        .await
-        .unwrap();
+    let balance = busd_contract.balanceOf(Address::ZERO).call().await.unwrap();
     assert_eq!(balance, U256::from(12345u64));
 }
 
@@ -718,7 +714,7 @@ async fn test_set_chain_id() {
     let from = handle.dev_accounts().next().unwrap();
     let receipt = provider
         .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::ONE),
         ))
         .await
         .unwrap()
@@ -929,7 +925,7 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
     let difficulty = multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
+    assert_eq!(difficulty, latest_block.header.difficulty);
 
     let gaslimit = multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
@@ -1140,6 +1136,7 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
     let trace = api
         .trace_replay_transaction(tx_hash, [TraceType::Trace].into_iter().collect())
         .await
+        .unwrap()
         .unwrap();
     assert!(!trace.full_trace.trace.is_empty());
 
@@ -1169,7 +1166,7 @@ async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
     let mut tx = TxEip1559 {
         chain_id: api.chain_id(),
         to: TxKind::Call(accounts[2].address()),
-        value: U256::from(1),
+        value: U256::ONE,
         max_priority_fee_per_gas: 3_000_000_000,
         max_fee_per_gas: 2_000_000_000,
         gas_limit: 21_000,
@@ -1332,7 +1329,7 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
         api.anvil_set_next_block_prevrandao(prevrandao).await.unwrap();
 
         let result: std::result::Result<serde_json::Value, _> = if method == "anvil_mine" {
-            provider.raw_request(method.into(), (U256::from(1),)).await
+            provider.raw_request(method.into(), (U256::ONE,)).await
         } else {
             provider
                 .raw_request(
@@ -1351,7 +1348,7 @@ async fn manual_mining_rpcs_preserve_controls_on_failure() {
         assert_eq!(block.header.timestamp, next_timestamp, "{method}");
         assert_eq!(block.header.mix_hash, Some(prevrandao), "{method}");
 
-        api.evm_increase_time(U256::from(1)).await.unwrap();
+        api.evm_increase_time(U256::ONE).await.unwrap();
         api.mine_one().await.unwrap();
         let following = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
         assert_ne!(following.header.mix_hash, Some(prevrandao), "{method}");
@@ -1393,7 +1390,7 @@ async fn instant_mining_reselects_from_live_pool_after_failure() {
         let first = TransactionRequest::default()
             .from(accounts[0].address())
             .to(accounts[1].address())
-            .value(U256::from(1));
+            .value(U256::ONE);
         let first_hash = api.send_transaction(WithOtherFields::new(first)).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(api.backend.best_number(), 0);
@@ -1406,7 +1403,7 @@ async fn instant_mining_reselects_from_live_pool_after_failure() {
         let second = TransactionRequest::default()
             .from(accounts[1].address())
             .to(accounts[2].address())
-            .value(U256::from(1));
+            .value(U256::ONE);
         let second_hash = api.send_transaction(WithOtherFields::new(second)).await.unwrap();
 
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -1802,12 +1799,11 @@ async fn test_safe_and_finalized_use_configured_slots_in_epoch() {
     let finalized_block = api.block_by_number(BlockNumberOrTag::Finalized).await.unwrap().unwrap();
     assert_eq!(finalized_block.header.number, 1);
 
-    let safe_history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    let safe_history = api.fee_history(U256::ONE, BlockNumberOrTag::Safe, vec![]).await.unwrap();
     assert_eq!(safe_history.oldest_block, 3);
 
     let finalized_history =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+        api.fee_history(U256::ONE, BlockNumberOrTag::Finalized, vec![]).await.unwrap();
     assert_eq!(finalized_history.oldest_block, 1);
 }
 
@@ -2039,7 +2035,7 @@ async fn can_get_default_base_fee_tempo_t0() {
 
     api.mine_one().await.unwrap();
 
-    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(
         block.header.base_fee_per_gas,
         Some(10_000_000_000),
@@ -2083,7 +2079,7 @@ async fn can_drop_all_transactions() {
             TransactionRequest::default()
                 .with_from(sender)
                 .with_to(Address::repeat_byte(0x22))
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_nonce(nonce),
         ))
         .await
@@ -2150,7 +2146,7 @@ async fn send_unsigned_transaction_requires_a_sender() {
             (WithOtherFields::new(
                 TransactionRequest::default()
                     .with_to(Address::repeat_byte(0x99))
-                    .with_value(U256::from(1)),
+                    .with_value(U256::ONE),
             ),),
         )
         .await

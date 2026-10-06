@@ -215,7 +215,7 @@ async fn fork_bal_unavailable_does_not_fetch_block_or_change_cache() {
 fn fork_bal_seed_preserves_storage_boundaries() {
     let hash = B256::repeat_byte(1);
     let address = Address::repeat_byte(1);
-    let slot = U256::from(1);
+    let slot = U256::ONE;
     let system_slot = U256::from(2);
     let account = AccountChanges::new(address)
         .with_storage_change(SlotChanges::new(
@@ -278,7 +278,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     let address = Address::repeat_byte(1);
     let account = complete_account(address, Bytes::new())
         .with_storage_change(SlotChanges::new(
-            U256::from(1),
+            U256::ONE,
             vec![StorageChange::new(index(1), U256::from(11))],
         ))
         .with_storage_change(SlotChanges::new(
@@ -290,7 +290,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     db.accounts().write().insert(address, cached_account.clone());
     db.storage().write().insert(
         address,
-        [(U256::from(1), U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
+        [(U256::ONE, U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
     );
 
     cache_bal(db.db(), vec![account]);
@@ -299,7 +299,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     assert_eq!(
         db.storage().read()[&address],
         [
-            (U256::from(1), U256::from(101)),
+            (U256::ONE, U256::from(101)),
             (U256::from(2), U256::from(22)),
             (U256::from(3), U256::from(303)),
         ]

@@ -118,9 +118,7 @@ async fn cast_base_transaction_roundtrip(prj: _, cmd: _) {
     let from = accounts.next().unwrap();
     let to = accounts.next().unwrap();
     let receipt = provider
-        .send_transaction(
-            TransactionRequest::default().from(from).to(to).value(U256::from(1)).into(),
-        )
+        .send_transaction(TransactionRequest::default().from(from).to(to).value(U256::ONE).into())
         .await
         .unwrap()
         .get_receipt()

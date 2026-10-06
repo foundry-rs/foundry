@@ -106,7 +106,7 @@ fn single_uint_corpus_values(
 ) -> Vec<U256> {
     let corpus_dir =
         root.join("fuzz_corpus").join(contract).join(test).join("worker0").join("corpus");
-    let expected_selector = format!("0x{}", hex::encode(&keccak256(signature.as_bytes())[..4]));
+    let expected_selector = hex::encode_prefixed(&keccak256(signature.as_bytes())[..4]);
     let mut values = Vec::new();
     for entry in std::fs::read_dir(&corpus_dir)
         .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
@@ -275,7 +275,7 @@ contract SymbolicSingleCallArtifactEnv is Test {
             "roll": "0xb",
             "sender": "0x0000000000000000000000000000000000000b0b",
             "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-            "calldata": format!("0x{}", hex::encode(&selector[..4])),
+            "calldata": hex::encode_prefixed(&selector[..4]),
             "value": format!("{:#x}", 3_000_000_000_000_000_000u128),
             "contract_name": "SymbolicSingleCallArtifactEnv",
             "function_name": "checkEnv",
@@ -4704,7 +4704,7 @@ contract SymbolicInvariantAssertionSeed is Test {
     let calldata =
         hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
     assert!(U256::from_be_slice(&calldata[4..36]) > U256::from(777));
-    assert_eq!(U256::from_be_slice(&calldata[36..]), U256::from(1));
+    assert_eq!(U256::from_be_slice(&calldata[36..]), U256::ONE);
 
     cmd.forge_fuse()
         .args([
@@ -5598,7 +5598,7 @@ contract SymbolicInvariantCheckpointSeed is Test {
 
     let mut first_call = artifact["sequences"][0][0].clone();
     let selector = &keccak256(b"set(uint256)")[..4];
-    first_call["calldata"] = Value::from(format!("0x{}{:064x}", hex::encode(selector), 1));
+    first_call["calldata"] = Value::from(format!("{}{:064x}", hex::encode_prefixed(selector), 1));
     artifact["sequences"][0].as_array_mut().unwrap().insert(0, first_call);
     std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
@@ -5683,7 +5683,7 @@ contract SymbolicImportFuzzCorpus {
     assert_eq!(empty_symbolic["corpus_seeds"]["used"].as_array().unwrap().len(), 0);
 
     let selector = &keccak256(b"testGuided(uint256)")[..4];
-    let calldata = format!("0x{}{:064x}", hex::encode(selector), 7);
+    let calldata = format!("{}{:064x}", hex::encode_prefixed(selector), 7);
     let corpus_dir = prj
         .root()
         .join("fuzz_corpus")
@@ -5759,15 +5759,15 @@ contract SymbolicImportFuzzCorpusVariants {
 
     let selector = &keccak256(b"testGuidedBytes(bytes)")[..4];
     let calldata = format!(
-        "0x{}{:064x}{:064x}{:0<64}",
-        hex::encode(selector),
+        "{}{:064x}{:064x}{:0<64}",
+        hex::encode_prefixed(selector),
         32,
         2,
         hex::encode([0xaa, 0xbb])
     );
     let unmodeled_calldata = format!(
-        "0x{}{:064x}{:064x}{:0<64}",
-        hex::encode(selector),
+        "{}{:064x}{:064x}{:0<64}",
+        hex::encode_prefixed(selector),
         32,
         3,
         hex::encode([0xcc, 0xdd, 0xee])
@@ -5846,7 +5846,7 @@ contract SymbolicInlineImportFuzzCorpus {
     );
 
     let selector = &keccak256(b"testFuzz_inline(uint256)")[..4];
-    let calldata = format!("0x{}{:064x}", hex::encode(selector), 7);
+    let calldata = format!("{}{:064x}", hex::encode_prefixed(selector), 7);
     let corpus_dir = prj
         .root()
         .join("fuzz_corpus")
