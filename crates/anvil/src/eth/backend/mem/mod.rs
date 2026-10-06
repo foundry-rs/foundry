@@ -5,7 +5,7 @@ use crate::{
     config::{ForkTransactionReplay, PruneStateHistoryConfig, source_hardfork},
     eth::{
         backend::{
-            cheats::{CheatEcrecover, CheatsManager},
+            cheats::{CheatEcrecover, CheatsManager, NextBlockOverrides},
             db::{
                 AnvilCacheDB, BLOCKHASH_HISTORY, Db, EmptyAsAbsentDb, MaybeFullDatabase,
                 SerializableState, StateDb,
@@ -1049,7 +1049,7 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time_offset: i128,
     next_block_timestamp: Option<u64>,
-    next_block_prevrandao: Option<B256>,
+    next_block: NextBlockOverrides,
 }
 
 #[cfg(test)]
@@ -1346,6 +1346,14 @@ impl<N: Network> Backend<N> {
     /// default per-block `prevrandao` derivation.
     pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
         self.cheats.set_next_block_prevrandao(prevrandao);
+    }
+
+    /// Sets the parent beacon block root to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block; afterwards anvil resumes
+    /// using the zero root.
+    pub fn set_next_block_parent_beacon_block_root(&self, root: B256) {
+        self.cheats.set_next_block_parent_beacon_block_root(root);
     }
 
     /// Sets the nonce of the given address
@@ -1917,7 +1925,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time_offset,
                 next_block_timestamp,
-                next_block_prevrandao: self.cheats.next_block_prevrandao(),
+                next_block: self.cheats.next_block_overrides(),
             },
         );
         id
@@ -5212,7 +5220,7 @@ impl<N: Network> Backend<N> {
         self.states.write().clear();
         self.active_state_snapshots.lock().clear();
         self.time.reset(timestamp);
-        self.cheats.clear_next_block_prevrandao();
+        self.cheats.clear_next_block_overrides();
 
         trace!(target: "backend", "reset fork");
         Ok(())
@@ -5400,7 +5408,7 @@ impl<N: Network> Backend<N> {
         self.states.write().clear();
         self.active_state_snapshots.lock().clear();
         self.time.reset(timestamp);
-        self.cheats.clear_next_block_prevrandao();
+        self.cheats.clear_next_block_overrides();
         trace!(target: "backend", "reset to fresh in-memory state");
         Ok(())
     }
@@ -5410,7 +5418,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block_prevrandao)) =
+        let Some((num, hash, fees, time_offset, next_block_timestamp, next_block)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5418,7 +5426,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time_offset,
                     snapshot.next_block_timestamp,
-                    snapshot.next_block_prevrandao,
+                    snapshot.next_block,
                 )
             })
         else {
@@ -5444,11 +5452,7 @@ impl<N: Network> Backend<N> {
 
         let reset_time = block.header.timestamp();
         self.time.reset_with_offset(reset_time, time_offset, next_block_timestamp);
-        if let Some(prevrandao) = next_block_prevrandao {
-            self.cheats.set_next_block_prevrandao(prevrandao);
-        } else {
-            self.cheats.clear_next_block_prevrandao();
-        }
+        self.cheats.restore_next_block_overrides(&next_block);
 
         {
             let mut env = self.evm_env.write();
@@ -6141,12 +6145,15 @@ where
             let mut input = [0u8; 40];
             input[..32].copy_from_slice(best_hash.as_slice());
             input[32..].copy_from_slice(&block_number.to_le_bytes());
-            // Use the `prevrandao` value set via `anvil_setNextBlockPrevRandao` for this block if
-            // one was provided, otherwise derive it from the parent hash and block number. The
-            // manual override is consumed here so it only applies to this single block.
-            let next_prevrandao = self.cheats.prepare_next_block_prevrandao();
+            // Use the values set via `anvil_setNextBlockPrevRandao` and
+            // `anvil_setNextBlockParentBeaconBlockRoot` for this block if provided, otherwise
+            // derive `prevrandao` from the parent hash and block number and use the zero root.
+            // The overrides are consumed once the block is committed so they only apply to it.
+            let next_block = self.cheats.next_block_overrides();
             evm_env.block_env.prevrandao =
-                Some(next_prevrandao.map_or_else(|| keccak256(input), |pending| pending.value));
+                Some(next_block.prevrandao.value.unwrap_or_else(|| keccak256(input)));
+            let parent_beacon_block_root =
+                Some(next_block.parent_beacon_block_root.value.unwrap_or_default());
 
             let (
                 db_guard,
@@ -6194,7 +6201,7 @@ where
                     &mining_evm_env,
                     best_hash,
                     hardfork,
-                    Some(B256::ZERO),
+                    parent_beacon_block_root,
                     BlockExecutionKind::Complete,
                     &pool_transactions,
                     &gas_config,
@@ -6227,7 +6234,7 @@ where
                     block_result,
                     pool_result.txs,
                     pool_result.tx_info,
-                    Some(B256::ZERO),
+                    parent_beacon_block_root,
                     block_access_list.as_ref(),
                 );
 
@@ -6235,9 +6242,7 @@ where
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
                 self.time.commit_next_timestamp(pending_timestamp);
-                if let Some(pending) = next_prevrandao {
-                    self.cheats.consume_next_block_prevrandao(pending);
-                }
+                self.cheats.consume_next_block_overrides(&next_block);
 
                 let header = &block_info.block.header;
                 let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(header);
@@ -6448,6 +6453,11 @@ where
         let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
+        // Read the next block's beacon root override without consuming it, so the pending block
+        // sees the root the next mined block will use.
+        let parent_beacon_block_root = Some(
+            self.cheats.next_block_overrides().parent_beacon_block_root.value.unwrap_or_default(),
+        );
 
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
@@ -6457,7 +6467,7 @@ where
             &evm_env,
             parent_hash,
             self.hardfork(),
-            Some(B256::ZERO),
+            parent_beacon_block_root,
             BlockExecutionKind::Complete,
             &pool_transactions,
             &gas_config,
@@ -6480,7 +6490,7 @@ where
             block_result,
             pool_result.txs,
             pool_result.tx_info,
-            Some(B256::ZERO),
+            parent_beacon_block_root,
             None,
         );
 
@@ -6959,30 +6969,40 @@ where
             return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
         }
 
-        if block_number < current_number {
-            if let Some((block_hash, block)) = self
-                .block_by_number(BlockNumber::Number(block_number))
-                .await?
-                .map(|block| (block.header.hash, block))
+        // The head can advance while waiting for the database lock. Serve the live state only if
+        // the requested block is still the head or no state history is kept. Otherwise hold the
+        // lock so the requested block's state cannot be pruned before it is read below.
+        let _head_guard = if block_number == current_number {
+            let db = self.db.read().await;
+            if self.best_number() == block_number
+                || !self.prune_state_history_config.is_state_history_supported()
             {
-                let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
-                }
+                let block = self.evm_env.read().block_env.clone();
+                return Ok(f(Box::new(&**db), block));
+            }
+            Some(db)
+        } else {
+            None
+        };
 
-                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
-                }
+        if let Some((block_hash, block)) = self
+            .block_by_number(BlockNumber::Number(block_number))
+            .await?
+            .map(|block| (block.header.hash, block))
+        {
+            let read_guard = self.states.upgradable_read();
+            if let Some(state_db) = read_guard.get_state(&block_hash) {
+                return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
             }
 
-            warn!(target: "backend", "Not historic state found for block={}", block_number);
-            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
+            }
         }
 
-        let db = self.db.read().await;
-        let block = self.evm_env.read().block_env.clone();
-        Ok(f(Box::new(&**db), block))
+        warn!(target: "backend", "Not historic state found for block={}", block_number);
+        Err(BlockchainError::BlockOutOfRange(self.best_number(), block_number))
     }
 
     /// Executes a closure with both state and network context at a specific block.
@@ -7030,34 +7050,38 @@ where
         #[cfg(not(feature = "monad"))]
         let context = None;
 
-        if block_number < current_number {
-            if let Some((block_hash, block)) = self
-                .block_by_number(BlockNumber::Number(block_number))
-                .await?
-                .map(|block| (block.header.hash, block))
+        // See `with_database_at`: re-check the head under the read guard.
+        let _head_guard = if block_number == current_number {
+            let db = self.db.read().await;
+            if self.best_number() == block_number
+                || !self.prune_state_history_config.is_state_history_supported()
             {
-                let read_guard = self.states.upgradable_read();
-                if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return f(
-                        Box::new(state_db),
-                        self.block_env_from_header(&block.header),
-                        context,
-                    );
-                }
+                let block = self.evm_env.read().block_env.clone();
+                return f(Box::new(&**db), block, context);
+            }
+            Some(db)
+        } else {
+            None
+        };
 
-                let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-                if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return f(Box::new(state), self.block_env_from_header(&block.header), context);
-                }
+        if let Some((block_hash, block)) = self
+            .block_by_number(BlockNumber::Number(block_number))
+            .await?
+            .map(|block| (block.header.hash, block))
+        {
+            let read_guard = self.states.upgradable_read();
+            if let Some(state_db) = read_guard.get_state(&block_hash) {
+                return f(Box::new(state_db), self.block_env_from_header(&block.header), context);
             }
 
-            warn!(target: "backend", "Not historic state found for block={}", block_number);
-            return Err(BlockchainError::BlockOutOfRange(current_number, block_number));
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+                return f(Box::new(state), self.block_env_from_header(&block.header), context);
+            }
         }
 
-        let db = self.db.read().await;
-        let block = self.evm_env.read().block_env.clone();
-        f(Box::new(&**db), block, context)
+        warn!(target: "backend", "Not historic state found for block={}", block_number);
+        Err(BlockchainError::BlockOutOfRange(self.best_number(), block_number))
     }
 
     pub async fn storage_at(
@@ -7587,8 +7611,8 @@ where
             env.block_env.prevrandao = common_block.header.mix_hash();
 
             self.time.reset(env.block_env.timestamp.saturating_to());
-            // drop any pending next-block prevrandao override so it does not leak into a block
-            self.cheats.clear_next_block_prevrandao();
+            // drop any pending next-block overrides so they do not leak into a block
+            self.cheats.clear_next_block_overrides();
         }
 
         // Only collect the last 256 block hashes since that's all BLOCKHASH can access.
@@ -10784,8 +10808,8 @@ mod tests {
         let recipient = Address::repeat_byte(0x11);
         let contract = Address::repeat_byte(0x22);
 
-        // Return the recipient balance followed by NUMBER. Before mining both are zero; after the
-        // queued transfer is mined both are one.
+        // Return the recipient balance followed by NUMBER. At block 0 both are zero; at block 1,
+        // after the queued transfer is mined, both are one.
         let mut code = vec![0x73];
         code.extend_from_slice(recipient.as_slice());
         code.extend_from_slice(&[
@@ -10853,11 +10877,60 @@ mod tests {
         assert_eq!(output.len(), 64);
         let balance = U256::from_be_slice(&output[..32]);
         let block_number = U256::from_be_slice(&output[32..]);
-        assert_eq!((balance, block_number), (U256::ONE, U256::ONE));
+        // The call requested block 0, so it sees block 0's balance and number.
+        assert_eq!((balance, block_number), (U256::ZERO, U256::ZERO));
 
         assert_eq!(pending_block.block.header.number, api.backend.best_number() + 1);
         assert_eq!(pending_block.block.header.parent_hash, api.backend.best_hash());
         assert_eq!(pending_block.block.header.base_fee_per_gas, Some(875_175_000));
+    }
+
+    /// Reads the recipient balance at head block 0 while block 1, which funds it, is being mined.
+    async fn read_head_balance_while_mining(config: NodeConfig) -> U256 {
+        let (api, handle) = spawn(config.with_no_mining(true)).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let recipient = Address::repeat_byte(0x11);
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+        // Pause mining after the next block's state is committed while it still holds the
+        // database write lock and before it publishes the new head.
+        let hook =
+            MiningCommitHook { reached: Arc::new(Notify::new()), resume: Arc::new(Notify::new()) };
+        *api.backend.mining_commit_hook.lock() = Some(hook.clone());
+        let mining_api = api.clone();
+        let mining = tokio::spawn(async move { mining_api.mine_one().await });
+        hook.reached.notified().await;
+
+        // The read names the current head, block 0, and queues behind the miner's write lock.
+        let head = api.backend.best_number();
+        assert_eq!(head, 0);
+        let mut balance =
+            Box::pin(api.backend.get_balance(recipient, Some(BlockRequest::Number(head))));
+        assert!(futures::poll!(balance.as_mut()).is_pending());
+
+        hook.resume.notify_one();
+        mining.await.unwrap().unwrap();
+        assert_eq!(api.backend.best_number(), 1);
+
+        balance.await.unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_number_read_waiting_on_mining_keeps_requested_state() {
+        // The read must be answered from block 0, not from block 1 mined while it waited.
+        assert_eq!(read_head_balance_while_mining(NodeConfig::test()).await, U256::ZERO);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn head_number_read_waiting_on_mining_without_history_reads_live_state() {
+        // Without state history block 0's state is gone, so the read is served from the live state
+        // instead of failing.
+        let config = NodeConfig::test().set_pruned_history(Some(None));
+        assert_eq!(read_head_balance_while_mining(config).await, U256::from(1));
     }
 
     struct CacheFlushingDb(BlockchainDb);
