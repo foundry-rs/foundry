@@ -480,6 +480,120 @@ No files changed, compilation skipped
 
 "#]]);
     }
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "storage",
+            &proxy.to_string(),
+            "--proxy",
+            &implementation.to_string(),
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_json_stdout(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 11,
+      "contract": "src/Vault.sol:Vault",
+      "label": "owner",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_address"
+    },
+    {
+      "astId": 13,
+      "contract": "src/Vault.sol:Vault",
+      "label": "totalDeposits",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_uint256"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  },
+  "values": [
+    "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "0x000000000000000000000000000000000000000000000000000000000000002a"
+  ]
+}
+"#]]);
+}
+
+#[casttest]
+async fn storage_layout_local_immutable(prj: _, cmd: _) {
+    prj.add_source(
+        "Pinned",
+        r#"
+contract Pinned {
+    address public immutable token;
+    uint256 public count;
+
+    constructor(address token_, uint256 count_) {
+        token = token_;
+        count = count_;
+    }
+}
+"#,
+    );
+
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "Pinned", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let deployment = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--json",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &rpc,
+            "--create",
+            bytecode.trim(),
+            "constructor(address,uint256)",
+            "0x000000000000000000000000000000000000dEaD",
+            "7",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let deployment: serde_json::Value = serde_json::from_str(&deployment).unwrap();
+    let address = deployment["contractAddress"].as_str().unwrap();
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["storage", address, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+╭-------+---------+------+--------+-------+-------+--------------------------------------------------------------------+-----------------------╮
+| Name  | Type    | Slot | Offset | Bytes | Value | Hex Value                                                          | Contract              |
++==============================================================================================================================================+
+| count | uint256 | 0    | 0      | 32    | 7     | 0x0000000000000000000000000000000000000000000000000000000000000007 | src/Pinned.sol:Pinned |
+╰-------+---------+------+--------+-------+-------+--------------------------------------------------------------------+-----------------------╯
+
+
+"#]]);
 }
 
 #[casttest]
