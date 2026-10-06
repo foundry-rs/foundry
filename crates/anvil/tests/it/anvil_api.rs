@@ -936,6 +936,38 @@ async fn test_set_next_block_parent_beacon_block_root() {
     assert_eq!(next.header.parent_beacon_block_root, Some(B256::ZERO));
 }
 
+// Tests that the pending block sees a parent beacon block root override without consuming it, so
+// pending calls observe the root the next mined block will use.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_next_block_parent_beacon_block_root_pending() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let root = b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
+    api.anvil_set_next_block_parent_beacon_block_root(root).await.unwrap();
+    // Pin the next timestamp: the pending block and the pending call each read it, and the
+    // EIP-4788 contract stores the root under it.
+    let latest = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.evm_set_next_block_timestamp(latest.header.timestamp + 100).unwrap();
+
+    let pending = api.block_by_number(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending.header.parent_beacon_block_root, Some(root));
+    let stored = provider
+        .call(WithOtherFields::new(
+            TransactionRequest::default()
+                .to(BEACON_ROOTS_ADDRESS)
+                .input(U256::from(pending.header.timestamp).to_be_bytes::<32>().to_vec().into()),
+        ))
+        .block(BlockId::pending())
+        .await
+        .unwrap();
+    assert_eq!(stored, Bytes::from(root.0));
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(block.header.parent_beacon_block_root, Some(root));
+}
+
 // Tests that a parent beacon block root override is dropped by `evm_revert` when set after the
 // snapshot and by `anvil_reset`, and restored by `evm_revert` when set before the snapshot.
 #[tokio::test(flavor = "multi_thread")]

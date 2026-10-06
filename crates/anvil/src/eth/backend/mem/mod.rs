@@ -6351,6 +6351,11 @@ where
         let mut cache_db = AnvilCacheDB::new(&*db, *evm_env.spec_id());
 
         let parent_hash = self.blockchain.storage.read().best_hash;
+        // Read the next block's beacon root override without consuming it, so the pending block
+        // sees the root the next mined block will use.
+        let parent_beacon_block_root = Some(
+            self.cheats.next_block_overrides().parent_beacon_block_root.value.unwrap_or_default(),
+        );
 
         let inspector_tx_config = self.inspector_tx_config();
         let gas_config = self.pool_tx_gas_config(&evm_env);
@@ -6360,7 +6365,7 @@ where
             &evm_env,
             parent_hash,
             self.hardfork(),
-            Some(B256::ZERO),
+            parent_beacon_block_root,
             BlockExecutionKind::Complete,
             &pool_transactions,
             &gas_config,
@@ -6383,7 +6388,7 @@ where
             block_result,
             pool_result.txs,
             pool_result.tx_info,
-            Some(B256::ZERO),
+            parent_beacon_block_root,
             None,
         );
 
