@@ -1,6 +1,6 @@
 use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
-    campaign::execute_invariant_replay_tx,
+    campaign::{apply_block_delay, execute_invariant_replay_tx},
     invariant::{
         IInvariantTest, call_after_invariant_function, call_invariant_function,
         error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
@@ -12,13 +12,10 @@ use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256, map::HashSet}
 use alloy_sol_types::SolCall;
 use foundry_common::ContractsByAddress;
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{
-    FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
-};
+use foundry_evm_core::{constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
-use revm::context::Block;
 use std::{cell::Cell, fmt::Write, hash::Hash};
 
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
@@ -378,32 +375,6 @@ fn apply_warp_roll(mut result: BasicTxDetails, warp: U256, roll: U256) -> BasicT
     result
 }
 
-/// Applies warp/roll adjustments directly to the executor's environment.
-fn apply_warp_roll_to_env<FEN: FoundryEvmNetwork>(
-    executor: &mut Executor<FEN>,
-    warp: U256,
-    roll: U256,
-) {
-    if warp > U256::ZERO || roll > U256::ZERO {
-        let ts = executor.evm_env().block_env.timestamp();
-        let num = executor.evm_env().block_env.number();
-        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
-        executor.evm_env_mut().block_env.set_number(num + roll);
-
-        let block_env = executor.evm_env().block_env.clone();
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                let bts = block.timestamp();
-                let bnum = block.number();
-                block.set_timestamp(bts + warp);
-                block.set_number(bnum + roll);
-            } else {
-                cheatcodes.block = Some(block_env);
-            }
-        }
-    }
-}
-
 /// Builds the final shrunk sequence from the shrinker state.
 ///
 /// When `accumulate_warp_roll` is enabled, warp/roll from removed calls is folded into the next
@@ -528,7 +499,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
     let target_address = invariant_contract.address;
-    let calldata: Bytes = target_invariant.selector().to_vec().into();
+    let calldata: Bytes = target_invariant.selector().into();
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
     let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
@@ -906,7 +877,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
 
     let target_address = invariant_contract.address;
-    let calldata: Bytes = target_invariant.selector().to_vec().into();
+    let calldata: Bytes = target_invariant.selector().into();
 
     // Special case: check if target value is achieved with 0 calls.
     if check_sequence_value(executor.clone(), calls, &[], target_address, calldata.clone())?
@@ -1131,7 +1102,7 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     }
 
     // Apply any remaining accumulated warp/roll before calling invariant.
-    apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
+    apply_block_delay(&mut executor, accumulated_warp, accumulated_roll);
 
     let (inv_result, success) = call_invariant_function(&executor, test_address, calldata)?;
 
@@ -1149,13 +1120,21 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::{
         LIVE_SHRINK_SEQUENCE_EDGE_CALLS, SequenceShrink, ShrinkCandidateKeys, ShrinkErrorPolicy,
-        ShrinkProgress, ShrinkRun, build_shrunk_sequence, format_shrink_progress_message,
-        run_shrink_loop, shrink_sequence_by_removing,
+        ShrinkProgress, ShrinkRun, build_shrunk_sequence, check_sequence_value,
+        format_shrink_progress_message, run_shrink_loop, shrink_sequence_by_removing,
     };
-    use crate::executors::EarlyExit;
-    use alloy_primitives::{Address, Bytes, U256};
+    use crate::executors::{EarlyExit, ExecutorBuilder};
+    use alloy_primitives::{Address, Bytes, I256, U256, hex};
+    use foundry_cheatcodes::CheatsConfig;
     use foundry_config::InvariantConfig;
+    use foundry_evm_core::{
+        FoundryBlock,
+        backend::Backend,
+        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+    };
     use foundry_evm_fuzz::{BasicTxDetails, CallDetails};
+    use revm::{bytecode::Bytecode, context::Block};
+    use std::sync::Arc;
 
     fn tx(warp: Option<u64>, roll: Option<u64>) -> BasicTxDetails {
         BasicTxDetails {
@@ -1209,6 +1188,56 @@ mod tests {
         assert_eq!(shrunk.len(), 1);
         assert_eq!(shrunk[0].warp, Some(U256::from(3)));
         assert_eq!(shrunk[0].roll, Some(U256::from(5)));
+    }
+
+    #[test]
+    fn check_sequence_value_applies_trailing_delay_before_invariant() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
+            .gas_limit(1 << 24)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                Default::default(),
+            );
+        // Returns `(block.number << 128) + block.timestamp`.
+        let test_address = Address::repeat_byte(0x11);
+        let code = hex!("4360801b420160005260206000f3");
+        executor.set_code(test_address, Bytecode::new_raw(Bytes::from(code))).unwrap();
+        let block_value =
+            |timestamp: U256, number: U256| I256::from_raw((number << 128) + timestamp);
+        let calls = [tx(Some(3), Some(5)), tx(Some(7), Some(11))];
+        let block = executor.evm_env().block_env.clone();
+
+        // Removed calls still contribute their delays to the invariant check, whether the
+        // cheatcode block mirrors the environment, is unset, or overrides it.
+        let delayed =
+            Some(block_value(block.timestamp() + U256::from(10), block.number() + U256::from(16)));
+        let mut cheatcode_block = block;
+        cheatcode_block.set_timestamp(U256::from(1000));
+        cheatcode_block.set_number(U256::from(2000));
+        let cases = [
+            (&[0][..], None, delayed),
+            (&[], None, delayed),
+            (&[], Some(None), delayed),
+            (
+                &[],
+                Some(Some(cheatcode_block)),
+                Some(block_value(U256::from(1010), U256::from(2016))),
+            ),
+        ];
+        for (sequence, cheatcode_block, expected) in cases {
+            let mut executor = executor.clone();
+            if let Some(block) = cheatcode_block {
+                executor.inspector_mut().cheatcodes.as_mut().unwrap().block = block;
+            }
+            let value =
+                check_sequence_value(executor, &calls, sequence, test_address, Bytes::new())
+                    .unwrap();
+            assert_eq!(value, expected);
+        }
     }
 
     #[test]

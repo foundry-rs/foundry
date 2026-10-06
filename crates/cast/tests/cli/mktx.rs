@@ -554,6 +554,8 @@ fn mktx_tempo_lane_resolves_nonce_key(prj: _, cmd: _) {
             "10000000000",
             "--priority-gas-price",
             "1000000000",
+            "--tempo.fee-token",
+            "PathUSD",
             "0x0000000000000000000000000000000000000001",
         ])
         .assert_success()
@@ -614,6 +616,7 @@ Continue anyway? [y/N] Aborted.
 "#]])
         .stderr_eq(str![[r#"
 Building batch transaction with 1 call(s)...
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
 
 "#]]);
 }

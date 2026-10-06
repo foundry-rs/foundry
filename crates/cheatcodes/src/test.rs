@@ -6,7 +6,6 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::{constants::MAGIC_SKIP, evm::FoundryEvmNetwork};
-use revm::context::{ContextTr, JournalTr};
 use std::str::FromStr;
 
 pub(crate) mod assert;
@@ -108,7 +107,7 @@ fn skip<FEN: FoundryEvmNetwork>(
     }
     // Skip should not work if called deeper than at test level.
     // Since we're not returning the magic skip bytes, this will cause a test failure.
-    ensure!(ccx.ecx.journal().depth() <= 1, "`skip` can only be used at test level");
+    ensure!(ccx.depth() <= 1, "`skip` can only be used at test level");
     let payload = Bytes::from([MAGIC_SKIP, reason.as_bytes()].concat());
     ccx.state.skip_payloads.push(payload.clone());
     Err(payload.into())

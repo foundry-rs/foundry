@@ -888,28 +888,28 @@ impl ListFormat {
     }
 
     pub(crate) const fn without_ind(mut self, without: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.no_ind = without;
         }
         self
     }
 
     pub(crate) const fn break_single(mut self, value: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.break_single = value;
         }
         self
     }
 
     pub(crate) const fn break_cmnts(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.breaks_cmnts = true;
         }
         self
     }
 
     pub(crate) const fn with_space(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.with_space = true;
         }
         self

@@ -49,8 +49,8 @@ impl Fixture {
         .await;
         // Every transaction reads slot one and increments slot zero.
         api.anvil_set_code(COUNTER, bytes!("6001545060005460010160005500")).await.unwrap();
-        api.anvil_set_storage_at(COUNTER, U256::ZERO, B256::from(U256::from(6))).await.unwrap();
-        api.anvil_set_storage_at(COUNTER, U256::from(1), B256::from(U256::from(19))).await.unwrap();
+        api.anvil_set_storage_at(COUNTER, U256::ZERO, B256::with_last_byte(6)).await.unwrap();
+        api.anvil_set_storage_at(COUNTER, U256::ONE, B256::with_last_byte(19)).await.unwrap();
         let endpoint = handle.http_endpoint();
         let sender = handle.dev_wallets().next().unwrap().address();
         let send = |nonce| {
@@ -63,7 +63,7 @@ impl Fixture {
         assert!(parent["blockAccessListHash"].is_string(), "missing native BAL commitment");
         assert_eq!(
             rpc(&endpoint, "eth_getStorageAt", json!([COUNTER, "0x0", "latest"])).await,
-            json!(B256::from(U256::from(7))),
+            json!(B256::with_last_byte(7)),
         );
         let mut transactions = [B256::ZERO; 3];
         for (index, hash) in transactions.iter_mut().enumerate() {
@@ -434,7 +434,7 @@ async fn fork_bal_parent_cache_preserves_prefix_boundaries(prj: _, cmd: _) {
                 proxy.assert_parent_bal(&fixture);
                 assert_eq!(proxy.slot_reads(U256::ZERO), 0, "mode={mode}, index={index}");
             }
-            assert!(proxy.slot_reads(U256::from(1)) > 0, "read-only slots need RPC fallback");
+            assert!(proxy.slot_reads(U256::ONE) > 0, "read-only slots need RPC fallback");
         }
         assert_eq!(block_reads[0], block_reads[1], "BAL fetched an extra block: mode={mode}");
         assert_eq!(gas_used[0], gas_used[1], "BAL changed gas: mode={mode}, index={index}");

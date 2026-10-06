@@ -660,7 +660,7 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{TxKind, U256, b256, hex};
+    use alloy_primitives::{TxKind, U256, address, b256, hex};
     use alloy_rlp::Decodable;
     use std::str::FromStr;
 
@@ -812,8 +812,8 @@ mod tests {
             panic!("expected legacy transaction");
         };
 
-        assert_eq!(tx.signature().r(), U256::from(1));
-        assert_eq!(tx.signature().s(), U256::from(1));
+        assert_eq!(tx.signature().r(), U256::ONE);
+        assert_eq!(tx.signature().s(), U256::ONE);
         assert!(!tx.signature().v());
     }
 
@@ -865,13 +865,11 @@ mod tests {
 
         assert_eq!(
             tx.hash(),
-            &"0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f"
-                .parse::<B256>()
-                .unwrap()
+            &b256!("0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f")
         );
         assert_eq!(
             tx.recover_signer().unwrap(),
-            "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse::<Address>().unwrap()
+            address!("0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5")
         );
     }
 
@@ -921,17 +919,14 @@ mod tests {
         assert_eq!(tx.tx().gas_limit, 21000);
         assert_eq!(tx.tx().nonce, 0);
         if let TxKind::Call(to) = tx.tx().to {
-            assert_eq!(
-                to,
-                "0x095e7baea6a6c7c4c2dfeb977efac326af552d87".parse::<Address>().unwrap()
-            );
+            assert_eq!(to, address!("0x095e7baea6a6c7c4c2dfeb977efac326af552d87"));
         } else {
             panic!("expected a call transaction");
         }
         assert_eq!(tx.tx().value, U256::from(0x0au64));
         assert_eq!(
             tx.recover_signer().unwrap(),
-            "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse::<Address>().unwrap()
+            address!("0f65fe9276bc9a24ae7083ae28e2660ef72df99e")
         );
     }
 
@@ -993,9 +988,8 @@ mod tests {
         use alloy_primitives::address;
         use tempo_primitives::TEMPO_TX_TYPE_ID;
 
-        let tx_hash: TxHash = "0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd"
-            .parse::<TxHash>()
-            .unwrap();
+        let tx_hash: TxHash =
+            b256!("0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd");
 
         // Raw transaction from Tempo testnet via eth_getRawTransactionByHash
         let raw_tx = hex::decode(

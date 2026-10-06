@@ -58,10 +58,7 @@ async fn fork_bal_prefills_complete_created_accounts() {
             .with_gas_limit(200_000),
     )
     .await;
-    assert_eq!(
-        api.storage_at(contract, U256::ZERO, None).await.unwrap(),
-        B256::from(U256::from(2))
-    );
+    assert_eq!(api.storage_at(contract, U256::ZERO, None).await.unwrap(), B256::with_last_byte(2));
 }
 
 #[tokio::test(flavor = "multi_thread")]

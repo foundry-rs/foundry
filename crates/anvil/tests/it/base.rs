@@ -41,6 +41,7 @@ const ACTIVATION_REGISTRY: Address = address!("845300000000000000000000000000000
 const MAINNET_BERYL_ACTIVATION_ADMIN: Address =
     address!("ce3a3bee7e72e2a24079f3c0cb3b97740ed425a9");
 const NONCE_MANAGER: Address = address!("813000000000000000000000000000000000aa01");
+const BASE_CREATE2_DEPLOYER: Address = address!("13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
 
 sol! {
     interface IBaseTime {
@@ -74,11 +75,7 @@ fn eip8130_envelope_with(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-        tx,
-        signature.as_bytes().to_vec().into(),
-        Bytes::new(),
-    ))
+    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn eip8130_envelope(signer: &PrivateKeySigner) -> FoundryTxEnvelope {
@@ -109,8 +106,7 @@ fn malformed_configured_eip8130_envelope_with_nonce(
         metadata: Bytes::new(),
         payer: None,
     };
-    let bare_auth =
-        signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes().to_vec().into();
+    let bare_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap().as_bytes().into();
     FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, bare_auth, Bytes::new()))
 }
 
@@ -152,11 +148,7 @@ fn eip8130_envelope_with_nonce_and_fee(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-        tx,
-        signature.as_bytes().to_vec().into(),
-        Bytes::new(),
-    ))
+    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn eip8130_envelope_with_channel_calls(
@@ -180,11 +172,7 @@ fn eip8130_envelope_with_channel_calls(
         payer: None,
     };
     let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(
-        tx,
-        signature.as_bytes().to_vec().into(),
-        Bytes::new(),
-    ))
+    FoundryTxEnvelope::Eip8130(Eip8130Signed::new(tx, signature.as_bytes().into(), Bytes::new()))
 }
 
 fn sponsored_eip8130_envelope(
@@ -628,7 +616,7 @@ async fn base_standalone_mines_deposit_transaction() {
     let mint = 1_000;
     let value = U256::from(600);
     let envelope = FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit {
-        source_hash: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+        source_hash: B256::with_last_byte(1),
         from,
         to: TxKind::Call(to),
         mint,
@@ -652,11 +640,11 @@ async fn base_standalone_includes_failed_deposit_transaction() {
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let from = handle.dev_wallets().next().unwrap().address();
-    let target = address!("cccccccccccccccccccccccccccccccccccccccc");
+    let target = Address::repeat_byte(0xcc);
     api.anvil_set_code(target, Bytes::from_static(&[0xfe])).await.unwrap();
     let sender_before = provider.get_balance(from).await.unwrap();
     let envelope = FoundryTxEnvelope::Deposit(Sealed::new(TxDeposit {
-        source_hash: b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        source_hash: B256::with_last_byte(2),
         from,
         to: TxKind::Call(target),
         mint: 1_000,
@@ -841,7 +829,7 @@ async fn base_eip8130_estimate_surfaces_phase_revert() {
     let (api, handle) = spawn(config).await;
     let provider = handle.http_provider();
     let sender = handle.dev_wallets().next().unwrap().address();
-    let target = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    let target = Address::repeat_byte(0xee);
     api.anvil_set_code(target, Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xfd])).await.unwrap();
     let request = eip8130_simulation_request_with_call(sender, target);
 
@@ -926,7 +914,7 @@ async fn base_eip8130_nonce_key_rpc_reads_channel_state() {
     api.anvil_set_storage_at(
         NonceManagerStorage::ADDRESS,
         slot,
-        B256::from(U256::from(42).to_be_bytes::<32>()),
+        B256::from(B256::with_last_byte(42).0),
     )
     .await
     .unwrap();
@@ -958,7 +946,7 @@ async fn base_eip8130_txpool_keeps_independent_nonce_channels() {
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
     let sender = signer.address();
-    let first_key = U256::from(1);
+    let first_key = U256::ONE;
     let second_key = U256::from(2);
 
     let first = provider
@@ -1316,7 +1304,7 @@ async fn base_eip8130_state_cheat_clears_pending_transactions() {
         .unwrap();
     assert_eq!(provider.txpool_status().await.unwrap().pending, 1);
 
-    api.anvil_set_balance(signer.address(), U256::from(1)).await.unwrap();
+    api.anvil_set_balance(signer.address(), U256::ONE).await.unwrap();
 
     let status = provider.txpool_status().await.unwrap();
     assert_eq!(status.pending, 0);
@@ -1409,7 +1397,7 @@ async fn base_eip8130_receipt_reports_phase_statuses_and_metadata() {
     let provider = handle.http_provider();
     let signer = handle.dev_wallets().next().unwrap().clone();
     let sender = signer.address();
-    let target = address!("dddddddddddddddddddddddddddddddddddddddd");
+    let target = Address::repeat_byte(0xdd);
     api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
     let envelope = eip8130_envelope_with(
         &signer,
@@ -1905,4 +1893,41 @@ async fn base_standalone_denim_pending_receipts_include_system_transactions() {
         receipts.iter().map(|receipt| receipt.transaction_hash).collect::<Vec<_>>(),
         block.transactions.hashes().collect::<Vec<_>>()
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn base_reset_restores_genesis_state() {
+    let config = NodeConfig::test_base().with_hardfork(Some(BaseUpgrade::Zenith.into()));
+    let (api, handle) = spawn(config).await;
+    let provider = handle.http_provider();
+    let read_state = async || {
+        let mut slots = Vec::new();
+        for slot in [1u64, 3, 7] {
+            slots.push(
+                provider.get_storage_at(Predeploys::L1_BLOCK_INFO, U256::from(slot)).await.unwrap(),
+            );
+        }
+        let mut code_hashes = Vec::new();
+        for address in [BASE_CREATE2_DEPLOYER, NONCE_MANAGER, ACTIVATION_REGISTRY] {
+            code_hashes.push(keccak256(provider.get_code_at(address).await.unwrap()));
+        }
+        (slots, code_hashes)
+    };
+
+    let genesis = read_state().await;
+    assert_eq!(
+        genesis,
+        (
+            vec![U256::from(1_000_000_000u64), U256::from(1_000_000u64) << 96, U256::ONE],
+            vec![
+                b256!("0xb0550b5b431e30d38000efb7107aaa0ade03d48a7198a140edda9d27134468b2"),
+                keccak256([0xef]),
+                keccak256([0xef]),
+            ],
+        )
+    );
+
+    api.anvil_reset(None).await.unwrap();
+
+    assert_eq!(read_state().await, genesis);
 }

@@ -31,7 +31,7 @@ impl SymBytes {
     }
 
     pub(crate) fn empty(cx: &mut SymCx) -> Self {
-        Self::from_kind(cx, SymBytesKind::Concrete(Vec::new()))
+        Self::concrete(cx, Vec::new())
     }
 
     pub(crate) fn concrete(cx: &mut SymCx, bytes: Vec<u8>) -> Self {

@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn stack_inputs_are_taken_from_the_top() {
-        let stack = [U256::from(1), U256::from(2), U256::from(3)];
+        let stack = [U256::ONE, U256::from(2), U256::from(3)];
         assert_eq!(
             get_stack_inputs_for_opcode(opcode::ADD, Some(&stack)),
             vec![U256::from(3), U256::from(2)]

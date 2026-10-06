@@ -50,7 +50,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{Database, DatabaseCommit, DatabaseRef},
-    interpreter::{InstructionResult, return_ok},
+    interpreter::{InstructionResult, gas::InitialAndFloorGas},
     primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
@@ -66,9 +66,8 @@ use std::{
 #[cfg(feature = "monad")]
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 #[cfg(feature = "monad")]
-use foundry_evm_core::{
-    evm::{MonadEvmNetwork, try_transact_monad_system_replay},
-    refresh_chain_journal,
+use foundry_evm_core::evm::{
+    MonadEvmNetwork, refresh_chain_journal, try_transact_monad_system_replay,
 };
 
 mod builder;
@@ -347,7 +346,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 let slot = history_storage_slot(block_number);
                 let value = history_storage_value(block_hash);
                 let _ = backend.insert_account_storage(HISTORY_STORAGE_ADDRESS, slot, value);
-                block_number += U256::from(1);
+                block_number += U256::ONE;
             }
         }
 
@@ -519,9 +518,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Set the code of an account.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.code_hash = keccak256(code.original_byte_slice());
-        account.code = Some(code);
+        let account = self.backend().basic_ref(address)?.unwrap_or_default().with_code(code);
         self.backend_mut().insert_account_info(address, account);
         Ok(())
     }
@@ -562,7 +559,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let info = revm::state::AccountInfo {
                 nonce: account_state.nonce.unwrap_or_default(),
                 balance: account_state.balance.unwrap_or_default(),
-                code_hash: keccak256(code.original_byte_slice()),
+                code_hash: code.hash_slow(),
                 code: Some(code),
                 account_id: Default::default(),
             };
@@ -579,7 +576,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
+        Ok(self.backend().basic_ref(address)?.is_none_or(|acc| acc.is_empty_code_hash()))
     }
 
     #[inline]
@@ -619,19 +616,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.deploy_with_env(evm_env, tx_env, rd)
     }
 
-    /// Deploys a contract with explicit network-specific context.
-    pub fn deploy_with_context(
-        &mut self,
-        from: Address,
-        code: Bytes,
-        value: U256,
-        chain_context: ChainFor<FEN>,
-        rd: Option<&RevertDecoder>,
-    ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Create, code, value);
-        self.deploy_with_env_and_context(evm_env, tx_env, chain_context, rd)
-    }
-
     /// Deploys a contract using the given `env` and commits the new state to the underlying
     /// database.
     ///
@@ -662,11 +646,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         chain_context: ChainFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        assert!(
-            matches!(tx_env.kind(), TxKind::Create),
-            "Expected create transaction, got {:?}",
-            tx_env.kind()
-        );
+        assert!(tx_env.kind().is_create(), "Expected create transaction, got {:?}", tx_env.kind());
         trace!(sender=%tx_env.caller(), "deploying contract");
 
         let mut result = self.transact_with_env_and_context(evm_env, tx_env, chain_context)?;
@@ -710,8 +690,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         // and also the chainid, which can be set manually
         self.evm_env_mut().cfg_env.chain_id = res.evm_env.cfg_env.chain_id;
 
-        let success =
-            self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
+        let success = self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res);
         if !success {
             return Err(res.into_execution_error("execution error".to_string()).into());
         }
@@ -802,19 +781,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> eyre::Result<RawCallResult<FEN>> {
         let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(evm_env, tx_env)
-    }
-
-    /// Performs a raw call with explicit network-specific context.
-    pub fn transact_raw_with_context(
-        &mut self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-        chain_context: ChainFor<FEN>,
-    ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
-        self.transact_with_env_and_context(evm_env, tx_env, chain_context)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -1087,13 +1053,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         address: Address,
         call_result: &mut RawCallResult<FEN>,
-        should_fail: bool,
     ) -> bool {
         self.is_raw_call_success(
             address,
             Cow::Owned(std::mem::take(&mut call_result.state_changeset)),
             call_result,
-            should_fail,
         )
     }
 
@@ -1105,13 +1069,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         state_changeset: Cow<'_, StateChangeset>,
         call_result: &RawCallResult<FEN>,
-        should_fail: bool,
     ) -> bool {
         if call_result.has_state_snapshot_failure {
             // a failure occurred in a reverted snapshot, which is considered a failed test
-            return should_fail;
+            return false;
         }
-        self.is_success(address, call_result.reverted, state_changeset, should_fail)
+        self.is_success(address, call_result.reverted, state_changeset)
     }
 
     /// Like [`Self::is_raw_call_mut_success`] but uses [`Self::is_success_handler_gate`] under
@@ -1155,10 +1118,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
-        should_fail: bool,
     ) -> bool {
-        let success = self.is_success_raw(address, reverted, state_changeset, false);
-        should_fail ^ success
+        self.is_success_raw(address, reverted, state_changeset, false)
     }
 
     /// Like [`Self::is_success`] but ignores the *committed* `GLOBAL_FAIL_SLOT` and only treats
@@ -1715,12 +1676,19 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
 }
 
 pub(crate) fn calculate_stipend(tx_env: &impl Transaction, cfg: &impl Cfg) -> u64 {
+    calculate_initial_gas(tx_env, cfg).initial_total_gas()
+}
+
+/// Returns the intrinsic gas and EIP-7623 calldata floor of a transaction.
+pub(crate) fn calculate_initial_gas(
+    tx_env: &impl Transaction,
+    cfg: &impl Cfg,
+) -> InitialAndFloorGas {
     let eip2780 = cfg.is_amsterdam_eip2780_enabled().then(|| Eip2780TxInfo {
         value: tx_env.value(),
         is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
     });
     revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, cfg.spec().into(), eip2780)
-        .initial_total_gas()
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
@@ -1789,7 +1757,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
         execution_cancelled,
-        reverted: !matches!(exit_reason, return_ok!()),
+        reverted: !exit_reason.is_ok(),
         has_state_snapshot_failure,
         result,
         gas_used,
@@ -1996,8 +1964,8 @@ mod tests {
 
     #[test]
     fn nested_revert_is_ignored_only_when_allowed() {
-        let target = Address::from([0x11; 20]);
-        let nested = Address::from([0x22; 20]);
+        let target = Address::repeat_byte(0x11);
+        let nested = Address::repeat_byte(0x22);
 
         assert!(should_ignore_revert(false, target, Some(nested), &[]));
         assert!(!should_ignore_revert(true, target, Some(nested), &[]));
@@ -2009,7 +1977,7 @@ mod tests {
     #[cfg(feature = "monad")]
     #[test]
     fn network_cheatcode_revert_handling_is_monad_specific() {
-        let target = Address::from([0x11; 20]);
+        let target = Address::repeat_byte(0x11);
 
         assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
         assert!(!should_ignore_revert(
@@ -2237,7 +2205,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(result.result, Bytes::from(U256::from(2).to_be_bytes::<32>()));
+        assert_eq!(result.result, Bytes::from(B256::with_last_byte(2).0));
         assert_eq!(result.tx_env.nonce, 2);
         assert_eq!(executor.get_nonce(CALLER).unwrap(), 3);
         assert_eq!(executor.backend().storage_ref(address, U256::ZERO).unwrap(), U256::from(2));
@@ -2524,7 +2492,7 @@ mod tests {
                 CHEATCODE_ADDRESS,
                 mockCallRevert_1Call {
                     callee: mocked,
-                    msgValue: U256::from(1),
+                    msgValue: U256::ONE,
                     data: Bytes::new(),
                     revertData: Bytes::new(),
                 }
@@ -2534,7 +2502,7 @@ mod tests {
             )
             .unwrap();
         executor.set_code(mocked, Bytecode::default()).unwrap();
-        executor.set_balance(target, U256::from(1)).unwrap();
+        executor.set_balance(target, U256::ONE).unwrap();
 
         // PUSH0 x4; PUSH1 1; PUSH20 <mocked>; GAS; CALL; POP; STOP.
         let mut code = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x60, 0x01, 0x73];

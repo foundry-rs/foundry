@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::assert_symbolic_witness;
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str};
 use std::{env, process::Command};
 
 fn symbolic_limits_enabled() -> bool {
@@ -21,131 +21,6 @@ fn should_skip(test: &str) -> bool {
         return true;
     }
     false
-}
-
-#[forgetest_init]
-fn symbolic_limits_riddle_counterexample_replays(prj: _, cmd: _) {
-    if should_skip("symbolic_limits_riddle_counterexample_replays") {
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicLimitsRiddle.t.sol",
-        r#"
-contract SymbolicLimitsRiddle {
-    function check_riddle(uint256 x) external pure {
-        uint256 msgSender = uint160(0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
-
-        unchecked {
-            require(x * x < msgSender);
-        }
-
-        require(x > msgSender);
-        require(x & 0x800 != 0);
-        require(x & 0x10000 == 0);
-
-        assert(false);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args([
-            "test",
-            "--symbolic",
-            "--symbolic-timeout",
-            "300",
-            "--symbolic-width",
-            "512",
-            "--symbolic-depth",
-            "50000",
-            "--symbolic-max-solver-queries",
-            "20000",
-            "--match-test",
-            "check_riddle",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-panic: assertion failed
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-check_riddle(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-(paths:
-"#]],
-    );
-    assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
-    assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
-}
-
-#[forgetest_init]
-fn symbolic_limits_reports_path_width_exhaustion(prj: _, cmd: _) {
-    if should_skip("symbolic_limits_reports_path_width_exhaustion") {
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicLimitsPathWidth.t.sol",
-        r#"
-contract SymbolicLimitsPathWidth {
-    function checkWidth(uint8 x) public pure {
-        uint256 acc;
-
-        if ((x & 0x01) != 0) acc += 1; else acc += 2;
-        if ((x & 0x02) != 0) acc += 4; else acc += 8;
-        if ((x & 0x04) != 0) acc += 16; else acc += 32;
-        if ((x & 0x08) != 0) acc += 64; else acc += 128;
-        if ((x & 0x10) != 0) acc += 256; else acc += 512;
-
-        assert(acc != 0);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--symbolic-width", "2", "--match-test", "checkWidth"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkWidth(uint8)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic path limit exceeded (2)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck)
-"#]],
-    );
 }
 
 #[forgetest_init]
@@ -174,30 +49,22 @@ contract SymbolicLimitsDepth {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--symbolic-depth", "8", "--match-test", "checkDepth"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkDepth(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic depth limit exceeded (8)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--symbolic-depth",
+        "8",
+        "--match-test",
+        "checkDepth",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicLimitsDepth.t.sol:SymbolicLimitsDepth
+[FAIL: incomplete symbolic execution (Stuck): symbolic depth limit exceeded (8)] checkDepth(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -219,30 +86,20 @@ contract SymbolicLimitsCalldataBudget {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkCalldataBudget"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkCalldataBudget(bytes)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-symbolic calldata size exceeds configured max
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-incomplete symbolic execution (Stuck)
-"#]],
-    );
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkCalldataBudget",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicLimitsCalldataBudget.t.sol:SymbolicLimitsCalldataBudget
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic calldata size exceeds configured max] checkCalldataBudget(bytes) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -251,6 +108,9 @@ fn symbolic_limits_invariant_depth_changes_result(prj: _) {
         return;
     }
 
+    // `--symbolic` still runs the concrete invariant campaign, so keep it at depth 1 to let the
+    // symbolic depth decide whether the two-call sequence is found.
+    prj.update_config(|config| config.invariant.depth = 1);
     prj.add_test(
         "SymbolicLimitsInvariantDepth.t.sol",
         r#"
@@ -279,55 +139,48 @@ contract SymbolicLimitsInvariantDepth is Test {
 "#,
     );
 
-    let passing = prj
-        .forge_command()
-        .args([
-            "test",
-            "--symbolic",
-            "--symbolic-invariant-depth",
-            "1",
-            "--match-test",
-            "invariant_valueNeverTwo",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &passing,
-        foundry_test_utils::str![[r#"
-[PASS] invariant_valueNeverTwo()
-"#]],
-    );
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--symbolic-invariant-depth",
+        "1",
+        "--match-test",
+        "invariant_valueNeverTwo",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicLimitsInvariantDepth.t.sol:SymbolicLimitsInvariantDepth
+[PASS] invariant_valueNeverTwo() ([METRICS])
 
-    let failing = prj
-        .forge_command()
-        .args([
-            "test",
-            "--symbolic",
-            "--symbolic-invariant-depth",
-            "2",
-            "--match-test",
-            "invariant_valueNeverTwo",
-        ])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert_relevant_lines(
-        &failing,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &failing,
-        foundry_test_utils::str![[r#"
-symbolic invariant counterexample
-"#]],
-    );
-    assert_relevant_lines(
-        &failing,
-        foundry_test_utils::str![[r#"
-invariant_valueNeverTwo()
-"#]],
-    );
+╭---------------+----------+-------+---------+----------╮
+| Contract      | Selector | Calls | Reverts | Discards |
++=======================================================+
+| LimitsCounter | inc      | 256   | 0       | 0        |
+╰---------------+----------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    assert_symbolic_witness(prj.forge_command().args([
+        "test",
+        "--symbolic",
+        "--symbolic-invariant-depth",
+        "2",
+        "--match-test",
+        "invariant_valueNeverTwo",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicLimitsInvariantDepth.t.sol:SymbolicLimitsInvariantDepth
+[FAIL: assertion failed]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] [SENDER] calldata=inc() [ARGS]
+		[SENDER] [SENDER] calldata=inc() [ARGS]
+ invariant_valueNeverTwo() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }

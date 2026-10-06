@@ -60,7 +60,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 
@@ -296,61 +296,57 @@ impl CallArgs {
             config.chain = Some(chain);
         }
 
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_network_and_opts::<TempoEvmNetwork>(
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                self.run_with_network_and_opts::<TempoEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            super::validate_base_transaction_options(&self.tx)?;
-            return self
-                .run_with_network_and_opts::<BaseEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                super::validate_base_transaction_options(&self.tx)?;
+                self.run_with_network_and_opts::<BaseEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<BaseEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_network_and_opts::<MonadEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                self.run_with_network_and_opts::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
-                .await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_network_and_opts::<OpEvmNetwork>(
+                .await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                self.run_with_network_and_opts::<OpEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
-                .await;
+                .await
+            }
+            NetworkVariant::Ethereum => {
+                self.run_with_network_and_opts::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
+                .await
+            }
         }
-
-        self.run_with_network_and_opts::<EthEvmNetwork>(
-            config,
-            evm_opts,
-            auth_preflight,
-            ExecutorBuilder::<EthEvmNetwork>::new(),
-        )
-        .await
     }
 
     /// Returns whether resolving this call can disclose an authorization before the transaction
@@ -373,7 +369,7 @@ impl CallArgs {
         let sender = if self.browser.browser {
             None
         } else {
-            Some(SenderKind::from_wallet_opts(self.wallet.clone()).await?)
+            Some(SenderKind::from_wallet_opts(self.wallet.clone(), &self.tx.auth).await?)
         };
         let browser_sender = SenderKind::from(self.wallet.from.unwrap_or_default());
         let validation_sender = sender.as_ref().unwrap_or(&browser_sender);
@@ -453,7 +449,7 @@ impl CallArgs {
                     Some(chain) => chain.id(),
                     None => provider.get_chain_id().await?,
                 };
-                read_only_sender::<FEN::Network>(&browser, wallet, &tx.tempo, chain_id).await?.0
+                read_only_sender::<FEN::Network>(&browser, wallet, &tx, chain_id).await?.0
             }
         };
         let from = sender.address();

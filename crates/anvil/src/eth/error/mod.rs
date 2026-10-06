@@ -37,6 +37,8 @@ pub enum BlockchainError {
     ChainIdNotAvailable,
     #[error("Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`")]
     InvalidFeeInput,
+    #[error("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")]
+    ConflictingFeeFields,
     #[error("Transaction data is empty")]
     EmptyRawTransactionData,
     #[error("Failed to decode signed transaction")]
@@ -566,6 +568,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::InvalidFeeInput => RpcError::invalid_params(
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
+                err @ BlockchainError::ConflictingFeeFields => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 BlockchainError::AlloyForkProvider(err) => {
                     error!(target: "backend", %err, "fork provider error");
                     match err {

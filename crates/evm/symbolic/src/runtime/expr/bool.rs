@@ -53,7 +53,7 @@ impl SymBoolExpr {
             Self::constant(cx, op.eval(word, value))
         } else {
             let value = SymExpr::constant(cx, value);
-            Self::cmp(cx, op, word.clone(), value)
+            Self::cmp_word_expr(cx, op, word, value)
         }
     }
 
@@ -305,22 +305,22 @@ impl SymBoolExpr {
         let SymExprKind::Ite(condition, then_expr, else_expr) = word.kind() else { return None };
         match (then_expr.as_const(), else_expr.as_const()) {
             (Some(then_value), Some(else_value))
-                if then_value == U256::from(1) && else_value.is_zero() =>
+                if then_value == U256::ONE && else_value.is_zero() =>
             {
                 Some(if value.is_zero() {
                     Self::not_bool(cx, condition.clone())
-                } else if value == U256::from(1) {
+                } else if value == U256::ONE {
                     condition.clone()
                 } else {
                     Self::constant(cx, false)
                 })
             }
             (Some(then_value), Some(else_value))
-                if then_value.is_zero() && else_value == U256::from(1) =>
+                if then_value.is_zero() && else_value == U256::ONE =>
             {
                 Some(if value.is_zero() {
                     condition.clone()
-                } else if value == U256::from(1) {
+                } else if value == U256::ONE {
                     Self::not_bool(cx, condition.clone())
                 } else {
                     Self::constant(cx, false)
@@ -497,7 +497,7 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
+        self.visit_bool(|expr| expr.is_raw_gasleft())
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
@@ -590,7 +590,7 @@ impl SymBoolExpr {
                     match *op {
                         SymCmpOp::Ult => right
                             .as_const()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
+                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
                             .and_then(|value| usize::try_from(value).ok()),
                         SymCmpOp::Ule => {
                             right.as_const().and_then(|value| usize::try_from(value).ok())
@@ -601,7 +601,7 @@ impl SymBoolExpr {
                     match *op {
                         SymCmpOp::Ugt => left
                             .as_const()
-                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
+                            .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::ONE))
                             .and_then(|value| usize::try_from(value).ok()),
                         SymCmpOp::Uge => {
                             left.as_const().and_then(|value| usize::try_from(value).ok())
@@ -758,7 +758,7 @@ impl SymBoolExpr {
                 Self::and(cx, values)
             }
             SymBoolExprKind::Cmp(op, left, right) => {
-                Self::cmp(cx, *op, left.clone(), right.clone())
+                Self::cmp_word_expr(cx, *op, left, right.clone())
             }
         };
         let expr = folder(cx, expr);

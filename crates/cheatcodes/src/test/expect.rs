@@ -1,25 +1,19 @@
-use std::{
-    collections::VecDeque,
-    fmt::{self, Display},
-};
+use std::fmt::{self, Display};
 
-use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
-use alloy_dyn_abi::{DynSolValue, EventExt};
-use alloy_json_abi::Event;
+use crate::{
+    Cheatcode, Cheatcodes, CheatsCtxt, Error, Result,
+    Vm::*,
+    expected_emit::{ExpectedEmit, observe_log},
+};
 use alloy_primitives::{
-    Address, Bytes, LogData as RawLog, U256, hex, keccak256,
-    map::{AddressHashMap, HashMap, hash_map::Entry},
+    Address, Bytes, Log, LogData as RawLog, U256, hex, keccak256,
+    map::{HashMap, hash_map::Entry},
 };
 use alloy_sol_types::{SolCall, SolValue};
-use foundry_common::{abi::get_indexed_event, fmt::format_token};
 use foundry_evm_core::evm::FoundryEvmNetwork;
-use foundry_evm_traces::DecodedCallLog;
-use revm::{
-    context::{ContextTr, JournalTr},
-    interpreter::{
-        CallScheme, InstructionResult, Interpreter, InterpreterAction,
-        interpreter_types::LoopControl,
-    },
+use itertools::Itertools;
+use revm::interpreter::{
+    CallScheme, InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
 };
 use tempo_contracts::precompiles::ISignatureVerifier;
 use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
@@ -35,8 +29,10 @@ use super::revert_handlers::RevertParameters;
 /// This then allows us to customize the matching behavior for each call data on the
 /// `ExpectedCallData` struct and track how many times we've actually seen the call on the second
 /// element of the tuple.
-pub type ExpectedCallTracker =
-    HashMap<Address, HashMap<(Bytes, Option<CallScheme>), (ExpectedCallData, u64)>>;
+pub type ExpectedCallTracker = HashMap<Address, ExpectedCallsForTarget>;
+
+/// Tracks calldata, scheme and count expectations for one target.
+pub type ExpectedCallsForTarget = HashMap<(Bytes, Option<CallScheme>), (ExpectedCallData, u64)>;
 
 #[derive(Clone, Debug)]
 pub struct ExpectedCallData {
@@ -97,77 +93,6 @@ pub struct ExpectedRevert {
     pub count: u64,
     /// Actual number of times this revert has been seen.
     pub actual_count: u64,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExpectedEmit {
-    /// The depth at which we expect this emit to have occurred
-    pub depth: usize,
-    /// The log we expect
-    pub log: Option<RawLog>,
-    /// The checks to perform:
-    /// ```text
-    /// ┌───────┬───────┬───────┬───────┬────┐
-    /// │topic 0│topic 1│topic 2│topic 3│data│
-    /// └───────┴───────┴───────┴───────┴────┘
-    /// ```
-    pub checks: [bool; 5],
-    /// If present, check originating address against this
-    pub address: Option<Address>,
-    /// If present, relax the requirement that topic 0 must be present. This allows anonymous
-    /// events with no indexed topics to be matched.
-    pub anonymous: bool,
-    /// Whether the log was actually found in the subcalls
-    pub found: bool,
-    /// Number of times the log is expected to be emitted
-    pub count: u64,
-    /// Stores mismatch details if a log didn't match.
-    pub mismatch_error: Option<EmitMismatch>,
-}
-
-#[derive(Clone, Debug)]
-pub enum EmitMismatch {
-    Log { actual: RawLog },
-    Emitter { expected: Address, actual: Address },
-}
-
-impl EmitMismatch {
-    pub fn to_error_msg<FEN: FoundryEvmNetwork>(
-        &self,
-        state: &Cheatcodes<FEN>,
-        checks: [bool; 5],
-        expected: Option<&RawLog>,
-        anonymous: bool,
-    ) -> String {
-        match self {
-            Self::Log { actual } => {
-                let Some(expected) = expected else {
-                    return "log != expected log".to_string();
-                };
-                let (expected_decoded, actual_decoded) = if anonymous {
-                    (None, None)
-                } else {
-                    state
-                        .signatures_identifier()
-                        .map(|identifier| {
-                            (decode_event(identifier, expected), decode_event(identifier, actual))
-                        })
-                        .unwrap_or_default()
-                };
-                get_emit_mismatch_message(
-                    checks,
-                    expected,
-                    actual,
-                    anonymous,
-                    expected_decoded.as_ref(),
-                    actual_decoded.as_ref(),
-                )
-            }
-            Self::Emitter { expected, actual } => {
-                format!("log emitter mismatch: expected={expected:#x}, got={actual:#x}")
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -352,7 +277,7 @@ impl Cheatcode for expectEmit_0Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             false,
@@ -366,7 +291,7 @@ impl Cheatcode for expectEmit_1Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             false,
@@ -378,14 +303,14 @@ impl Cheatcode for expectEmit_1Call {
 impl Cheatcode for expectEmit_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], None, false, 1)
+        expect_emit(ccx.state, ccx.depth(), [true; 5], None, false, 1)
     }
 }
 
 impl Cheatcode for expectEmit_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], Some(emitter), false, 1)
+        expect_emit(ccx.state, ccx.depth(), [true; 5], Some(emitter), false, 1)
     }
 }
 
@@ -394,7 +319,7 @@ impl Cheatcode for expectEmit_4Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, count } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             false,
@@ -408,7 +333,7 @@ impl Cheatcode for expectEmit_5Call {
         let Self { checkTopic1, checkTopic2, checkTopic3, checkData, emitter, count } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             [true, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             false,
@@ -420,14 +345,14 @@ impl Cheatcode for expectEmit_5Call {
 impl Cheatcode for expectEmit_6Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { count } = *self;
-        expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], None, false, count)
+        expect_emit(ccx.state, ccx.depth(), [true; 5], None, false, count)
     }
 }
 
 impl Cheatcode for expectEmit_7Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { emitter, count } = *self;
-        expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], Some(emitter), false, count)
+        expect_emit(ccx.state, ccx.depth(), [true; 5], Some(emitter), false, count)
     }
 }
 
@@ -436,7 +361,7 @@ impl Cheatcode for expectEmitAnonymous_0Call {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             None,
             true,
@@ -450,7 +375,7 @@ impl Cheatcode for expectEmitAnonymous_1Call {
         let Self { checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData, emitter } = *self;
         expect_emit(
             ccx.state,
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             [checkTopic0, checkTopic1, checkTopic2, checkTopic3, checkData],
             Some(emitter),
             true,
@@ -462,14 +387,14 @@ impl Cheatcode for expectEmitAnonymous_1Call {
 impl Cheatcode for expectEmitAnonymous_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], None, true, 1)
+        expect_emit(ccx.state, ccx.depth(), [true; 5], None, true, 1)
     }
 }
 
 impl Cheatcode for expectEmitAnonymous_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { emitter } = *self;
-        expect_emit(ccx.state, ccx.ecx.journal().depth(), [true; 5], Some(emitter), true, 1)
+        expect_emit(ccx.state, ccx.depth(), [true; 5], Some(emitter), true, 1)
     }
 }
 
@@ -548,7 +473,7 @@ fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
     new_logo_uri: &str,
 ) -> Result {
     let expected_emit = ExpectedEmit {
-        depth: ccx.ecx.journal().depth(),
+        depth: ccx.depth(),
         log: Some(RawLog::new_unchecked(
             vec![keccak256("LogoURIUpdated(address,string)"), updater.into_word()],
             new_logo_uri.abi_encode().into(),
@@ -567,36 +492,28 @@ fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
 impl Cheatcode for expectRevert_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        expect_revert(ccx.state, None, ccx.ecx.journal().depth(), false, false, None, 1)
+        expect_revert(ccx.state, None, ccx.depth(), false, false, None, 1)
     }
 }
 
 impl Cheatcode for expectRevert_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
-            false,
-            false,
-            None,
-            1,
-        )
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), false, false, None, 1)
     }
 }
 
 impl Cheatcode for expectRevert_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.ecx.journal().depth(), false, false, None, 1)
+        expect_revert(ccx.state, Some(revertData), ccx.depth(), false, false, None, 1)
     }
 }
 
 impl Cheatcode for expectRevert_3Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { reverter } = self;
-        expect_revert(ccx.state, None, ccx.ecx.journal().depth(), false, false, Some(*reverter), 1)
+        expect_revert(ccx.state, None, ccx.depth(), false, false, Some(*reverter), 1)
     }
 }
 
@@ -606,7 +523,7 @@ impl Cheatcode for expectRevert_4Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             false,
             false,
             Some(*reverter),
@@ -618,67 +535,35 @@ impl Cheatcode for expectRevert_4Call {
 impl Cheatcode for expectRevert_5Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, reverter } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData),
-            ccx.ecx.journal().depth(),
-            false,
-            false,
-            Some(*reverter),
-            1,
-        )
+        expect_revert(ccx.state, Some(revertData), ccx.depth(), false, false, Some(*reverter), 1)
     }
 }
 
 impl Cheatcode for expectRevert_6Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { count } = self;
-        expect_revert(ccx.state, None, ccx.ecx.journal().depth(), false, false, None, *count)
+        expect_revert(ccx.state, None, ccx.depth(), false, false, None, *count)
     }
 }
 
 impl Cheatcode for expectRevert_7Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, count } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
-            false,
-            false,
-            None,
-            *count,
-        )
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), false, false, None, *count)
     }
 }
 
 impl Cheatcode for expectRevert_8Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData, count } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData),
-            ccx.ecx.journal().depth(),
-            false,
-            false,
-            None,
-            *count,
-        )
+        expect_revert(ccx.state, Some(revertData), ccx.depth(), false, false, None, *count)
     }
 }
 
 impl Cheatcode for expectRevert_9Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { reverter, count } = self;
-        expect_revert(
-            ccx.state,
-            None,
-            ccx.ecx.journal().depth(),
-            false,
-            false,
-            Some(*reverter),
-            *count,
-        )
+        expect_revert(ccx.state, None, ccx.depth(), false, false, Some(*reverter), *count)
     }
 }
 
@@ -688,7 +573,7 @@ impl Cheatcode for expectRevert_10Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             false,
             false,
             Some(*reverter),
@@ -703,7 +588,7 @@ impl Cheatcode for expectRevert_11Call {
         expect_revert(
             ccx.state,
             Some(revertData),
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             false,
             false,
             Some(*reverter),
@@ -715,15 +600,7 @@ impl Cheatcode for expectRevert_11Call {
 impl Cheatcode for expectPartialRevert_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
-            false,
-            true,
-            None,
-            1,
-        )
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), false, true, None, 1)
     }
 }
 
@@ -733,7 +610,7 @@ impl Cheatcode for expectPartialRevert_1Call {
         expect_revert(
             ccx.state,
             Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
+            ccx.depth(),
             false,
             true,
             Some(*reverter),
@@ -744,43 +621,35 @@ impl Cheatcode for expectPartialRevert_1Call {
 
 impl Cheatcode for _expectCheatcodeRevert_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        expect_revert(ccx.state, None, ccx.ecx.journal().depth(), true, false, None, 1)
+        expect_revert(ccx.state, None, ccx.depth(), true, false, None, 1)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
-        expect_revert(
-            ccx.state,
-            Some(revertData.as_ref()),
-            ccx.ecx.journal().depth(),
-            true,
-            false,
-            None,
-            1,
-        )
+        expect_revert(ccx.state, Some(revertData.as_ref()), ccx.depth(), true, false, None, 1)
     }
 }
 
 impl Cheatcode for _expectCheatcodeRevert_2Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { revertData } = self;
-        expect_revert(ccx.state, Some(revertData), ccx.ecx.journal().depth(), true, false, None, 1)
+        expect_revert(ccx.state, Some(revertData), ccx.depth(), true, false, None, 1)
     }
 }
 
 impl Cheatcode for expectSafeMemoryCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journal().depth().try_into()?)
+        expect_safe_memory(ccx.state, min, max, ccx.depth().try_into()?)
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
-        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journal().depth().try_into()?);
+        ccx.state.allowed_mem_writes.remove(&ccx.depth().try_into()?);
         Ok(Default::default())
     }
 }
@@ -788,7 +657,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 impl Cheatcode for expectSafeMemoryCallCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, (ccx.ecx.journal().depth() + 1).try_into()?)
+        expect_safe_memory(ccx.state, min, max, (ccx.depth() + 1).try_into()?)
     }
 }
 
@@ -889,6 +758,93 @@ fn expect_call<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+/// Counts a call against every matching expectation registered for one target.
+pub(crate) fn observe_call(
+    expected_calls_for_target: &mut ExpectedCallsForTarget,
+    input: &[u8],
+    value: Option<U256>,
+    gas_limit: u64,
+    scheme: CallScheme,
+) {
+    // Match every partial/full calldata.
+    for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target {
+        // Increment actual times seen if all of the following hold.
+        // The calldata is at most as big as this call's input.
+        if calldata.len() <= input.len() &&
+            // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector).
+            input.get(..calldata.len()) == Some(calldata.as_ref()) &&
+            // The value matches, if provided.
+            expected.value.is_none_or(|expected_value| Some(expected_value) == value) &&
+            // The gas matches, if provided.
+            expected.gas.is_none_or(|gas| gas == gas_limit) &&
+            // The minimum gas matches, if provided.
+            expected.min_gas.is_none_or(|min_gas| min_gas <= gas_limit) &&
+            // The call scheme matches, if provided.
+            expected_scheme.is_none_or(|expected_scheme| expected_scheme == scheme)
+        {
+            *actual_count += 1;
+        }
+    }
+}
+
+/// Returns the failure message for the smallest unmet call expectation, if any.
+///
+/// Expectations are ordered by address, calldata and call scheme.
+/// `succeeded` is false for both reverts and halts.
+pub(crate) fn first_unmet_call(tracker: &ExpectedCallTracker, succeeded: bool) -> Option<String> {
+    let (address, calldata, scheme, expected, actual_count) = tracker
+        .iter()
+        .flat_map(|(address, calldatas)| {
+            calldatas.iter().map(move |((calldata, scheme), (expected, actual_count))| {
+                (address, calldata, scheme, expected, actual_count)
+            })
+        })
+        .filter(|(_, _, _, expected, actual_count)| match expected.call_type {
+            // Counted expectations require exactly the requested number of calls.
+            ExpectedCallType::Count => expected.count != **actual_count,
+            // Non-counted expectations require at least the requested number of calls.
+            ExpectedCallType::NonCount => expected.count > **actual_count,
+        })
+        .min_by_key(|(address, calldata, scheme, ..)| {
+            (*address, *calldata, call_scheme_rank(**scheme))
+        })?;
+
+    let ExpectedCallData { gas, min_gas, value, count, .. } = expected;
+    let expected_values = [
+        Some(format!("data {}", hex::encode_prefixed(calldata))),
+        value.as_ref().map(|v| format!("value {v}")),
+        gas.map(|g| format!("gas {g}")),
+        min_gas.map(|g| format!("minimum gas {g}")),
+        scheme.map(|scheme| format!("call type {scheme:?}")),
+    ]
+    .into_iter()
+    .flatten()
+    .join(", ");
+    let but = if succeeded {
+        let s = if *actual_count == 1 { "" } else { "s" };
+        format!("was called {actual_count} time{s}")
+    } else {
+        "the call reverted instead; \
+         ensure you're testing the happy path when using `expectCall`"
+            .to_string()
+    };
+    let s = if *count == 1 { "" } else { "s" };
+    Some(format!(
+        "expected call to {address} with {expected_values} \
+         to be called {count} time{s}, but {but}"
+    ))
+}
+
+const fn call_scheme_rank(scheme: Option<CallScheme>) -> u8 {
+    match scheme {
+        None => 0,
+        Some(CallScheme::Call) => 1,
+        Some(CallScheme::CallCode) => 2,
+        Some(CallScheme::DelegateCall) => 3,
+        Some(CallScheme::StaticCall) => 4,
+    }
+}
+
 fn expect_emit<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     depth: usize,
@@ -919,222 +875,23 @@ fn expect_emit<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+/// Applies an `expectEmit` failure for `log` by reverting the current call, when an interpreter
+/// is available.
+///
+/// Without an interpreter, the failure reason is returned to the caller instead.
 pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
-    log: &alloy_primitives::Log,
-    mut interpreter: Option<&mut Interpreter>,
+    log: &Log,
+    interpreter: Option<&mut Interpreter>,
 ) -> Option<&'static str> {
-    // This function returns an optional string indicating a failure reason.
-    // If the string is `Some`, it indicates that the expectation failed with the provided reason.
-    let mut failure_reason = None;
-
-    // Fill or check the expected emits.
-    // We expect for emit checks to be filled as they're declared (from oldest to newest),
-    // so we fill them and push them to the back of the queue.
-    // If the user has properly filled all the emits, they'll end up in their original order.
-    // If not, the queue will not be in the order the events will be intended to be filled,
-    // and we'll be able to later detect this and bail.
-
-    // First, we can return early if all events have been matched.
-    // This allows a contract to arbitrarily emit more events than expected (additive behavior),
-    // as long as all the previous events were matched in the order they were expected to be.
-    if state.expected_emits.iter().all(|(expected, _)| expected.found) {
-        return failure_reason;
-    }
-
-    // Check count=0 expectations against this log - fail immediately if violated
-    for (expected_emit, _) in &state.expected_emits {
-        if expected_emit.count == 0
-            && !expected_emit.found
-            && let Some(expected_log) = &expected_emit.log
-            && checks_topics_and_data(expected_emit.checks, expected_log, log)
-            // Check revert address 
-            && (expected_emit.address.is_none_or(|address| address == log.address))
-        {
-            if let Some(interpreter) = &mut interpreter {
-                // This event was emitted but we expected it NOT to be (count=0)
-                // Fail immediately
-                interpreter.bytecode.set_action(InterpreterAction::new_return(
-                    InstructionResult::Revert,
-                    Error::encode("log emitted but expected 0 times"),
-                    interpreter.gas,
-                ));
-            } else {
-                failure_reason = Some("log emitted but expected 0 times");
-            }
-
-            return failure_reason;
-        }
-    }
-
-    let should_fill_logs = state.expected_emits.iter().any(|(expected, _)| expected.log.is_none());
-    let index_to_fill_or_check = if should_fill_logs {
-        // If there's anything to fill, we start with the last event to match in the queue
-        // (without taking into account events already matched).
-        state
-            .expected_emits
-            .iter()
-            .position(|(emit, _)| emit.found)
-            .unwrap_or(state.expected_emits.len())
-            .saturating_sub(1)
-    } else {
-        // if all expected logs are filled, check any unmatched event
-        // in the declared order, so we start from the front (like a queue).
-        // Skip count=0 expectations as they are handled separately above
-        state.expected_emits.iter().position(|(emit, _)| !emit.found && emit.count > 0).unwrap_or(0)
-    };
-
-    // If there are only count=0 expectations left, we can return early
-    if !should_fill_logs
-        && state.expected_emits.iter().all(|(emit, _)| emit.found || emit.count == 0)
-    {
-        return failure_reason;
-    }
-
-    let (mut event_to_fill_or_check, mut count_map) = state
-        .expected_emits
-        .remove(index_to_fill_or_check)
-        .expect("we should have an emit to fill or check");
-
-    let Some(expected) = &event_to_fill_or_check.log else {
-        // Unless the caller is trying to match an anonymous event, the first topic must be
-        // filled.
-        if event_to_fill_or_check.anonymous || !log.topics().is_empty() {
-            event_to_fill_or_check.log = Some(log.data.clone());
-            // If we only filled the expected log then we put it back at the same position.
-            state
-                .expected_emits
-                .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
-        } else if let Some(interpreter) = &mut interpreter {
-            interpreter.bytecode.set_action(InterpreterAction::new_return(
-                InstructionResult::Revert,
-                Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                interpreter.gas,
-            ));
-        } else {
-            failure_reason = Some("use vm.expectEmitAnonymous to match anonymous events");
-        }
-
-        return failure_reason;
-    };
-
-    // Increment/set `count` for `log.address` and `log.data`
-    match count_map.entry(log.address) {
-        Entry::Occupied(mut entry) => {
-            let log_count_map = entry.get_mut();
-            log_count_map.insert(&log.data);
-        }
-        Entry::Vacant(entry) => {
-            let mut log_count_map = LogCountMap::new(&event_to_fill_or_check);
-            if log_count_map.satisfies_checks(&log.data) {
-                log_count_map.insert(&log.data);
-                entry.insert(log_count_map);
-            }
-        }
-    }
-
-    event_to_fill_or_check.found = || -> bool {
-        if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
-            event_to_fill_or_check.mismatch_error =
-                Some(EmitMismatch::Log { actual: log.data.clone() });
-            return false;
-        }
-
-        // Maybe match source address.
-        if let Some(expected) = event_to_fill_or_check.address
-            && expected != log.address
-        {
-            event_to_fill_or_check.mismatch_error =
-                Some(EmitMismatch::Emitter { expected, actual: log.address });
-            return false;
-        }
-
-        let expected_count = event_to_fill_or_check.count;
-        match event_to_fill_or_check.address {
-            Some(emitter) => count_map
-                .get(&emitter)
-                .is_some_and(|log_map| log_map.count(&log.data) >= expected_count),
-            None => count_map
-                .values()
-                .find(|log_map| log_map.satisfies_checks(&log.data))
-                .is_some_and(|map| map.count(&log.data) >= expected_count),
-        }
-    }();
-
-    // If we found the event, we can push it to the back of the queue
-    // and begin expecting the next event.
-    if event_to_fill_or_check.found {
-        state.expected_emits.push_back((event_to_fill_or_check, count_map));
-    } else {
-        // We did not match this event, so we need to keep waiting for the right one to
-        // appear.
-        state.expected_emits.push_front((event_to_fill_or_check, count_map));
-    }
-
-    failure_reason
-}
-
-/// Handles expected emits specified by the `expectEmit` cheatcodes.
-///
-/// The second element of the tuple counts the number of times the log has been emitted by a
-/// particular address
-pub type ExpectedEmitTracker = VecDeque<(ExpectedEmit, AddressHashMap<LogCountMap>)>;
-
-#[derive(Clone, Debug, Default)]
-pub struct LogCountMap {
-    checks: [bool; 5],
-    expected_log: RawLog,
-    map: HashMap<RawLog, u64>,
-}
-
-impl LogCountMap {
-    /// Instantiates `LogCountMap`.
-    fn new(expected_emit: &ExpectedEmit) -> Self {
-        Self {
-            checks: expected_emit.checks,
-            expected_log: expected_emit.log.clone().expect("log should be filled here"),
-            map: Default::default(),
-        }
-    }
-
-    /// Inserts a log into the map and increments the count.
-    ///
-    /// The log must pass all checks against the expected log for the count to increment.
-    ///
-    /// Returns true if the log was inserted and count was incremented.
-    fn insert(&mut self, log: &RawLog) -> bool {
-        // If its already in the map, increment the count without checking.
-        if self.map.contains_key(log) {
-            self.map.entry(log.clone()).and_modify(|c| *c += 1);
-
-            return true;
-        }
-
-        if !self.satisfies_checks(log) {
-            return false;
-        }
-
-        self.map.entry(log.clone()).and_modify(|c| *c += 1).or_insert(1);
-
-        true
-    }
-
-    /// Checks the incoming raw log against the expected logs topics and data.
-    fn satisfies_checks(&self, log: &RawLog) -> bool {
-        checks_topics_and_data(self.checks, &self.expected_log, log)
-    }
-
-    pub fn count(&self, log: &RawLog) -> u64 {
-        if !self.satisfies_checks(log) {
-            return 0;
-        }
-
-        self.count_unchecked()
-    }
-
-    pub fn count_unchecked(&self) -> u64 {
-        self.map.values().sum()
-    }
+    let reason = observe_log(&mut state.expected_emits, log)?;
+    let Some(interpreter) = interpreter else { return Some(reason) };
+    interpreter.bytecode.set_action(InterpreterAction::new_return(
+        InstructionResult::Revert,
+        Error::encode(reason),
+        interpreter.gas,
+    ));
+    None
 }
 
 fn expect_create<FEN: FoundryEvmNetwork>(
@@ -1180,255 +937,6 @@ fn expect_revert<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
-fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) -> bool {
-    if log.topics().len() != expected.topics().len() {
-        return false;
-    }
-
-    // Check topics.
-    if !log
-        .topics()
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| checks[*i])
-        .all(|(i, topic)| topic == &expected.topics()[i])
-    {
-        return false;
-    }
-
-    // Check data
-    if checks[4] && expected.data.as_ref() != log.data.as_ref() {
-        return false;
-    }
-
-    true
-}
-
-fn decode_event(
-    identifier: &foundry_evm_traces::identifier::SignaturesIdentifier,
-    log: &RawLog,
-) -> Option<DecodedCallLog> {
-    let topics = log.topics();
-    if topics.is_empty() {
-        return None;
-    }
-    let t0 = topics[0]; // event sig
-    // Try to identify the event
-    let event = foundry_common::block_on(
-        identifier.identify_event_with_indexed_count(t0, topics.len().saturating_sub(1)),
-    )?;
-
-    // Check if event already has indexed information from signatures
-    let has_indexed_info = event.inputs.iter().any(|p| p.indexed);
-    // Only use get_indexed_event if the event doesn't have indexing info
-    let indexed_event = if has_indexed_info { event } else { get_indexed_event(event, log) };
-
-    // Try to decode the event
-    if let Ok(decoded) = indexed_event.decode_log(log) {
-        let params = reconstruct_params(&indexed_event, &decoded);
-
-        let decoded_params = params
-            .into_iter()
-            .zip(indexed_event.inputs.iter())
-            .map(|(param, input)| (input.name.clone(), format_token(&param)))
-            .collect();
-
-        return Some(DecodedCallLog {
-            name: Some(indexed_event.name),
-            params: Some(decoded_params),
-        });
-    }
-
-    None
-}
-
-/// Restore the order of the params of a decoded event
-fn reconstruct_params(event: &Event, decoded: &alloy_dyn_abi::DecodedEvent) -> Vec<DynSolValue> {
-    let mut indexed = 0;
-    let mut unindexed = 0;
-    let mut inputs = vec![];
-    for input in &event.inputs {
-        if input.indexed && indexed < decoded.indexed.len() {
-            inputs.push(decoded.indexed[indexed].clone());
-            indexed += 1;
-        } else if unindexed < decoded.body.len() {
-            inputs.push(decoded.body[unindexed].clone());
-            unindexed += 1;
-        }
-    }
-    inputs
-}
-
-/// Gets a detailed mismatch message for emit assertions
-pub(crate) fn get_emit_mismatch_message(
-    checks: [bool; 5],
-    expected: &RawLog,
-    actual: &RawLog,
-    is_anonymous: bool,
-    expected_decoded: Option<&DecodedCallLog>,
-    actual_decoded: Option<&DecodedCallLog>,
-) -> String {
-    // Early return for completely different events or incompatible structures
-
-    // 1. Different number of topics
-    if actual.topics().len() != expected.topics().len() {
-        let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
-        let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
-        let expected_topics = checked_topic_count(expected, is_anonymous);
-        let actual_topics = checked_topic_count(actual, is_anonymous);
-
-        if expected_name == actual_name {
-            return format!(
-                "{actual_name} indexed topic count mismatch: expected {expected_topics}, got {actual_topics}"
-            );
-        }
-
-        return name_mismatched_logs(expected_decoded, actual_decoded);
-    }
-
-    // 2. Different event signatures (for non-anonymous events)
-    if !is_anonymous
-        && checks[0]
-        && (!expected.topics().is_empty() && !actual.topics().is_empty())
-        && expected.topics()[0] != actual.topics()[0]
-    {
-        return name_mismatched_logs(expected_decoded, actual_decoded);
-    }
-
-    let expected_data = expected.data.as_ref();
-    let actual_data = actual.data.as_ref();
-
-    // 3. Check data
-    if checks[4] && expected_data != actual_data {
-        // Different lengths or not ABI-encoded
-        if expected_data.len() != actual_data.len()
-            || !expected_data.len().is_multiple_of(32)
-            || expected_data.is_empty()
-        {
-            return name_mismatched_logs(expected_decoded, actual_decoded);
-        }
-    }
-
-    // expected and actual events are the same, so check individual parameters
-    let mut mismatches = Vec::new();
-
-    // Check topics (indexed parameters)
-    for (i, (expected_topic, actual_topic)) in
-        expected.topics().iter().zip(actual.topics().iter()).enumerate()
-    {
-        // Skip topic[0] for non-anonymous events (already checked above)
-        if i == 0 && !is_anonymous {
-            continue;
-        }
-
-        // Only check if the corresponding check flag is set
-        if i < checks.len() && checks[i] && expected_topic != actual_topic {
-            let param_idx = if is_anonymous {
-                i // For anonymous events, topic[0] is param 0
-            } else {
-                i - 1 // For regular events, topic[0] is event signature, so topic[1] is param 0
-            };
-            mismatches
-                .push(format!("param {param_idx}: expected={expected_topic}, got={actual_topic}"));
-        }
-    }
-
-    // Check data (non-indexed parameters)
-    if checks[4] && expected_data != actual_data {
-        let num_indexed_params = if is_anonymous {
-            expected.topics().len()
-        } else {
-            expected.topics().len().saturating_sub(1)
-        };
-
-        for (i, (expected_chunk, actual_chunk)) in
-            expected_data.chunks(32).zip(actual_data.chunks(32)).enumerate()
-        {
-            if expected_chunk != actual_chunk {
-                let param_idx = num_indexed_params + i;
-                mismatches.push(format!(
-                    "param {}: expected={}, got={}",
-                    param_idx,
-                    hex::encode_prefixed(expected_chunk),
-                    hex::encode_prefixed(actual_chunk)
-                ));
-            }
-        }
-    }
-
-    if mismatches.is_empty() {
-        name_mismatched_logs(expected_decoded, actual_decoded)
-    } else {
-        // Build the error message with event names if available
-        let event_prefix = match (expected_decoded, actual_decoded) {
-            (Some(expected_dec), Some(actual_dec)) if expected_dec.name == actual_dec.name => {
-                format!(
-                    "{} param mismatch",
-                    expected_dec.name.as_ref().unwrap_or(&"log".to_string())
-                )
-            }
-            _ => {
-                if is_anonymous {
-                    "anonymous log mismatch".to_string()
-                } else {
-                    "log mismatch".to_string()
-                }
-            }
-        };
-
-        // Add parameter details if available from decoded events
-        let detailed_mismatches = if let (Some(expected_dec), Some(actual_dec)) =
-            (expected_decoded, actual_decoded)
-            && let (Some(expected_params), Some(actual_params)) =
-                (&expected_dec.params, &actual_dec.params)
-        {
-            mismatches
-                .into_iter()
-                .map(|basic_mismatch| {
-                    // Try to find the parameter name and decoded value
-                    if let Some(param_idx) = basic_mismatch
-                        .split(' ')
-                        .nth(1)
-                        .and_then(|s| s.trim_end_matches(':').parse::<usize>().ok())
-                        && param_idx < expected_params.len()
-                        && param_idx < actual_params.len()
-                    {
-                        let (expected_name, expected_value) = &expected_params[param_idx];
-                        let (_actual_name, actual_value) = &actual_params[param_idx];
-                        let param_name = if expected_name.is_empty() {
-                            &format!("param{param_idx}")
-                        } else {
-                            expected_name
-                        };
-                        return format!(
-                            "{param_name}: expected={expected_value}, got={actual_value}",
-                        );
-                    }
-                    basic_mismatch
-                })
-                .collect::<Vec<_>>()
-        } else {
-            mismatches
-        };
-
-        format!("{} at {}", event_prefix, detailed_mismatches.join(", "))
-    }
-}
-
-/// Formats the generic mismatch message: "log != expected log" to include event names if available
-fn name_mismatched_logs(
-    expected_decoded: Option<&DecodedCallLog>,
-    actual_decoded: Option<&DecodedCallLog>,
-) -> String {
-    let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
-    let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
-    format!("{actual_name} != expected {expected_name}")
-}
-
-fn checked_topic_count(log: &RawLog, is_anonymous: bool) -> usize {
-    if is_anonymous { log.topics().len() } else { log.topics().len().saturating_sub(1) }
-}
-
 fn expect_safe_memory<FEN: FoundryEvmNetwork>(
     state: &mut Cheatcodes<FEN>,
     start: u64,
@@ -1440,4 +948,287 @@ fn expect_safe_memory<FEN: FoundryEvmNetwork>(
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Default::default())
+}
+
+/// Removes the first create expectation matched by a completed create.
+///
+/// `create_scheme` is only called for expectations with a matching deployer.
+pub(crate) fn observe_create(
+    expected_creates: &mut Vec<ExpectedCreate>,
+    deployer: Address,
+    create_scheme: impl Fn() -> CreateScheme,
+    bytecode: &Bytes,
+) {
+    if let Some((index, _)) = expected_creates.iter().find_position(|expected_create| {
+        expected_create.deployer == deployer
+            && expected_create.create_scheme.eq(create_scheme())
+            && expected_create.bytecode == *bytecode
+    }) {
+        expected_creates.swap_remove(index);
+    }
+}
+
+/// Returns the failure message for the first unmet create expectation, if any.
+pub(crate) fn first_unmet_create(expected_creates: &[ExpectedCreate]) -> Option<String> {
+    let expected_create = expected_creates.first()?;
+    Some(format!(
+        "expected {} call by address {} for bytecode {} but not found",
+        expected_create.create_scheme,
+        hex::encode_prefixed(expected_create.deployer),
+        hex::encode_prefixed(&expected_create.bytecode),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{address, bytes};
+
+    const TARGET: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+
+    fn expected(
+        value: Option<U256>,
+        gas: Option<u64>,
+        min_gas: Option<u64>,
+        count: u64,
+        call_type: ExpectedCallType,
+    ) -> ExpectedCallData {
+        ExpectedCallData { value, gas, min_gas, count, call_type }
+    }
+
+    fn tracker(
+        calldata: Bytes,
+        scheme: Option<CallScheme>,
+        data: ExpectedCallData,
+    ) -> ExpectedCallTracker {
+        let mut tracker = ExpectedCallTracker::default();
+        tracker.entry(TARGET).or_default().insert((calldata, scheme), (data, 0));
+        tracker
+    }
+
+    fn seen(tracker: &ExpectedCallTracker, calldata: &Bytes, scheme: Option<CallScheme>) -> u64 {
+        tracker[&TARGET][&(calldata.clone(), scheme)].1
+    }
+
+    fn observe(tracker: &mut ExpectedCallTracker, input: &[u8], value: Option<U256>, gas: u64) {
+        observe_call(tracker.get_mut(&TARGET).unwrap(), input, value, gas, CallScheme::Call);
+    }
+
+    #[test]
+    fn observe_call_matches_calldata_prefix() {
+        let selector = bytes!("771602f7");
+        let full = bytes!("771602f7aabb");
+        let mut t = tracker(
+            selector.clone(),
+            None,
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+        t.entry(TARGET).or_default().insert(
+            (full.clone(), None),
+            (expected(None, None, None, 1, ExpectedCallType::NonCount), 0),
+        );
+
+        observe(&mut t, &full, None, 0);
+        observe(&mut t, &selector, None, 0);
+        observe(&mut t, &bytes!("12345678"), None, 0);
+
+        assert_eq!(seen(&t, &selector, None), 2);
+        assert_eq!(seen(&t, &full, None), 1);
+    }
+
+    #[test]
+    fn observe_call_filters_value() {
+        let calldata = bytes!("c290d691");
+        let mut t = tracker(
+            calldata.clone(),
+            None,
+            expected(Some(U256::from(1)), None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe(&mut t, &calldata, Some(U256::from(2)), 0);
+        observe(&mut t, &calldata, None, 0);
+        assert_eq!(seen(&t, &calldata, None), 0);
+
+        observe(&mut t, &calldata, Some(U256::from(1)), 0);
+        assert_eq!(seen(&t, &calldata, None), 1);
+
+        // An expected zero value does not match a call without a transfer value.
+        let mut zero = tracker(
+            calldata.clone(),
+            None,
+            expected(Some(U256::ZERO), None, None, 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut zero, &calldata, None, 0);
+        assert_eq!(seen(&zero, &calldata, None), 0);
+        observe(&mut zero, &calldata, Some(U256::ZERO), 0);
+        assert_eq!(seen(&zero, &calldata, None), 1);
+
+        // No expected value matches any transfer value.
+        let mut any = tracker(
+            calldata.clone(),
+            None,
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut any, &calldata, Some(U256::from(5)), 0);
+        assert_eq!(seen(&any, &calldata, None), 1);
+    }
+
+    #[test]
+    fn observe_call_filters_gas_and_min_gas() {
+        let calldata = bytes!("771602f7");
+        let mut gas = tracker(
+            calldata.clone(),
+            None,
+            expected(None, Some(25_000), None, 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut gas, &calldata, None, 24_999);
+        observe(&mut gas, &calldata, None, 25_001);
+        assert_eq!(seen(&gas, &calldata, None), 0);
+        observe(&mut gas, &calldata, None, 25_000);
+        assert_eq!(seen(&gas, &calldata, None), 1);
+
+        let mut min_gas = tracker(
+            calldata.clone(),
+            None,
+            expected(None, None, Some(50_000), 1, ExpectedCallType::NonCount),
+        );
+        observe(&mut min_gas, &calldata, None, 49_999);
+        assert_eq!(seen(&min_gas, &calldata, None), 0);
+        observe(&mut min_gas, &calldata, None, 50_000);
+        observe(&mut min_gas, &calldata, None, 60_000);
+        assert_eq!(seen(&min_gas, &calldata, None), 2);
+    }
+
+    #[test]
+    fn observe_call_filters_scheme() {
+        let calldata = bytes!("771602f7");
+        let mut t = tracker(
+            calldata.clone(),
+            Some(CallScheme::DelegateCall),
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::Call);
+        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 0);
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::DelegateCall);
+        assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 1);
+    }
+
+    #[test]
+    fn first_unmet_call_compares_counts() {
+        let calldata = bytes!("771602f7");
+        let mut count =
+            tracker(calldata.clone(), None, expected(None, None, None, 2, ExpectedCallType::Count));
+        let mut non_count =
+            tracker(calldata, None, expected(None, None, None, 2, ExpectedCallType::NonCount));
+
+        for seen in [1, 3] {
+            count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = seen;
+            assert!(first_unmet_call(&count, true).is_some(), "count with {seen} calls");
+        }
+        count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 2;
+        assert_eq!(first_unmet_call(&count, true), None);
+
+        non_count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 1;
+        assert!(first_unmet_call(&non_count, true).is_some());
+        for seen in [2, 3] {
+            non_count.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = seen;
+            assert_eq!(first_unmet_call(&non_count, true), None, "non-count with {seen} calls");
+        }
+    }
+
+    #[test]
+    fn first_unmet_call_reports_smallest_unmet_key() {
+        let low = address!("0000000000000000000000000000000000000001");
+        let high = address!("0000000000000000000000000000000000000002");
+        let ordered = [
+            (low, bytes!("01"), None, ""),
+            (low, bytes!("01"), Some(CallScheme::Call), ", call type Call"),
+            (low, bytes!("01"), Some(CallScheme::CallCode), ", call type CallCode"),
+            (low, bytes!("01"), Some(CallScheme::DelegateCall), ", call type DelegateCall"),
+            (low, bytes!("01"), Some(CallScheme::StaticCall), ", call type StaticCall"),
+            (low, bytes!("02"), None, ""),
+            (high, bytes!("00"), None, ""),
+            (high, bytes!("01"), None, ""),
+        ];
+
+        for offset in 0..ordered.len() {
+            let mut t = ExpectedCallTracker::default();
+            // A satisfied expectation must not hide a later failure.
+            t.entry(Address::ZERO).or_default().insert(
+                (Bytes::new(), None),
+                (expected(None, None, None, 1, ExpectedCallType::NonCount), 1),
+            );
+            for index in (0..ordered.len()).rev() {
+                let (address, calldata, scheme, _) = &ordered[(index + offset) % ordered.len()];
+                t.entry(*address).or_default().insert(
+                    (calldata.clone(), *scheme),
+                    (expected(None, None, None, 1, ExpectedCallType::NonCount), 0),
+                );
+            }
+
+            for (address, calldata, scheme, suffix) in &ordered {
+                assert_eq!(
+                    first_unmet_call(&t, true).unwrap(),
+                    format!(
+                        "expected call to {address} with data {}{suffix} to be called 1 time, \
+                         but was called 0 times",
+                        hex::encode_prefixed(calldata),
+                    ),
+                );
+                t.get_mut(address).unwrap().remove(&(calldata.clone(), *scheme));
+            }
+            assert_eq!(first_unmet_call(&t, true), None);
+        }
+    }
+
+    #[test]
+    fn first_unmet_call_message() {
+        let calldata = bytes!("771602f7");
+        let mut t = tracker(
+            calldata.clone(),
+            Some(CallScheme::DelegateCall),
+            expected(Some(U256::from(1)), Some(2), Some(3), 2, ExpectedCallType::Count),
+        );
+        t.get_mut(&TARGET).unwrap().values_mut().next().unwrap().1 = 1;
+
+        assert_eq!(
+            first_unmet_call(&t, true).unwrap(),
+            "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7, \
+             value 1, gas 2, minimum gas 3, call type DelegateCall to be called 2 times, \
+             but was called 1 time"
+        );
+        assert_eq!(
+            first_unmet_call(&t, false).unwrap(),
+            "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7, \
+             value 1, gas 2, minimum gas 3, call type DelegateCall to be called 2 times, \
+             but the call reverted instead; ensure you're testing the happy path when using \
+             `expectCall`"
+        );
+
+        let single =
+            tracker(calldata, None, expected(None, None, None, 1, ExpectedCallType::NonCount));
+        assert_eq!(
+            first_unmet_call(&single, true).unwrap(),
+            "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 \
+             to be called 1 time, but was called 0 times"
+        );
+    }
+
+    #[test]
+    fn observe_create_converts_the_scheme_only_for_a_matching_deployer() {
+        let bytecode = bytes!("6080");
+        let mut expected_creates = vec![ExpectedCreate {
+            deployer: Address::ZERO,
+            bytecode: bytecode.clone(),
+            create_scheme: CreateScheme::Create,
+        }];
+
+        observe_create(&mut expected_creates, TARGET, || unreachable!(), &bytecode);
+        assert_eq!(expected_creates.len(), 1);
+
+        observe_create(&mut expected_creates, Address::ZERO, || CreateScheme::Create, &bytecode);
+        assert!(expected_creates.is_empty());
+    }
 }
