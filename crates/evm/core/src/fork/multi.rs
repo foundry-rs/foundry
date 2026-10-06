@@ -135,9 +135,6 @@ impl<
 > MultiFork<N, SPEC, BLOCK>
 {
     /// Creates a new pair and spawns the `MultiForkHandler` on a background thread.
-    ///
-    /// The thread owns a dedicated runtime. The request methods block until the handler replies,
-    /// so a handler on the caller's current-thread runtime would deadlock.
     pub fn spawn() -> Self {
         Self::spawn_with_forks(HashMap::default(), None)
     }
@@ -171,16 +168,22 @@ impl<
             handler.set_flush_cache_interval(Duration::from_secs(60));
             handler.await
         };
-        std::thread::Builder::new()
-            .name("multi-fork-backend".into())
-            .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime")
-                    .block_on(fut)
-            })
-            .expect("failed to spawn thread");
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => _ = rt.spawn(fut),
+            Err(_) => {
+                trace!(target: "fork::multi", "spawning multifork backend thread");
+                _ = std::thread::Builder::new()
+                    .name("multi-fork-backend".into())
+                    .spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .expect("failed to build tokio runtime")
+                            .block_on(fut)
+                    })
+                    .expect("failed to spawn thread")
+            }
+        }
 
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
         fork
