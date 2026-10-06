@@ -6,7 +6,10 @@ use revm::{
     context::{ContextTr, JournalTr},
     interpreter::InstructionResult,
 };
-use std::{cmp::Ordering, collections::VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, VecDeque},
+};
 
 /// Mocked call data.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -244,4 +247,34 @@ fn make_acc_non_empty<FEN: FoundryEvmNetwork>(
     }
 
     Ok(Default::default())
+}
+
+/// Finds the return data queue of the mock matching a call.
+///
+/// An exact calldata and value match wins. Otherwise, the first mock in map order whose calldata
+/// prefixes `input` and whose value, if set, equals `value` is used.
+pub(crate) fn find_mock_returns<'a>(
+    mocks: &'a mut BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>,
+    input: &Bytes,
+    value: Option<U256>,
+) -> Option<&'a mut VecDeque<MockCallReturnData>> {
+    let ctx = MockCallDataContext { calldata: input.clone(), value };
+    if mocks.contains_key(&ctx) {
+        return mocks.get_mut(&ctx);
+    }
+    mocks
+        .iter_mut()
+        .find(|(mock, _)| {
+            input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                && mock.value.is_none_or(|mock_value| Some(mock_value) == value)
+        })
+        .map(|(_, v)| v)
+}
+
+/// Consumes the front return data of a mock, keeping the last one for every later call.
+pub(crate) fn advance_mock_returns(queue: &mut VecDeque<MockCallReturnData>) {
+    // If the mocked calls stack has a single element in it, don't empty it.
+    if queue.len() > 1 {
+        queue.pop_front();
+    }
 }
