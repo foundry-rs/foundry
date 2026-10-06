@@ -24,7 +24,10 @@ use foundry_compilers::{
         BytecodeHash, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
         ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
         Severity,
-        output_selection::{ContractOutputSelection, OutputSelection},
+        output_selection::{
+            BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
+            OutputSelection,
+        },
         remappings::{RelativeRemapping, Remapping},
         serde_helpers,
     },
@@ -2044,6 +2047,42 @@ impl Config {
     pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
         let paths: ProjectPathsConfig = self.project_paths();
         Ok(self.parsed_libraries()?.apply(|libs| paths.apply_lib_remappings(libs)))
+    }
+
+    /// Requests the compiler's ETHDebug programs for a debugger that reads them.
+    ///
+    /// Solar emits them for every build. Solc emits them from 0.8.29, only through the IR pipeline
+    /// with the optimizer disabled, and needs `experimental` from 0.8.35; older versions ignore the
+    /// request. Solc builds that can enable the optimizer, including through compiler profiles or
+    /// restrictions, are left unchanged.
+    ///
+    /// With solc, the executed code does not change, but `experimental` adds a field to the CBOR
+    /// metadata, so the deployed code grows by a few bytes.
+    pub fn request_ethdebug(&mut self) {
+        // Solar is configured as a local compiler binary, which foundry-compilers recognizes by
+        // its file name.
+        let solar = matches!(&self.solc, Some(SolcReq::Local(path))
+            if path.file_name().is_some_and(|name| name.to_string_lossy().contains("solar")));
+        if !solar
+            && (!self.via_ir
+                || self.optimizer == Some(true)
+                || !self.additional_compiler_profiles.is_empty()
+                || !self.compilation_restrictions.is_empty())
+        {
+            return;
+        }
+        for output in [
+            ContractOutputSelection::Evm(BytecodeOutputSelection::Ethdebug.into()),
+            ContractOutputSelection::Evm(DeployedBytecodeOutputSelection::Ethdebug.into()),
+        ] {
+            if !self.extra_output.contains(&output) {
+                self.extra_output.push(output);
+            }
+        }
+        // Solar ignores `experimental`.
+        if !solar {
+            self.experimental = true;
+        }
     }
 
     /// Returns the configured `solc` `Settings` that includes:
@@ -9464,5 +9503,54 @@ mod tests {
         std::os::unix::fs::symlink(root.join("src"), root.join("cache")).unwrap();
         let config = Config::with_root(root);
         assert!(config.coverage_cache_path().is_none());
+    }
+
+    #[test]
+    fn request_ethdebug_for_solar_and_unoptimized_via_ir() {
+        let ethdebug = [
+            ContractOutputSelection::Evm(BytecodeOutputSelection::Ethdebug.into()),
+            ContractOutputSelection::Evm(DeployedBytecodeOutputSelection::Ethdebug.into()),
+        ];
+
+        let mut config = Config { via_ir: true, ..Default::default() };
+        config.request_ethdebug();
+        config.request_ethdebug();
+        assert_eq!(config.extra_output, ethdebug);
+        assert!(config.experimental);
+        assert_eq!(
+            config.extra_output.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["evm.bytecode.ethdebug", "evm.deployedBytecode.ethdebug"]
+        );
+
+        // Solar emits ETHDebug with the optimizer and without via-IR or `experimental`.
+        let mut config = Config {
+            solc: Some(SolcReq::Local("/usr/local/bin/solar".into())),
+            optimizer: Some(true),
+            ..Default::default()
+        };
+        config.request_ethdebug();
+        assert_eq!(config.extra_output, ethdebug);
+        assert!(!config.experimental);
+
+        for mut config in [
+            Config::default(),
+            Config { via_ir: true, optimizer: Some(true), ..Default::default() },
+            Config {
+                via_ir: true,
+                additional_compiler_profiles: vec![SettingsOverrides {
+                    name: "optimized".to_string(),
+                    via_ir: None,
+                    evm_version: None,
+                    optimizer: Some(true),
+                    optimizer_runs: None,
+                    bytecode_hash: None,
+                }],
+                ..Default::default()
+            },
+        ] {
+            config.request_ethdebug();
+            assert!(config.extra_output.is_empty());
+            assert!(!config.experimental);
+        }
     }
 }

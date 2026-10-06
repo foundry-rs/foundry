@@ -346,3 +346,51 @@ Exiting debugger.
 
 "#]]);
 }
+
+// Requests the compiler's ETHDebug programs for an unoptimized via-IR build, and writes them into
+// the soldb bundle, where soldb prefers them over source maps.
+#[forgetest]
+#[cfg(feature = "soldb")]
+fn debugger_soldb_ethdebug(prj: _, cmd: _) {
+    prj.update_config(|config| {
+        config.via_ir = true;
+        config.optimizer = Some(false);
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = number + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest {
+    function test_increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+    }
+}
+"#,
+    );
+
+    let dump_dir = prj.root().join("soldb");
+    cmd.args(["test", "--debug", "--debugger", "soldb", "--mt", "test_increment", "--dump"])
+        .arg(&dump_dir)
+        .assert_success();
+    let program =
+        dump_dir.join("0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f/Counter_ethdebug-runtime.json");
+    let program =
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(program).unwrap()).unwrap();
+    assert_eq!(program["environment"], "call");
+    assert_eq!(program["contract"]["name"], "Counter");
+    assert!(!program["instructions"].as_array().unwrap().is_empty());
+}

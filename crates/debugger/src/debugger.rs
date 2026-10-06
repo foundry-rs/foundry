@@ -49,6 +49,17 @@ pub enum DebuggerFrontend {
     Soldb,
 }
 
+impl DebuggerFrontend {
+    /// Whether the frontend reads the compiler's ETHDebug programs when the build has them.
+    pub const fn reads_ethdebug(self) -> bool {
+        match self {
+            Self::Foundry => false,
+            #[cfg(feature = "soldb")]
+            Self::Soldb => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DebuggerStats {
     /// Sum of root-call gas used across every trace arena passed to the debugger.
