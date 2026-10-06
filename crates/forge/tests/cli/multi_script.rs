@@ -242,12 +242,22 @@ async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
         .await
         .expect("Forge did not submit to chain 2");
 
-    // Chain 2 accepted the first submission, but Forge never received the response.
+    // Chain 2 accepted and mined the first submission, but Forge never received the response.
     let accepted = chain2_submissions.lock().unwrap()[0][0].clone();
     let accepted_hash = keccak256(hex::decode(accepted.as_str().unwrap()).unwrap());
-    assert!(
-        handle2.http_provider().get_transaction_by_hash(accepted_hash).await.unwrap().is_some()
-    );
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while handle2
+            .http_provider()
+            .get_transaction_receipt(accepted_hash)
+            .await
+            .unwrap()
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("chain 2 did not mine the accepted submission");
     assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
     let recovery_path = foundry_common::fs::json_files(&prj.root().join("cache"))
         .find(|path| path.to_string_lossy().ends_with(".recovery.json"))
@@ -285,9 +295,10 @@ async fn resume_multi_chain_after_lost_submission_response(prj: _, cmd: _) {
         .arg("--resume");
     tester.cmd.assert_success();
 
-    // Chain 1 is not resubmitted, and chain 2 never rebuilds its accepted operation: any replay
-    // uses the accepted bytes, so exactly one distinct payload exists per operation.
+    // Chain 1 is not resubmitted, and chain 2 reconciles its mined operation instead of resending
+    // it, so exactly one payload is submitted per operation.
     assert_eq!(chain1_submissions.lock().unwrap().len(), 2);
+    assert_eq!(chain2_submissions.lock().unwrap().len(), 5);
     let chain2_payloads = chain2_submissions
         .lock()
         .unwrap()

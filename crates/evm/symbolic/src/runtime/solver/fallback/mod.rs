@@ -456,18 +456,18 @@ fn fallback_candidates_for_var(
     constants: &[U256],
 ) -> Option<Vec<U256>> {
     let hints = MaskHints::for_var(var, constraints);
-    if (hints.one & hints.zero) != U256::ZERO {
+    if !(hints.one & hints.zero).is_zero() {
         return None;
     }
 
     let mut candidates = HashSet::<U256>::default();
     for candidate in [
         U256::ZERO,
-        U256::from(1),
+        U256::ONE,
         U256::from(2),
         U256::from(3),
         U256::MAX,
-        U256::MAX - U256::from(1),
+        U256::MAX - U256::ONE,
         U256::MAX - U256::from(2),
     ] {
         push_fallback_candidate(&mut candidates, candidate, hints);
@@ -475,15 +475,15 @@ fn fallback_candidates_for_var(
 
     for constant in constants.iter().copied() {
         push_fallback_candidate(&mut candidates, constant, hints);
-        push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::from(1)), hints);
-        push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::from(1)), hints);
+        push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::ONE), hints);
+        push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::ONE), hints);
         if candidates.len() >= FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR {
             break;
         }
     }
 
     for bit in 0..256 {
-        let power = U256::from(1) << bit;
+        let power = U256::ONE << bit;
         push_fallback_candidate(&mut candidates, power, hints);
         if candidates.len() >= FALLBACK_MODEL_MAX_CANDIDATES_PER_VAR {
             break;
@@ -861,20 +861,20 @@ fn assign_checked_add_base(sum: &SymExpr, base: &SymExpr, model: &mut SymbolicMo
     false
 }
 
-fn support_target_for_known_left(op: SymCmpOp, value: U256) -> Option<U256> {
+const fn support_target_for_known_left(op: SymCmpOp, value: U256) -> Option<U256> {
     match op {
         SymCmpOp::Eq | SymCmpOp::Ule | SymCmpOp::Uge => Some(value),
-        SymCmpOp::Ult => value.checked_add(U256::from(1)),
-        SymCmpOp::Ugt => value.checked_sub(U256::from(1)),
+        SymCmpOp::Ult => value.checked_add(U256::ONE),
+        SymCmpOp::Ugt => value.checked_sub(U256::ONE),
         SymCmpOp::Slt | SymCmpOp::Sgt => None,
     }
 }
 
-fn support_target_for_known_right(op: SymCmpOp, value: U256) -> Option<U256> {
+const fn support_target_for_known_right(op: SymCmpOp, value: U256) -> Option<U256> {
     match op {
         SymCmpOp::Eq | SymCmpOp::Ule | SymCmpOp::Uge => Some(value),
-        SymCmpOp::Ult => value.checked_sub(U256::from(1)),
-        SymCmpOp::Ugt => value.checked_add(U256::from(1)),
+        SymCmpOp::Ult => value.checked_sub(U256::ONE),
+        SymCmpOp::Ugt => value.checked_add(U256::ONE),
         SymCmpOp::Slt | SymCmpOp::Sgt => None,
     }
 }
@@ -922,7 +922,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
 
     let var = if vars.len() == 1 { *vars.iter().next()? } else { return None };
     let hints = MaskHints::for_var(&var, constraints);
-    if (hints.one & hints.zero) != U256::ZERO {
+    if !(hints.one & hints.zero).is_zero() {
         return None;
     }
 
@@ -937,10 +937,10 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
 
     for candidate in [
         U256::ZERO,
-        U256::from(1),
+        U256::ONE,
         U256::from(2),
         U256::MAX,
-        U256::MAX - U256::from(1),
+        U256::MAX - U256::ONE,
         U256::MAX - U256::from(2),
     ] {
         let mut model = SymbolicModel::default();
@@ -953,12 +953,12 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     let mut candidates = HashSet::<U256>::default();
     for constant in constants.iter().copied() {
         push_fallback_candidate(&mut candidates, constant, hints);
-        push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::from(1)), hints);
-        push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::from(1)), hints);
+        push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::ONE), hints);
+        push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::ONE), hints);
     }
 
     for bit in 0..256 {
-        let power = U256::from(1) << bit;
+        let power = U256::ONE << bit;
         push_fallback_candidate(&mut candidates, power, hints);
         for constant in constants.iter().copied().take(64) {
             push_fallback_candidate(&mut candidates, power | constant, hints);

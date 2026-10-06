@@ -108,7 +108,7 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
             .trim_start_matches('[')
             .trim_end_matches(']')
             .split(',')
-            .map(|s| s.to_string())
+            .map(|s| s.trim().to_string())
             .collect::<Vec<_>>()
             .into(),
         Value::Empty(_, _) => Vec::<Value>::new().into(),

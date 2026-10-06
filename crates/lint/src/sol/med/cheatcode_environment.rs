@@ -772,7 +772,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                     inner,
                     binary,
                     value.scalar,
-                    Some(Scalar::Uint(U256::from(1))),
+                    Some(Scalar::Uint(U256::ONE)),
                     state,
                 );
                 value.cheatcode = false;

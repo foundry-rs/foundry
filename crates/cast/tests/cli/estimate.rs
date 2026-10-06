@@ -1,6 +1,7 @@
 //! CLI tests for estimate commands.
 
 use super::*;
+use alloy_primitives::bytes;
 
 // tests that `cast estimate` is working correctly.
 #[casttest]
@@ -136,7 +137,7 @@ async fn estimate_eip7702_auth_disclosure_accepted_and_forced(cmd: _) {
     let endpoint = handle.http_endpoint();
     api.anvil_set_code(
         address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
-        "0x602a5f5260205ff3".parse().unwrap(),
+        bytes!("0x602a5f5260205ff3"),
     )
     .await
     .unwrap();
@@ -188,7 +189,6 @@ Continue anyway? [y/N] "#]])
 
 // <https://basescan.org/block/30558838>
 #[casttest]
-#[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
 fn flaky_estimate_base_da(cmd: _) {
     cmd.args(["da-estimate", "30558838", "-r", next_rpc_endpoint(NamedChain::Base).as_str()])
         .assert_success()

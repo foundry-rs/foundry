@@ -1,8 +1,6 @@
 //! Commonly used constants.
 
-use alloy_eips::Typed2718;
-use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{Address, B256, Signature, address};
+use alloy_primitives::{Address, address};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -10,9 +8,6 @@ pub const DEV_CHAIN_ID: u64 = 31337;
 
 /// The first four bytes of the call data for a function call specifies the function to be called.
 pub const SELECTOR_LEN: usize = 4;
-
-/// Maximum size in bytes (0x6000) that a contract can have.
-pub const CONTRACT_MAX_SIZE: usize = 24576;
 
 /// Default request timeout for http requests
 ///
@@ -46,8 +41,7 @@ pub const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8F621353f12378d0046E7
 ///
 /// These are legacy envelopes with `gasPrice = 0` and a receipt `gasUsed` of `0`, so replaying one
 /// as a regular transaction fails base fee validation and aborts the whole block replay.
-pub const HYPERLIQUID_SYSTEM_ADDRESS: Address =
-    address!("0x2222222222222222222222222222222222222222");
+pub const HYPERLIQUID_SYSTEM_ADDRESS: Address = Address::repeat_byte(0x22);
 
 /// MegaETH system address for `Set Slots` in the MegaETH oracle.
 ///
@@ -81,19 +75,6 @@ pub fn is_known_system_sender(sender: Address) -> bool {
         Address::ZERO,
     ]
     .contains(&sender)
-}
-
-pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
-    if let AnyTxEnvelope::Ethereum(tx) = tx {
-        return is_impersonated_sig(tx.signature(), tx.ty());
-    }
-    false
-}
-
-pub fn is_impersonated_sig(sig: &Signature, ty: u8) -> bool {
-    let impersonated_sig =
-        Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
-    ty != SYSTEM_TRANSACTION_TYPE && (sig == &impersonated_sig || sig.r() == impersonated_sig.r())
 }
 
 #[cfg(test)]

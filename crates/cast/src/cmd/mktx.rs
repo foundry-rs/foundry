@@ -219,8 +219,7 @@ impl MakeTxArgs {
                 };
                 (tx, signer.address())
             };
-            let hash =
-                tempo::sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
+            let hash = tempo::sponsor_hash(fee_provider, &mut tx, from, sponsor_fee_payer).await?;
             return print_scalar(format!("{hash:?}"));
         }
 
@@ -246,14 +245,8 @@ impl MakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::apply_fee_payment::<N, _>(
-                tempo_sponsor.as_ref(),
-                fee_provider,
-                chain,
-                &mut tx,
-                from,
-            )
-            .await?;
+            tempo::apply_fee_payment::<N, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+                .await?;
             return print_scalar(hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing()));
         }
 
@@ -264,14 +257,8 @@ impl MakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::apply_fee_payment::<N, _>(
-                tempo_sponsor.as_ref(),
-                fee_provider,
-                chain,
-                &mut tx,
-                from,
-            )
-            .await?;
+            tempo::apply_fee_payment::<N, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+                .await?;
 
             let tx = tx.build_unsigned()?;
             let recovered = signature.recover_address_from_prehash(&tx.signature_hash())?;
@@ -296,7 +283,6 @@ impl MakeTxArgs {
             tempo::apply_fee_payment::<N, _>(
                 tempo_sponsor.as_ref(),
                 fee_provider,
-                chain,
                 &mut tx,
                 config.sender,
             )
@@ -314,7 +300,6 @@ impl MakeTxArgs {
             tempo::apply_fee_payment::<N, _>(
                 tempo_sponsor.as_ref(),
                 fee_provider,
-                chain,
                 &mut tx,
                 prepared.account(),
             )
@@ -326,14 +311,8 @@ impl MakeTxArgs {
             else {
                 return Ok(());
             };
-            tempo::apply_fee_payment::<N, _>(
-                tempo_sponsor.as_ref(),
-                fee_provider,
-                chain,
-                &mut tx,
-                from,
-            )
-            .await?;
+            tempo::apply_fee_payment::<N, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+                .await?;
             tx.build(&EthereumWallet::new(signer)).await?.encoded_2718()
         };
 

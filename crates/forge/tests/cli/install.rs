@@ -1220,7 +1220,7 @@ async fn oz_contracts_sync_foundry_lock() {
     cmd.arg("install").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Branch { .. }));
+    assert!(forge_std.is_branch());
     assert_eq!(forge_std.rev(), submod_forge_std.rev());
     assert_eq!(forge_std.name(), "v1");
     let erc4626_tests = lockfile_get(prj.root(), &PathBuf::from("lib/erc4626-tests")).unwrap();
@@ -1238,7 +1238,7 @@ async fn oz_contracts_sync_foundry_lock() {
     cmd.forge_fuse().arg("update").assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
-    assert!(matches!(forge_std, DepIdentifier::Branch { .. }));
+    assert!(forge_std.is_branch());
     // assert_eq!(forge_std.rev(), submod_forge_std.rev());  // This can fail, as forge-std will get
     // updated to the latest commit on master.
     assert_eq!(forge_std.name(), "v1"); // But it stays locked on the same master

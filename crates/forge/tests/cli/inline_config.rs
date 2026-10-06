@@ -70,73 +70,6 @@ Error: Inline config error at test/inline.sol:4:9: invalid profile `unknown.fuzz
 "#]]);
 }
 
-// TODO: Uncomment once this done for normal config too.
-/*
-#[forgetest]
-fn invalid_key(prj: _, cmd: _) {
-    prj.add_test(
-        "inline.sol",
-        "
-        /** forge-config:  default.fuzzz.runs = 2 */
-        contract Inline {
-            function test(bool) public {}
-        }
-    ",
-    );
-
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/inline.sol:Inline
-[FAIL: failed to get inline configuration: unknown config section `default`] test(bool) ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/inline.sol:Inline
-[FAIL: failed to get inline configuration: unknown config section `default`] test(bool) ([GAS])
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-"#]]);
-}
-
-#[forgetest]
-fn invalid_key_2(prj: _, cmd: _) {
-    prj.add_test(
-        "inline.sol",
-        "
-/** forge-config:  default.fuzz.runss = 2 */
-        contract Inline {
-            function test(bool) public {}
-        }
-    ",
-    );
-
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/inline.sol:Inline
-[FAIL: failed to get inline configuration: unknown config section `default`] test(bool) ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/inline.sol:Inline
-[FAIL: failed to get inline configuration: unknown config section `default`] test(bool) ([GAS])
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-"#]]);
-}
-*/
-
 #[forgetest]
 fn invalid_value(prj: _, cmd: _) {
     prj.add_test(
@@ -358,10 +291,25 @@ fn is_isolate_mode_uses_effective_isolation(prj: _, cmd: _) {
     "#,
     );
 
-    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/effective_isolation.sol:EffectiveIsolationTest
+[PASS] test_isolate_mode_disabled_by_config() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
     cmd.forge_fuse()
         .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
-        .assert_success();
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/effective_isolation.sol:EffectiveIsolationTest
+[PASS] test_gas_report_enables_isolate_mode() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
@@ -401,7 +349,15 @@ fn inline_isolate_inherits_default_fs_permissions_for_non_default_profile(prj: _
     );
 
     cmd.env("FOUNDRY_PROFILE", "test");
-    cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"]).assert_success();
+    cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/inline_isolate_fs_permissions.sol:InlineIsolateFsPermissionsTest
+[PASS] testInlineIsolateCanCreateFile() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
 }
 
 #[forgetest_init]
