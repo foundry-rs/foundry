@@ -566,7 +566,7 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            let request = if browser_signer.is_some() && chain.is_tempo() {
+            let request = if browser_signer.is_some() {
                 deployer.tx.browser_wallet_gas_estimation_request()
             } else {
                 deployer.tx.clone()
@@ -627,7 +627,6 @@ impl CreateArgs {
             sponsor
                 .resolve_and_set_fee_token(
                     resolve_unknown_fee_token_symbol.then_some(&provider),
-                    Some(chain),
                     &mut deployer.tx,
                 )
                 .await?;
@@ -635,7 +634,6 @@ impl CreateArgs {
         } else {
             let fee_token = resolve_and_set_fee_token(
                 resolve_unknown_fee_token_symbol.then_some(&provider),
-                Some(chain),
                 &mut deployer.tx,
                 Some(deployer_address),
             )

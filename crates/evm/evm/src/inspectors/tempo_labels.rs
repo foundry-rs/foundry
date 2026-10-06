@@ -48,7 +48,7 @@ where
                     break 'decode None;
                 }
                 let len = len.to::<usize>();
-                let start = U256::from_be_bytes(keccak256(slot.to_be_bytes::<32>()).0);
+                let start = Into::<U256>::into(keccak256(slot.to_be_bytes::<32>()));
                 let mut data = Vec::with_capacity(len);
                 for i in 0..len.div_ceil(32) {
                     let Ok(chunk) = db.storage(address, start + U256::from(i)) else {

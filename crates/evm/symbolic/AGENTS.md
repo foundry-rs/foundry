@@ -71,4 +71,4 @@ SYMBOLIC_LIMITS=1 cargo nextest run -p forge --test cli symbolic_limits
 ```
 
 The conformance and limits suites require a local solver and are intentionally
-broader/slower.
+broader/slower. PR CI skips them; the nightly `test-flaky` workflow runs them.

@@ -214,7 +214,7 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
         Err(msg.into_owned().into())
     } else {
         executor.console_log(&msg);
-        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
+        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ONE)?;
         Ok(Default::default())
     }
 }

@@ -104,7 +104,7 @@ impl StorageArgs {
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = base_slot {
-            let slot = U256::from_be_bytes(slot.0).saturating_add(offset);
+            let slot = Into::<U256>::into(slot).saturating_add(offset);
             sh_println!(
                 "{}",
                 B256::from(
@@ -372,7 +372,7 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
             &slot.slot,
             &slot.offset.to_string(),
             storage_type.map_or("?", |t| &t.number_of_bytes),
-            &U256::from_be_bytes(value.0).to_string(),
+            &Into::<U256>::into(value).to_string(),
             &value.to_string(),
             &slot.contract,
         ]);
@@ -391,12 +391,6 @@ mod tests {
         util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     };
     use std::path::Path;
-
-    fn test_project(name: &str) -> TestProject {
-        let project = TestProject::new(name, PathStyle::Dapptools);
-        foundry_test_utils::util::initialize(project.root());
-        project
-    }
 
     fn load_project(project: &TestProject) -> Project {
         load_project_with_config(project, Config::with_root(project.root()))
@@ -418,7 +412,7 @@ mod tests {
 
     #[test]
     fn local_storage_layout_targets_exact_artifact_and_imports() {
-        let prj = test_project("cast-storage-target");
+        let prj = TestProject::new("cast-storage-target", PathStyle::Dapptools);
         let base_path = prj.add_source("Base", "contract Base { uint256 baseValue; }");
         let unrelated_path = prj.add_source("Target", "contract Target { uint256 unrelated; }");
         let target_path = prj.add_source(
@@ -463,7 +457,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_rechecks_bytecode_after_source_change() {
-        let prj = test_project("cast-storage-source-change");
+        let prj = TestProject::new("cast-storage-source-change", PathStyle::Dapptools);
         let target_path = prj.add_source("Target", "contract Target { uint256 originalValue; }");
         let project = load_project(&prj);
         let (target, address_code) = compile_target(&project, &target_path, "Target");
@@ -483,7 +477,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_preserves_compiler_profile() {
-        let prj = test_project("cast-storage-profile");
+        let prj = TestProject::new("cast-storage-profile", PathStyle::Dapptools);
         let target_path = prj.add_source("Profiled", "contract Profiled { uint256 value; }");
         let mut config = Config::with_root(prj.root());
         config.additional_compiler_profiles = vec![SettingsOverrides {
@@ -524,7 +518,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_preserves_compiler_version_in_multi_version_project() {
-        let prj = test_project("cast-storage-multi-version");
+        let prj = TestProject::new("cast-storage-multi-version", PathStyle::Dapptools);
         let old_path = prj.add_raw_source(
             "Old",
             &format!(
@@ -553,7 +547,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_preserves_full_json_ast_ids() {
-        let prj = test_project("cast-storage-json-ast-ids");
+        let prj = TestProject::new("cast-storage-json-ast-ids", PathStyle::Dapptools);
         prj.add_source("First", "contract First { uint256 first; }");
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let project = load_project(&prj);
@@ -573,7 +567,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_uses_full_compile_with_build_info() {
-        let prj = test_project("cast-storage-build-info");
+        let prj = TestProject::new("cast-storage-build-info", PathStyle::Dapptools);
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let mut config = Config::with_root(prj.root());
         config.build_info = true;
@@ -587,7 +581,7 @@ contract Target is Base {
 
     #[test]
     fn local_storage_layout_uses_full_compile_without_cache() {
-        let prj = test_project("cast-storage-no-cache");
+        let prj = TestProject::new("cast-storage-no-cache", PathStyle::Dapptools);
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let project = load_project(&prj);
         let mut code_project = project.clone();

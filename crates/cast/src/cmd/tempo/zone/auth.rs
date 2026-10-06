@@ -36,7 +36,7 @@ fn token_fields(zone_id: u32, chain_id: u64, issued: u64, expires: u64) -> ([u8;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Signature;
+    use alloy_primitives::{Signature, b256};
     use alloy_signer_local::PrivateKeySigner;
 
     #[tokio::test]
@@ -68,9 +68,7 @@ mod tests {
         );
         assert_eq!(
             digest,
-            "0xf827387a933f40dfedece81ba4933feaef89e98a269f52f4f54dda2f1dac4171"
-                .parse::<B256>()
-                .unwrap()
+            b256!("0xf827387a933f40dfedece81ba4933feaef89e98a269f52f4f54dda2f1dac4171")
         );
     }
 }
