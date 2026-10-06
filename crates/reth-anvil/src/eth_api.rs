@@ -4,7 +4,9 @@ use alloy_rpc_types::{anvil::Forking, txpool::TxpoolStatus};
 use alloy_rpc_types_eth::{Account, Index, Transaction, TransactionReceipt, TransactionRequest};
 use eyre::Result;
 use jsonrpsee::{RpcModule, core::params::ArrayParams};
+use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
+use std::sync::Arc;
 
 /// In-process access to the node's RPC handlers.
 ///
@@ -12,12 +14,13 @@ use serde::de::DeserializeOwned;
 #[derive(Clone, Debug)]
 pub struct EthApi {
     module: RpcModule<()>,
-    instance_id: B256,
+    /// The instance id, shared with the `anvil_*` namespace, which rotates it on `anvil_reset`.
+    instance_id: Arc<RwLock<B256>>,
 }
 
 impl EthApi {
     /// Creates the API over the node's RPC module.
-    pub(crate) const fn new(module: RpcModule<()>, instance_id: B256) -> Self {
+    pub(crate) const fn new(module: RpcModule<()>, instance_id: Arc<RwLock<B256>>) -> Self {
         Self { module, instance_id }
     }
 
@@ -29,9 +32,9 @@ impl EthApi {
         Ok(self.module.call(method, params).await?)
     }
 
-    /// Returns the unique identifier of this node instance.
-    pub const fn instance_id(&self) -> B256 {
-        self.instance_id
+    /// Returns the unique identifier of this node instance. It changes on `anvil_reset`.
+    pub fn instance_id(&self) -> B256 {
+        *self.instance_id.read()
     }
 
     /// Returns the current block number.

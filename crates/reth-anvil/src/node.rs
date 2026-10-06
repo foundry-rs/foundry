@@ -22,6 +22,7 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm_networks::NetworkVariant;
+use parking_lot::RwLock;
 use reth_ethereum::{
     chainspec::EthChainSpec,
     node::{
@@ -218,7 +219,7 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
     let logging = LoggingState::new(!config.silent);
-    let instance_id = B256::random();
+    let instance_id = Arc::new(RwLock::new(B256::random()));
     let rpc_module = Arc::new(Mutex::new(None));
     let launcher = AnvilNodeLauncher::new(
         runtime.clone(),
@@ -253,6 +254,7 @@ pub(crate) async fn launch<Net: AnvilNetwork>(
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
             let identity = Net::identity(&config)?;
+            let instance_id = instance_id.clone();
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
                 {

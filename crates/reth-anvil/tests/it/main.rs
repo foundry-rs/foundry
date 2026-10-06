@@ -1077,7 +1077,8 @@ async fn anvil_reorg_rewinds_and_mines_the_given_transactions() -> Result<()> {
 
 #[tokio::test]
 async fn anvil_reset_returns_to_genesis() -> Result<()> {
-    with_test_client(|client| async move {
+    let (api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    {
         let (funder, gas_price) = funder_and_gas_price(&client).await?;
         let recipient = Address::repeat_byte(0x5E);
         let tx_hash: B256 = client
@@ -1095,13 +1096,13 @@ async fn anvil_reset_returns_to_genesis() -> Result<()> {
         assert_eq!(balance, U256::ZERO, "reset should drop state writes and mined transfers");
         let after: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
         assert_ne!(before.instance_id, after.instance_id, "reset should pick a new instance id");
+        assert_eq!(api.instance_id(), after.instance_id, "the in-process api shares the id");
 
         client.request::<(), _>("anvil_mine", rpc_params![]).await?;
         assert_eq!(block_number(&client).await?, 1);
 
         Ok(())
-    })
-    .await
+    }
 }
 
 #[tokio::test]
