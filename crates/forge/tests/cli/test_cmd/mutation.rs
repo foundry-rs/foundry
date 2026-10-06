@@ -1,11 +1,73 @@
 // CLI integration tests for mutation testing
 
+use alloy_primitives::{U256, address};
+use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::Remapping;
-use foundry_test_utils::{str, util::OutputExt};
+use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, str, util::OutputExt};
 use std::{fs, str::FromStr};
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
+}
+
+#[forgetest_init]
+async fn mutation_fork_backend_is_shared_by_baseline_and_workers(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    api.anvil_set_balance(address!("0000000000000000000000000000000000001234"), U256::from(42))
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    let (endpoint, blocks) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getBlockByNumber").await;
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+contract Counter {
+    uint256 public number;
+    function increment() public { number++; }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import "../src/Counter.sol";
+contract CounterTest {
+    function testIncrement() public {
+        require(address(0x1234).balance == 42, "wrong remote state");
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    );
+    cmd.args([
+        "test",
+        "--fork-url",
+        &endpoint,
+        "--mutate",
+        "src/Counter.sol",
+        "--mutation-jobs",
+        "4",
+        "--threads",
+        "1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Running mutation tests with 4 parallel workers...
+...
+3 mutants killed
+...
+"#]]);
+    assert_eq!(
+        blocks.lock().unwrap().len(),
+        1,
+        "baseline and mutants must use one prepared backend"
+    );
 }
 
 #[forgetest_init]

@@ -61,8 +61,8 @@ impl BuildData {
     ) -> Result<LinkedBuildData> {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
-            .evm_opts
-            .can_use_create2_deployer_resolved(script_config.resolved_fork()?)
+            .backend
+            .can_use_create2_deployer(script_config.evm_opts.create2_deployer)
             .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
