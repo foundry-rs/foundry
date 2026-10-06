@@ -557,11 +557,51 @@ pub fn get_commit_hash(root: &Path) -> Option<String> {
     Git::new(root).commit_hash(true, "HEAD").ok()
 }
 
+/// Returns a stable transaction ordinal across the complete script plan, including completed
+/// transactions so that resuming does not change expiring nonce discriminators.
+pub(crate) fn operation_ordinal<N: Network>(
+    sequences: &[ScriptSequence<N>],
+    sequence: usize,
+    index: usize,
+) -> usize {
+    sequences[..sequence].iter().map(|sequence| sequence.transactions.len()).sum::<usize>() + index
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
     use foundry_common::TransactionMaybeSigned;
+
+    #[test]
+    fn operation_ordinals_include_earlier_sequences_and_completed_transactions() {
+        let transaction =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<Ethereum>::Unsigned(
+                Default::default(),
+            ));
+        let mut sequences = [
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction.clone()].into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4218,
+                transactions: [transaction.clone(), transaction.clone()].into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction].into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(operation_ordinal(&sequences, 0, 0), 0);
+        assert_eq!(operation_ordinal(&sequences, 1, 1), 2);
+        assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
+        sequences[0].transactions[0].hash = Some(B256::repeat_byte(1));
+        assert_eq!(operation_ordinal(&sequences, 2, 0), 3);
+    }
 
     fn unknown_delegated_sequence() -> (tempfile::TempDir, ScriptSequenceKind<Ethereum>, B256) {
         let dir = tempfile::tempdir().unwrap();

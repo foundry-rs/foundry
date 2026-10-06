@@ -5,7 +5,7 @@ use crate::{
     build::LinkedBuildData,
     progress::ScriptProgress,
     recovery::{AttemptKind, DelegatedStatus},
-    sequence::{ScriptSequenceKind, completed_transaction_prefix},
+    sequence::{ScriptSequenceKind, completed_transaction_prefix, operation_ordinal},
     session::{
         RemainingScriptTransaction, SignerScope,
         insert_session_access_key_for_remaining_transactions,
@@ -22,7 +22,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, Bytes, TxHash, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressHashSet, HashMap},
+    map::{AddressHashMap, AddressHashSet, HashMap, HashSet},
     utils::format_units,
 };
 use alloy_provider::{
@@ -35,7 +35,10 @@ use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::{
+    opts::TempoOpts,
+    utils::{has_batch_support, has_different_gas_calc},
+};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
@@ -610,6 +613,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
+        if self.script_config.tempo.expiring_nonce {
+            reject_expiring_call_before_create(
+                self.sequence.sequences(),
+                &self.script_config.tempo,
+            )?;
+        }
         let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
         let ordering_addresses = remaining_sender_addresses(&self.sequence);
         let has_unprepared_transactions =
@@ -723,6 +732,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let progress = ScriptProgress::default();
 
         for i in 0..self.sequence.sequences().len() {
+            let sequence_offset = operation_ordinal(self.sequence.sequences(), i, 0);
             let remaining_indices = remaining_operation_indices(&self.sequence, i);
             let signed_payloads = (0..self.sequence.sequences()[i].transactions.len())
                 .map(|index| {
@@ -811,10 +821,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 };
 
                 // TIP-1106: from T12 the nonce of an expiring nonce transaction is an opaque
-                // discriminator. Each transaction gets its index in the sequence, which is
-                // monotonic and stable across `--resume`, so that otherwise identical
-                // transactions keep distinct signing and replay hashes. Earlier hardforks only
-                // accept 0, which is also the fallback when the hardfork cannot be determined.
+                // discriminator. Each transaction gets its ordinal in the complete script plan,
+                // which is monotonic and stable across `--resume`, so that
+                // otherwise identical transactions keep distinct signing and replay
+                // hashes. Earlier hardforks only accept 0, which is also the
+                // fallback when the hardfork cannot be determined.
                 let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
                     && !all_signed
                     && is_tempo_hardfork_active(provider.as_ref(), TempoHardfork::T12)
@@ -864,7 +875,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                             self.script_config.tempo.apply::<FEN::Network>(
                                 &mut tx,
-                                expiring_nonce_discriminators.then_some(index as u64),
+                                expiring_nonce_discriminators
+                                    .then_some((sequence_offset + index) as u64),
                             );
 
                             send_kind.for_sender(sequence_chain, &from, tx)?
@@ -1813,6 +1825,43 @@ where
     }
 }
 
+/// Collection increments the sender's protocol nonce for CALLs, but expiring CALLs do not.
+/// Reject a subsequent CREATE before submitting anything, since its simulated address is stale.
+fn reject_expiring_call_before_create<N: Network>(
+    sequences: &[ScriptSequence<N>],
+    tempo: &TempoOpts,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let mut called = HashSet::new();
+    for sequence in sequences {
+        for transaction in &sequence.transactions {
+            let tx = transaction.tx();
+            if let Some(sender) = tx.from() {
+                let scope = (sequence.chain, sender);
+                if tx.to().is_none() && called.contains(&scope) {
+                    bail!(
+                        "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
+                    );
+                }
+                let request = match tx {
+                    TransactionMaybeSigned::Unsigned(request) => {
+                        let mut request = request.clone();
+                        tempo.apply::<N>(&mut request, None);
+                        request
+                    }
+                    TransactionMaybeSigned::Signed { tx, .. } => tx.clone().into(),
+                };
+                if request.nonce_key() == Some(TEMPO_EXPIRING_NONCE_KEY) && tx.to().is_some() {
+                    called.insert(scope);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2231,6 +2280,65 @@ mod tests {
         let error = reject_access_key_create::<TempoNetwork>(&tx, true).unwrap_err();
 
         assert!(error.to_string().contains("Tempo access-key transactions cannot use CREATE"));
+    }
+
+    #[test]
+    fn expiring_nonce_create_preflight_tracks_chain_and_sender_across_sequences() {
+        let sender = Address::with_last_byte(1);
+        let transaction = |sender, to| {
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::<TempoNetwork>::new(
+                TempoTransactionRequest {
+                    inner: TransactionRequest { from: Some(sender), to, ..Default::default() },
+                    ..Default::default()
+                },
+            ))
+        };
+        let tempo = TempoOpts { expiring_nonce: true, ..Default::default() };
+        let mut sequences = [
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction(sender, Some(TxKind::Call(Address::with_last_byte(2))))]
+                    .into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4218,
+                transactions: [transaction(sender, None)].into(),
+                ..Default::default()
+            },
+            ScriptSequence {
+                chain: 4217,
+                transactions: [transaction(sender, None)].into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            reject_expiring_call_before_create(&sequences, &tempo).unwrap_err().to_string(),
+            "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
+        );
+        reject_expiring_call_before_create(&sequences, &TempoOpts::default()).unwrap();
+        sequences[2].chain = 4219;
+        reject_expiring_call_before_create(&sequences, &tempo).unwrap();
+        sequences[2].chain = 4217;
+        sequences[2].transactions[0] = transaction(Address::with_last_byte(3), None);
+        reject_expiring_call_before_create(&sequences, &tempo).unwrap();
+        sequences[2].transactions[0] =
+            transaction(sender, Some(TxKind::Call(Address::with_last_byte(2))));
+        reject_expiring_call_before_create(&sequences, &tempo).unwrap();
+        let mut discriminators = Vec::new();
+        for (i, sequence) in sequences.iter().enumerate() {
+            for (index, transaction) in sequence.transactions.iter().enumerate() {
+                let TransactionMaybeSigned::Unsigned(mut request) = transaction.tx().clone() else {
+                    unreachable!()
+                };
+                tempo.apply::<TempoNetwork>(
+                    &mut request,
+                    Some(operation_ordinal(&sequences, i, index) as u64),
+                );
+                discriminators.push(request.nonce().unwrap());
+            }
+        }
+        assert_eq!(discriminators, [0, 1, 2]);
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {

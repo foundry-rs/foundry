@@ -1,4 +1,4 @@
-use crate::sequence::{SequenceData, completed_transaction_prefix};
+use crate::sequence::{SequenceData, completed_transaction_prefix, operation_ordinal};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
@@ -286,7 +286,13 @@ where
             .get(index)
             .context("signed payload operation is not in the recovery snapshot")?;
         let transaction = &self.plan.data.sequences()[sequence].transactions[index];
-        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain, index)?;
+        let signed = validate_signed_payload::<N>(
+            payload,
+            transaction,
+            deployment.chain,
+            index,
+            operation_ordinal(self.plan.data.sequences(), sequence, index),
+        )?;
         if let Some(existing) = self.signed_payload(sequence, index) {
             if existing != &signed {
                 bail!("refusing to replace an existing signed payload");
@@ -820,6 +826,11 @@ where
                                 &data.transactions[operation.id.index as usize],
                                 deployment.chain,
                                 operation.id.index as usize,
+                                operation_ordinal(
+                                    self.data.sequences(),
+                                    sequence,
+                                    operation.id.index as usize,
+                                ),
                             )?
                         } else {
                             SignedPayload {
@@ -930,6 +941,7 @@ fn validate_signed_payload<N: Network>(
     planned: &TransactionWithMetadata<N>,
     chain: u64,
     index: usize,
+    ordinal: usize,
 ) -> Result<SignedPayload>
 where
     N::TxEnvelope: SignerRecoverable,
@@ -948,11 +960,12 @@ where
         TransactionMaybeSigned::Unsigned(_) => envelope.chain_id() == Some(chain),
     };
     // The planned nonce is the sender's sequential nonce. A Tempo expiring nonce transaction
-    // never reads nonce state and is signed with 0 or, from T12, with its operation index as the
-    // TIP-1106 discriminator.
+    // never reads nonce state and is signed with 0 or, from T12, with its complete-plan ordinal as
+    // the TIP-1106 discriminator. Accept sequence-local indices from older recovery snapshots
+    // too.
     let nonce = envelope.nonce();
     let nonce_matches = transaction.nonce() == Some(nonce)
-        || ((nonce == 0 || nonce == index as u64)
+        || ((nonce == 0 || nonce == ordinal as u64 || nonce == index as u64)
             && <N::TransactionRequest as From<N::TxEnvelope>>::from(envelope.clone()).nonce_key()
                 == Some(TEMPO_EXPIRING_NONCE_KEY));
     if transaction.from() != Some(signer)
@@ -1100,7 +1113,10 @@ mod tests {
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{AASigned, TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{
+        AASigned, TempoSignature, TempoTxEnvelope,
+        transaction::{Call, PrimitiveSignature},
+    };
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1168,6 +1184,46 @@ mod tests {
             transaction_index: None,
             effective_gas_price: None,
             block_timestamp: None,
+        }
+    }
+
+    #[test]
+    fn expiring_signed_payload_accepts_complete_plan_ordinal_and_legacy_index() {
+        let signer = foundry_wallets::utils::create_local_signer(
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        )
+        .unwrap();
+        let request = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(signer.address()),
+                to: Some(TxKind::Call(Address::with_last_byte(2))),
+                chain_id: Some(4217),
+                nonce: Some(8),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
+            valid_before: std::num::NonZeroU64::new(100),
+            ..Default::default()
+        };
+        let planned =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request.clone()));
+        for nonce in [0, 1, 3, 4] {
+            let mut request = request.clone();
+            request.inner.nonce = Some(nonce);
+            let tx = request.build_aa().unwrap();
+            let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+            let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
+                tx,
+                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+            ));
+            let payload = Bytes::from(envelope.encoded_2718());
+            assert_eq!(
+                validate_signed_payload::<TempoNetwork>(payload, &planned, 4217, 1, 3).is_ok(),
+                nonce != 4
+            );
         }
     }
 
