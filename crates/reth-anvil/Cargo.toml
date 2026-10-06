@@ -60,6 +60,7 @@ revm.workspace = true
 
 # misc
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+chrono.workspace = true
 clap_complete.workspace = true
 eyre.workspace = true
 fdlimit = "0.3"
@@ -74,6 +75,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
 tokio-stream.workspace = true
+tower.workspace = true
 tracing.workspace = true
 yansi.workspace = true
 

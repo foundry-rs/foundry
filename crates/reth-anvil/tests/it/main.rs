@@ -1512,3 +1512,70 @@ async fn personal_sign_and_erigon_header_match_eth_namespace() -> Result<()> {
     })
     .await
 }
+
+async fn mine_two_transfers_with_order(order: reth_anvil::TransactionOrder) -> Result<Vec<String>> {
+    let config = NodeConfig::test().with_no_mining(true).with_transaction_order(order);
+    let (_api, handle, client) = spawn_with_client(config).await?;
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let (_, gas_price) = funder_and_gas_price(&client).await?;
+    let recipient = Address::with_last_byte(0xc1);
+
+    // The first transaction arrives first but pays a lower tip than the second.
+    let first: B256 = client
+        .request("eth_sendTransaction", rpc_params![transfer(accounts[0], recipient, gas_price)])
+        .await?;
+    let second: B256 = client
+        .request(
+            "eth_sendTransaction",
+            rpc_params![transfer(accounts[1], recipient, gas_price + 2_000_000_000)],
+        )
+        .await?;
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let block = get_block(&client, "latest").await?;
+    let hashes: Vec<String> = block["transactions"]
+        .as_array()
+        .ok_or_eyre("transactions")?
+        .iter()
+        .filter_map(|hash| hash.as_str().map(str::to_lowercase))
+        .collect();
+    assert_eq!(hashes.len(), 2);
+    let _ = (first, second);
+    Ok(vec![
+        hashes[0].clone(),
+        hashes[1].clone(),
+        first.to_string().to_lowercase(),
+        second.to_string().to_lowercase(),
+    ])
+}
+
+#[tokio::test]
+async fn transaction_order_fifo_and_fees() -> Result<()> {
+    let fifo = mine_two_transfers_with_order(reth_anvil::TransactionOrder::Fifo).await?;
+    assert_eq!(&fifo[0..2], &fifo[2..4], "fifo mines in arrival order");
+
+    let fees = mine_two_transfers_with_order(reth_anvil::TransactionOrder::Fees).await?;
+    assert_eq!(fees[0], fees[3], "fees mines the higher tip first");
+    assert_eq!(fees[1], fees[2]);
+
+    let info: NodeInfo = {
+        let (_api, _handle, client) = spawn_with_client(
+            NodeConfig::test().with_transaction_order(reth_anvil::TransactionOrder::Fifo),
+        )
+        .await?;
+        client.request("anvil_nodeInfo", rpc_params![]).await?
+    };
+    assert_eq!(info.transaction_order, "fifo");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ipc_endpoint_is_created() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("anvil.ipc");
+    let config = NodeConfig::test().with_ipc(Some(Some(path.to_string_lossy().into_owned())));
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+    assert_eq!(block_number(&client).await?, 0);
+    assert!(path.exists(), "the ipc socket exists at {}", path.display());
+    Ok(())
+}

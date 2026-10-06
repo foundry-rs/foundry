@@ -2,12 +2,13 @@ use crate::{
     block_env::BlockEnvOverrides,
     fork::ForkBackend,
     impersonation::ImpersonationState,
+    logging::LoggingState,
     mining::MiningController,
     snapshot::{Snapshot, SnapshotManager},
     state::{AnvilState, SharedAnvilState},
     state_dump::{AccountDump, SerializableState},
     time::TimeManager,
-    types::{ReorgOptions, TransactionData},
+    types::{ReorgOptions, TransactionData, TransactionOrder},
 };
 use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
@@ -38,10 +39,7 @@ use reth_ethereum::{
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer};
 use revm::context::BlockEnv;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -288,7 +286,8 @@ pub struct AnvilRpc<Pool, Provider, Eth> {
     snapshots: SnapshotManager,
     chain_spec: Arc<ChainSpec>,
     instance_id: Arc<RwLock<B256>>,
-    logging_enabled: Arc<AtomicBool>,
+    logging: LoggingState,
+    transaction_order: TransactionOrder,
     fork: Option<Arc<ForkBackend>>,
     pool: Pool,
     provider: Provider,
@@ -307,6 +306,8 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
         snapshots: SnapshotManager,
         chain_spec: Arc<ChainSpec>,
         instance_id: B256,
+        logging: LoggingState,
+        transaction_order: TransactionOrder,
         fork: Option<Arc<ForkBackend>>,
         pool: Pool,
         provider: Provider,
@@ -321,7 +322,8 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
             snapshots,
             chain_spec,
             instance_id: Arc::new(RwLock::new(instance_id)),
-            logging_enabled: Arc::new(AtomicBool::new(true)),
+            logging,
+            transaction_order,
             fork,
             pool,
             provider,
@@ -674,7 +676,7 @@ where
     }
 
     async fn anvil_set_logging_enabled(&self, enabled: bool) -> RpcResult<()> {
-        self.logging_enabled.store(enabled, Ordering::Relaxed);
+        self.logging.set_enabled(enabled);
         Ok(())
     }
 
@@ -783,7 +785,7 @@ where
             current_block_timestamp: latest.header.timestamp,
             current_block_hash: latest.header.hash,
             hard_fork: self.hardfork_name(latest.header.timestamp, latest.header.number),
-            transaction_order: "fees".to_string(),
+            transaction_order: self.transaction_order.to_string(),
             environment: NodeEnvironment {
                 base_fee: latest.header.base_fee_per_gas.unwrap_or_default().into(),
                 chain_id: self.chain_spec.chain().id(),

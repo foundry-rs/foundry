@@ -7,6 +7,7 @@ use crate::{
     fork::ForkBackend,
     impersonation::{ImpersonatedSigner, ImpersonationState},
     launcher::AnvilNodeLauncher,
+    logging::{LoggingState, NodeInfoLayer, log_mined_blocks},
     miner::AnvilMiner,
     mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
     pool::AnvilPoolBuilder,
@@ -176,7 +177,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
             ws_port: address.port(),
             ws_allowed_origins: Some("*".to_string()),
             ws_api: Some(RpcModuleSelection::All),
-            ipcdisable: true,
+            ipcdisable: config.ipc_path.is_none(),
+            ipcpath: config.ipc_path.clone().unwrap_or_default(),
             disable_auth_server: true,
             ..Default::default()
         })
@@ -204,6 +206,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     }
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
+    let logging = LoggingState::new(!config.silent);
     let instance_id = B256::random();
     let rpc_module = Arc::new(Mutex::new(None));
     let launcher = AnvilNodeLauncher::new(
@@ -221,7 +224,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         .with_components(
             EthereumNode::components()
                 .network(NoopNetworkBuilder::eth())
-                .pool(AnvilPoolBuilder { state: impersonation.clone() })
+                .pool(AnvilPoolBuilder {
+                    state: impersonation.clone(),
+                    order: config.transaction_order,
+                })
                 .executor(AnvilExecutorBuilder {
                     state: impersonation.clone(),
                     block_env: block_env.clone(),
@@ -229,7 +235,9 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
                 })
                 .consensus(NoopConsensusBuilder),
         )
-        .with_add_ons(EthereumAddOns::default())
+        .with_add_ons(
+            EthereumAddOns::default().with_rpc_middleware(NodeInfoLayer::new(logging.clone())),
+        )
         .extend_rpc_modules({
             let mining = mining.clone();
             let time = time.clone();
@@ -240,6 +248,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
             let signer_accounts = config.signer_accounts.clone();
             let rpc_module = rpc_module.clone();
             let fork = fork.clone();
+            let logging = logging.clone();
+            let transaction_order = config.transaction_order;
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
                 {
@@ -256,6 +266,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
                     snapshots,
                     chain_spec,
                     instance_id,
+                    logging,
+                    transaction_order,
                     fork,
                     ctx.pool().clone(),
                     ctx.provider().clone(),
@@ -309,6 +321,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     node.task_executor.spawn_critical_task(
         "reth-anvil state writes",
         clear_applied_state_writes(node.provider.subscribe_to_canonical_state(), anvil_state),
+    );
+    node.task_executor.spawn_critical_task(
+        "reth-anvil logging",
+        log_mined_blocks(node.provider.subscribe_to_canonical_state(), logging),
     );
 
     let module = rpc_module

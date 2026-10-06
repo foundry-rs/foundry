@@ -12,6 +12,7 @@ mod evm;
 mod fork;
 mod impersonation;
 mod launcher;
+mod logging;
 mod miner;
 mod mining;
 mod node;

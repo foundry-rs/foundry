@@ -444,6 +444,7 @@ which = "8"
 wait-timeout = "0.2"
 prettyplease = "0.2"
 base64 = "0.23"
+tower = "0.5"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
@@ -497,7 +498,6 @@ tempfile = "3.23"
 tokio = "1"
 toml = "1.1"
 toml_edit = "0.25"
-tower = "0.5"
 tower-http = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"

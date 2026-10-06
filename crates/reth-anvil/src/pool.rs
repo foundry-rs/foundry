@@ -1,7 +1,8 @@
-use crate::impersonation::ImpersonationState;
+use crate::{impersonation::ImpersonationState, types::TransactionOrder};
 use alloy_consensus::{Transaction, transaction::TxHashRef};
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use eyre::Result;
+use parking_lot::Mutex;
 use reth_ethereum::{
     TransactionSigned,
     chainspec::EthereumHardforks,
@@ -13,9 +14,9 @@ use reth_ethereum::{
         },
     },
     pool::{
-        CoinbaseTipOrdering, EthPooledTransaction, EthTransactionValidator, Pool, PoolTransaction,
-        TransactionOrigin, TransactionValidationOutcome, TransactionValidationTaskExecutor,
-        TransactionValidator,
+        EthPooledTransaction, EthTransactionValidator, Pool, PoolTransaction, Priority,
+        TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
+        TransactionValidationTaskExecutor, TransactionValidator,
         blobstore::DiskFileBlobStore,
         error::{InvalidPoolTransactionError, PoolTransactionError},
         validate::ValidTransaction,
@@ -24,7 +25,13 @@ use reth_ethereum::{
 };
 use std::{
     any::Any,
+    collections::HashMap,
     fmt::{self, Debug, Display},
+    marker::PhantomData,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 /// Wraps the standard Ethereum validator and short-circuits validation for impersonated
@@ -129,12 +136,81 @@ impl PoolTransactionError for RevertedTransaction {
     }
 }
 
+/// Orders transactions by effective tip, or in order of arrival for `--order fifo`.
+///
+/// The arrival order is the order in which the pool first asked for a transaction's priority. The
+/// bookkeeping is cleared when it grows large, which only reorders transactions still in the pool
+/// among themselves.
+pub struct AnvilOrdering<T> {
+    order: TransactionOrder,
+    next: Arc<AtomicU64>,
+    arrivals: Arc<Mutex<HashMap<B256, u64>>>,
+    _tx: PhantomData<T>,
+}
+
+impl<T> Debug for AnvilOrdering<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnvilOrdering").field("order", &self.order).finish_non_exhaustive()
+    }
+}
+
+impl<T> Clone for AnvilOrdering<T> {
+    fn clone(&self) -> Self {
+        Self {
+            order: self.order,
+            next: self.next.clone(),
+            arrivals: self.arrivals.clone(),
+            _tx: PhantomData,
+        }
+    }
+}
+
+impl<T> AnvilOrdering<T> {
+    const MAX_TRACKED_ARRIVALS: usize = 100_000;
+
+    /// Creates the ordering.
+    pub fn new(order: TransactionOrder) -> Self {
+        Self {
+            order,
+            next: Arc::new(AtomicU64::new(0)),
+            arrivals: Arc::new(Mutex::new(HashMap::new())),
+            _tx: PhantomData,
+        }
+    }
+}
+
+impl<T> TransactionOrdering for AnvilOrdering<T>
+where
+    T: PoolTransaction + 'static,
+{
+    type PriorityValue = u128;
+    type Transaction = T;
+
+    fn priority(&self, transaction: &Self::Transaction, base_fee: u64) -> Priority<u128> {
+        match self.order {
+            TransactionOrder::Fees => transaction.effective_tip_per_gas(base_fee).into(),
+            TransactionOrder::Fifo => {
+                let mut arrivals = self.arrivals.lock();
+                if arrivals.len() > Self::MAX_TRACKED_ARRIVALS {
+                    arrivals.clear();
+                }
+                let arrival = *arrivals
+                    .entry(*transaction.hash())
+                    .or_insert_with(|| self.next.fetch_add(1, Ordering::Relaxed));
+                Priority::Value(u128::from(u64::MAX - arrival))
+            }
+        }
+    }
+}
+
 /// Pool builder that wraps the default Ethereum pool builder and decorates the validator with
 /// impersonation support.
 #[derive(Debug, Clone)]
 pub struct AnvilPoolBuilder {
     /// The shared impersonation state.
     pub state: ImpersonationState,
+    /// How the pool orders transactions.
+    pub order: TransactionOrder,
 }
 
 /// The transaction pool type produced by [`AnvilPoolBuilder`].
@@ -142,7 +218,7 @@ pub type AnvilTransactionPool<Provider, Evm> = Pool<
     TransactionValidationTaskExecutor<
         AnvilValidator<EthTransactionValidator<Provider, EthPooledTransaction, Evm>>,
     >,
-    CoinbaseTipOrdering<EthPooledTransaction>,
+    AnvilOrdering<EthPooledTransaction>,
     DiskFileBlobStore,
 >;
 
@@ -175,6 +251,10 @@ where
 
         TxPoolBuilder::new(ctx)
             .with_validator(validator)
-            .build_and_spawn_maintenance_task(blob_store, pool_config)
+            .build_with_ordering_and_spawn_maintenance_task(
+                AnvilOrdering::new(self.order),
+                blob_store,
+                pool_config,
+            )
     }
 }
