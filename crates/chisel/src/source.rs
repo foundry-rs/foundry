@@ -18,7 +18,6 @@ use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
     opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -41,13 +40,6 @@ pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
-
-/// In-memory backend and the exact fork identity from which it was constructed.
-#[derive(Clone, Debug)]
-pub(crate) struct CachedBackend<FEN: FoundryEvmNetwork> {
-    pub(crate) backend: Backend<FEN>,
-    pub(crate) resolved_fork: Option<ResolvedFork>,
-}
 
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
@@ -321,7 +313,7 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     pub no_vm: bool,
     /// Cached execution backend and its fork identity.
     #[serde(skip)]
-    pub(crate) cached_backend: Option<CachedBackend<FEN>>,
+    pub(crate) cached_backend: Option<Backend<FEN>>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution

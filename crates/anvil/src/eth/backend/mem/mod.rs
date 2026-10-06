@@ -3883,7 +3883,7 @@ impl<N: Network> Backend<N> {
         } else {
             state.code_by_hash_ref(account.code_hash)?
         };
-        Ok(code.bytes()[..code.len()].to_vec().into())
+        Ok(code.original_bytes())
     }
 
     pub fn get_balance_with_state<D>(
@@ -4836,8 +4836,7 @@ impl<N: Network> Backend<N> {
             if account.code.as_ref().is_none_or(|code| code.is_empty()) {
                 let code =
                     revm::state::Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
-                account.code_hash = code.hash_slow();
-                account.code = Some(code);
+                account.set_code(code);
                 db.insert_account(address, account);
             }
         }
@@ -9792,8 +9791,7 @@ where
                         |error| BlockchainError::Eip8130TransactionRejected(error.to_string()),
                     )?;
                     let word = self.storage_at(NonceManagerStorage::ADDRESS, slot, None).await?;
-                    let channel_nonce =
-                        Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)).to::<u64>();
+                    let channel_nonce = Eip8130Nonce::decode_channel_nonce(word.into()).to::<u64>();
                     (channel_nonce == 0, body.nonce_sequence == channel_nonce)
                 };
             let intrinsic = IntrinsicGas::compute(

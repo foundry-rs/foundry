@@ -850,7 +850,7 @@ async fn test_set_next_block_prevrandao_evm() {
 
     // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
     let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from_be_bytes(prevrandao.0));
+    assert_eq!(difficulty, Into::<U256>::into(prevrandao));
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));

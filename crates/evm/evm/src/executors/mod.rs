@@ -556,18 +556,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         for (address, account_state) in prestate {
             let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
-            let info = revm::state::AccountInfo {
-                nonce: account_state.nonce.unwrap_or_default(),
-                balance: account_state.balance.unwrap_or_default(),
-                code_hash: code.hash_slow(),
-                code: Some(code),
-                account_id: Default::default(),
-            };
+            let info = revm::state::AccountInfo::default()
+                .with_balance(account_state.balance.unwrap_or_default())
+                .with_nonce(account_state.nonce.unwrap_or_default())
+                .with_code(code);
             backend.insert_account_info(address, info);
 
             for (slot, value) in account_state.storage {
-                let slot = U256::from_be_bytes(slot.0);
-                let value = U256::from_be_bytes(value.0);
+                let slot = slot.into();
+                let value = value.into();
                 backend.insert_account_storage(address, slot, value)?;
             }
         }
