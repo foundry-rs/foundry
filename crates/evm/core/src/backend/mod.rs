@@ -4622,4 +4622,20 @@ mod tests {
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
     }
+
+    #[tokio::test]
+    async fn fork_backend_lifecycle_on_current_thread_runtime() {
+        // Fork creation blocks the only thread of this runtime, so anvil runs on another runtime.
+        let node_runtime = tokio::runtime::Runtime::new().unwrap();
+        let (_api, handle) = node_runtime.spawn(spawn(NodeConfig::test())).await.unwrap();
+
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        let fork = evm_opts.get_fork(&Config::default(), 31_337, None).unwrap();
+        let backend = Backend::<EthEvmNetwork>::spawn(Some(fork)).unwrap();
+        assert!(backend.active_fork_ids.is_some());
+        drop(backend);
+
+        node_runtime.shutdown_background();
+    }
 }
