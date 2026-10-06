@@ -24,6 +24,7 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-hardforks.workspace = true
+foundry-fork-db.workspace = true
 
 # reth
 reth-chain-state.workspace = true
@@ -47,6 +48,7 @@ alloy-evm.workspace = true
 alloy-genesis.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
+alloy-provider.workspace = true
 alloy-rpc-types = { workspace = true, features = ["anvil", "txpool"] }
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
@@ -77,4 +79,5 @@ yansi.workspace = true
 
 [dev-dependencies]
 alloy-chains.workspace = true
+foundry-test-utils.workspace = true
 jsonrpsee = { version = "0.26", features = ["http-client"] }

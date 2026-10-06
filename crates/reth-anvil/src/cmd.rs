@@ -1,7 +1,7 @@
 use crate::{
     AccountGenerator, CHAIN_ID, DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, NodeConfig,
     state_dump::{SerializableState, StateFile},
-    types::{ForkUrl, TransactionOrder},
+    types::{ForkChoice, ForkUrl, TransactionOrder},
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
@@ -209,6 +209,13 @@ impl NodeArgs {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let funded_accounts = self.parse_funded_accounts()?;
         let hardfork = self.hardfork.as_deref().map(parse_hardfork).transpose()?;
+        let compute_units_per_second =
+            if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
+        let fork_choice = match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
+            (Some(number), _) => Some(ForkChoice::Block(number)),
+            (None, Some(hash)) => Some(ForkChoice::Transaction(hash)),
+            (None, None) => None,
+        };
 
         let config = NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
@@ -225,6 +232,17 @@ impl NodeArgs {
             .with_genesis_block_number(self.number)
             .with_port(self.port)
             .with_fork_urls(self.evm.fork_url)
+            .with_fork_choice(fork_choice)
+            .with_fork_headers(self.evm.fork_headers)
+            .with_fork_chain_id(self.evm.fork_chain_id.map(u64::from).map(U256::from))
+            .with_no_fork_node_info(self.evm.no_fork_node_info)
+            .with_no_bal(self.evm.no_bal)
+            .with_fork_state_by_number(self.evm.fork_state_by_number)
+            .fork_request_timeout(self.evm.fork_request_timeout.map(Duration::from_millis))
+            .fork_request_retries(self.evm.fork_request_retries)
+            .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
+            .fork_compute_units_per_second(compute_units_per_second)
+            .with_no_storage_caching(self.evm.no_storage_caching)
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
             .with_server_config(
@@ -313,9 +331,6 @@ impl NodeArgs {
             eyre::bail!("--state and --dump-state are not supported yet");
         }
         let config = self.into_node_config()?;
-        if !config.fork_urls.is_empty() {
-            eyre::bail!("forking is not supported yet");
-        }
         if config.init_state.is_some() {
             eyre::bail!("--load-state is not supported yet");
         }

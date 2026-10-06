@@ -28,6 +28,8 @@ pub struct AnvilMiner {
     attributes: LocalPayloadAttributesBuilder<ChainSpec>,
     map_attributes: Box<dyn Fn(PayloadAttributes) -> PayloadAttributes + Send + Sync>,
     rewind: RewindFn,
+    /// Runs after a payload is built and before the engine validates it.
+    before_insert: Box<dyn Fn() -> Result<()> + Send + Sync>,
     last_header: SealedHeader,
     requests: UnboundedReceiver<MinerRequest>,
 }
@@ -36,13 +38,16 @@ impl AnvilMiner {
     /// Creates a miner that extends the chain from `head`.
     ///
     /// `rewind` rewinds the chain state to a header; the miner runs it between blocks so a rewind
-    /// never races a block build.
+    /// never races a block build. `before_insert` runs after a payload is built and before the
+    /// engine validates it.
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         engine: ConsensusEngineHandle<EthEngineTypes>,
         payload_builder: PayloadBuilderHandle<EthEngineTypes>,
         attributes: LocalPayloadAttributesBuilder<ChainSpec>,
         map_attributes: impl Fn(PayloadAttributes) -> PayloadAttributes + Send + Sync + 'static,
         rewind: impl Fn(&SealedHeader) -> Result<()> + Send + Sync + 'static,
+        before_insert: impl Fn() -> Result<()> + Send + Sync + 'static,
         head: SealedHeader,
         requests: UnboundedReceiver<MinerRequest>,
     ) -> Self {
@@ -52,6 +57,7 @@ impl AnvilMiner {
             attributes,
             map_attributes: Box::new(map_attributes),
             rewind: Box::new(rewind),
+            before_insert: Box::new(before_insert),
             last_header: head,
             requests,
         }
@@ -110,6 +116,7 @@ impl AnvilMiner {
         };
         let header = payload.block().sealed_header().clone();
 
+        (self.before_insert)()?;
         let status = self.engine.new_payload(payload.into()).await?;
         ensure!(status.is_valid(), "payload rejected: {status:?}");
         self.last_header = header.clone();

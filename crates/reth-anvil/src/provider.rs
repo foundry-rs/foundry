@@ -1,15 +1,30 @@
-use crate::{state::SharedAnvilState, state_provider::AnvilStateProvider};
+use crate::{
+    fork::{
+        ForkBackend, ForkStateProvider, LocalWrites, decode_remote_tx_number, remote_tx_number,
+    },
+    state::SharedAnvilState,
+    state_provider::AnvilStateProvider,
+};
 use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
-use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use alloy_primitives::{Address, B256, BlockHash, BlockNumber, StorageKey, TxHash, TxNumber};
 use alloy_rpc_types_engine::ForkchoiceState;
 use reth_chain_state::{
-    CanonStateNotifications, CanonStateSubscriptions, ExecutedBlock, ForkChoiceNotifications,
-    ForkChoiceSubscriptions, NewCanonicalChain, PersistedBlockNotifications,
-    PersistedBlockSubscriptions,
+    CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ExecutedBlock,
+    ForkChoiceNotifications, ForkChoiceSubscriptions, NewCanonicalChain,
+    PersistedBlockNotifications, PersistedBlockSubscriptions,
 };
-use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
+use reth_db_api::{
+    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
+    models::{
+        AccountBeforeTx, BlockNumberAddress, ShardedKey, StoredBlockBodyIndices,
+        storage_sharded_key::StorageShardedKey,
+    },
+    tables,
+    transaction::{DbTx, DbTxMut},
+};
 use reth_ethereum::{
+    EthPrimitives,
     chainspec::{ChainInfo, ChainSpecProvider},
     node::api::{BlockTy, HeaderTy, ReceiptTy, TxTy},
     primitives::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry},
@@ -26,10 +41,10 @@ use reth_ethereum::{
         BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockExecutionWriter,
         BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt,
         CanonChainTracker, ChangeSetReader, DBProvider, DatabaseProviderFactory, HeaderProvider,
-        NodePrimitivesProvider, PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt,
-        StageCheckpointReader, StateProviderBox, StateProviderFactory, StateRangeProviderFactory,
-        StateRangeView, StateReader, StorageChangeSetReader, TransactionsProvider,
-        errors::provider::ProviderResult,
+        HistoryWriter, NodePrimitivesProvider, PruneCheckpointReader, ReceiptProvider,
+        ReceiptProviderIdExt, StageCheckpointReader, StateProviderBox, StateProviderFactory,
+        StateRangeProviderFactory, StateRangeView, StateReader, StorageChangeSetReader,
+        TransactionsProvider, errors::provider::ProviderResult,
     },
     trie::ComputedTrieData,
 };
@@ -41,37 +56,130 @@ use std::{
     time::Instant,
 };
 
+/// The node types the provider supports: Ethereum primitives, so the remote fork data converts
+/// into the local types.
+pub trait AnvilNodeTypes: ProviderNodeTypes<Primitives = EthPrimitives> {}
+
+impl<N: ProviderNodeTypes<Primitives = EthPrimitives>> AnvilNodeTypes for N {}
+
 /// The node provider: reth's [`BlockchainProvider`] with anvil state writes served on top of the
-/// latest and pending state.
+/// latest and pending state, and with a remote fork below the local chain.
 ///
-/// State lookups by block hash stay untouched because the engine executes blocks against them. The
-/// block executor applies the same writes inside the next block, so execution and the state root
-/// catch up with the overlay.
+/// State lookups by block hash stay untouched by the anvil state writes because the engine
+/// executes blocks against them. The block executor applies the same writes inside the next block,
+/// so execution and the state root catch up with the overlay.
+///
+/// When the node forks a remote chain, blocks below the fork block and the state keys the local
+/// chain has not written come from the remote endpoint.
 #[derive(Debug)]
-pub struct AnvilProvider<N: ProviderNodeTypes> {
+pub struct AnvilProvider<N: AnvilNodeTypes> {
     inner: BlockchainProvider<N>,
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
+    fork: Option<Arc<ForkBackend>>,
 }
 
-impl<N: ProviderNodeTypes> Clone for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> Clone for AnvilProvider<N> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             state: self.state.clone(),
             slots_in_an_epoch: self.slots_in_an_epoch,
+            fork: self.fork.clone(),
         }
     }
 }
 
-impl<N: ProviderNodeTypes> AnvilProvider<N> {
+impl<N: AnvilNodeTypes> AnvilProvider<N> {
     /// Wraps the given provider.
     pub const fn new(
         inner: BlockchainProvider<N>,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
+        fork: Option<Arc<ForkBackend>>,
     ) -> Self {
-        Self { inner, state, slots_in_an_epoch }
+        Self { inner, state, slots_in_an_epoch, fork }
+    }
+
+    /// Returns the fork when the block with the given number is below the fork block.
+    fn remote_for(&self, number: BlockNumber) -> Option<&Arc<ForkBackend>> {
+        self.fork.as_ref().filter(|fork| fork.predates_fork(number))
+    }
+
+    /// Returns the fork when the block with the given hash is a remote block below the fork block.
+    fn remote_for_hash(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<ForkBackend>>> {
+        let Some(fork) = &self.fork else { return Ok(None) };
+        if self.inner.block_number(hash)?.is_some() {
+            return Ok(None);
+        }
+        Ok(fork
+            .block_number_by_hash(hash)?
+            .filter(|number| fork.predates_fork(*number))
+            .map(|_| fork))
+    }
+
+    /// Returns the fork when the block id names a remote block below the fork block.
+    fn remote_for_id(&self, id: BlockHashOrNumber) -> ProviderResult<Option<&Arc<ForkBackend>>> {
+        match id {
+            BlockHashOrNumber::Hash(hash) => self.remote_for_hash(hash),
+            BlockHashOrNumber::Number(number) => Ok(self.remote_for(number)),
+        }
+    }
+
+    /// Layers the fork under the local state at `block`.
+    fn with_fork(
+        &self,
+        provider: StateProviderBox,
+        block: BlockNumber,
+    ) -> ProviderResult<StateProviderBox> {
+        match &self.fork {
+            Some(fork) => {
+                let writes = LocalWriteIndex {
+                    db: self.inner.database_provider_ro()?,
+                    in_memory: self.inner.canonical_in_memory_state(),
+                };
+                Ok(Box::new(ForkStateProvider::new(
+                    fork.clone(),
+                    Some((provider, Box::new(writes))),
+                    block,
+                )?))
+            }
+            None => Ok(provider),
+        }
+    }
+
+    /// Returns the remote state at `block`, which is below the fork block.
+    fn remote_state(
+        &self,
+        fork: &Arc<ForkBackend>,
+        block: BlockNumber,
+    ) -> ProviderResult<StateProviderBox> {
+        Ok(Box::new(ForkStateProvider::new(fork.clone(), None, block)?))
+    }
+
+    /// Splits a block range into the part below the fork block and the local part.
+    fn split_range(
+        &self,
+        range: impl RangeBounds<BlockNumber>,
+    ) -> (Option<RangeInclusive<BlockNumber>>, RangeInclusive<BlockNumber>) {
+        let start = match range.start_bound() {
+            std::ops::Bound::Included(start) => *start,
+            std::ops::Bound::Excluded(start) => start.saturating_add(1),
+            std::ops::Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            std::ops::Bound::Included(end) => *end,
+            std::ops::Bound::Excluded(end) => end.saturating_sub(1),
+            std::ops::Bound::Unbounded => u64::MAX,
+        };
+        match &self.fork {
+            Some(fork) if fork.predates_fork(start) => {
+                let fork_block = fork.block_number();
+                let remote_end = end.min(fork_block - 1);
+                (Some(start..=remote_end), fork_block.max(start)..=end)
+            }
+            _ => (None, start..=end),
+        }
     }
 
     /// Rewinds the canonical chain to the given header.
@@ -103,6 +211,51 @@ impl<N: ProviderNodeTypes> AnvilProvider<N> {
         // they learn about a reorg.
         let reorg = NewCanonicalChain::Reorg { new: vec![target], old };
         in_memory.notify_canon_state(reorg.to_chain_notification());
+        Ok(())
+    }
+
+    /// Copies the remote state read since the last block into the local database.
+    ///
+    /// The engine validates blocks against the local database, so the remote accounts, slots, and
+    /// bytecodes the block builder read must be local before the engine executes the block. The
+    /// copies get the fork block as their history entry, so reads treat them as local state from
+    /// the fork block on. Local values win: a key the local chain already wrote is left alone.
+    pub fn materialize_fork_reads(&self) -> ProviderResult<()> {
+        let Some(fork) = &self.fork else { return Ok(()) };
+        let reads = fork.take_reads();
+        if reads.is_empty() {
+            return Ok(());
+        }
+        let fork_block = fork.block_number();
+        let provider = self.inner.database_provider_rw()?;
+        let tx = provider.tx_ref();
+
+        let mut account_history = Vec::new();
+        for (address, account) in reads.accounts {
+            if tx.get::<tables::PlainAccountState>(address)?.is_some() {
+                continue;
+            }
+            tx.put::<tables::PlainAccountState>(address, account)?;
+            account_history.push((address, [fork_block]));
+        }
+        for (hash, code) in reads.codes {
+            if tx.get::<tables::Bytecodes>(hash)?.is_none() {
+                tx.put::<tables::Bytecodes>(hash, code)?;
+            }
+        }
+        let mut storage_history = Vec::new();
+        let mut cursor = tx.cursor_dup_write::<tables::PlainStorageState>()?;
+        for ((address, slot), value) in reads.storage {
+            if cursor.seek_by_key_subkey(address, slot)?.is_some_and(|entry| entry.key == slot) {
+                continue;
+            }
+            cursor.upsert(address, &StorageEntry::new(slot, value))?;
+            storage_history.push(((address, slot), [fork_block]));
+        }
+        drop(cursor);
+        provider.insert_account_history_index(account_history)?;
+        provider.insert_storage_history_index(storage_history)?;
+        provider.commit()?;
         Ok(())
     }
 
@@ -168,23 +321,23 @@ impl<N: ProviderNodeTypes> AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> NodePrimitivesProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> NodePrimitivesProvider for AnvilProvider<N> {
     type Primitives = N::Primitives;
 }
 
-impl<N: ProviderNodeTypes> BalProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BalProvider for AnvilProvider<N> {
     fn bal_store(&self) -> &BalStoreHandle {
         self.inner.bal_store()
     }
 }
 
-impl<N: ProviderNodeTypes> StateRangeProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StateRangeProviderFactory for AnvilProvider<N> {
     fn state_range_provider(&self, state_root: B256) -> ProviderResult<Option<StateRangeView>> {
         self.inner.state_range_provider(state_root)
     }
 }
 
-impl<N: ProviderNodeTypes> DatabaseProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> DatabaseProviderFactory for AnvilProvider<N> {
     type DB = N::DB;
     type Provider = <BlockchainProvider<N> as DatabaseProviderFactory>::Provider;
     type ProviderRW = <BlockchainProvider<N> as DatabaseProviderFactory>::ProviderRW;
@@ -198,7 +351,7 @@ impl<N: ProviderNodeTypes> DatabaseProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StaticFileProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StaticFileProviderFactory for AnvilProvider<N> {
     fn static_file_provider(&self) -> StaticFileProvider<Self::Primitives> {
         self.inner.static_file_provider()
     }
@@ -212,7 +365,7 @@ impl<N: ProviderNodeTypes> StaticFileProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> RocksDBProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> RocksDBProviderFactory for AnvilProvider<N> {
     fn rocksdb_provider(&self) -> RocksDBProvider {
         self.inner.rocksdb_provider()
     }
@@ -226,50 +379,99 @@ impl<N: ProviderNodeTypes> RocksDBProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> HeaderProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> HeaderProvider for AnvilProvider<N> {
     type Header = HeaderTy<N>;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
-        self.inner.header(block_hash)
+        if let Some(header) = self.inner.header(block_hash)? {
+            return Ok(Some(header));
+        }
+        match &self.fork {
+            Some(fork) => fork.header_by_hash(block_hash),
+            None => Ok(None),
+        }
     }
 
     fn header_by_number(&self, num: BlockNumber) -> ProviderResult<Option<Self::Header>> {
-        self.inner.header_by_number(num)
+        match self.remote_for(num) {
+            Some(fork) => fork.header_by_number(num),
+            None => self.inner.header_by_number(num),
+        }
     }
 
     fn headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<Self::Header>> {
-        self.inner.headers_range(range)
+        let (remote, local) = self.split_range(range);
+        let mut headers = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                headers.extend(fork.header_by_number(number)?);
+            }
+        }
+        if !local.is_empty() {
+            headers.extend(self.inner.headers_range(local)?);
+        }
+        Ok(headers)
     }
 
     fn sealed_header(
         &self,
         number: BlockNumber,
     ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
-        self.inner.sealed_header(number)
+        match self.remote_for(number) {
+            Some(fork) => fork.sealed_header(number),
+            None => self.inner.sealed_header(number),
+        }
     }
 
     fn sealed_headers_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
-        self.inner.sealed_headers_range(range)
+        let (remote, local) = self.split_range(range);
+        let mut headers = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                headers.extend(fork.sealed_header(number)?);
+            }
+        }
+        if !local.is_empty() {
+            headers.extend(self.inner.sealed_headers_range(local)?);
+        }
+        Ok(headers)
     }
 
     fn sealed_headers_while(
         &self,
         range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
+        mut predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
     ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
-        self.inner.sealed_headers_while(range, predicate)
+        let (remote, local) = self.split_range(range);
+        let mut headers = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                let Some(header) = fork.sealed_header(number)? else { return Ok(headers) };
+                if !predicate(&header) {
+                    return Ok(headers);
+                }
+                headers.push(header);
+            }
+        }
+        if !local.is_empty() {
+            headers.extend(self.inner.sealed_headers_while(local, predicate)?);
+        }
+        Ok(headers)
     }
 }
 
-impl<N: ProviderNodeTypes> BlockHashReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BlockHashReader for AnvilProvider<N> {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
-        self.inner.block_hash(number)
+        match self.remote_for(number) {
+            Some(fork) => fork.block_hash_by_number(number),
+            None => self.inner.block_hash(number),
+        }
     }
 
     fn canonical_hashes_range(
@@ -277,11 +479,21 @@ impl<N: ProviderNodeTypes> BlockHashReader for AnvilProvider<N> {
         start: BlockNumber,
         end: BlockNumber,
     ) -> ProviderResult<Vec<B256>> {
-        self.inner.canonical_hashes_range(start, end)
+        let (remote, local) = self.split_range(start..end);
+        let mut hashes = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                hashes.extend(fork.block_hash_by_number(number)?);
+            }
+        }
+        if !local.is_empty() {
+            hashes.extend(self.inner.canonical_hashes_range(*local.start(), *local.end() + 1)?);
+        }
+        Ok(hashes)
     }
 }
 
-impl<N: ProviderNodeTypes> BlockNumReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BlockNumReader for AnvilProvider<N> {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         self.inner.chain_info()
     }
@@ -295,15 +507,24 @@ impl<N: ProviderNodeTypes> BlockNumReader for AnvilProvider<N> {
     }
 
     fn earliest_block_number(&self) -> ProviderResult<BlockNumber> {
+        if self.fork.is_some() {
+            return Ok(0);
+        }
         self.inner.earliest_block_number()
     }
 
     fn block_number(&self, hash: B256) -> ProviderResult<Option<BlockNumber>> {
-        self.inner.block_number(hash)
+        if let Some(number) = self.inner.block_number(hash)? {
+            return Ok(Some(number));
+        }
+        match &self.fork {
+            Some(fork) => fork.block_number_by_hash(hash),
+            None => Ok(None),
+        }
     }
 }
 
-impl<N: ProviderNodeTypes> BlockIdReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BlockIdReader for AnvilProvider<N> {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         self.inner.pending_block_num_hash()
     }
@@ -319,7 +540,7 @@ impl<N: ProviderNodeTypes> BlockIdReader for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
     type Block = BlockTy<N>;
 
     fn find_block_by_hash(
@@ -327,7 +548,13 @@ impl<N: ProviderNodeTypes> BlockReader for AnvilProvider<N> {
         hash: B256,
         source: BlockSource,
     ) -> ProviderResult<Option<Self::Block>> {
-        self.inner.find_block_by_hash(hash, source)
+        if let Some(block) = self.inner.find_block_by_hash(hash, source)? {
+            return Ok(Some(block));
+        }
+        match self.remote_for_hash(hash)? {
+            Some(fork) => Ok(fork.block_by_hash(hash)?.map(|block| (*block).clone().into_block())),
+            None => Ok(None),
+        }
     }
 
     fn find_sealed_or_recovered_block(
@@ -335,11 +562,22 @@ impl<N: ProviderNodeTypes> BlockReader for AnvilProvider<N> {
         hash: B256,
         source: BlockSource,
     ) -> ProviderResult<Option<SealedOrRecoveredBlock<Self::Block>>> {
-        self.inner.find_sealed_or_recovered_block(hash, source)
+        if let Some(block) = self.inner.find_sealed_or_recovered_block(hash, source)? {
+            return Ok(Some(block));
+        }
+        match self.remote_for_hash(hash)? {
+            Some(fork) => Ok(fork
+                .recovered_block(hash.into())?
+                .map(|block| SealedOrRecoveredBlock::Recovered(Arc::new(block)))),
+            None => Ok(None),
+        }
     }
 
     fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
-        self.inner.block(id)
+        match self.remote_for_id(id)? {
+            Some(fork) => Ok(fork.block(id)?.map(|block| (*block).clone().into_block())),
+            None => self.inner.block(id),
+        }
     }
 
     fn pending_block(&self) -> ProviderResult<Option<Arc<RecoveredBlock<Self::Block>>>> {
@@ -357,7 +595,10 @@ impl<N: ProviderNodeTypes> BlockReader for AnvilProvider<N> {
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
     ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
-        self.inner.recovered_block(id, transaction_kind)
+        match self.remote_for_id(id)? {
+            Some(fork) => fork.recovered_block(id),
+            None => self.inner.recovered_block(id, transaction_kind),
+        }
     }
 
     fn sealed_block_with_senders(
@@ -365,73 +606,144 @@ impl<N: ProviderNodeTypes> BlockReader for AnvilProvider<N> {
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
     ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
-        self.inner.sealed_block_with_senders(id, transaction_kind)
+        match self.remote_for_id(id)? {
+            Some(fork) => fork.recovered_block(id),
+            None => self.inner.sealed_block_with_senders(id, transaction_kind),
+        }
     }
 
     fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
-        self.inner.block_range(range)
+        let (remote, local) = self.split_range(range);
+        let mut blocks = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                blocks.extend(
+                    fork.block_by_number(number)?.map(|block| (*block).clone().into_block()),
+                );
+            }
+        }
+        if !local.is_empty() {
+            blocks.extend(self.inner.block_range(local)?);
+        }
+        Ok(blocks)
     }
 
     fn block_with_senders_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
-        self.inner.block_with_senders_range(range)
+        self.recovered_block_range(range)
     }
 
     fn recovered_block_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
-        self.inner.recovered_block_range(range)
+        let (remote, local) = self.split_range(range);
+        let mut blocks = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                blocks.extend(fork.recovered_block(number.into())?);
+            }
+        }
+        if !local.is_empty() {
+            blocks.extend(self.inner.recovered_block_range(local)?);
+        }
+        Ok(blocks)
     }
 
     fn block_by_transaction_id(&self, id: TxNumber) -> ProviderResult<Option<BlockNumber>> {
+        if let Some((block, _)) = decode_remote_tx_number(id) {
+            return Ok(Some(block));
+        }
         self.inner.block_by_transaction_id(id)
     }
 }
 
-impl<N: ProviderNodeTypes> TransactionsProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
     type Transaction = TxTy<N>;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
-        self.inner.transaction_id(tx_hash)
+        if let Some(id) = self.inner.transaction_id(tx_hash)? {
+            return Ok(Some(id));
+        }
+        match &self.fork {
+            Some(fork) => Ok(fork
+                .transaction_by_hash_with_meta(tx_hash)?
+                .map(|(_, meta)| remote_tx_number(meta.block_number, meta.index))),
+            None => Ok(None),
+        }
     }
 
     fn transaction_by_id(&self, id: TxNumber) -> ProviderResult<Option<Self::Transaction>> {
-        self.inner.transaction_by_id(id)
+        match (decode_remote_tx_number(id), &self.fork) {
+            (Some((block, index)), Some(fork)) => Ok(fork
+                .block_by_number(block)?
+                .and_then(|block| block.body().transactions.get(index as usize).cloned())),
+            _ => self.inner.transaction_by_id(id),
+        }
     }
 
     fn transaction_by_id_unhashed(
         &self,
         id: TxNumber,
     ) -> ProviderResult<Option<Self::Transaction>> {
+        if decode_remote_tx_number(id).is_some() {
+            return self.transaction_by_id(id);
+        }
         self.inner.transaction_by_id_unhashed(id)
     }
 
     fn transaction_by_hash(&self, hash: TxHash) -> ProviderResult<Option<Self::Transaction>> {
-        self.inner.transaction_by_hash(hash)
+        if let Some(tx) = self.inner.transaction_by_hash(hash)? {
+            return Ok(Some(tx));
+        }
+        match &self.fork {
+            Some(fork) => Ok(fork.transaction_by_hash_with_meta(hash)?.map(|(tx, _)| tx)),
+            None => Ok(None),
+        }
     }
 
     fn transaction_by_hash_with_meta(
         &self,
         tx_hash: TxHash,
     ) -> ProviderResult<Option<(Self::Transaction, TransactionMeta)>> {
-        self.inner.transaction_by_hash_with_meta(tx_hash)
+        if let Some(tx) = self.inner.transaction_by_hash_with_meta(tx_hash)? {
+            return Ok(Some(tx));
+        }
+        match &self.fork {
+            Some(fork) => fork.transaction_by_hash_with_meta(tx_hash),
+            None => Ok(None),
+        }
     }
 
     fn transactions_by_block(
         &self,
         id: BlockHashOrNumber,
     ) -> ProviderResult<Option<Vec<Self::Transaction>>> {
-        self.inner.transactions_by_block(id)
+        match self.remote_for_id(id)? {
+            Some(fork) => Ok(fork.block(id)?.map(|block| block.body().transactions.clone())),
+            None => self.inner.transactions_by_block(id),
+        }
     }
 
     fn transactions_by_block_range(
         &self,
         range: impl RangeBounds<BlockNumber>,
     ) -> ProviderResult<Vec<Vec<Self::Transaction>>> {
-        self.inner.transactions_by_block_range(range)
+        let (remote, local) = self.split_range(range);
+        let mut txs = Vec::new();
+        if let (Some(remote), Some(fork)) = (remote, &self.fork) {
+            for number in remote {
+                txs.extend(
+                    fork.block_by_number(number)?.map(|block| block.body().transactions.clone()),
+                );
+            }
+        }
+        if !local.is_empty() {
+            txs.extend(self.inner.transactions_by_block_range(local)?);
+        }
+        Ok(txs)
     }
 
     fn transactions_by_tx_range(
@@ -449,26 +761,53 @@ impl<N: ProviderNodeTypes> TransactionsProvider for AnvilProvider<N> {
     }
 
     fn transaction_sender(&self, id: TxNumber) -> ProviderResult<Option<Address>> {
-        self.inner.transaction_sender(id)
+        match (decode_remote_tx_number(id), &self.fork) {
+            (Some((block, index)), Some(fork)) => Ok(fork
+                .recovered_block(block.into())?
+                .and_then(|block| block.senders().get(index as usize).copied())),
+            _ => self.inner.transaction_sender(id),
+        }
     }
 }
 
-impl<N: ProviderNodeTypes> ReceiptProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> ReceiptProvider for AnvilProvider<N> {
     type Receipt = ReceiptTy<N>;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
-        self.inner.receipt(id)
+        match (decode_remote_tx_number(id), &self.fork) {
+            (Some((block, index)), Some(fork)) => {
+                let Some(hash) = fork.block_hash_by_number(block)? else { return Ok(None) };
+                Ok(fork
+                    .receipts_by_block(hash)?
+                    .and_then(|receipts| receipts.get(index as usize).cloned()))
+            }
+            _ => self.inner.receipt(id),
+        }
     }
 
     fn receipt_by_hash(&self, hash: TxHash) -> ProviderResult<Option<Self::Receipt>> {
-        self.inner.receipt_by_hash(hash)
+        if let Some(receipt) = self.inner.receipt_by_hash(hash)? {
+            return Ok(Some(receipt));
+        }
+        match &self.fork {
+            Some(fork) => fork.receipt_by_hash(hash),
+            None => Ok(None),
+        }
     }
 
     fn receipts_by_block(
         &self,
         block: BlockHashOrNumber,
     ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
-        self.inner.receipts_by_block(block)
+        match self.remote_for_id(block)? {
+            Some(fork) => {
+                let Some(hash) = fork.block(block)?.map(|block| block.hash()) else {
+                    return Ok(None);
+                };
+                Ok(fork.receipts_by_block(hash)?.map(|receipts| (*receipts).clone()))
+            }
+            None => self.inner.receipts_by_block(block),
+        }
     }
 
     fn receipts_by_tx_range(
@@ -482,33 +821,65 @@ impl<N: ProviderNodeTypes> ReceiptProvider for AnvilProvider<N> {
         &self,
         block_range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
-        self.inner.receipts_by_block_range(block_range)
+        let (remote, local) = self.split_range(block_range);
+        let mut receipts = Vec::new();
+        if let Some(remote) = remote {
+            for number in remote {
+                receipts.extend(self.receipts_by_block(number.into())?);
+            }
+        }
+        if !local.is_empty() {
+            receipts.extend(self.inner.receipts_by_block_range(local)?);
+        }
+        Ok(receipts)
     }
 }
 
-impl<N: ProviderNodeTypes> ReceiptProviderIdExt for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> ReceiptProviderIdExt for AnvilProvider<N> {
     fn receipts_by_block_id(&self, block: BlockId) -> ProviderResult<Option<Vec<Self::Receipt>>> {
-        self.inner.receipts_by_block_id(block)
+        match block {
+            BlockId::Hash(hash) => self.receipts_by_block(hash.block_hash.into()),
+            BlockId::Number(number) => match self.convert_block_number(number)? {
+                Some(number) => self.receipts_by_block(number.into()),
+                None => Ok(None),
+            },
+        }
     }
 }
 
-impl<N: ProviderNodeTypes> BlockBodyIndicesProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BlockBodyIndicesProvider for AnvilProvider<N> {
     fn block_body_indices(
         &self,
         number: BlockNumber,
     ) -> ProviderResult<Option<StoredBlockBodyIndices>> {
-        self.inner.block_body_indices(number)
+        match self.remote_for(number) {
+            Some(fork) => Ok(fork.block_by_number(number)?.map(|block| StoredBlockBodyIndices {
+                first_tx_num: remote_tx_number(number, 0),
+                tx_count: block.body().transactions.len() as u64,
+            })),
+            None => self.inner.block_body_indices(number),
+        }
     }
 
     fn block_body_indices_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<Vec<StoredBlockBodyIndices>> {
-        self.inner.block_body_indices_range(range)
+        let (remote, local) = self.split_range(range);
+        let mut indices = Vec::new();
+        if let Some(remote) = remote {
+            for number in remote {
+                indices.extend(self.block_body_indices(number)?);
+            }
+        }
+        if !local.is_empty() {
+            indices.extend(self.inner.block_body_indices_range(local)?);
+        }
+        Ok(indices)
     }
 }
 
-impl<N: ProviderNodeTypes> StageCheckpointReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StageCheckpointReader for AnvilProvider<N> {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.inner.get_stage_checkpoint(id)
     }
@@ -522,7 +893,7 @@ impl<N: ProviderNodeTypes> StageCheckpointReader for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> PruneCheckpointReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> PruneCheckpointReader for AnvilProvider<N> {
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -535,7 +906,7 @@ impl<N: ProviderNodeTypes> PruneCheckpointReader for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ChainSpecProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> ChainSpecProvider for AnvilProvider<N> {
     type ChainSpec = N::ChainSpec;
 
     fn chain_spec(&self) -> Arc<N::ChainSpec> {
@@ -543,11 +914,12 @@ impl<N: ProviderNodeTypes> ChainSpecProvider for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StateProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
     type Primitives = N::Primitives;
 
     fn latest(&self) -> ProviderResult<StateProviderBox> {
-        Ok(self.overlay(self.inner.latest()?))
+        let head = self.inner.best_block_number()?;
+        Ok(self.overlay(self.with_fork(self.inner.latest()?, head)?))
     }
 
     fn state_with_block_appended(
@@ -555,7 +927,9 @@ impl<N: ProviderNodeTypes> StateProviderFactory for AnvilProvider<N> {
         parent_hash: BlockHash,
         block: ExecutedBlock<N::Primitives>,
     ) -> ProviderResult<StateProviderBox> {
-        self.inner.state_with_block_appended(parent_hash, block)
+        let number = block.recovered_block().number();
+        let provider = self.inner.state_with_block_appended(parent_hash, block)?;
+        self.with_fork(provider, number)
     }
 
     fn state_by_block_number_or_tag(
@@ -565,44 +939,69 @@ impl<N: ProviderNodeTypes> StateProviderFactory for AnvilProvider<N> {
         match number_or_tag {
             BlockNumberOrTag::Latest => self.latest(),
             BlockNumberOrTag::Pending => self.pending(),
-            BlockNumberOrTag::Number(number) => {
-                let provider = self.inner.state_by_block_number_or_tag(number_or_tag)?;
-                self.overlay_if_head_number(number, provider)
+            BlockNumberOrTag::Number(number) => self.history_by_block_number(number),
+            BlockNumberOrTag::Earliest => {
+                self.history_by_block_number(self.earliest_block_number()?)
             }
-            BlockNumberOrTag::Finalized | BlockNumberOrTag::Safe | BlockNumberOrTag::Earliest => {
-                self.inner.state_by_block_number_or_tag(number_or_tag)
+            BlockNumberOrTag::Finalized | BlockNumberOrTag::Safe => {
+                let number = self
+                    .convert_block_number(number_or_tag)?
+                    .ok_or(ProviderError::FinalizedBlockNotFound)?;
+                self.history_by_block_number(number)
             }
         }
     }
 
     fn history_by_block_number(&self, block: BlockNumber) -> ProviderResult<StateProviderBox> {
-        let provider = self.inner.history_by_block_number(block)?;
+        if let Some(fork) = self.remote_for(block) {
+            return self.remote_state(fork, block);
+        }
+        let provider = self.with_fork(self.inner.history_by_block_number(block)?, block)?;
         self.overlay_if_head_number(block, provider)
     }
 
     fn history_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
-        let provider = self.inner.history_by_block_hash(block)?;
+        if let Some(fork) = self.remote_for_hash(block)? {
+            let number =
+                fork.block_number_by_hash(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
+            return self.remote_state(fork, number);
+        }
+        let number =
+            self.inner.block_number(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
+        let provider = self.with_fork(self.inner.history_by_block_hash(block)?, number)?;
         self.overlay_if_head_hash(block, provider)
     }
 
     fn state_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
-        self.inner.state_by_block_hash(block)
+        if let Some(fork) = self.remote_for_hash(block)? {
+            let number =
+                fork.block_number_by_hash(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
+            return self.remote_state(fork, number);
+        }
+        let number =
+            self.inner.block_number(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
+        self.with_fork(self.inner.state_by_block_hash(block)?, number)
     }
 
     fn pending(&self) -> ProviderResult<StateProviderBox> {
-        Ok(self.overlay(self.inner.pending()?))
+        let pending = self.inner.best_block_number()? + 1;
+        Ok(self.overlay(self.with_fork(self.inner.pending()?, pending)?))
     }
 
     fn pending_state_by_hash(&self, block_hash: B256) -> ProviderResult<Option<StateProviderBox>> {
-        self.inner.pending_state_by_hash(block_hash)
+        let Some(provider) = self.inner.pending_state_by_hash(block_hash)? else { return Ok(None) };
+        let pending = self.inner.best_block_number()? + 1;
+        Ok(Some(self.with_fork(provider, pending)?))
     }
 
     fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
-        Ok(self.inner.maybe_pending()?.map(|provider| self.overlay(provider)))
+        let Some(provider) = self.inner.maybe_pending()? else { return Ok(None) };
+        let pending = self.inner.best_block_number()? + 1;
+        Ok(Some(self.overlay(self.with_fork(provider, pending)?)))
     }
 }
 
-impl<N: ProviderNodeTypes> CanonChainTracker for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> CanonChainTracker for AnvilProvider<N> {
     type Header = HeaderTy<N>;
 
     fn on_forkchoice_update_received(&self, update: &ForkchoiceState) {
@@ -626,38 +1025,64 @@ impl<N: ProviderNodeTypes> CanonChainTracker for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> BlockReaderIdExt for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> BlockReaderIdExt for AnvilProvider<N> {
     fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
-        self.inner.block_by_id(id)
+        match id {
+            BlockId::Hash(hash) => self.block(hash.block_hash.into()),
+            BlockId::Number(number) => match self.convert_block_number(number)? {
+                Some(number) => self.block(number.into()),
+                None => Ok(None),
+            },
+        }
     }
 
     fn header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
     ) -> ProviderResult<Option<Self::Header>> {
-        self.inner.header_by_number_or_tag(id)
+        Ok(self.sealed_header_by_number_or_tag(id)?.map(|header| header.into_header()))
     }
 
     fn sealed_header_by_number_or_tag(
         &self,
         id: BlockNumberOrTag,
     ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
-        self.inner.sealed_header_by_number_or_tag(id)
+        match id {
+            BlockNumberOrTag::Number(number) if self.remote_for(number).is_some() => {
+                self.sealed_header(number)
+            }
+            BlockNumberOrTag::Earliest if self.fork.is_some() => self.sealed_header(0),
+            _ => self.inner.sealed_header_by_number_or_tag(id),
+        }
     }
 
     fn sealed_header_by_id(
         &self,
         id: BlockId,
     ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
-        self.inner.sealed_header_by_id(id)
+        match id {
+            BlockId::Hash(hash) => {
+                let hash = hash.block_hash;
+                if let Some(header) = self.inner.sealed_header_by_id(id)? {
+                    return Ok(Some(header));
+                }
+                match &self.fork {
+                    Some(fork) => {
+                        Ok(fork.block_by_hash(hash)?.map(|block| block.sealed_header().clone()))
+                    }
+                    None => Ok(None),
+                }
+            }
+            BlockId::Number(number) => self.sealed_header_by_number_or_tag(number),
+        }
     }
 
     fn header_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Header>> {
-        self.inner.header_by_id(id)
+        Ok(self.sealed_header_by_id(id)?.map(|header| header.into_header()))
     }
 }
 
-impl<N: ProviderNodeTypes> CanonStateSubscriptions for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> CanonStateSubscriptions for AnvilProvider<N> {
     type Primitives = N::Primitives;
 
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives> {
@@ -665,7 +1090,7 @@ impl<N: ProviderNodeTypes> CanonStateSubscriptions for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ForkChoiceSubscriptions for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> ForkChoiceSubscriptions for AnvilProvider<N> {
     type Header = HeaderTy<N>;
 
     fn subscribe_safe_block(&self) -> ForkChoiceNotifications<Self::Header> {
@@ -677,13 +1102,13 @@ impl<N: ProviderNodeTypes> ForkChoiceSubscriptions for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> PersistedBlockSubscriptions for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> PersistedBlockSubscriptions for AnvilProvider<N> {
     fn subscribe_persisted_block(&self) -> PersistedBlockNotifications {
         self.inner.subscribe_persisted_block()
     }
 }
 
-impl<N: ProviderNodeTypes> StorageChangeSetReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StorageChangeSetReader for AnvilProvider<N> {
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
@@ -708,7 +1133,7 @@ impl<N: ProviderNodeTypes> StorageChangeSetReader for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> ChangeSetReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> ChangeSetReader for AnvilProvider<N> {
     fn account_block_changeset(
         &self,
         block_number: BlockNumber,
@@ -732,7 +1157,7 @@ impl<N: ProviderNodeTypes> ChangeSetReader for AnvilProvider<N> {
     }
 }
 
-impl<N: ProviderNodeTypes> StateReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StateReader for AnvilProvider<N> {
     type Receipt = ReceiptTy<N>;
 
     fn get_state(
@@ -740,5 +1165,86 @@ impl<N: ProviderNodeTypes> StateReader for AnvilProvider<N> {
         block: BlockNumber,
     ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
         self.inner.get_state(block)
+    }
+}
+
+/// Answers which state keys the local chain wrote, from reth's history index for persisted blocks
+/// and the bundle states of the in-memory blocks.
+struct LocalWriteIndex<DB, N: reth_ethereum::primitives::NodePrimitives> {
+    db: DB,
+    in_memory: CanonicalInMemoryState<N>,
+}
+
+impl<DB: DBProvider, N: reth_ethereum::primitives::NodePrimitives> LocalWriteIndex<DB, N> {
+    /// Returns the in-memory blocks at or below `block`, including the pending block.
+    fn bundles(&self, block: u64) -> Vec<Arc<revm::database::BundleState>> {
+        let mut bundles: Vec<_> = self
+            .in_memory
+            .canonical_chain()
+            .filter(|state| state.number() <= block)
+            .map(|state| Arc::new(state.block_ref().execution_output.state.clone()))
+            .collect();
+        if let Some(pending) = self.in_memory.pending_state()
+            && pending.number() <= block
+        {
+            bundles.push(Arc::new(pending.block_ref().execution_output.state.clone()));
+        }
+        bundles
+    }
+
+    /// Returns the first block in which the persisted history saw `address` change.
+    fn first_account_change(&self, address: &Address) -> ProviderResult<Option<u64>> {
+        let mut cursor = self.db.tx_ref().cursor_read::<tables::AccountsHistory>()?;
+        Ok(cursor
+            .seek(ShardedKey::new(*address, 0))?
+            .filter(|(key, _)| key.key == *address)
+            .and_then(|(_, blocks)| blocks.0.min()))
+    }
+
+    /// Returns the first block in which the persisted history saw `slot` of `address` change.
+    fn first_slot_change(
+        &self,
+        address: &Address,
+        slot: &StorageKey,
+    ) -> ProviderResult<Option<u64>> {
+        let mut cursor = self.db.tx_ref().cursor_read::<tables::StoragesHistory>()?;
+        Ok(cursor
+            .seek(StorageShardedKey::new(*address, *slot, 0))?
+            .filter(|(key, _)| key.address == *address && key.sharded_key.key == *slot)
+            .and_then(|(_, blocks)| blocks.0.min()))
+    }
+}
+
+impl<DB: DBProvider + Send + Sync, N: reth_ethereum::primitives::NodePrimitives> LocalWrites
+    for LocalWriteIndex<DB, N>
+{
+    fn account_is_local(&self, address: &Address, block: u64) -> ProviderResult<bool> {
+        if self.first_account_change(address)?.is_some_and(|first| first <= block) {
+            return Ok(true);
+        }
+        Ok(self.bundles(block).iter().any(|bundle| {
+            bundle
+                .state
+                .get(address)
+                .is_some_and(|account| account.is_info_changed() || account.was_destroyed())
+        }))
+    }
+
+    fn slot_is_local(
+        &self,
+        address: &Address,
+        slot: &StorageKey,
+        block: u64,
+    ) -> ProviderResult<bool> {
+        if self.first_slot_change(address, slot)?.is_some_and(|first| first <= block) {
+            return Ok(true);
+        }
+        let slot = alloy_primitives::U256::from_be_bytes(slot.0);
+        Ok(self.bundles(block).iter().any(|bundle| {
+            bundle.state.get(address).is_some_and(|account| {
+                account.was_destroyed()
+                    || account.storage.get(&slot).is_some_and(|value| value.is_changed())
+            })
+        }))
     }
 }

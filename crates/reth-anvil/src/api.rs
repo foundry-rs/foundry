@@ -1,5 +1,6 @@
 use crate::{
     block_env::BlockEnvOverrides,
+    fork::ForkBackend,
     impersonation::ImpersonationState,
     mining::MiningController,
     snapshot::{Snapshot, SnapshotManager},
@@ -11,7 +12,9 @@ use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
 use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types::anvil::{Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo};
+use alloy_rpc_types::anvil::{
+    ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
+};
 use alloy_rpc_types_eth::{
     Block, TransactionRequest,
     state::{AccountOverride, StateOverridesBuilder},
@@ -92,9 +95,14 @@ pub trait AnvilApi {
     #[method(name = "reorg")]
     async fn anvil_reorg(&self, options: ReorgOptions) -> RpcResult<()>;
 
-    /// Resets the chain to genesis. Forking is not supported yet.
+    /// Resets the chain to genesis, or to the fork block when forking. Changing the fork endpoint
+    /// or block is not supported yet.
     #[method(name = "reset", aliases = ["hardhat_reset"])]
-    async fn anvil_reset(&self, forking: Option<serde_json::Value>) -> RpcResult<()>;
+    async fn anvil_reset(&self, forking: Option<Forking>) -> RpcResult<()>;
+
+    /// Replaces the fork endpoint.
+    #[method(name = "setRpcUrl")]
+    async fn anvil_set_rpc_url(&self, url: String) -> RpcResult<()>;
 
     /// Sets the minimum gas price. Rejected while EIP-1559 is active, as in anvil.
     #[method(name = "setMinGasPrice", aliases = ["hardhat_setMinGasPrice"])]
@@ -246,6 +254,7 @@ pub struct AnvilRpc<Pool, Provider, Eth> {
     chain_spec: Arc<ChainSpec>,
     instance_id: Arc<RwLock<B256>>,
     logging_enabled: Arc<AtomicBool>,
+    fork: Option<Arc<ForkBackend>>,
     pool: Pool,
     provider: Provider,
     eth: Eth,
@@ -263,6 +272,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
         snapshots: SnapshotManager,
         chain_spec: Arc<ChainSpec>,
         instance_id: B256,
+        fork: Option<Arc<ForkBackend>>,
         pool: Pool,
         provider: Provider,
         eth: Eth,
@@ -277,6 +287,7 @@ impl<Pool, Provider, Eth> AnvilRpc<Pool, Provider, Eth> {
             chain_spec,
             instance_id: Arc::new(RwLock::new(instance_id)),
             logging_enabled: Arc::new(AtomicBool::new(true)),
+            fork,
             pool,
             provider,
             eth,
@@ -578,11 +589,22 @@ where
         result
     }
 
-    async fn anvil_reset(&self, forking: Option<serde_json::Value>) -> RpcResult<()> {
-        if forking.is_some_and(|forking| !forking.is_null()) {
-            return Err(invalid_params("forking is not supported yet"));
+    async fn anvil_reset(&self, forking: Option<Forking>) -> RpcResult<()> {
+        if let Some(forking) = forking {
+            let same_url = forking
+                .json_rpc_url
+                .as_ref()
+                .is_none_or(|url| self.fork.as_ref().is_some_and(|fork| fork.url() == *url));
+            let same_block = forking.block_number.is_none_or(|number| {
+                self.fork.as_ref().is_some_and(|fork| fork.block_number() == number)
+            });
+            if !same_url || !same_block {
+                return Err(invalid_params(
+                    "resetting to a different fork endpoint or block is not supported yet",
+                ));
+            }
         }
-        let genesis = self.sealed_header(0)?;
+        let genesis = self.sealed_header(self.chain_spec.genesis_header().number)?;
         self.rewind_to(&genesis).await?;
         let hashes = self.pool.all_transaction_hashes();
         if !hashes.is_empty() {
@@ -596,6 +618,13 @@ where
         self.block_env.restore(Default::default());
         *self.instance_id.write() = B256::random();
         Ok(())
+    }
+
+    async fn anvil_set_rpc_url(&self, url: String) -> RpcResult<()> {
+        let Some(fork) = &self.fork else {
+            return Err(invalid_params("anvil_setRpcUrl requires a forked node"));
+        };
+        fork.set_rpc_url(url).map_err(|error| internal_error(error.to_string()))
     }
 
     async fn anvil_set_min_gas_price(&self, _gas_price: U256) -> RpcResult<()> {
@@ -724,7 +753,13 @@ where
                 gas_limit: latest.header.gas_limit,
                 gas_price: gas_price.to(),
             },
-            fork_config: NodeForkConfig::default(),
+            fork_config: self.fork.as_ref().map_or_else(NodeForkConfig::default, |fork| {
+                NodeForkConfig {
+                    fork_url: Some(fork.url()),
+                    fork_block_number: Some(fork.block_number()),
+                    fork_retry_backoff: Some(fork.settings().backoff.as_millis()),
+                }
+            }),
             network: None,
         })
     }
@@ -740,7 +775,11 @@ where
             instance_id: *self.instance_id.read(),
             latest_block_number: latest.header.number,
             latest_block_hash: latest.header.hash,
-            forked_network: None,
+            forked_network: self.fork.as_ref().map(|fork| ForkedNetwork {
+                chain_id: fork.chain_id(),
+                fork_block_number: fork.block_number(),
+                fork_block_hash: fork.block_hash(),
+            }),
             snapshots: self.snapshots.metadata(),
         })
     }

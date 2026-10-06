@@ -1,6 +1,6 @@
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types::txpool::TxpoolStatus;
+use alloy_rpc_types::{anvil::Forking, txpool::TxpoolStatus};
 use alloy_rpc_types_eth::{Account, Index, Transaction, TransactionReceipt, TransactionRequest};
 use eyre::Result;
 use jsonrpsee::{RpcModule, core::params::ArrayParams};
@@ -111,6 +111,11 @@ impl EthApi {
     /// Impersonates an account.
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
         self.call("anvil_impersonateAccount", params![address]).await
+    }
+
+    /// Resets the chain to genesis, or to the fork block when forking.
+    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
+        self.call("anvil_reset", params![forking]).await
     }
 
     /// Sets the balance of an account.

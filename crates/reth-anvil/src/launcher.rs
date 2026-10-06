@@ -4,7 +4,7 @@
 //! context receives: reth constructs its `BlockchainProvider` directly, and this launcher wraps it
 //! in the [`AnvilProvider`] so anvil state writes reach RPC and pool reads.
 
-use crate::{provider::AnvilProvider, state::SharedAnvilState};
+use crate::{fork::ForkBackend, provider::AnvilProvider, state::SharedAnvilState};
 use alloy_consensus::BlockHeader;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
 use reth_engine_tree::{
@@ -15,6 +15,7 @@ use reth_engine_tree::{
 };
 use reth_engine_util::EngineMessageStreamExt;
 use reth_ethereum::{
+    EthPrimitives,
     chainspec::{EthChainSpec, EthereumHardforks},
     exex::ExExManagerHandle,
     network::{
@@ -65,6 +66,7 @@ pub struct AnvilNodeLauncher {
     engine_tree_config: TreeConfig,
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
+    fork: Option<Arc<ForkBackend>>,
 }
 
 impl AnvilNodeLauncher {
@@ -75,12 +77,14 @@ impl AnvilNodeLauncher {
         engine_tree_config: TreeConfig,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
+        fork: Option<Arc<ForkBackend>>,
     ) -> Self {
         Self {
             ctx: LaunchContext::new(task_executor, data_dir),
             engine_tree_config,
             state,
             slots_in_an_epoch,
+            fork,
         }
     }
 
@@ -89,7 +93,9 @@ impl AnvilNodeLauncher {
         target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB::Components>, AO>>
     where
-        N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
+        N: Node<RethFullAdapter<DB, N>>
+            + NodeTypesForProvider
+            + NodeTypes<Primitives = EthPrimitives>,
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<
                 Types = N,
@@ -100,7 +106,7 @@ impl AnvilNodeLauncher {
         AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>
             + EngineValidatorAddOn<NodeAdapter<T, CB::Components>>,
     {
-        let Self { ctx, engine_tree_config, state, slots_in_an_epoch } = self;
+        let Self { ctx, engine_tree_config, state, slots_in_an_epoch, fork } = self;
         let NodeBuilderWithComponents {
             adapter: NodeTypesAdapter { database },
             rocksdb_provider,
@@ -148,6 +154,7 @@ impl AnvilNodeLauncher {
                     BlockchainProvider::new(provider_factory)?,
                     state,
                     slots_in_an_epoch,
+                    fork,
                 ))
             })?
             .with_components(components_builder, on_component_initialized).await?;
@@ -439,6 +446,7 @@ impl AnvilNodeLauncher {
 
 impl<N, DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for AnvilNodeLauncher
 where
+    N: NodeTypes<Primitives = EthPrimitives>,
     T: FullNodeTypes<Types = N, DB = DB, Provider = AnvilProvider<NodeTypesWithDBAdapter<N, DB>>>,
     N: Node<RethFullAdapter<DB, N>> + NodeTypesForProvider,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,

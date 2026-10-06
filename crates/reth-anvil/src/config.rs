@@ -1,18 +1,23 @@
 use crate::{
+    fork::{ForkGenesisAccount, ForkSettings},
     state_dump::SerializableState,
-    types::{ForkUrl, TransactionOrder},
+    types::{ForkChoice, ForkUrl, TransactionOrder},
 };
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{Address, B256, Bytes, U256, hex, map::HashMap, utils::Unit};
 use alloy_signer::Signer;
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use eyre::{Result, WrapErr};
+use foundry_common::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use foundry_evm_core::constants::{
     DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
 };
 use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
 use rand_08::thread_rng;
-use reth_ethereum::chainspec::{Chain, ChainSpec, ChainSpecBuilder, ForkCondition};
+use reth_ethereum::{
+    chainspec::{Chain, ChainSpec, ChainSpecBuilder, ForkCondition},
+    primitives::SealedHeader,
+};
 use serde_json::{Value, json};
 use std::{
     fmt::Write,
@@ -126,6 +131,28 @@ pub struct NodeConfig {
     pub init_state: Option<SerializableState>,
     /// Fork endpoints.
     pub fork_urls: Vec<ForkUrl>,
+    /// Where to fork from. Overrides the block in `fork_urls`.
+    pub fork_choice: Option<ForkChoice>,
+    /// Extra HTTP headers for the fork endpoint.
+    pub fork_headers: Vec<String>,
+    /// Timeout of fork requests.
+    pub fork_request_timeout: Duration,
+    /// Number of retries of fork requests.
+    pub fork_request_retries: u32,
+    /// Initial backoff of fork request retries.
+    pub fork_retry_backoff: Duration,
+    /// Assumed compute units per second of the fork endpoint.
+    pub compute_units_per_second: u64,
+    /// Chain id of the fork endpoint, to skip the `eth_chainId` request.
+    pub fork_chain_id: Option<u64>,
+    /// Skip the on-disk fork cache.
+    pub no_storage_caching: bool,
+    /// Fetch fork state by block number instead of block hash.
+    pub fork_state_by_number: bool,
+    /// Skip the node info request to the fork endpoint.
+    pub no_fork_node_info: bool,
+    /// Skip block access list prefetching when forking.
+    pub no_bal: bool,
     /// Print opcode traces.
     pub enable_steps_tracing: bool,
     /// Print `console.log` output.
@@ -188,6 +215,17 @@ impl Default for NodeConfig {
             config_out: None,
             init_state: None,
             fork_urls: Vec::new(),
+            fork_choice: None,
+            fork_headers: Vec::new(),
+            fork_request_timeout: REQUEST_TIMEOUT,
+            fork_request_retries: 5,
+            fork_retry_backoff: Duration::from_millis(1_000),
+            compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
+            fork_chain_id: None,
+            no_storage_caching: false,
+            fork_state_by_number: false,
+            no_fork_node_info: false,
+            no_bal: false,
             enable_steps_tracing: false,
             print_logs: true,
             print_traces: false,
@@ -434,6 +472,139 @@ impl NodeConfig {
         self
     }
 
+    /// Sets where to fork from.
+    pub const fn with_fork_choice(mut self, fork_choice: Option<ForkChoice>) -> Self {
+        self.fork_choice = fork_choice;
+        self
+    }
+
+    /// Sets the block to fork from.
+    pub fn with_fork_block_number<U: Into<u64>>(self, fork_block_number: Option<U>) -> Self {
+        self.with_fork_choice(
+            fork_block_number.map(|number| ForkChoice::Block(number.into() as i128)),
+        )
+    }
+
+    /// Sets the transaction to fork from.
+    pub fn with_fork_transaction_hash<U: Into<B256>>(
+        self,
+        fork_transaction_hash: Option<U>,
+    ) -> Self {
+        self.with_fork_choice(
+            fork_transaction_hash.map(|hash| ForkChoice::Transaction(hash.into())),
+        )
+    }
+
+    /// Sets the extra HTTP headers of the fork endpoint.
+    pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
+        self.fork_headers = headers;
+        self
+    }
+
+    /// Sets the chain id of the fork endpoint, to skip the `eth_chainId` request.
+    pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
+        self.fork_chain_id = fork_chain_id.map(|chain_id| chain_id.to());
+        self
+    }
+
+    /// Sets the timeout of fork requests.
+    pub const fn fork_request_timeout(mut self, timeout: Option<Duration>) -> Self {
+        if let Some(timeout) = timeout {
+            self.fork_request_timeout = timeout;
+        }
+        self
+    }
+
+    /// Sets the number of retries of fork requests.
+    pub const fn fork_request_retries(mut self, retries: Option<u32>) -> Self {
+        if let Some(retries) = retries {
+            self.fork_request_retries = retries;
+        }
+        self
+    }
+
+    /// Sets the initial backoff of fork request retries.
+    pub const fn fork_retry_backoff(mut self, backoff: Option<Duration>) -> Self {
+        if let Some(backoff) = backoff {
+            self.fork_retry_backoff = backoff;
+        }
+        self
+    }
+
+    /// Sets the assumed compute units per second of the fork endpoint.
+    pub const fn fork_compute_units_per_second(mut self, cups: Option<u64>) -> Self {
+        if let Some(cups) = cups {
+            self.compute_units_per_second = cups;
+        }
+        self
+    }
+
+    /// Skips the on-disk fork cache.
+    pub const fn with_no_storage_caching(mut self, no_storage_caching: bool) -> Self {
+        self.no_storage_caching = no_storage_caching;
+        self
+    }
+
+    /// Fetches fork state by block number instead of block hash.
+    pub const fn with_fork_state_by_number(mut self, by_number: bool) -> Self {
+        self.fork_state_by_number = by_number;
+        self
+    }
+
+    /// Skips the node info request to the fork endpoint.
+    pub const fn with_no_fork_node_info(mut self, no_fork_node_info: bool) -> Self {
+        self.no_fork_node_info = no_fork_node_info;
+        self
+    }
+
+    /// Skips block access list prefetching when forking.
+    pub const fn with_no_bal(mut self, no_bal: bool) -> Self {
+        self.no_bal = no_bal;
+        self
+    }
+
+    /// Returns whether the node forks a remote chain.
+    pub const fn is_fork(&self) -> bool {
+        !self.fork_urls.is_empty()
+    }
+
+    /// Returns the fork connection settings.
+    pub fn fork_settings(&self) -> ForkSettings {
+        ForkSettings {
+            urls: self.fork_urls.iter().map(|fork| fork.url.clone()).collect(),
+            headers: self.fork_headers.clone(),
+            timeout: self.fork_request_timeout,
+            retries: self.fork_request_retries,
+            backoff: self.fork_retry_backoff,
+            compute_units_per_second: self.compute_units_per_second,
+            no_storage_caching: self.no_storage_caching,
+            state_by_number: self.fork_state_by_number,
+        }
+    }
+
+    /// Adopts the chain id, gas limit, and timestamp of the fork block, unless configured
+    /// explicitly, and re-keys the dev wallets for the chain id.
+    pub fn apply_fork(&mut self, chain_id: u64, header: &SealedHeader, gas_price: u128) {
+        if self.chain_id.is_none() {
+            self.chain_id = Some(chain_id);
+            let chain_id = Some(chain_id);
+            for wallet in self.genesis_accounts.iter_mut().chain(self.signer_accounts.iter_mut()) {
+                wallet.set_chain_id(chain_id);
+            }
+        }
+        if self.gas_limit.is_none() {
+            self.gas_limit = Some(header.gas_limit);
+        }
+        if self.gas_price.is_none() {
+            self.gas_price = Some(gas_price);
+        }
+        if self.base_fee.is_none() {
+            self.base_fee = header.base_fee_per_gas;
+        }
+        self.genesis_timestamp = Some(header.timestamp);
+        self.genesis_block_number = Some(header.number);
+    }
+
     /// Enables opcode tracing output.
     pub const fn with_steps_tracing(mut self, enable: bool) -> Self {
         self.enable_steps_tracing = enable;
@@ -664,6 +835,64 @@ impl NodeConfig {
     pub fn with_funded_accounts(mut self, accounts: HashMap<Address, U256>) -> Self {
         self.funded_accounts = accounts;
         self
+    }
+
+    /// Builds the chain spec of a fork: the fork block header stands in for genesis, and the
+    /// genesis accounts keep their remote nonce and code.
+    pub fn fork_chain_spec(
+        &self,
+        header: &SealedHeader,
+        accounts: &[(Address, ForkGenesisAccount)],
+    ) -> Result<Arc<ChainSpec>> {
+        let hardfork = match self.hardfork {
+            Some(FoundryHardfork::Ethereum(hardfork)) => hardfork,
+            Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not supported yet"),
+            None => EthereumHardfork::from_chain_and_timestamp(
+                Chain::from_id(self.get_chain_id()),
+                header.timestamp,
+            )
+            .unwrap_or(EthereumHardfork::Osaka),
+        };
+        let mut genesis = self
+            .genesis
+            .clone()
+            .unwrap_or_default()
+            .with_timestamp(header.timestamp)
+            .with_gas_limit(header.gas_limit)
+            .with_difficulty(header.difficulty)
+            .with_base_fee(header.base_fee_per_gas.map(u128::from));
+        genesis.number = Some(header.number);
+        genesis.config.chain_id = self.get_chain_id();
+
+        let remote = |address: &Address| {
+            accounts.iter().find(|(remote, _)| remote == address).map(|(_, account)| account)
+        };
+        let fork_account = |address: &Address, balance: U256| {
+            let account = remote(address).cloned().unwrap_or_default();
+            GenesisAccount::default()
+                .with_balance(balance)
+                .with_nonce(Some(account.nonce))
+                .with_code(account.code)
+        };
+        let mut alloc: Vec<(Address, GenesisAccount)> = self
+            .genesis_accounts
+            .iter()
+            .map(|account| {
+                (account.address(), fork_account(&account.address(), self.genesis_balance))
+            })
+            .collect();
+        alloc.extend(
+            self.funded_accounts
+                .iter()
+                .map(|(address, balance)| (*address, fork_account(address, *balance))),
+        );
+        genesis = genesis.extend_accounts(alloc);
+
+        let builder =
+            ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
+        let mut spec = activate_hardfork(builder, hardfork).build();
+        spec.genesis_header = SealedHeader::new(header.clone_header(), header.hash());
+        Ok(Arc::new(spec))
     }
 
     /// Builds the chain spec: the configured hardfork active from genesis, with the dev accounts

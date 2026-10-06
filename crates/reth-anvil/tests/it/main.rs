@@ -1161,3 +1161,149 @@ async fn misc_anvil_methods_match_anvil() -> Result<()> {
     })
     .await
 }
+
+/// Mainnet block the fork tests fork from, and known state at that block.
+const FORK_BLOCK_NUMBER: u64 = 14_608_400;
+const FORK_BLOCK_TIMESTAMP: u64 = 1_650_274_250;
+const DEAD_BALANCE_AT_FORK_BLOCK: u128 = 12_556_069_338_441_120_059_867;
+const WETH: Address = alloy_primitives::address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+fn fork_config() -> NodeConfig {
+    NodeConfig::test()
+        .with_eth_rpc_url(Some(foundry_test_utils::rpc::next_http_archive_rpc_url()))
+        .with_fork_block_number(Some(FORK_BLOCK_NUMBER))
+}
+
+async fn balance(client: &HttpClient, address: Address, tag: impl Into<Value>) -> Result<U256> {
+    Ok(client.request("eth_getBalance", rpc_params![address, tag.into()]).await?)
+}
+
+#[tokio::test]
+async fn fork_serves_remote_state_and_blocks() -> Result<()> {
+    let (_api, handle, client) = spawn_with_client(fork_config()).await?;
+
+    assert_eq!(block_number(&client).await?, FORK_BLOCK_NUMBER);
+    let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
+    assert_eq!(chain_id, U256::from(1));
+    assert_eq!(block_timestamp(&client, "latest").await?, FORK_BLOCK_TIMESTAMP);
+
+    // Remote state at the fork block.
+    assert_eq!(
+        balance(&client, Address::with_last_byte(0xad).create(0), "latest").await?,
+        U256::ZERO
+    );
+    let dead_address = Address::from_str("0x000000000000000000000000000000000000dEaD")?;
+    assert_eq!(
+        balance(&client, dead_address, "latest").await?,
+        U256::from(DEAD_BALANCE_AT_FORK_BLOCK)
+    );
+    let code: Bytes = client.request("eth_getCode", rpc_params![WETH, "latest"]).await?;
+    assert!(!code.is_empty(), "the fork serves remote code");
+
+    // The dev accounts are funded on top of the remote state.
+    let funder = handle.dev_accounts().next().ok_or_eyre("no dev account")?;
+    assert_eq!(balance(&client, funder, "latest").await?, handle.genesis_balance());
+
+    // Remote blocks below the fork block, linked to the fork block.
+    let fork_block = get_block(&client, format!("0x{FORK_BLOCK_NUMBER:x}")).await?;
+    let parent = get_block(&client, format!("0x{:x}", FORK_BLOCK_NUMBER - 1)).await?;
+    assert_eq!(fork_block["parentHash"], parent["hash"]);
+    assert_eq!(parent["number"], Value::String(format!("0x{:x}", FORK_BLOCK_NUMBER - 1)));
+    let by_hash: Value =
+        client.request("eth_getBlockByHash", rpc_params![parent["hash"].clone(), true]).await?;
+    assert_eq!(by_hash["number"], parent["number"]);
+    assert!(!by_hash["transactions"].as_array().ok_or_eyre("transactions")?.is_empty());
+
+    // Remote receipts and transactions.
+    let tx_hash = by_hash["transactions"][0]["hash"].clone();
+    let receipt: Value =
+        client.request("eth_getTransactionReceipt", rpc_params![tx_hash.clone()]).await?;
+    assert_eq!(receipt["blockHash"], parent["hash"]);
+    let tx: Value = client.request("eth_getTransactionByHash", rpc_params![tx_hash]).await?;
+    assert_eq!(tx["blockNumber"], parent["number"]);
+
+    // Historical remote state.
+    let earlier = balance(&client, WETH, format!("0x{:x}", FORK_BLOCK_NUMBER - 1000)).await?;
+    assert!(!earlier.is_zero(), "WETH holds ETH at every block");
+
+    // A call against a remote contract.
+    let call = TransactionRequest::default()
+        .with_to(WETH)
+        .with_input(Bytes::from_static(&[0x95, 0xd8, 0x9b, 0x41]));
+    let symbol: Bytes = client.request("eth_call", rpc_params![call, "latest"]).await?;
+    assert!(symbol.windows(4).any(|window| window == b"WETH"), "symbol() returns WETH");
+
+    let metadata: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
+    let forked = metadata.forked_network.ok_or_eyre("forked network")?;
+    assert_eq!(forked.chain_id, 1);
+    assert_eq!(forked.fork_block_number, FORK_BLOCK_NUMBER);
+    assert_eq!(forked.fork_block_hash.to_string(), fork_block["hash"]);
+    let info: NodeInfo = client.request("anvil_nodeInfo", rpc_params![]).await?;
+    assert_eq!(info.fork_config.fork_block_number, Some(FORK_BLOCK_NUMBER));
+    assert!(info.fork_config.fork_url.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn fork_mines_and_reverts_on_top_of_remote_state() -> Result<()> {
+    let (_api, _handle, client) = spawn_with_client(fork_config()).await?;
+    let dead = Address::from_str("0x000000000000000000000000000000000000dEaD")?;
+    let remote_balance = U256::from(DEAD_BALANCE_AT_FORK_BLOCK);
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+
+    let snapshot: U256 = client.request("evm_snapshot", rpc_params![]).await?;
+
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![transfer(funder, dead, gas_price)])
+        .await?;
+    let receipt = wait_for_receipt(&client, tx_hash).await?;
+    assert_eq!(receipt["status"], "0x1");
+    assert_eq!(block_number(&client).await?, FORK_BLOCK_NUMBER + 1);
+
+    // The local write wins over the remote state, and the remote value stays at the fork block.
+    let sent = U256::from(1);
+    assert_eq!(balance(&client, dead, "latest").await?, remote_balance + sent);
+    assert_eq!(balance(&client, dead, format!("0x{FORK_BLOCK_NUMBER:x}")).await?, remote_balance);
+    let nonce: U256 =
+        client.request("eth_getTransactionCount", rpc_params![funder, "latest"]).await?;
+    assert_eq!(nonce, U256::from(1));
+
+    // A call that reads the remote balance through the EVM sees the local write.
+    let reader = Address::with_last_byte(0xbe);
+    client.request::<(), _>("anvil_setCode", rpc_params![reader, balance_of_code(dead)]).await?;
+    let call = TransactionRequest::default().with_to(reader);
+    let result: Bytes = client.request("eth_call", rpc_params![call, "latest"]).await?;
+    assert_eq!(U256::from_be_slice(result.as_ref()), remote_balance + sent);
+
+    // Reverting drops the local write and the remote state shows again.
+    let reverted: bool = client.request("evm_revert", rpc_params![snapshot]).await?;
+    assert!(reverted);
+    assert_eq!(block_number(&client).await?, FORK_BLOCK_NUMBER);
+    assert_eq!(balance(&client, dead, "latest").await?, remote_balance);
+    let nonce: U256 =
+        client.request("eth_getTransactionCount", rpc_params![funder, "latest"]).await?;
+    assert_eq!(nonce, U256::ZERO);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn fork_logs_span_remote_and_local_blocks() -> Result<()> {
+    let (_api, _handle, client) = spawn_with_client(fork_config()).await?;
+
+    let filter = serde_json::json!({
+        "fromBlock": format!("0x{:x}", FORK_BLOCK_NUMBER - 1),
+        "toBlock": "latest",
+        "address": WETH,
+    });
+    let logs: Vec<Value> = client.request("eth_getLogs", rpc_params![filter]).await?;
+    assert!(!logs.is_empty(), "WETH emits logs in every block");
+    assert!(logs.iter().all(|log| {
+        log["address"]
+            .as_str()
+            .is_some_and(|address| address.eq_ignore_ascii_case(&WETH.to_string()))
+    }));
+
+    Ok(())
+}

@@ -1,4 +1,4 @@
-use alloy_primitives::Bytes;
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionRequest;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -31,6 +31,33 @@ impl fmt::Display for TransactionOrder {
             Self::Fifo => "fifo",
             Self::Fees => "fees",
         })
+    }
+}
+
+/// Where to fork from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkChoice {
+    /// A block number. A negative value counts back from the latest block.
+    Block(i128),
+    /// A transaction hash: fork at the block before the transaction's block.
+    Transaction(B256),
+}
+
+impl ForkChoice {
+    /// Returns the block number, if this is a block choice.
+    pub const fn block_number(&self) -> Option<i128> {
+        match self {
+            Self::Block(number) => Some(*number),
+            Self::Transaction(_) => None,
+        }
+    }
+
+    /// Returns the transaction hash, if this is a transaction choice.
+    pub const fn transaction_hash(&self) -> Option<B256> {
+        match self {
+            Self::Block(_) => None,
+            Self::Transaction(hash) => Some(*hash),
+        }
     }
 }
 

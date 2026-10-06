@@ -4,6 +4,7 @@ use crate::{
     config::NodeConfig,
     eth_api::EthApi,
     evm::AnvilExecutorBuilder,
+    fork::ForkBackend,
     impersonation::{ImpersonatedSigner, ImpersonationState},
     launcher::AnvilNodeLauncher,
     miner::AnvilMiner,
@@ -146,12 +147,19 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 ///
 /// The node runs on a fresh MDBX database in a temporary directory that is removed when the
 /// returned handle drops. The node tasks run on the current tokio runtime.
-pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     let runtime = RuntimeBuilder::new(
         RuntimeConfig::default().with_tokio(TokioConfig::ExistingHandle(Handle::current())),
     )
     .build()?;
-    let chain_spec = config.chain_spec()?;
+    let (fork, chain_spec) = if config.is_fork() {
+        let (fork, accounts) = ForkBackend::setup(&config).await?;
+        config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
+        let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
+        (Some(fork), chain_spec)
+    } else {
+        (None, config.chain_spec()?)
+    };
     let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
 
     let datadir = tempfile::tempdir()?;
@@ -186,6 +194,12 @@ pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     let (mining, miner_requests) = MiningController::new(initial_mining_mode(&config));
     let time = TimeManager::new(chain_spec.genesis_timestamp());
     let block_env = BlockEnvOverrides::default();
+    if fork.is_some()
+        && let Some(gas_limit) = config.gas_limit
+        && gas_limit != chain_spec.genesis_header().gas_limit
+    {
+        block_env.set_gas_limit(gas_limit);
+    }
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
     let instance_id = B256::random();
@@ -196,6 +210,7 @@ pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         node_config.tree_config(),
         anvil_state.clone(),
         config.slots_in_an_epoch,
+        fork.clone(),
     );
 
     let builder = NodeBuilder::new(node_config)
@@ -222,6 +237,7 @@ pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
             let chain_spec = chain_spec.clone();
             let signer_accounts = config.signer_accounts.clone();
             let rpc_module = rpc_module.clone();
+            let fork = fork.clone();
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
                 {
@@ -238,6 +254,7 @@ pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
                     snapshots,
                     chain_spec,
                     instance_id,
+                    fork,
                     ctx.pool().clone(),
                     ctx.provider().clone(),
                     eth_api,
@@ -262,13 +279,15 @@ pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         .provider
         .sealed_header(node.provider.best_block_number()?)?
         .ok_or_else(|| eyre::eyre!("missing head header"))?;
-    let provider = node.provider.clone();
+    let rewind_provider = node.provider.clone();
+    let insert_provider = node.provider.clone();
     let miner = AnvilMiner::new(
         node.add_ons_handle.beacon_engine_handle.clone(),
         node.payload_builder_handle.clone(),
         LocalPayloadAttributesBuilder::new(chain_spec),
         time.payload_attributes_hook(block_env),
-        move |header| Ok(provider.rewind_to(header)?),
+        move |header| Ok(rewind_provider.rewind_to(header)?),
+        move || Ok(insert_provider.materialize_fork_reads()?),
         head,
         miner_requests,
     );

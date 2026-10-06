@@ -9,6 +9,7 @@ pub mod cmd;
 mod config;
 mod eth_api;
 mod evm;
+mod fork;
 mod impersonation;
 mod launcher;
 mod miner;
@@ -31,7 +32,10 @@ pub use config::{
     DEFAULT_SLOTS_IN_AN_EPOCH, INITIAL_BASE_FEE, NODE_PORT, NodeConfig,
 };
 pub use eth_api::EthApi;
+pub use fork::{ForkBackend, ForkSettings, LocalWrites};
 pub use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
 pub use node::{NodeHandle, spawn, try_spawn};
 pub use state_dump::{SerializableAccountRecord, SerializableState, StateFile};
-pub use types::{ForkUrl, ReorgOptions, TransactionData, TransactionOrder};
+pub use types::{ForkChoice, ForkUrl, ReorgOptions, TransactionData, TransactionOrder};
+
+pub use alloy_rpc_types::anvil::Forking;
