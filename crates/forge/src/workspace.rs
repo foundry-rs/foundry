@@ -11,7 +11,11 @@ use std::{
 use alloy_primitives::keccak256;
 use eyre::Result;
 use foundry_common::fs::normalize_path;
-use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
+use foundry_compilers::{
+    Graph,
+    artifacts::remappings::{RelativeRemapping, Remapping},
+    compilers::multi::{MultiCompilerLanguage, MultiCompilerParser},
+};
 use foundry_config::{
     Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
 };
@@ -388,6 +392,29 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
             if !target.exists() && symlink_dir(&dep_path, &target).is_err() {
                 copy_dir_recursive(&dep_path, &target)?;
             }
+        }
+    }
+
+    // Tests can import project files outside the directories above, for example from `scripts/`
+    // when the script directory is the default `script/`. Copy the remaining project-local sources
+    // in the import graph so the workspace compiles like the project.
+    if let Ok(graph) =
+        Graph::<MultiCompilerParser>::resolve(&config.project_paths::<MultiCompilerLanguage>())
+    {
+        for source in graph.files().keys() {
+            if source
+                .strip_prefix(&config.root)
+                .is_ok_and(|rel| is_covered_by_handled_root(rel, &handled_extra_roots))
+            {
+                continue;
+            }
+            copy_extra_project_path(
+                &config.root,
+                temp_dir,
+                source,
+                &handled_extra_roots,
+                "imported source",
+            )?;
         }
     }
 
@@ -1247,6 +1274,32 @@ mod tests {
         let d_drive = isolated_mutable_path_rel(Path::new(r"D:\shared\state"));
 
         assert_ne!(c_drive, d_drive);
+    }
+
+    #[test]
+    fn test_copy_project_copies_imported_sources_outside_project_dirs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let workspace = normalize_existing_ancestor(&temp.path().join("workspace"));
+        create_test_dir_structure(
+            &root,
+            &["src/Target.sol", "scripts/Deploy.s.sol", "docs/Unused.sol"],
+        );
+        fs::create_dir_all(root.join("test")).unwrap();
+        fs::write(root.join("test/Deploy.t.sol"), "import \"../scripts/Deploy.s.sol\";\n").unwrap();
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            script: root.join("script"),
+            ..Default::default()
+        };
+
+        copy_project(&config, &workspace).unwrap();
+
+        assert!(workspace.join("scripts/Deploy.s.sol").exists());
+        assert!(!workspace.join("docs/Unused.sol").exists());
     }
 
     #[test]
