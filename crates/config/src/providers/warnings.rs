@@ -141,7 +141,7 @@ impl<P: Provider> WarningsProvider<P> {
     pub fn for_figment(provider: P, figment: &Figment) -> Self {
         let old_warnings = {
             let warnings_res = figment.extract_inner(Self::WARNINGS_KEY);
-            if warnings_res.as_ref().err().map(|err| err.missing()).unwrap_or(false) {
+            if warnings_res.as_ref().err().is_some_and(|err| err.missing()) {
                 Ok(vec![])
             } else {
                 warnings_res

@@ -1,7 +1,7 @@
 //! Tests for pinning remote traces to one canonical block context.
 
 use alloy_network::{BlockResponse, TransactionBuilder, primitives::HeaderResponse};
-use alloy_primitives::{B256, address, hex};
+use alloy_primitives::{Address, B256, bytes, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use anvil::{NodeConfig, NodeHandle};
@@ -24,6 +24,12 @@ enum ResponseMutation {
         replacement: String,
     },
     RefetchedTransactionBlockHash {
+        tx_hash: String,
+        replacement: String,
+        lookups: Arc<AtomicUsize>,
+    },
+    /// Reports a different transaction hash on the second lookup of `tx_hash`.
+    RefetchedTransactionHash {
         tx_hash: String,
         replacement: String,
         lookups: Arc<AtomicUsize>,
@@ -162,6 +168,15 @@ fn mutate_rpc_result(request: &Value, response: &mut Value, mutation: &ResponseM
         return;
     }
 
+    if let ResponseMutation::RefetchedTransactionHash { tx_hash, replacement, lookups } = mutation
+        && method == "eth_getTransactionByHash"
+        && requested_target.is_some_and(|target| target.eq_ignore_ascii_case(tx_hash))
+        && lookups.fetch_add(1, Ordering::Relaxed) == 1
+    {
+        response["result"]["hash"] = json!(replacement);
+        return;
+    }
+
     if let ResponseMutation::MissingTransactionBlock { block_hash } = mutation
         && method == "eth_getBlockByHash"
         && requested_target.is_some_and(|target| target.eq_ignore_ascii_case(block_hash))
@@ -266,7 +281,7 @@ async fn send_identity_transaction(handle: &NodeHandle) -> (B256, u64, B256) {
         .send_transaction(
             TransactionRequest::default()
                 .with_from(from)
-                .with_to(address!("0x0000000000000000000000000000000000000004"))
+                .with_to(Address::with_last_byte(4))
                 .with_input(hex!("deadbeef"))
                 .into(),
         )
@@ -543,25 +558,20 @@ async fn cast_remote_trace_supports_zksync_call_tracer(cmd: _) {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     // DELEGATECALL(gas, 0x..bb, 0, 0, 0, 0) POP STOP
     api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000aa"),
-        hex!("0x60006000600060007300000000000000000000000000000000000000bb5af45000").into(),
+        Address::with_last_byte(0xaa),
+        bytes!("0x60006000600060007300000000000000000000000000000000000000bb5af45000"),
     )
     .await
     .unwrap();
     // REVERT(0, 0)
-    api.anvil_set_code(
-        address!("0x00000000000000000000000000000000000000bb"),
-        hex!("0x60006000fd").into(),
-    )
-    .await
-    .unwrap();
+    api.anvil_set_code(Address::with_last_byte(0xbb), bytes!("0x60006000fd")).await.unwrap();
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
     let tx_hash = provider
         .send_transaction(
             TransactionRequest::default()
                 .with_from(from)
-                .with_to(address!("0x00000000000000000000000000000000000000aa"))
+                .with_to(Address::with_last_byte(0xaa))
                 .into(),
         )
         .await
@@ -610,4 +620,26 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+}
+
+#[casttest]
+async fn cast_run_remote_trace_rejects_refetched_transaction_hash_mismatch(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (tx_hash, _, _) = send_identity_transaction(&handle).await;
+    let replacement = B256::repeat_byte(0xcc);
+    let (endpoint, _) = spawn_recording_rpc_proxy(
+        handle.http_endpoint(),
+        ResponseMutation::RefetchedTransactionHash {
+            tx_hash: tx_hash.to_string(),
+            replacement: replacement.to_string(),
+            lookups: Arc::new(AtomicUsize::new(0)),
+        },
+    )
+    .await;
+
+    cmd.args(["run", "--debug-trace-transaction", &tx_hash.to_string(), "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: RPC returned transaction {replacement} for requested {tx_hash}\n"
+        ));
 }

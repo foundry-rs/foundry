@@ -190,7 +190,7 @@ pub fn format_receipt<N: Network>(
 mod tests {
     use super::*;
     use alloy_network::{Ethereum, TransactionBuilder};
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, Bloom};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
     use std::collections::VecDeque;
@@ -199,7 +199,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "type": "0x02", "status": if success { "0x1" } else { "0x0" },
             "cumulativeGasUsed": "0x5208", "logs": [], "transactionHash": tx_hash,
-            "logsBloom": format!("0x{}", "0".repeat(512)),
+            "logsBloom": format!("{:#x}", Bloom::ZERO),
             "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x3039",
             "gasUsed": "0x5208", "effectiveGasPrice": "0x4a817c800",
             "from": "0x0000000000000000000000000000000000000000",
@@ -393,8 +393,7 @@ mod tests {
         let mut wallets = handle.dev_wallets();
         let from = wallets.next().unwrap().address();
         let to = wallets.next().unwrap().address();
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
         let pending = signer_provider.send_transaction(tx).await.unwrap();
         let tx_hash = *pending.tx_hash();
@@ -437,8 +436,7 @@ mod tests {
         let mut wallets = handle.dev_wallets();
         let from = wallets.next().unwrap().address();
         let to = wallets.next().unwrap().address();
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
         // Send and mine the tx so a receipt is immediately available.
         let pending = signer_provider.send_transaction(tx).await.unwrap();
@@ -470,8 +468,7 @@ mod tests {
         let mut wallets = handle.dev_wallets();
         let from = wallets.next().unwrap().address();
         let to = wallets.next().unwrap().address();
-        let tx =
-            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::ONE);
 
         let pending = signer_provider.send_transaction(tx).await.unwrap();
         let tx_hash = *pending.tx_hash();

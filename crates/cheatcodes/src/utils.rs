@@ -323,7 +323,7 @@ fn random_uint<FEN: FoundryEvmNetwork>(
         let exclusive_modulo = max - min;
         let mut random_number: U256 = state.rng().random();
         if exclusive_modulo != U256::MAX {
-            let inclusive_modulo = exclusive_modulo + U256::from(1);
+            let inclusive_modulo = exclusive_modulo + U256::ONE;
             random_number %= inclusive_modulo;
         }
         random_number += min;

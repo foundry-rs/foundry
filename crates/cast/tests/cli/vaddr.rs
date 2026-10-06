@@ -99,7 +99,7 @@ mod vaddr_e2e {
         rpc: &str,
         owner: &PrivateKeySigner,
     ) -> String {
-        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+        let owner_pk = hex::encode_prefixed(owner.credential().to_bytes());
         let owner_addr = format!("{:#x}", owner.address());
         let out = cmd
             .cast_fuse()
@@ -132,7 +132,7 @@ mod vaddr_e2e {
         let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
         let rpc = handle.http_endpoint();
         let owner = handle.dev_wallets().next().unwrap();
-        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+        let owner_pk = hex::encode_prefixed(owner.credential().to_bytes());
         let owner_addr = format!("{:#x}", owner.address());
 
         let out = cmd
@@ -201,7 +201,7 @@ mod vaddr_e2e {
         let rpc = handle.http_endpoint();
         let owner = handle.dev_wallets().next().unwrap();
         let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+        let sender_pk = hex::encode_prefixed(sender.credential().to_bytes());
         let owner_addr = format!("{:#x}", owner.address());
 
         let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
@@ -259,7 +259,7 @@ mod vaddr_e2e {
         let rpc = handle.http_endpoint();
         let owner = handle.dev_wallets().next().unwrap();
         let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+        let sender_pk = hex::encode_prefixed(sender.credential().to_bytes());
         let sender_addr = format!("{:#x}", sender.address());
 
         let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);

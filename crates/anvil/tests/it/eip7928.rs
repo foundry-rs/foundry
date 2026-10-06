@@ -203,7 +203,7 @@ async fn locally_mined_block_access_list_records_every_phase() {
         [SlotChanges::new(
             U256::ZERO,
             vec![
-                StorageChange::new(index(1), U256::from(1)),
+                StorageChange::new(index(1), U256::ONE),
                 StorageChange::new(index(2), U256::from(2)),
             ],
         )]

@@ -3,7 +3,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder, NetworkWallet};
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_wallets::TempoAccountsWallet;
@@ -163,6 +163,11 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
 
     /// Returns true when this request will be built as a Tempo AA transaction.
     fn is_tempo_aa(&self) -> bool {
+        false
+    }
+
+    /// Returns true when this request type can pay fees in a Tempo fee token.
+    fn supports_fee_token(&self) -> bool {
         false
     }
 
@@ -457,6 +462,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         NetworkTransactionBuilder::<TempoNetwork>::output_tx_type(self) == TempoTxType::AA
     }
 
+    fn supports_fee_token(&self) -> bool {
+        true
+    }
+
     fn set_fee_token(&mut self, fee_token: Address) {
         self.fee_token = Some(fee_token);
     }
@@ -473,13 +482,11 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         let mut request = self.clone();
         if request.key_type.is_none() {
             request.key_type = Some(SignatureType::WebAuthn);
-            request.key_data =
-                Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
+            request.key_data = Some(TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes().into());
         } else if matches!(request.key_type, Some(SignatureType::WebAuthn))
             && request.key_data.is_none()
         {
-            request.key_data =
-                Some(Bytes::copy_from_slice(&TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes()));
+            request.key_data = Some(TEMPO_BROWSER_WEBAUTHN_DATA_SIZE.to_be_bytes().into());
         }
         request.convert_create_to_call();
         request

@@ -45,10 +45,10 @@ pub struct PreparedSessionAuthorization {
 impl SessionAuthorizationRequest {
     /// Validate this request and build the unsigned Tempo [`KeyAuthorization`].
     pub fn prepare(&self, now: u64) -> eyre::Result<PreparedSessionAuthorization> {
-        ensure!(self.session_id != B256::ZERO, "session id cannot be zero");
-        ensure!(self.root_account != Address::ZERO, "session root account cannot be zero");
+        ensure!(!self.session_id.is_zero(), "session id cannot be zero");
+        ensure!(!self.root_account.is_zero(), "session root account cannot be zero");
         ensure!(self.chain_id != 0, "session chain id cannot be zero");
-        ensure!(self.key_address != Address::ZERO, "session key address cannot be zero");
+        ensure!(!self.key_address.is_zero(), "session key address cannot be zero");
         ensure!(
             self.key_address != self.root_account,
             "session key address must differ from the root account"
@@ -209,12 +209,12 @@ mod tests {
 
     #[test]
     fn prepared_session_authorization_builds_entry_and_key_authorization() {
-        let session_id = B256::from([0x42; 32]);
-        let root = Address::from([0x11; 20]);
-        let key = Address::from([0x22; 20]);
-        let target = Address::from([0x33; 20]);
-        let token = Address::from([0x44; 20]);
-        let recipient = Address::from([0x55; 20]);
+        let session_id = B256::repeat_byte(0x42);
+        let root = Address::repeat_byte(0x11);
+        let key = Address::repeat_byte(0x22);
+        let target = Address::repeat_byte(0x33);
+        let token = Address::repeat_byte(0x44);
+        let recipient = Address::repeat_byte(0x55);
 
         let request = SessionAuthorizationRequest {
             session_id,
@@ -280,12 +280,12 @@ mod tests {
     #[test]
     fn prepared_session_authorization_rejects_invalid_policy() {
         let base = SessionAuthorizationRequest {
-            session_id: B256::from([0x42; 32]),
-            root_account: Address::from([0x11; 20]),
+            session_id: B256::repeat_byte(0x42),
+            root_account: Address::repeat_byte(0x11),
             chain_id: 4217,
-            key_address: Address::from([0x22; 20]),
+            key_address: Address::repeat_byte(0x22),
             expiry: NonZeroU64::new(1_700_000_600).unwrap(),
-            scope: vec![CallScope { target: Address::from([0x33; 20]), selector_rules: vec![] }],
+            scope: vec![CallScope { target: Address::repeat_byte(0x33), selector_rules: vec![] }],
             spend_limits: vec![],
         };
 
@@ -316,12 +316,12 @@ mod tests {
         let root: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
         let session_key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
         let request = SessionAuthorizationRequest {
-            session_id: B256::from([0x66; 32]),
+            session_id: B256::repeat_byte(0x66),
             root_account: root.address(),
             chain_id: 4217,
             key_address: session_key.address(),
             expiry: NonZeroU64::new(1_700_000_600).unwrap(),
-            scope: vec![CallScope { target: Address::from([0x33; 20]), selector_rules: vec![] }],
+            scope: vec![CallScope { target: Address::repeat_byte(0x33), selector_rules: vec![] }],
             spend_limits: vec![],
         };
         let prepared = request.prepare(1_700_000_000).unwrap();
@@ -340,12 +340,12 @@ mod tests {
 
     #[test]
     fn prepared_session_authorization_enforces_empty_spend_policy() {
-        let target = Address::from([0x33; 20]);
+        let target = Address::repeat_byte(0x33);
         let request = SessionAuthorizationRequest {
-            session_id: B256::from([0x68; 32]),
-            root_account: Address::from([0x11; 20]),
+            session_id: B256::repeat_byte(0x68),
+            root_account: Address::repeat_byte(0x11),
             chain_id: 4217,
-            key_address: Address::from([0x22; 20]),
+            key_address: Address::repeat_byte(0x22),
             expiry: NonZeroU64::new(1_700_000_600).unwrap(),
             scope: vec![CallScope { target, selector_rules: vec![] }],
             spend_limits: vec![],
@@ -369,14 +369,14 @@ mod tests {
     fn signed_session_authorization_rejects_policy_mismatch() {
         let root: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
         let session_key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
-        let token = Address::from([0x44; 20]);
+        let token = Address::repeat_byte(0x44);
         let request = SessionAuthorizationRequest {
-            session_id: B256::from([0x67; 32]),
+            session_id: B256::repeat_byte(0x67),
             root_account: root.address(),
             chain_id: 4217,
             key_address: session_key.address(),
             expiry: NonZeroU64::new(1_700_000_600).unwrap(),
-            scope: vec![CallScope { target: Address::from([0x33; 20]), selector_rules: vec![] }],
+            scope: vec![CallScope { target: Address::repeat_byte(0x33), selector_rules: vec![] }],
             spend_limits: vec![SessionSpendLimit { token, amount: U256::ZERO }],
         };
         let prepared = request.prepare(1_700_000_000).unwrap();
@@ -395,12 +395,12 @@ mod tests {
         let root: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
         let session_key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
         let request = SessionAuthorizationRequest {
-            session_id: B256::from([0x70; 32]),
+            session_id: B256::repeat_byte(0x70),
             root_account: root.address(),
             chain_id: 4217,
             key_address: session_key.address(),
             expiry: NonZeroU64::new(1_700_000_600).unwrap(),
-            scope: vec![CallScope { target: Address::from([0x33; 20]), selector_rules: vec![] }],
+            scope: vec![CallScope { target: Address::repeat_byte(0x33), selector_rules: vec![] }],
             spend_limits: vec![],
         };
         let prepared = request.prepare(1_700_000_000).unwrap();
@@ -408,7 +408,7 @@ mod tests {
         let signed = prepared.authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
 
         let mut other_request = request;
-        other_request.session_id = B256::from([0x71; 32]);
+        other_request.session_id = B256::repeat_byte(0x71);
         let other_prepared = other_request.prepare(1_700_000_000).unwrap();
 
         let error = other_prepared.into_active_entry(session_key, &signed).unwrap_err();
@@ -420,14 +420,14 @@ mod tests {
     fn signed_session_authorization_accepts_order_independent_policy_match() {
         let root: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
         let session_key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
-        let token_a = Address::from([0x44; 20]);
-        let token_b = Address::from([0x45; 20]);
-        let target_a = Address::from([0x46; 20]);
-        let target_b = Address::from([0x47; 20]);
-        let recipient_a = Address::from([0x48; 20]);
-        let recipient_b = Address::from([0x49; 20]);
+        let token_a = Address::repeat_byte(0x44);
+        let token_b = Address::repeat_byte(0x45);
+        let target_a = Address::repeat_byte(0x46);
+        let target_b = Address::repeat_byte(0x47);
+        let recipient_a = Address::repeat_byte(0x48);
+        let recipient_b = Address::repeat_byte(0x49);
         let request = SessionAuthorizationRequest {
-            session_id: B256::from([0x69; 32]),
+            session_id: B256::repeat_byte(0x69),
             root_account: root.address(),
             chain_id: 4217,
             key_address: session_key.address(),
@@ -443,7 +443,7 @@ mod tests {
                 CallScope { target: target_b, selector_rules: vec![] },
             ],
             spend_limits: vec![
-                SessionSpendLimit { token: token_a, amount: U256::from(1) },
+                SessionSpendLimit { token: token_a, amount: U256::ONE },
                 SessionSpendLimit { token: token_b, amount: U256::from(2) },
             ],
         };

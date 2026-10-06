@@ -1300,8 +1300,8 @@ mod tests {
         );
 
         // Create the "original" DynSolValue instance.
-        let owner_address = Address::from([1; 20]);
-        let wallet_id = B256::from([2; 32]);
+        let owner_address = Address::repeat_byte(1);
+        let wallet_id = B256::repeat_byte(2);
         let original_wallet = DynSolValue::CustomStruct {
             name: "Wallet".to_string(),
             prop_names: vec!["owner".to_string(), "balance".to_string(), "id".to_string()],
