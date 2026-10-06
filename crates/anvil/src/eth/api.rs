@@ -5602,11 +5602,7 @@ fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnve
 }
 
 fn convert_transact_out(out: &Option<Output>) -> Bytes {
-    match out {
-        None => Default::default(),
-        Some(Output::Call(out)) => out.to_vec().into(),
-        Some(Output::Create(out, _)) => out.to_vec().into(),
-    }
+    out.as_ref().map(Output::data).cloned().unwrap_or_default()
 }
 
 /// Returns an error if the `exit` code is _not_ ok
