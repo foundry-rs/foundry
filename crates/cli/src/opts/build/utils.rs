@@ -1,9 +1,10 @@
 use eyre::Result;
 use foundry_compilers::{
-    CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
+    CompilerInput, Graph, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{Source, Sources},
-    multi::{MultiCompilerLanguage, MultiCompilerParser},
-    solc::{SOLC_EXTENSIONS, SolcLanguage, SolcVersionedInput},
+    compilers::{Compiler, CompilerOutput, CompilerVersion},
+    multi::{MultiCompiler, MultiCompilerLanguage, MultiCompilerParser},
+    solc::{SOLC_EXTENSIONS, SolcCompiler, SolcLanguage, SolcVersionedInput},
 };
 use foundry_config::Config;
 use rayon::prelude::*;
@@ -120,9 +121,21 @@ fn configure_pcx_with_sources(
 
     // Process Solar-compatible sources and use the latest version for the compiler input.
     let graph = Graph::<MultiCompilerParser>::resolve_sources(&project.paths, sources)?;
+    // Parsing needs compatible language versions, without preferring installed binaries.
+    let parsing_project = ProjectBuilder::<ParsingCompiler>::default()
+        .paths(project.paths.clone())
+        .settings(project.settings.clone())
+        .additional_settings(project.additional_settings.clone())
+        .restrictions(project.restrictions.clone())
+        .build(ParsingCompiler::new(
+            project
+                .compiler
+                .available_versions(&MultiCompilerLanguage::Solc(SolcLanguage::Solidity)),
+            matches!(project.compiler.solc, Some(SolcCompiler::AutoDetect)),
+        ))?;
     let Some(versioned_sources) = graph
         // Resolve graph into mapping language -> version -> sources
-        .into_sources_by_version(project)?
+        .into_sources_by_version(&parsing_project)?
         .sources
         .into_iter()
         // Only interested in Solidity sources
@@ -339,10 +352,103 @@ fn configure_pcx_from_solc_cli(
     pcx.file_resolver.add_include_paths(cli_settings.include_paths.iter().cloned());
 }
 
-#[cfg(all(test, windows))]
+/// Supplies compiler versions for parsing without executing a compiler.
+#[derive(Clone)]
+struct ParsingCompiler {
+    versions: Vec<CompilerVersion>,
+}
+
+impl ParsingCompiler {
+    fn new(mut versions: Vec<CompilerVersion>, auto_detect: bool) -> Self {
+        if auto_detect {
+            for version in &mut versions {
+                *version = CompilerVersion::Remote(version.as_ref().clone());
+            }
+            versions.sort_unstable();
+        }
+        Self { versions }
+    }
+}
+
+impl Compiler for ParsingCompiler {
+    type Input = <MultiCompiler as Compiler>::Input;
+    type CompilationError = <MultiCompiler as Compiler>::CompilationError;
+    type CompilerContract = <MultiCompiler as Compiler>::CompilerContract;
+    type Parser = MultiCompilerParser;
+    type Settings = <MultiCompiler as Compiler>::Settings;
+    type Language = MultiCompilerLanguage;
+
+    fn compile(
+        &self,
+        _input: &Self::Input,
+    ) -> foundry_compilers::error::Result<
+        CompilerOutput<Self::CompilationError, Self::CompilerContract>,
+    > {
+        Err(foundry_compilers::error::SolcError::msg("parsing does not compile sources"))
+    }
+
+    fn available_versions(&self, _language: &Self::Language) -> Vec<CompilerVersion> {
+        self.versions.clone()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn parsing_ignores_unrelated_installed_compilers() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Config::with_root(root.path()).project_paths();
+        let source = root.path().join("src/Foo.sol");
+        let old = semver::Version::new(0, 7, 6);
+        let modern = semver::Version::new(0, 8, 26);
+        for (pragma, expected) in [(">=0.6.0", modern.clone()), ("^0.7.0", old.clone())] {
+            let compiler = ParsingCompiler::new(
+                vec![
+                    CompilerVersion::Installed(old.clone()),
+                    CompilerVersion::Remote(modern.clone()),
+                ],
+                true,
+            );
+            let project = ProjectBuilder::<ParsingCompiler>::default()
+                .paths(paths.clone())
+                .build(compiler)
+                .unwrap();
+            let graph = Graph::<MultiCompilerParser>::resolve_sources(
+                &paths,
+                Sources::from([(
+                    source.clone(),
+                    Source::new(format!("pragma solidity {pragma}; contract Foo {{}}")),
+                )]),
+            )
+            .unwrap();
+            let resolved = graph.into_sources_by_version(&project).unwrap();
+            let sources = &resolved.sources[&MultiCompilerLanguage::Solc(SolcLanguage::Solidity)];
+            assert_eq!(sources.len(), 1);
+            assert_eq!(sources[0].0, expected);
+        }
+
+        // Installed versions can also be newer than the remaining remote candidates.
+        let modern_installed = ParsingCompiler::new(
+            vec![CompilerVersion::Installed(modern.clone()), CompilerVersion::Remote(old.clone())],
+            true,
+        );
+        assert_eq!(
+            modern_installed
+                .available_versions(&MultiCompilerLanguage::Solc(SolcLanguage::Solidity)),
+            vec![CompilerVersion::Remote(old.clone()), CompilerVersion::Remote(modern)],
+        );
+
+        // A pinned compiler remains authoritative, even when Solar cannot support it.
+        let pinned = ParsingCompiler::new(vec![CompilerVersion::Installed(old.clone())], false);
+        assert_eq!(
+            pinned.available_versions(&MultiCompilerLanguage::Solc(SolcLanguage::Solidity)),
+            vec![CompilerVersion::Installed(old)]
+        );
+    }
+
+    #[cfg(windows)]
     #[test]
     fn solar_slash_path_preserves_windows_prefixes_and_boundaries() {
         for (path, expected) in [
