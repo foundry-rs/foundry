@@ -5,7 +5,7 @@
 //! receipts and the bloom), the warm addresses after precompile moves, and the state roots. This
 //! module keeps reth's execution and block assembly, and puts anvil's rules around them.
 
-use crate::{evm::AnvilNextBlockEnv, fork::ForkInfo};
+use crate::{api::CallBatch, evm::AnvilNextBlockEnv, fork::ForkInfo};
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_evm::{
@@ -34,7 +34,7 @@ use reth_ethereum::{
             db::{State, bal::BalState},
         },
     },
-    primitives::BlockBody as _,
+    primitives::{BlockBody as _, NodePrimitives, Recovered},
     rpc::eth::{
         EthApiError,
         error::ToRpcError,
@@ -120,6 +120,7 @@ pub(crate) async fn simulate_v1<Eth>(
 ) -> Result<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>, Eth::Error>
 where
     Eth: EthCall + Clone + 'static,
+    RpcTxReq<Eth::NetworkTypes>: CallBatch,
     <Eth::Evm as ConfigureEvm>::NextBlockEnvCtx: AnvilNextBlockEnv,
 {
     let SimulatePayload {
@@ -536,6 +537,7 @@ where
         >,
     >,
     T: RpcConvert<Primitives = S::Primitives>,
+    RpcTxReq<T::Network>: CallBatch,
 {
     builder.apply_pre_execution_changes()?;
 
@@ -578,7 +580,7 @@ where
         // which fails at the maximum nonce and leaves it in place.
         let wraps_nonce = max_nonce && call.as_ref().to.is_some_and(|to| to.is_call());
         let basefee = builder.evm().block().basefee();
-        let tx = reth_simulate::resolve_transaction(
+        let tx = resolve_transaction(
             call,
             execution_gas,
             basefee,
@@ -953,4 +955,55 @@ mod tests {
             "vm execution error: InvalidFEOpcode"
         );
     }
+}
+
+/// Fills the missing fields of a simulated call, as reth's `resolve_transaction` does, except
+/// that a call batch without `to` stays a batch instead of becoming a contract creation.
+fn resolve_transaction<DB, T>(
+    mut tx: RpcTxReq<T::Network>,
+    default_gas_limit: u64,
+    block_base_fee_per_gas: u64,
+    chain_id: u64,
+    disable_nonce_check: bool,
+    db: &mut DB,
+    converter: &T,
+) -> Result<Recovered<<T::Primitives as NodePrimitives>::SignedTx>, EthApiError>
+where
+    DB: Database<Error: Into<EthApiError>>,
+    T: RpcConvert,
+    RpcTxReq<T::Network>: CallBatch,
+{
+    if tx.has_calls() {
+        let from = tx.as_ref().from.unwrap_or_default();
+        tx.as_mut().from = Some(from);
+        if tx.as_ref().nonce.is_none() {
+            let nonce =
+                db.basic(from).map_err(Into::into)?.map(|acc| acc.nonce).unwrap_or_default();
+            tx.as_mut().nonce = Some(nonce);
+        }
+        if disable_nonce_check && tx.as_ref().nonce == Some(u64::MAX) {
+            tx.as_mut().nonce = Some(0);
+        }
+        let request = tx.as_mut();
+        request.gas.get_or_insert(default_gas_limit);
+        request.chain_id.get_or_insert(chain_id);
+        // Unspecified fees are zero, as the `eth_simulateV1` spec says.
+        if request.gas_price.is_none() {
+            request.max_fee_per_gas.get_or_insert(0);
+            request.max_priority_fee_per_gas.get_or_insert(0);
+        }
+        let tx = converter
+            .build_simulate_v1_transaction(tx)
+            .map_err(|error| EthApiError::other(error.into()))?;
+        return Ok(Recovered::new_unchecked(tx, from));
+    }
+    reth_simulate::resolve_transaction(
+        tx,
+        default_gas_limit,
+        block_base_fee_per_gas,
+        chain_id,
+        disable_nonce_check,
+        db,
+        converter,
+    )
 }

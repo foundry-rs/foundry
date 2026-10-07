@@ -6,10 +6,10 @@
 //! as the payload value. It leaves out Tempo's prewarming, parallel replay, and build budgets,
 //! which serve block production under consensus.
 
-use crate::evm::AnvilEvmConfig;
+use crate::{evm::AnvilEvmConfig, time::TimeManager};
 use alloy_consensus::BlockHeader;
 use alloy_evm::{
-    Evm,
+    Database, Evm,
     block::{BlockExecutionError, BlockValidationError},
 };
 use alloy_primitives::U256;
@@ -22,7 +22,7 @@ use reth_ethereum::{
     chainspec::EthereumHardforks,
     evm::{
         primitives::{
-            ConfigureEvm,
+            ConfigureEvm, EvmEnvFor, EvmFor, ExecutionCtxFor,
             execute::{BlockBuilder, BlockBuilderOutcome},
         },
         revm::{cached::CachedReads, database::StateProviderDatabase, db::State},
@@ -37,7 +37,9 @@ use reth_ethereum::{
         BestTransactions, BestTransactionsAttributes, TransactionPool,
         error::InvalidPoolTransactionError,
     },
-    primitives::{RecoveredBlock, transaction::error::InvalidTransactionError},
+    primitives::{
+        RecoveredBlock, SealedBlock, SealedHeader, transaction::error::InvalidTransactionError,
+    },
     provider::{ChainSpecProvider, StateProviderFactory},
     storage::StateProvider,
 };
@@ -48,7 +50,7 @@ use tempo_chainspec::{TempoChainSpec, hardfork::TempoHardforks};
 use tempo_evm::{TempoEvmConfig, TempoNextBlockEnvAttributes};
 use tempo_node::TempoNode;
 use tempo_payload_types::{EncodedBlock, TempoBuiltPayload, TempoPayloadAttributes};
-use tempo_primitives::TempoPrimitives;
+use tempo_primitives::{TempoHeader, TempoPrimitives};
 use tempo_transaction_pool::{
     TempoTransactionPool,
     transaction::{TempoPoolTransactionError, TempoPooledTransaction},
@@ -312,4 +314,80 @@ where
 }
 
 /// The pool of a Tempo dev node.
-pub type TempoAnvilPool<Provider> = TempoTransactionPool<Provider, TempoAnvilEvmConfig>;
+pub type TempoAnvilPool<Provider> = TempoTransactionPool<Provider, TempoPoolEvmConfig>;
+
+/// The EVM config of the Tempo pool: the node's, except that the pool validates a transaction
+/// against the block anvil mines next, at the time anvil's clock gives it, and skips the fee
+/// balance check when the pool balance checks are off. Only the pool uses it; blocks run on the
+/// node's config.
+#[derive(Clone, Debug)]
+pub struct TempoPoolEvmConfig {
+    inner: TempoAnvilEvmConfig,
+    time: TimeManager,
+    disable_balance_check: bool,
+}
+
+impl TempoPoolEvmConfig {
+    /// Wraps the node's EVM config with anvil's clock.
+    pub const fn new(
+        inner: TempoAnvilEvmConfig,
+        time: TimeManager,
+        disable_balance_check: bool,
+    ) -> Self {
+        Self { inner, time, disable_balance_check }
+    }
+}
+
+impl ConfigureEvm for TempoPoolEvmConfig {
+    type Primitives = TempoPrimitives;
+    type Error = <TempoAnvilEvmConfig as ConfigureEvm>::Error;
+    type NextBlockEnvCtx = <TempoAnvilEvmConfig as ConfigureEvm>::NextBlockEnvCtx;
+    type BlockExecutorFactory = <TempoAnvilEvmConfig as ConfigureEvm>::BlockExecutorFactory;
+    type BlockAssembler = <TempoAnvilEvmConfig as ConfigureEvm>::BlockAssembler;
+
+    fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
+        self.inner.block_executor_factory()
+    }
+
+    fn block_assembler(&self) -> &Self::BlockAssembler {
+        self.inner.block_assembler()
+    }
+
+    fn evm_env(&self, header: &TempoHeader) -> Result<EvmEnvFor<Self>, Self::Error> {
+        self.inner.evm_env(header)
+    }
+
+    fn next_evm_env(
+        &self,
+        parent: &TempoHeader,
+        attributes: &Self::NextBlockEnvCtx,
+    ) -> Result<EvmEnvFor<Self>, Self::Error> {
+        self.inner.next_evm_env(parent, attributes)
+    }
+
+    fn context_for_block<'a>(
+        &self,
+        block: &'a SealedBlock<tempo_primitives::Block>,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        self.inner.context_for_block(block)
+    }
+
+    fn context_for_next_block(
+        &self,
+        parent: &SealedHeader<TempoHeader>,
+        attributes: Self::NextBlockEnvCtx,
+    ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
+        self.inner.context_for_next_block(parent, attributes)
+    }
+
+    fn evm_with_env<DB: Database>(&self, db: DB, mut evm_env: EvmEnvFor<Self>) -> EvmFor<Self, DB> {
+        // The pool checks time bounds and expiring nonces against the next block's timestamp,
+        // which anvil's clock sets, not the timestamp of the tip.
+        evm_env.block_env.inner.timestamp = U256::from(self.time.current_call_timestamp());
+        evm_env.block_env.timestamp_millis_part = 0;
+        if self.disable_balance_check {
+            evm_env.cfg_env.disable_balance_check = true;
+        }
+        self.inner.evm_with_env(db, evm_env)
+    }
+}

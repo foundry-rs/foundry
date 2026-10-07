@@ -2,7 +2,7 @@
 //! installed.
 
 use crate::{
-    api::NodeIdentity,
+    api::{CallBatch, NodeIdentity},
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     console::ConsolePrinter,
@@ -22,7 +22,7 @@ use reth_ethereum::{
     evm::primitives::ConfigureEvm,
     node::{
         api::{
-            FullNodeTypesAdapter, HeaderTy, NodeTypes, NodeTypesWithDBAdapter,
+            BlockTy, FullNodeTypesAdapter, HeaderTy, NodeTypes, NodeTypesWithDBAdapter,
             PayloadAttributesBuilder, PayloadTypes,
         },
         builder::{
@@ -122,18 +122,22 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
             Components: NodeComponents<
                 AnvilAdapter<Self::Node>,
                 Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>,
-                Pool: TransactionPoolExt,
+                Pool: TransactionPoolExt<Block = BlockTy<Self::Node>>,
             >,
         >;
     /// The RPC add-ons.
     type AddOns: RethRpcAddOns<
             NodeOf<Self>,
             EthApi: FullEthApiServer<
-                NetworkTypes: RpcTypes<TransactionRequest: Default>,
+                NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>,
                 Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>,
             > + EthTransactions
                         + Clone,
         > + EngineValidatorAddOn<NodeOf<Self>>;
+    /// Whether the first block takes the genesis base fee, as anvil gives it on Ethereum, instead
+    /// of the fee the chain spec's rule gives it.
+    const FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE: bool = true;
+
     /// Builds the payload attributes of the next block.
     type Attributes: PayloadAttributesBuilder<PayloadAttributesOf<Self::Node>, HeaderTy<Self::Node>>;
 

@@ -8,7 +8,9 @@
 use super::{
     AnvilAdapter, AnvilComponents, AnvilNetwork, NodeOf, Prepared,
     tempo_genesis::tempo_genesis_alloc,
-    tempo_payload::{TempoAnvilEvmConfig, TempoAnvilPool, TempoDevPayloadBuilderBuilder},
+    tempo_payload::{
+        TempoAnvilEvmConfig, TempoAnvilPool, TempoDevPayloadBuilderBuilder, TempoPoolEvmConfig,
+    },
 };
 use crate::{
     api::NodeIdentity,
@@ -21,13 +23,14 @@ use crate::{
     fork::{AnvilPrimitives, ForkBackend, ForkGenesisAccount, ForkNetwork, TxPosition},
     logging::{LoggingState, NodeInfoLayer},
     pending::{AnvilEthApiBuilder, AnvilPendingEnv},
-    time::AnvilPayloadAttributes,
+    time::{AnvilPayloadAttributes, TimeManager},
 };
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::Recovered};
 use alloy_eips::Encodable2718;
 use alloy_evm::Database;
 use alloy_genesis::Genesis;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt};
+use alloy_primitives::{Address, B256, Bytes, U64, U256};
 use eyre::Result;
 use foundry_evm_hardforks::EthereumHardfork;
 use reth_ethereum::{
@@ -62,7 +65,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tempo_alloy::{TempoNetwork, rpc::TempoTransactionReceipt};
+use tempo_alloy::rpc::{TempoHeaderResponse, TempoTransactionReceipt};
 use tempo_chainspec::{TempoChainSpec, spec::DEV};
 use tempo_evm::{FeeTokenResolver, TempoEvmFactory, TempoNextBlockEnvAttributes, TempoStateAccess};
 use tempo_hardfork::TempoHardfork;
@@ -86,10 +89,7 @@ use tempo_transaction_pool::{
     maintain::maintain_tempo_pool,
     ordering::TempoTipOrdering,
     tt_2d_pool::DEFAULT_MAX_TXS_PER_LANE,
-    validator::{
-        DEFAULT_AA_VALID_AFTER_MAX_SECS, DEFAULT_MAX_TEMPO_AUTHORIZATIONS,
-        TempoTransactionValidator,
-    },
+    validator::{DEFAULT_MAX_TEMPO_AUTHORIZATIONS, TempoTransactionValidator},
 };
 use tower::layer::util::Identity;
 
@@ -117,6 +117,9 @@ impl AnvilNetwork for Tempo {
     >;
     type Attributes = TempoAttributesBuilder;
 
+    // Tempo's chain spec sets every block's base fee: a fixed fee, or the T7 controller.
+    const FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE: bool = false;
+
     async fn prepare(config: &mut NodeConfig) -> Result<Prepared<TempoNode>> {
         if config.is_fork() {
             let (fork, accounts) = ForkBackend::<TempoFork>::setup(config).await?;
@@ -137,7 +140,10 @@ impl AnvilNetwork for Tempo {
     fn components(anvil: &AnvilComponents) -> Self::Components {
         ComponentsBuilder::default()
             .node_types::<AnvilAdapter<TempoNode>>()
-            .pool(TempoAnvilPoolBuilder)
+            .pool(TempoAnvilPoolBuilder {
+                time: anvil.time.clone(),
+                disable_balance_check: anvil.config.disable_pool_balance_checks,
+            })
             .executor(AnvilExecutorBuilder {
                 inner: TempoExecutorBuilder::default(),
                 state: anvil.impersonation.clone(),
@@ -262,9 +268,15 @@ impl PayloadAttributesBuilder<TempoPayloadAttributes, TempoHeader> for TempoAttr
 }
 
 /// Builds the Tempo pool with the wrapped EVM config, as Tempo's pool builder does with Tempo's,
-/// with anvil's replacement rule: any higher fee replaces a pooled transaction.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct TempoAnvilPoolBuilder;
+/// with anvil's replacement rule, any higher fee replaces a pooled transaction, and anvil's
+/// clock.
+#[derive(Clone, Debug)]
+pub struct TempoAnvilPoolBuilder {
+    /// Anvil's clock, which times the pool's checks.
+    pub time: TimeManager,
+    /// Whether the pool skips the fee balance check.
+    pub disable_balance_check: bool,
+}
 
 impl<Node> PoolBuilder<Node, TempoAnvilEvmConfig> for TempoAnvilPoolBuilder
 where
@@ -283,6 +295,7 @@ where
             PriceBumpConfig { default_price_bump: 0, replace_blob_tx_price_bump: 0 };
 
         let blob_store = InMemoryBlobStore::default();
+        let evm_config = TempoPoolEvmConfig::new(evm_config, self.time, self.disable_balance_check);
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
@@ -306,9 +319,11 @@ where
         });
         let amm_liquidity_cache = AmmLiquidityCache::new(ctx.provider())?;
         let validator = validator.map(move |validator| {
+            // Tempo bounds `valid_after` by the wall clock; anvil's clock may run ahead of it, so
+            // the anvil API checks the bound against anvil's clock instead.
             TempoTransactionValidator::new(
                 validator,
-                DEFAULT_AA_VALID_AFTER_MAX_SECS,
+                u64::MAX,
                 DEFAULT_MAX_TEMPO_AUTHORIZATIONS,
                 amm_liquidity_cache.clone(),
             )
@@ -498,21 +513,33 @@ impl ConsoleEvmFactory for TempoEvmFactory {
 }
 
 /// The Tempo fork network.
+///
+/// Responses come in as any network's and convert through their JSON form, so a fork of an
+/// endpoint that serves Ethereum headers and receipts, such as an Ethereum anvil node, gets the
+/// Tempo fields at their defaults.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TempoFork;
 
 impl ForkNetwork for TempoFork {
-    type Network = TempoNetwork;
+    type Network = AnyNetwork;
     type Primitives = TempoPrimitives;
 
-    fn uncles(response: &<TempoNetwork as alloy_network::Network>::BlockResponse) -> (B256, usize) {
+    fn uncles(response: &AnyRpcBlock) -> (B256, usize) {
         (response.header.hash, response.uncles.len())
     }
 
     fn block(
-        response: <TempoNetwork as alloy_network::Network>::BlockResponse,
-        _uncles: Vec<<TempoNetwork as alloy_network::Network>::BlockResponse>,
+        response: AnyRpcBlock,
+        _uncles: Vec<AnyRpcBlock>,
     ) -> Result<SealedBlock<Block>, ProviderError> {
+        let mut value = to_json(&response)?;
+        if let Some(block) = value.as_object_mut() {
+            with_tempo_header_defaults(block);
+        }
+        let response: alloy_rpc_types_eth::Block<
+            alloy_rpc_types_eth::Transaction<TempoTxEnvelope>,
+            TempoHeaderResponse,
+        > = from_json(value)?;
         let hash = response.header.hash;
         let header = response.header.inner.inner;
         let transactions =
@@ -525,7 +552,17 @@ impl ForkNetwork for TempoFork {
         Ok(SealedBlock::new_unchecked(Block { header, body }, hash))
     }
 
-    fn receipt(response: TempoTransactionReceipt) -> Result<Option<TempoReceipt>, ProviderError> {
+    fn receipt(response: AnyTransactionReceipt) -> Result<Option<TempoReceipt>, ProviderError> {
+        let mut value = to_json(&response)?;
+        if let Some(receipt) = value.as_object_mut()
+            && !receipt.contains_key("feePayer")
+            && let Some(from) = receipt.get("from").cloned()
+        {
+            receipt.insert("feePayer".to_string(), from);
+        }
+        let Ok(response) = serde_json::from_value::<TempoTransactionReceipt>(value) else {
+            return Ok(None);
+        };
         let receipt = response.inner.inner.receipt;
         Ok(Some(TempoReceipt {
             tx_type: receipt.tx_type,
@@ -536,8 +573,13 @@ impl ForkNetwork for TempoFork {
     }
 
     fn transaction(
-        response: alloy_rpc_types_eth::Transaction<TempoTxEnvelope>,
+        response: AnyRpcTransaction,
     ) -> Result<Option<(TempoTxEnvelope, Option<TxPosition>)>, ProviderError> {
+        let Ok(response) = serde_json::from_value::<
+            alloy_rpc_types_eth::Transaction<TempoTxEnvelope>,
+        >(to_json(&response)?) else {
+            return Ok(None);
+        };
         let position =
             match (response.block_hash, response.block_number, response.transaction_index) {
                 (Some(hash), Some(number), Some(index)) => Some((hash, number, index)),
@@ -546,6 +588,34 @@ impl ForkNetwork for TempoFork {
         let tx: Recovered<TempoTxEnvelope> = response.inner;
         Ok(Some((tx.into_inner(), position)))
     }
+}
+
+/// Fills the Tempo header fields an Ethereum header lacks: no general or shared gas limit, and a
+/// timestamp in whole seconds.
+fn with_tempo_header_defaults(header: &mut serde_json::Map<String, serde_json::Value>) {
+    let timestamp = header
+        .get("timestamp")
+        .and_then(|timestamp| serde_json::from_value::<U64>(timestamp.clone()).ok())
+        .map(|timestamp| timestamp.to::<u64>())
+        .unwrap_or_default();
+    for (field, value) in [
+        ("mainBlockGeneralGasLimit", U64::ZERO),
+        ("sharedGasLimit", U64::ZERO),
+        ("timestampMillisPart", U64::ZERO),
+        ("timestampMillis", U64::from(timestamp.saturating_mul(1000))),
+    ] {
+        header.entry(field).or_insert_with(|| serde_json::json!(value));
+    }
+}
+
+/// Returns the JSON form of a response.
+fn to_json(response: &impl serde::Serialize) -> Result<serde_json::Value, ProviderError> {
+    serde_json::to_value(response).map_err(ProviderError::other)
+}
+
+/// Reads a Tempo response from its JSON form.
+fn from_json<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, ProviderError> {
+    serde_json::from_value(value).map_err(ProviderError::other)
 }
 
 impl AnvilPrimitives for TempoPrimitives {

@@ -27,10 +27,11 @@ use alloy_rpc_types::anvil::{Metadata, NodeInfo};
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
-use foundry_evm_core::utils::block_env_from_header;
+use foundry_evm_core::{backend::account_fetch_policy_for_source, utils::block_env_from_header};
+use foundry_evm_networks::NetworkConfigs;
 use foundry_fork_db::{
-    BlockchainDb, ForkBlock as ForkAnchor, SharedBackend, backend::BlockingMode,
-    cache::BlockchainDbMeta,
+    AccountFetchPolicy, BlockchainDb, ForkBlock as ForkAnchor, SharedBackend,
+    backend::BlockingMode, cache::BlockchainDbMeta,
 };
 use jsonrpsee::{
     core::RpcResult,
@@ -482,6 +483,9 @@ pub struct ForkSettings {
     /// The instance id of the endpoint, when it is an anvil node: a reset of that node is another
     /// chain behind the same URL, so its cached state must not be reused.
     pub instance_id: Option<B256>,
+    /// How accounts are read from the endpoint. A Tempo endpoint reports a placeholder for native
+    /// balances, so accounts must come from `eth_getAccountInfo`.
+    pub account_fetch_policy: AccountFetchPolicy,
 }
 
 impl ForkSettings {
@@ -755,6 +759,18 @@ impl<F: ForkNetwork> ForkBackend<F> {
         // An endpoint that identified itself must still answer: a failure now hides a reset.
         let node_info = probe.request(&provider).await?.or(node_info_before);
         let mut source_chain_id = chain_id;
+        let network_profile = node_info
+            .as_ref()
+            .and_then(|info| {
+                NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                    chain_id,
+                    Some(info.network.as_deref()),
+                    None,
+                )
+                .ok()
+                .flatten()
+            })
+            .unwrap_or_default();
         if node_info.is_some() {
             config.mark_anvil_endpoint(&url);
             let metadata = tokio::time::timeout(
@@ -773,6 +789,8 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 }
             }
         }
+        settings.account_fetch_policy =
+            account_fetch_policy_for_source(source_chain_id, network_profile);
         let replay = match replay_target {
             Some((number, target)) => {
                 let block = chain
@@ -815,7 +833,8 @@ impl<F: ForkNetwork> ForkBackend<F> {
 
         let meta =
             BlockchainDbMeta::new(block_env_from_header::<BlockEnv>(header.header()), url.clone())
-                .with_fork_identity(hash, settings.source_id());
+                .with_fork_identity(hash, settings.source_id())
+                .with_account_fetch_policy(settings.account_fetch_policy);
         let db = BlockchainDb::new(meta, settings.cache_path(chain_id, block_number, &url));
         drop((provider, chain));
         let state = spawn_state_backend(
@@ -882,7 +901,8 @@ impl<F: ForkNetwork> ForkBackend<F> {
         )?;
 
         let meta =
-            BlockchainDbMeta::new(block_env_from_header::<BlockEnv>(head.header()), url.clone());
+            BlockchainDbMeta::new(block_env_from_header::<BlockEnv>(head.header()), url.clone())
+                .with_account_fetch_policy(settings.account_fetch_policy);
         let (shared, handler) = SharedBackend::new(
             Arc::new(settings.provider::<alloy_network::AnyNetwork>(&url)?),
             BlockchainDb::new(meta, None),
@@ -1211,7 +1231,8 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 block_env_from_header::<BlockEnv>(self.header.header()),
                 url.clone(),
             )
-            .with_fork_identity(self.header.hash(), self.settings.source_id());
+            .with_fork_identity(self.header.hash(), self.settings.source_id())
+            .with_account_fetch_policy(self.settings.account_fetch_policy);
             let db = BlockchainDb::new(
                 meta,
                 self.settings.cache_path(self.chain_id, self.header.number(), &url),
@@ -1264,7 +1285,8 @@ impl<F: ForkNetwork> ForkBackend<F> {
             .header_by_number(number)?
             .ok_or(ProviderError::HeaderNotFound(BlockHashOrNumber::Number(number)))?;
         let url = self.url();
-        let meta = BlockchainDbMeta::new(block_env_from_header::<BlockEnv>(&header), url.clone());
+        let meta = BlockchainDbMeta::new(block_env_from_header::<BlockEnv>(&header), url.clone())
+            .with_account_fetch_policy(self.settings.account_fetch_policy);
         let db = BlockchainDb::new(meta, self.settings.cache_path(self.chain_id, number, &url));
         let provider = self
             .settings

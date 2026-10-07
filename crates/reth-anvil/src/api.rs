@@ -49,7 +49,7 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{
         ErrorObjectOwned,
-        error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE, METHOD_NOT_FOUND_CODE},
+        error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
     },
 };
 use parking_lot::{Mutex, RwLock};
@@ -58,9 +58,9 @@ use reth_ethereum::{
     chainspec::{EthChainSpec, EthereumHardforks, Hardforks, MIN_TRANSACTION_GAS},
     evm::primitives::ConfigureEvm,
     pool::{TransactionPool, TransactionPoolExt},
-    primitives::{Bytecode, SealedHeader},
+    primitives::{Bytecode, SealedHeader, TxTy},
     rpc::eth::{
-        EthApiError, RpcInvalidTransactionError, error::RpcPoolError,
+        EthApiError, FillTransaction, RpcInvalidTransactionError, error::RpcPoolError,
         utils::recover_raw_transaction,
     },
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
@@ -100,6 +100,8 @@ use tempo_precompiles::{
 use tempo_primitives::{
     TEMPO_TX_TYPE_ID, TempoTxEnvelope, transaction::FEE_PAYER_SIGNATURE_MARKER,
 };
+#[cfg(feature = "tempo")]
+use tempo_transaction_pool::validator::DEFAULT_AA_VALID_AFTER_MAX_SECS;
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -362,7 +364,14 @@ pub trait EvmApi {
 
 /// The `eth_*` methods anvil adds on top of the standard namespace, or replaces.
 #[rpc(server, namespace = "eth")]
-pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject, Tx: RpcObject, Blk: RpcObject> {
+pub trait EthExtApi<
+    TxReq: RpcObject,
+    Receipt: RpcObject,
+    Tx: RpcObject,
+    Blk: RpcObject,
+    RawTx: RpcObject,
+>
+{
     /// Signs and sends a transaction from a dev account. A request without `to` deploys a
     /// contract.
     ///
@@ -562,6 +571,15 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject, Tx: RpcObject, Blk: Rp
     #[method(name = "signRawTransaction")]
     async fn eth_sign_raw_transaction(&self, tx: Bytes) -> RpcResult<Bytes>;
 
+    /// Fills the defaults of a transaction request and returns it with its unsigned encoding.
+    #[method(name = "fillTransaction")]
+    async fn eth_fill_transaction(&self, request: TxReq) -> RpcResult<FillTransaction<RawTx>>;
+
+    /// Returns the native balance of an account. Tempo's API reports a placeholder for it;
+    /// anvil reports the balance.
+    #[method(name = "getBalance")]
+    async fn eth_get_balance(&self, address: Address, block: Option<BlockId>) -> RpcResult<U256>;
+
     /// Returns the coinbase of the next block: the override set by `anvil_setCoinbase`, else the
     /// genesis coinbase.
     #[method(name = "coinbase")]
@@ -602,9 +620,26 @@ pub const CLIENT_VERSION: &str = concat!(env!("CARGO_PKG_NAME"), "/v", env!("CAR
 /// The header type of a provider.
 type HeaderOf<Provider> = <Provider as HeaderProvider>::Header;
 
-/// Marks a request without `to` as a contract creation, so the signer can build it.
-fn with_recipient<TxReq: AsMut<TransactionRequest>>(mut request: TxReq) -> TxReq {
-    if request.as_mut().to.is_none() {
+/// A transaction request, which may carry a batch of calls in place of one recipient.
+pub trait CallBatch {
+    /// Returns whether the request carries a batch of calls.
+    fn has_calls(&self) -> bool {
+        false
+    }
+}
+
+impl CallBatch for TransactionRequest {}
+
+#[cfg(feature = "tempo")]
+impl CallBatch for tempo_alloy::rpc::TempoTransactionRequest {
+    fn has_calls(&self) -> bool {
+        !self.calls.is_empty()
+    }
+}
+
+/// Marks a request without `to` or calls as a contract creation, so the signer can build it.
+fn with_recipient<TxReq: AsMut<TransactionRequest> + CallBatch>(mut request: TxReq) -> TxReq {
+    if !request.has_calls() && request.as_mut().to.is_none() {
         request.as_mut().to = Some(TxKind::Create);
     }
     request
@@ -734,6 +769,39 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     new_filter: NewFilterHook,
     /// The dev account that sponsors Tempo fee-payer requests, if any.
     tempo_fee_payer: Option<PrivateKeySigner>,
+    /// The chain spec's base fee rule for the block after a header.
+    next_block_base_fee: NextBlockBaseFee<HeaderOf<Provider>>,
+    /// Makes the pool drop the state it read at the tip, after an anvil state write.
+    pool_refresh: Option<PoolRefresh>,
+}
+
+/// Makes the pool drop the state it read at the tip. Tempo's pool keeps the reads it made at a
+/// tip until the next block, so an anvil state write would stay hidden from it until then.
+#[derive(Clone)]
+pub struct PoolRefresh(Arc<dyn Fn() + Send + Sync>);
+
+impl PoolRefresh {
+    /// Wraps the refresh.
+    pub fn new(refresh: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(Arc::new(refresh))
+    }
+}
+
+impl fmt::Debug for PoolRefresh {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PoolRefresh")
+    }
+}
+
+/// The base fee of the block after a header at a timestamp, by the chain spec's rule: EIP-1559,
+/// or Tempo's fixed fee and its T7 controller.
+#[derive(Clone)]
+struct NextBlockBaseFee<H>(Arc<dyn Fn(&H, u64) -> Option<u64> + Send + Sync>);
+
+impl<H> fmt::Debug for NextBlockBaseFee<H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NextBlockBaseFee")
+    }
 }
 
 /// Installs a log filter, or a block filter for `None`, and returns its id.
@@ -757,7 +825,10 @@ impl NewFilterHook {
     }
 }
 
-impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec> {
+impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+where
+    Spec: EthChainSpec<Header = HeaderOf<Provider>> + 'static,
+{
     /// Creates the `anvil_*` namespace over the given node components.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
@@ -780,6 +851,12 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
         eth: Eth,
         new_filter: NewFilterHook,
     ) -> Self {
+        let next_block_base_fee = {
+            let chain_spec = chain_spec.clone();
+            NextBlockBaseFee(Arc::new(move |header: &HeaderOf<Provider>, timestamp| {
+                chain_spec.next_block_base_fee(header, timestamp)
+            }))
+        };
         Self {
             identity,
             relauncher,
@@ -801,7 +878,15 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
             nonce_locks: Default::default(),
             new_filter,
             tempo_fee_payer: None,
+            next_block_base_fee,
+            pool_refresh: None,
         }
+    }
+
+    /// Sets the refresh that makes the pool see anvil state writes before the next block.
+    pub fn with_pool_refresh(mut self, refresh: Option<PoolRefresh>) -> Self {
+        self.pool_refresh = refresh;
+        self
     }
 
     /// Sets the dev account that sponsors Tempo fee-payer requests.
@@ -833,7 +918,7 @@ where
     Pool: TransactionPool,
     Provider:
         BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + StateDump,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks,
 {
     async fn block_by_number(
@@ -938,6 +1023,7 @@ where
             nonce: account.nonce,
             balance: account.balance,
         }]);
+        self.refresh_pool();
         Ok(())
     }
 
@@ -1072,7 +1158,7 @@ where
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks + Send + Sync + 'static,
 {
     async fn anvil_impersonate_account(&self, address: Address) -> RpcResult<()> {
@@ -1652,6 +1738,7 @@ where
 
     async fn anvil_set_code(&self, address: Address, code: Bytes) -> RpcResult<()> {
         self.state.write().set_code(address, Bytecode::new_raw(code));
+        self.refresh_pool();
         Ok(())
     }
 
@@ -1662,6 +1749,7 @@ where
         value: B256,
     ) -> RpcResult<bool> {
         self.state.write().set_storage_at(address, slot.into(), value.into());
+        self.refresh_pool();
         Ok(true)
     }
 
@@ -1820,7 +1908,7 @@ where
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks + Send + Sync + 'static,
 {
     async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String> {
@@ -1833,7 +1921,7 @@ impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool,
     Provider: BlockNumReader + HeaderProvider + StateProviderFactory,
-    Eth: FullEthApiServer,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch>>,
     Spec: EthChainSpec + EthereumHardforks,
 {
     /// Fills a missing `from` with the first dev account, as anvil does, and marks a missing
@@ -1842,6 +1930,7 @@ where
         &self,
         mut request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
+        self.ensure_network_supports(request.as_ref())?;
         if request.as_ref().from.is_none() {
             let accounts = EthApiServer::accounts(&self.eth)?;
             let from =
@@ -1976,7 +2065,9 @@ where
         // Reth signs a blob transaction without its sidecar and the pool rejects it; the signed
         // transaction gets the sidecar back and goes in as a pooled transaction.
         let Some(sidecar) = request.as_ref().sidecar.clone() else {
-            return EthApiServer::send_transaction(&self.eth, request).await;
+            return EthApiServer::send_transaction(&self.eth, request)
+                .await
+                .map_err(|error| self.pool_error(error));
         };
         if request.as_ref().blob_versioned_hashes.is_none() {
             request.as_mut().blob_versioned_hashes = Some(sidecar.versioned_hashes().collect());
@@ -2012,7 +2103,13 @@ where
     async fn send_raw(&self, tx: Bytes) -> RpcResult<B256> {
         // A Tempo transaction that asks for sponsorship gets the node's fee payer signature
         // first, as the sign-and-relay mode of Tempo's fee payer service does.
-        let tx = if self.is_tempo() { self.sponsor_raw_transaction(&tx, false)? } else { tx };
+        let tx = if self.is_tempo() {
+            let tx = self.sponsor_raw_transaction(&tx, false)?;
+            self.ensure_tempo_valid_after(&tx)?;
+            tx
+        } else {
+            tx
+        };
         let recovered = recover_raw_transaction::<PooledTransactionVariant>(&tx).ok();
         let _guard = match &recovered {
             Some(recovered) => Some(self.nonce_lock(recovered.signer()).lock_owned().await),
@@ -2026,7 +2123,9 @@ where
                 recovered.max_fee_per_gas(),
             )?;
         }
-        EthApiServer::send_raw_transaction(&self.eth, tx).await
+        EthApiServer::send_raw_transaction(&self.eth, tx)
+            .await
+            .map_err(|error| self.pool_error(error))
     }
 
     /// Returns whether a lookup by transaction hash that failed with `error` should run again:
@@ -2163,9 +2262,7 @@ where
             return Ok(Some(fee));
         }
         let header = self.sealed_header(self.best_block_number()?)?;
-        let params =
-            self.chain_spec.base_fee_params_at_timestamp(self.time.current_call_timestamp());
-        Ok(header.next_block_base_fee(params))
+        Ok((self.next_block_base_fee.0)(header.header(), self.time.current_call_timestamp()))
     }
 
     /// Rejects a transaction whose fee cap is below the next block's base fee, as anvil does;
@@ -2259,6 +2356,7 @@ where
         &self,
         mut request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
+        self.ensure_network_supports(request.as_ref())?;
         let Some(base_fee) = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas()
         else {
             return Ok(request);
@@ -2314,6 +2412,7 @@ impl<Pool, Provider, Eth, Spec>
         RpcReceipt<Eth::NetworkTypes>,
         RpcTransaction<Eth::NetworkTypes>,
         RpcBlock<Eth::NetworkTypes>,
+        TxTy<Eth::Primitives>,
     > for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool + 'static,
@@ -2324,7 +2423,7 @@ where
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch>>,
     <Eth::Evm as ConfigureEvm>::NextBlockEnvCtx: AnvilNextBlockEnv,
     Spec: EthChainSpec + EthereumHardforks + Send + Sync + 'static,
 {
@@ -2631,6 +2730,21 @@ where
         EthApiServer::sign_transaction(&self.eth, request).await
     }
 
+    async fn eth_get_balance(&self, address: Address, block: Option<BlockId>) -> RpcResult<U256> {
+        if self.is_tempo() {
+            return self.balance_of(address, block, None);
+        }
+        EthApiServer::balance(&self.eth, address, block).await
+    }
+
+    async fn eth_fill_transaction(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<FillTransaction<TxTy<Eth::Primitives>>> {
+        self.ensure_network_supports(request.as_ref())?;
+        EthApiServer::fill_transaction(&self.eth, request).await
+    }
+
     async fn eth_sign_raw_transaction(&self, tx: Bytes) -> RpcResult<Bytes> {
         if !self.is_tempo() {
             return Err(tempo_only());
@@ -2841,11 +2955,6 @@ where
     Provider: BlockNumReader + HeaderProvider + StateProviderFactory,
     Spec: EthChainSpec,
 {
-    /// Returns whether the node runs the Tempo network.
-    fn is_tempo(&self) -> bool {
-        self.identity.network == Some("tempo")
-    }
-
     /// Sets the balance of an account in a TIP-20 token, and returns whether the token is a
     /// TIP-20 token. Tempo only.
     fn try_set_tip20_balance(
@@ -2975,15 +3084,18 @@ where
         if !apply {
             return Ok(result);
         }
-        let mut state = self.state.write();
-        for (address, writes) in storage.into_writes() {
-            if let Some(code) = writes.code {
-                state.set_code(address, reth_ethereum::primitives::Bytecode(code));
-            }
-            for (slot, value) in writes.storage {
-                state.set_storage_at(address, slot.into(), value);
+        {
+            let mut state = self.state.write();
+            for (address, writes) in storage.into_writes() {
+                if let Some(code) = writes.code {
+                    state.set_code(address, reth_ethereum::primitives::Bytecode(code));
+                }
+                for (slot, value) in writes.storage {
+                    state.set_storage_at(address, slot.into(), value);
+                }
             }
         }
+        self.refresh_pool();
         Ok(result)
     }
 }
@@ -3070,6 +3182,70 @@ where
     }
 }
 
+impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+where
+    Provider: HeaderProvider,
+{
+    /// Returns whether the node runs the Tempo network.
+    fn is_tempo(&self) -> bool {
+        self.identity.network == Some("tempo")
+    }
+
+    /// Makes the pool see the anvil state writes made since the tip.
+    fn refresh_pool(&self) {
+        if let Some(refresh) = &self.pool_refresh {
+            (refresh.0)();
+        }
+    }
+
+    /// Rejects a Tempo transaction request on a node that does not run Tempo, as anvil does,
+    /// instead of running it as an Ethereum transaction.
+    fn ensure_network_supports(&self, request: &TransactionRequest) -> RpcResult<()> {
+        if !self.is_tempo() && request.transaction_type == Some(TEMPO_TRANSACTION_TYPE) {
+            return Err(invalid_params(
+                "tempo transaction received but is not supported.\n\nYou can use it by running \
+                 anvil with '--tempo'.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reports a pool rejection as anvil does: on Tempo, a fee payer short of fee tokens gets the
+    /// fee token shortfall, which reth reports as missing native funds.
+    fn pool_error(&self, error: ErrorObjectOwned) -> ErrorObjectOwned {
+        const INSUFFICIENT_FUNDS: &str = "insufficient funds for gas * price + value: have ";
+        if self.is_tempo()
+            && let Some(amounts) = error.message().strip_prefix(INSUFFICIENT_FUNDS)
+            && let Some((balance, required)) = amounts.split_once(" want ")
+        {
+            return ErrorObjectOwned::owned(
+                error.code(),
+                format!("insufficient fee token balance: have {balance}, need {required}"),
+                None::<()>,
+            );
+        }
+        error
+    }
+
+    /// Rejects a Tempo transaction whose `valid_after` lies more than Tempo's pool limit past the
+    /// time of the next block, as anvil's clock gives it.
+    fn ensure_tempo_valid_after(&self, raw: &Bytes) -> RpcResult<()> {
+        #[cfg(feature = "tempo")]
+        if let Ok(TempoTxEnvelope::AA(transaction)) =
+            TempoTxEnvelope::decode_2718(&mut raw.as_ref())
+        {
+            let max_allowed =
+                self.time.current_call_timestamp().saturating_add(DEFAULT_AA_VALID_AFTER_MAX_SECS);
+            transaction.tx().ensure_valid_after(max_allowed).map_err(|error| {
+                ErrorObjectOwned::owned(TRANSACTION_REJECTED_CODE, error.to_string(), None::<()>)
+            })?;
+        }
+        #[cfg(not(feature = "tempo"))]
+        let _ = raw;
+        Ok(())
+    }
+}
+
 /// Returns the standard encoding of a Tempo transaction sent in the fee payer service encoding,
 /// which carries a `0x00` placeholder for the fee payer signature, or `None` for any other
 /// transaction.
@@ -3111,7 +3287,10 @@ fn normalize_fee_payer_service_encoding(raw: &[u8]) -> Option<Vec<u8>> {
     Some(normalized)
 }
 
-/// The error for a Tempo method on a node that does not run Tempo.
+/// The type of a Tempo transaction.
+const TEMPO_TRANSACTION_TYPE: u8 = 0x76;
+
+/// The error for a Tempo method on a node that does not run Tempo, as anvil reports it.
 fn tempo_only() -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(METHOD_NOT_FOUND_CODE, "Rpc Endpoint not implemented", None::<()>)
+    internal_error("Not implemented")
 }

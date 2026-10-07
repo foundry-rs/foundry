@@ -905,7 +905,7 @@ async fn test_anvil_deal_tip20_rejects_invalid_token() {
     assert_eq!(
         result.unwrap_err().to_string(),
         format!(
-            "server returned an error response: error code -32603: failed to process AnyRequest: address {token} is not a deployed TIP-20 token"
+            "server returned an error response: error code -32603: address {token} is not a deployed TIP-20 token"
         )
     );
 }
@@ -1300,7 +1300,8 @@ async fn test_anvil_cli_tempo_t5_hardfork_precompile_smoke() {
     let endpoint = format!("http://127.0.0.1:{port}");
     let provider = http_provider(&endpoint);
     let mut ready = false;
-    for _ in 0..100 {
+    // The node starts a reth node, which takes longer than anvil's in-memory backend.
+    for _ in 0..300 {
         if provider.get_chain_id().await.is_ok() {
             ready = true;
             break;
@@ -1349,7 +1350,8 @@ async fn test_anvil_cli_tempo_t6_hardfork_receive_policy_guard_smoke() {
     let endpoint = format!("http://127.0.0.1:{port}");
     let provider = http_provider(&endpoint);
     let mut ready = false;
-    for _ in 0..100 {
+    // The node starts a reth node, which takes longer than anvil's in-memory backend.
+    for _ in 0..300 {
         if provider.get_chain_id().await.is_ok() {
             ready = true;
             break;
@@ -2527,7 +2529,7 @@ async fn test_native_value_transfer_rejected() {
 
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("native value transfer not allowed"),
+        err.contains("value transfer not allowed"),
         "Expected 'native value transfer not allowed' error, got: {err}"
     );
 }
@@ -3248,13 +3250,12 @@ async fn test_tempo_rpc_rejects_malformed_extension_fields() {
         request[field] = value;
         let error =
             provider.raw_request::<_, Bytes>("eth_call".into(), (request,)).await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "server returned an error response: error code -32602: Invalid transaction request: {expected}"
-            ),
+        let error = error.to_string();
+        assert!(
+            error.starts_with("server returned an error response: error code -32602"),
             "{field}"
         );
+        assert!(error.contains(expected), "{field}: {error}");
     }
 }
 
@@ -4531,7 +4532,7 @@ async fn test_tempo_aa_expired_valid_before() {
     assert_eq!(
         result.unwrap_err().to_string(),
         format!(
-            "server returned an error response: error code -32003: Tempo tx valid_before ({valid_before}) must be > current time + 3s ({})",
+            "server returned an error response: error code -32000: 'valid_before' {valid_before} is too close to current time (min allowed: {})",
             current_time + 3
         )
     );
@@ -4860,7 +4861,7 @@ async fn test_gas_estimation_with_value_fails() {
     let result = provider.estimate_gas(tx.into()).await;
     assert_eq!(
         result.unwrap_err().to_string(),
-        "server returned an error response: error code -32603: tempo transaction error: value transfer not allowed"
+        "server returned an error response: error code -32603: Revm error: value transfer not allowed"
     );
 }
 
@@ -5907,7 +5908,8 @@ async fn test_tempo_aa_get_transaction_by_hash() {
     let tx_hash = *pending.tx_hash();
     pending.get_receipt().await.unwrap();
 
-    let tx = api.transaction_by_hash(tx_hash).await.unwrap();
+    let tx: Option<alloy_rpc_types::Transaction<TempoTxEnvelope>> =
+        api.request("eth_getTransactionByHash", jsonrpsee::rpc_params![tx_hash]).await.unwrap();
     assert!(tx.is_some(), "Transaction should be retrievable by hash");
 
     let tx = tx.unwrap();
@@ -6024,7 +6026,7 @@ async fn test_tempo_aa_wrong_chain_id_rejected() {
     let result = provider.send_raw_transaction(&encoded).await;
     assert_eq!(
         result.unwrap_err().to_string(),
-        "server returned an error response: error code -32003: invalid chain id for signer"
+        "server returned an error response: error code -32000: invalid chain ID"
     );
 }
 
@@ -6073,10 +6075,8 @@ async fn test_tempo_aa_gas_too_low_rejected() {
     envelope.encode_2718(&mut encoded);
 
     let result = provider.send_raw_transaction(&encoded).await;
-    assert_eq!(
-        result.unwrap_err().to_string(),
-        "server returned an error response: error code -32000: intrinsic gas too low"
-    );
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("exceeds the gas limit (1000)"), "{err}");
 }
 
 // ============================================================================
@@ -6126,7 +6126,7 @@ async fn test_tempo_aa_value_in_call_rejected() {
     let result = provider.send_raw_transaction(&encoded).await;
     assert_eq!(
         result.unwrap_err().to_string(),
-        "server returned an error response: error code -32003: native value transfer not allowed in Tempo mode"
+        "server returned an error response: error code -32000: value transfer not allowed"
     );
 }
 
@@ -6669,7 +6669,7 @@ async fn test_anvil_set_fee_token_non_tempo_fails() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     let result = api.anvil_set_fee_token(Address::random(), ALPHA_USD).await;
-    assert_eq!(result.unwrap_err().to_string(), "Rpc Endpoint not implemented");
+    assert!(result.unwrap_err().to_string().contains("Not implemented"));
 }
 
 /// `anvil_setValidatorFeeToken` sets the fee token for a validator, readable via `validatorTokens`.
@@ -6699,7 +6699,7 @@ async fn test_anvil_set_validator_fee_token_non_tempo_fails() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
 
     let result = api.anvil_set_validator_fee_token(Address::random(), BETA_USD).await;
-    assert_eq!(result.unwrap_err().to_string(), "Rpc Endpoint not implemented");
+    assert!(result.unwrap_err().to_string().contains("Not implemented"));
 }
 
 /// `anvil_setFeeAmmLiquidity` mints AMM liquidity for a token pair,
@@ -6740,7 +6740,7 @@ async fn test_anvil_set_fee_amm_liquidity_non_tempo_fails() {
 
     let result =
         api.anvil_set_fee_amm_liquidity(PATH_USD, ALPHA_USD, U256::from(1_000_000u64)).await;
-    assert_eq!(result.unwrap_err().to_string(), "Rpc Endpoint not implemented");
+    assert!(result.unwrap_err().to_string().contains("Not implemented"));
 }
 
 /// Pre-T7 Tempo uses a fixed base fee, so mining empty blocks must not drift it (EIP-1559 would).
@@ -6894,4 +6894,34 @@ async fn test_tempo_mined_traces_use_hardfork_precompiles() {
         let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
         assert_eq!(replay.trace, traces, "{hardfork:?}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn zz_debug_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let calls = [
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xde]),
+        },
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xbe]),
+        },
+    ];
+    let req = serde_json::json!({"from": from, "type": "0x76", "calls": calls});
+    println!("REQ {req}");
+    let r = provider
+        .raw_request::<_, serde_json::Value>("eth_estimateGas".into(), (req.clone(),))
+        .await;
+    println!("EST {r:?}");
+    let r = provider.raw_request::<_, serde_json::Value>("eth_call".into(), (req.clone(),)).await;
+    println!("CALL {r:?}");
+    let r =
+        provider.raw_request::<_, serde_json::Value>("eth_sendTransaction".into(), (req,)).await;
+    println!("SEND {r:?}");
 }

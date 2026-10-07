@@ -20,6 +20,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_fork_db::AccountFetchPolicy;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use reth_ethereum::{
@@ -789,6 +790,7 @@ impl NodeConfig {
             no_storage_caching: self.no_storage_caching,
             state_by_number: self.fork_state_by_number,
             instance_id: None,
+            account_fetch_policy: AccountFetchPolicy::Auto,
         }
     }
 
