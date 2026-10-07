@@ -11323,6 +11323,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "alloy-transport",
  "alloy-trie",
  "axum",
  "chrono",

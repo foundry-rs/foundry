@@ -32,7 +32,7 @@ use reth_rpc_eth_api::{
     RpcNodeCore, RpcTxReq,
     helpers::{EthTransactions, LoadBlock, LoadTransaction, TraceExt},
 };
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{fmt, sync::Arc};
 
@@ -44,6 +44,25 @@ const SENDER_NOT_EOA_CODE: i32 = -32003;
 
 /// The error code anvil reports for a replay without the state of the parent block.
 const HISTORICAL_STATE_CODE: i32 = -32000;
+
+/// A block id parameter that also accepts a plain block number, as anvil's does.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum LenientBlockId {
+    /// A block number as a JSON integer.
+    Number(u64),
+    /// A block id.
+    Id(BlockId),
+}
+
+impl From<LenientBlockId> for BlockId {
+    fn from(block: LenientBlockId) -> Self {
+        match block {
+            LenientBlockId::Number(number) => Self::number(number),
+            LenientBlockId::Id(id) => id,
+        }
+    }
+}
 
 /// The `debug_*` methods with anvil's error codes and fork routing.
 #[rpc(server, namespace = "debug")]
@@ -61,7 +80,7 @@ pub trait AnvilDebugApi {
     #[method(name = "accountInfoAt")]
     async fn debug_account_info_at(
         &self,
-        block: BlockId,
+        block: LenientBlockId,
         index: Index,
         address: Address,
     ) -> RpcResult<Option<AccountInfo>>;
@@ -75,7 +94,7 @@ pub trait AnvilTraceApi {
     #[method(name = "block")]
     async fn trace_block(
         &self,
-        block: BlockId,
+        block: LenientBlockId,
     ) -> RpcResult<Option<Vec<LocalizedTransactionTrace>>>;
 
     /// Replays the block's transactions with the given trace types. The pending block is
@@ -83,13 +102,16 @@ pub trait AnvilTraceApi {
     #[method(name = "replayBlockTransactions")]
     async fn trace_replay_block_transactions(
         &self,
-        block: BlockId,
+        block: LenientBlockId,
         trace_types: HashSet<TraceType>,
     ) -> RpcResult<Option<Vec<TraceResultsWithTransactionHash>>>;
 
     /// Returns the opcode gas of the block's transactions.
     #[method(name = "blockOpcodeGas")]
-    async fn trace_block_opcode_gas(&self, block: BlockId) -> RpcResult<Option<BlockOpcodeGas>>;
+    async fn trace_block_opcode_gas(
+        &self,
+        block: LenientBlockId,
+    ) -> RpcResult<Option<BlockOpcodeGas>>;
 
     /// Returns the traces of the transaction, from the fork endpoint when the local chain does
     /// not know the transaction.
@@ -258,10 +280,11 @@ where
 
     async fn debug_account_info_at(
         &self,
-        block: BlockId,
+        block: LenientBlockId,
         index: Index,
         address: Address,
     ) -> RpcResult<Option<AccountInfo>> {
+        let block = block.into();
         if let Some(remote) = remote_block(self.inner.eth_api(), self.fork.as_ref(), block).await?
             && let Some(fork) = &self.fork
         {
@@ -337,8 +360,9 @@ where
 {
     async fn trace_block(
         &self,
-        block: BlockId,
+        block: LenientBlockId,
     ) -> RpcResult<Option<Vec<LocalizedTransactionTrace>>> {
+        let block = block.into();
         if let Some(traces) = self.forwarded("trace_block", block, |id| json!([id])).await? {
             return Ok(traces);
         }
@@ -351,9 +375,10 @@ where
 
     async fn trace_replay_block_transactions(
         &self,
-        block: BlockId,
+        block: LenientBlockId,
         trace_types: HashSet<TraceType>,
     ) -> RpcResult<Option<Vec<TraceResultsWithTransactionHash>>> {
+        let block = block.into();
         if let Some(traces) = self
             .forwarded("trace_replayBlockTransactions", block, |id| json!([id, trace_types]))
             .await?
@@ -368,7 +393,11 @@ where
         .await
     }
 
-    async fn trace_block_opcode_gas(&self, block: BlockId) -> RpcResult<Option<BlockOpcodeGas>> {
+    async fn trace_block_opcode_gas(
+        &self,
+        block: LenientBlockId,
+    ) -> RpcResult<Option<BlockOpcodeGas>> {
+        let block = block.into();
         if let Some(gas) = self.forwarded("trace_blockOpcodeGas", block, |id| json!([id])).await? {
             return Ok(gas);
         }

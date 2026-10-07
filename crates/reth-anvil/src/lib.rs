@@ -41,7 +41,7 @@ pub use api::{
 };
 pub use config::{
     AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, DEFAULT_IPC_ENDPOINT, DEFAULT_MNEMONIC,
-    DEFAULT_SLOTS_IN_AN_EPOCH, INITIAL_BASE_FEE, NODE_PORT, NodeConfig,
+    DEFAULT_SLOTS_IN_AN_EPOCH, ForkSource, INITIAL_BASE_FEE, NODE_PORT, NodeConfig,
 };
 pub use eth_api::EthApi;
 pub use fork::{ForkBackend, ForkSettings, LocalWrites};

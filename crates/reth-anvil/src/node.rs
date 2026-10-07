@@ -5,7 +5,7 @@ use crate::{
     },
     block_env::BlockEnvOverrides,
     config::NodeConfig,
-    console::ConsolePrinter,
+    console::{ConsolePrinter, HARDHAT_CONSOLE_ADDRESS},
     debug::{AnvilDebugApi, AnvilDebugApiServer, AnvilTraceApi, AnvilTraceApiServer},
     eth_api::EthApi,
     fork::{ForkHeader, ForkInfo, ForkNetwork, ForkReplay},
@@ -30,14 +30,15 @@ use crate::{
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types_eth::FilterBlockOption;
+use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm_networks::NetworkVariant;
-use jsonrpsee::RpcModule;
+use jsonrpsee::{RpcModule, core::RpcResult};
 use parking_lot::RwLock;
 use reth_ethereum::{
-    chainspec::EthChainSpec,
+    chainspec::{EthChainSpec, EthereumHardforks},
     node::{
         api::{FullNodeComponents, NodeTypes},
         builder::{LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle},
@@ -149,6 +150,16 @@ impl Relauncher {
         self.relaunch_with(config, update).await
     }
 
+    /// Changes the config the next relaunch starts from, without relaunching.
+    pub fn update_config(&self, update: impl FnOnce(&mut NodeConfig)) {
+        update(&mut self.config.write());
+    }
+
+    /// Returns the config the next relaunch starts from.
+    pub fn current_config(&self) -> NodeConfig {
+        self.config.read().clone()
+    }
+
     /// Replaces the running node with one launched from the first node's config changed by
     /// `update`.
     pub async fn relaunch_from_original(
@@ -217,9 +228,14 @@ impl NodeHandle {
         self.config.signer_accounts.iter().map(|wallet| wallet.address())
     }
 
-    /// Returns the wallets the node signs with.
+    /// Returns the wallets the node signs with, set to the chain id the node runs with.
     pub fn dev_wallets(&self) -> impl Iterator<Item = PrivateKeySigner> + '_ {
-        self.config.signer_accounts.iter().cloned()
+        let chain_id = self.config.get_chain_id();
+        self.config.signer_accounts.iter().map(move |wallet| {
+            let mut wallet = wallet.clone();
+            wallet.set_chain_id(Some(chain_id));
+            wallet
+        })
     }
 
     /// Returns the accounts funded in genesis.
@@ -275,8 +291,13 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
         config: Arc::new(RwLock::new(config.clone())),
         original: Arc::new(config.clone()),
     };
+    let mut launch_config = config.clone();
+    let prepared = Net::prepare(&mut launch_config).await?;
     let (module, running) =
-        launch_node::<Net>(config.clone(), instance_id.clone(), relauncher.clone()).await?;
+        launch_node::<Net>(launch_config, prepared, instance_id.clone(), relauncher.clone())
+            .await?;
+    // The handle reports the config the node runs with: a fork may have chosen the chain id.
+    let config = relauncher.config.read().clone();
     let module: SharedModule = Arc::new(RwLock::new(module));
     let logging = LoggingState::new(!config.silent);
     let server =
@@ -365,23 +386,31 @@ async fn supervise<Net: AnvilNetwork>(mut supervisor: Supervisor) {
     }
 }
 
-/// Stops the running node and launches one from `config`. If that fails, the previous config is
-/// launched again, so the node keeps serving.
+/// Stops the running node and launches one from `config`. A config whose fork cannot be set up
+/// leaves the running node untouched, as anvil's failed resets do. If the launch itself fails,
+/// the previous config is launched again, so the node keeps serving.
 async fn relaunch<Net: AnvilNetwork>(
     supervisor: &mut Supervisor,
-    config: NodeConfig,
+    mut config: NodeConfig,
 ) -> Result<()> {
+    let prepared = Net::prepare(&mut config).await?;
     if let Some(running) = supervisor.running.take() {
         running.stop().await;
     }
-    let launch = |config: NodeConfig| {
-        launch_node::<Net>(config, supervisor.instance_id.clone(), supervisor.relauncher.clone())
+    let launch = |config: NodeConfig, prepared| {
+        launch_node::<Net>(
+            config,
+            prepared,
+            supervisor.instance_id.clone(),
+            supervisor.relauncher.clone(),
+        )
     };
-    let (result, config) = match launch(config.clone()).await {
+    let (result, config) = match launch(config.clone(), prepared).await {
         Ok(launched) => (Ok(launched), config),
         Err(error) => {
-            let previous = supervisor.relauncher.config.read().clone();
-            match launch(previous.clone()).await {
+            let mut previous = supervisor.relauncher.config.read().clone();
+            let prepared = Net::prepare(&mut previous).await?;
+            match launch(previous.clone(), prepared).await {
                 Ok(launched) => {
                     *supervisor.module.write() = launched.0;
                     supervisor.running = Some(launched.1);
@@ -410,7 +439,8 @@ async fn relaunch<Net: AnvilNetwork>(
 
 /// Launches the reth node of the given network, without RPC servers, and returns its RPC module.
 async fn launch_node<Net: AnvilNetwork>(
-    mut config: NodeConfig,
+    config: NodeConfig,
+    prepared: Prepared<Net::Node>,
     instance_id: Arc<RwLock<B256>>,
     relauncher: Relauncher,
 ) -> Result<(RpcModule<()>, RunningNode)> {
@@ -418,12 +448,18 @@ async fn launch_node<Net: AnvilNetwork>(
         RuntimeConfig::default().with_tokio(TokioConfig::ExistingHandle(Handle::current())),
     )
     .build()?;
-    let Prepared { chain_spec, fork } = Net::prepare(&mut config).await?;
+    let Prepared { chain_spec, fork } = prepared;
     {
-        // The network adopted from a fork endpoint stays across relaunches, as on anvil.
+        // What a fork endpoint chose stays across relaunches, as on anvil: the network for good,
+        // the chain id and hardfork until a reset to another endpoint.
         let mut launch_config = relauncher.config.write();
         launch_config.networks = config.networks;
         launch_config.adopted_fork_network = config.adopted_fork_network;
+        // The dev wallets sign for the adopted chain id too.
+        launch_config.set_chain_id(config.chain_id);
+        launch_config.adopted_chain_id = config.adopted_chain_id;
+        launch_config.hardfork = config.hardfork;
+        launch_config.adopted_hardfork = config.adopted_hardfork;
     }
 
     let datadir = tempfile::tempdir()?;
@@ -492,7 +528,14 @@ async fn launch_node<Net: AnvilNetwork>(
     // Anvil gives the first block the genesis base fee, not the EIP-1559 decrease of an empty
     // parent. A fork starts from the fork block's fee.
     // A chain loaded from a dump continues the dump's fee timeline instead.
-    if fork.is_none()
+    // An explicit base fee also overrides the fee a fork block schedules, as on anvil.
+    if fork.as_ref().is_some_and(|fork| !fork.is_dump())
+        && !config.adopted_base_fee
+        && chain_spec.genesis_header().base_fee_per_gas().is_some()
+        && let Some(base_fee) = config.base_fee
+    {
+        block_env.set_next_base_fee(base_fee);
+    } else if fork.is_none()
         && config.init_state.is_none()
         && let Some(base_fee) = chain_spec.genesis_header().base_fee_per_gas()
     {
@@ -633,11 +676,25 @@ async fn launch_node<Net: AnvilNetwork>(
 
                 // The in-process API calls the same handlers the servers do.
                 let mut module = ctx.registry.module_for(&RpcModuleSelection::All);
-                // Reth adds `eth_config` to its transport modules, which are off here.
-                module.merge(EthConfigApiServer::into_rpc(EthConfigHandler::new(
+                // Reth adds `eth_config` to its transport modules, which are off here. The
+                // console precompile is the node's own, so the fork's list leaves it out, as
+                // anvil's does.
+                let mut config_module = RpcModule::new(EthConfigHandler::new(
                     ctx.provider().clone(),
                     ctx.node().evm_config().clone(),
-                )))?;
+                ));
+                config_module.register_method("eth_config", |_, handler, _| {
+                    let mut config = EthConfigApiServer::config(handler)?;
+                    for fork in
+                        [Some(&mut config.current), config.next.as_mut(), config.last.as_mut()]
+                            .into_iter()
+                            .flatten()
+                    {
+                        fork.precompiles.retain(|_, address| *address != HARDHAT_CONSOLE_ADDRESS);
+                    }
+                    RpcResult::Ok(config)
+                })?;
+                module.merge(config_module)?;
                 module.merge(anvil_module.clone())?;
                 module.merge(evm_module.clone())?;
                 for name in eth_module
@@ -672,8 +729,17 @@ async fn launch_node<Net: AnvilNetwork>(
         .sealed_header(node.provider.best_block_number()?)?
         .ok_or_else(|| eyre::eyre!("missing head header"))?;
     let insert_provider = node.provider.clone();
+    let active_forks = {
+        let chain_spec = chain_spec.clone();
+        move |timestamp| {
+            (
+                chain_spec.is_shanghai_active_at_timestamp(timestamp),
+                chain_spec.is_cancun_active_at_timestamp(timestamp),
+            )
+        }
+    };
     let (map_attributes, finish) =
-        time.build_hooks(block_env.clone(), chain_spec.genesis().coinbase);
+        time.build_hooks(block_env.clone(), chain_spec.genesis().coinbase, active_forks);
     let genesis_hash = node.provider.genesis_header()?.hash();
     let automine = {
         let mining = mining.clone();
@@ -716,8 +782,14 @@ async fn launch_node<Net: AnvilNetwork>(
         "reth-anvil logging",
         log_mined_blocks(node.provider.subscribe_to_canonical_state(), logging),
     );
-    if let Some(replay) = fork.as_ref().and_then(|fork| fork.take_replay()) {
-        replay_fork_transactions(replay, &node.pool, &mining, &time, &block_env, &order).await?;
+    if let Some(fork) = &fork
+        && let Some(replay) = fork.take_replay()
+        && let Err(error) =
+            replay_fork_transactions(replay, &node.pool, &mining, &time, &block_env, &order).await
+    {
+        // The cached remote state must not outlive a failed start, as on anvil.
+        fork.remove_cache();
+        return Err(error.wrap_err("failed to replay fork transaction prefix"));
     }
 
     let module = rpc_module
@@ -763,7 +835,9 @@ where
     if let Some(root) = header.parent_beacon_block_root() {
         block_env.set_next_parent_beacon_block_root(root);
     }
-    time.set_next_block_timestamp(header.timestamp()).map_err(|error| eyre::eyre!(error))?;
+    // The replayed block keeps the source timestamp without moving the clock, so the next block
+    // follows it, as on anvil.
+    time.pin_next_timestamp(header.timestamp());
 
     let expected = transactions.len();
     let mut submitted = 0;
@@ -782,7 +856,9 @@ where
         match pool.add_transaction(TransactionOrigin::Local, pooled).await {
             Ok(_) => submitted += 1,
             Err(error) => {
-                tracing::warn!(target: "node", %hash, %error, "skipping fork transaction");
+                order.set(previous_order);
+                block_env.restore(snapshot);
+                eyre::bail!("the pool rejected fork transaction {hash}: {error}");
             }
         }
     }

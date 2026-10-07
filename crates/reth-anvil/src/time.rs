@@ -162,10 +162,15 @@ impl TimeManager {
     /// the coinbase override, and the one-shot overrides of the block under construction, and
     /// the finish hook, which puts the time and the one-shot overrides back when a block is not
     /// mined, as anvil keeps them for the next attempt.
+    ///
+    /// `active_forks` tells whether Shanghai and Cancun are active at a timestamp: the attributes
+    /// builder picks withdrawals and the beacon root for the wall-clock time, and the block may
+    /// get another timestamp, on the other side of a hardfork.
     pub fn build_hooks<A: AnvilPayloadAttributes>(
         &self,
         block_env: BlockEnvOverrides,
         default_coinbase: Address,
+        active_forks: impl Fn(u64) -> (bool, bool) + Send + Sync + 'static,
     ) -> (impl Fn(A) -> A + Send + Sync + 'static, impl Fn(bool) + Send + Sync + 'static) {
         let snapshot = Arc::new(Mutex::new(None));
         let map_attributes = {
@@ -175,7 +180,15 @@ impl TimeManager {
             move |mut attributes: A| {
                 *snapshot.lock() = Some(time.snapshot());
                 block_env.begin_block();
-                attributes.set_timestamp(time.next_timestamp());
+                let timestamp = time.next_timestamp();
+                attributes.set_timestamp(timestamp);
+                let (shanghai, cancun) = active_forks(timestamp);
+                attributes.set_withdrawals_active(shanghai);
+                if !cancun {
+                    attributes.clear_parent_beacon_block_root();
+                } else if attributes.parent_beacon_block_root().is_none() {
+                    attributes.set_parent_beacon_block_root(B256::ZERO);
+                }
                 // Anvil mines into the genesis coinbase unless one is set; reth picks a random
                 // address per block.
                 attributes
@@ -215,6 +228,10 @@ pub trait AnvilPayloadAttributes: Send + 'static {
     fn parent_beacon_block_root(&self) -> Option<B256>;
     /// Sets the parent beacon block root.
     fn set_parent_beacon_block_root(&mut self, root: B256);
+    /// Removes the parent beacon block root, for a block before Cancun.
+    fn clear_parent_beacon_block_root(&mut self);
+    /// Gives the block an empty withdrawal list from Shanghai on, and none before.
+    fn set_withdrawals_active(&mut self, active: bool);
 }
 
 impl AnvilPayloadAttributes for PayloadAttributes {
@@ -236,6 +253,18 @@ impl AnvilPayloadAttributes for PayloadAttributes {
 
     fn set_parent_beacon_block_root(&mut self, root: B256) {
         self.parent_beacon_block_root = Some(root);
+    }
+
+    fn clear_parent_beacon_block_root(&mut self) {
+        self.parent_beacon_block_root = None;
+    }
+
+    fn set_withdrawals_active(&mut self, active: bool) {
+        if !active {
+            self.withdrawals = None;
+        } else if self.withdrawals.is_none() {
+            self.withdrawals = Some(Vec::new());
+        }
     }
 }
 

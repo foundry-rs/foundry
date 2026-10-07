@@ -2,7 +2,7 @@ use crate::{
     block_env::BlockEnvOverrides,
     eth_api::on_large_stack,
     evm::AnvilNextBlockEnv,
-    fork::ForkInfo,
+    fork::{ForkInfo, NodeInfoProbe},
     impersonation::ImpersonationState,
     logging::LoggingState,
     miner::HookFuture,
@@ -27,6 +27,7 @@ use alloy_eips::{
 use alloy_json_rpc::RpcObject;
 use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U64, U256};
+use alloy_provider::Provider;
 use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
@@ -37,7 +38,10 @@ use alloy_rpc_types_eth::{
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
-use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
+use foundry_common::{
+    provider::ProviderBuilder,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
 use foundry_evm_core::utils::block_env_from_header;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -565,6 +569,9 @@ const REVERT_ERROR_CODE: i32 = 3;
 
 /// The error code anvil reports for a transaction or a call it rejects.
 const TRANSACTION_REJECTED_CODE: i32 = -32003;
+
+/// How long a probe of another endpoint's `anvil_*` identity waits.
+const ENDPOINT_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Encodes a blob as a hex string on the heap: serde's encoding of a 128 KiB blob goes through
 /// a buffer of twice that size on the stack.
@@ -1176,29 +1183,35 @@ where
     }
 
     async fn anvil_reset(&self, forking: Option<Forking>) -> RpcResult<()> {
-        if let Some(forking) = forking {
-            let same_url = forking
-                .json_rpc_url
-                .as_ref()
-                .is_none_or(|url| self.fork.as_ref().is_some_and(|fork| fork.url() == *url));
-            let same_block = forking.block_number.is_none_or(|number| {
-                self.fork.as_ref().is_some_and(|fork| fork.block_number() == number)
-            });
-            if !same_url || !same_block {
-                // Another endpoint or block means another chain spec, so the node relaunches.
-                return self
-                    .relauncher
-                    .relaunch(|config| {
-                        if let Some(url) = forking.json_rpc_url {
-                            config.fork_urls = vec![ForkUrl { url, block: None }];
-                        }
-                        config.fork_choice =
-                            forking.block_number.map(|number| ForkChoice::Block(number.into()));
-                        config.init_state = None;
-                    })
-                    .await
-                    .map_err(internal_error);
+        // `anvil_setRpcUrl` on a node without a fork names the endpoint a reset forks.
+        let has_fork_url = !self.relauncher.current_config().fork_urls.is_empty();
+        if let Some(forking) = forking
+            && (self.fork.is_some() || forking.json_rpc_url.is_some() || has_fork_url)
+        {
+            if let Some(url) = &forking.json_rpc_url
+                && self.is_own_endpoint(url).await
+            {
+                return Err(invalid_params("cannot reset Anvil to its own RPC endpoint"));
             }
+            // A fork reset relaunches the node on the fork, at the given block or the endpoint's
+            // latest one, as anvil does.
+            return self
+                .relauncher
+                .relaunch(|config| {
+                    if let Some(url) = forking.json_rpc_url {
+                        config.fork_urls = vec![ForkUrl { url, block: None }];
+                        config.fork_chain_id = None;
+                        config.forget_fork_adoption();
+                        // Another endpoint brings its own hardfork; a reset to memory restores
+                        // the configured one.
+                        config.hardfork = None;
+                    }
+                    config.fork_choice =
+                        forking.block_number.map(|number| ForkChoice::Block(number.into()));
+                    config.init_state = None;
+                })
+                .await
+                .map_err(internal_error);
         }
         if self.fork.is_some() {
             // Anvil turns a forked node back into a plain one.
@@ -1234,9 +1247,58 @@ where
 
     async fn anvil_set_rpc_url(&self, url: String) -> RpcResult<()> {
         let Some(fork) = &self.fork else {
-            return Err(invalid_params("anvil_setRpcUrl requires a forked node"));
+            // Without a fork, the endpoint waits for a reset that forks it, as on anvil.
+            self.relauncher.update_config(|config| {
+                config.fork_urls = vec![ForkUrl { url, block: None }];
+                config.fork_chain_id = None;
+            });
+            return Ok(());
         };
-        fork.set_rpc_url(url).map_err(|error| internal_error(error.to_string()))
+        // The replacement must serve the same chain at the same fork block, as anvil checks.
+        let provider = ProviderBuilder::<alloy_network::AnyNetwork>::new(&url)
+            .build()
+            .map_err(|error| invalid_params(format!("invalid fork endpoint {url}: {error}")))?;
+        if self.is_own_endpoint(&url).await {
+            return Err(invalid_params("cannot set Anvil's fork provider to its own RPC endpoint"));
+        }
+        // The endpoint's identity is probed before and after the block check: an anvil endpoint
+        // that stops answering in between may have reset.
+        let config = self.relauncher.current_config();
+        let mut probe = NodeInfoProbe::new(false, config.no_fork_node_info);
+        let probe_error = |error: eyre::Report| internal_error(format!("{error:#}"));
+        let identified = probe.request(&provider).await.map_err(probe_error)?.is_some();
+        let chain_id = provider.get_chain_id().await.map_err(|error| {
+            internal_error(format!("failed to fetch network chain ID from {url}: {error}"))
+        })?;
+        crate::fork::ensure_fork_network_supported(chain_id)
+            .map_err(|error| invalid_params(error.to_string()))?;
+        if chain_id != fork.chain_id() {
+            return Err(invalid_params(format!(
+                "fork endpoints must use the same chain ID: expected {}, got {chain_id} from {url}",
+                fork.chain_id()
+            )));
+        }
+        let block =
+            provider.get_block_by_number(fork.block_number().into()).await.map_err(|error| {
+                internal_error(format!("failed to confirm the fork block on {url}: {error}"))
+            })?;
+        probe.request(&provider).await.map_err(probe_error)?;
+        if block.map(|block| block.header.hash) != Some(fork.block_hash()) {
+            return Err(invalid_params(format!(
+                "replacement fork endpoint does not contain active fork block {} with hash {}",
+                fork.block_number(),
+                fork.block_hash()
+            )));
+        }
+        fork.set_rpc_url(url.clone()).map_err(|error| internal_error(error.to_string()))?;
+        if identified {
+            config.mark_anvil_endpoint(&url);
+        }
+        self.relauncher.update_config(|config| {
+            config.fork_urls = vec![ForkUrl { url, block: None }];
+            config.fork_chain_id = None;
+        });
+        Ok(())
     }
 
     async fn anvil_set_min_gas_price(&self, gas_price: U256) -> RpcResult<()> {
@@ -1378,9 +1440,14 @@ where
             }),
             transaction_order: self.transaction_order.to_string(),
             environment: NodeEnvironment {
-                base_fee: latest.header.base_fee_per_gas().unwrap_or_default().into(),
+                // The base fee of the next block, as anvil reports it.
+                base_fee: match self.block_env.next_base_fee() {
+                    Some(base_fee) => base_fee,
+                    None => self.next_base_fee()?.unwrap_or_default(),
+                }
+                .into(),
                 chain_id: self.chain_spec.chain().id(),
-                gas_limit: latest.header.gas_limit(),
+                gas_limit: self.block_env.gas_limit().unwrap_or_else(|| latest.header.gas_limit()),
                 gas_price: gas_price.to(),
             },
             fork_config: self.fork.as_ref().filter(|fork| !fork.url().is_empty()).map_or_else(
@@ -1833,6 +1900,19 @@ where
     /// the lookup failed to recover the sender from the signature, and the transaction's block
     /// is now in the RPC cache. An impersonated transaction has no valid signature, and the
     /// cache carries the senders the block recorded.
+    /// Returns whether the given endpoint is this node's own, by the instance id it reports.
+    async fn is_own_endpoint(&self, url: &str) -> bool {
+        let Ok(provider) = ProviderBuilder::<alloy_network::AnyNetwork>::new(url).build() else {
+            return false;
+        };
+        let response = tokio::time::timeout(
+            ENDPOINT_PROBE_TIMEOUT,
+            provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()),
+        )
+        .await;
+        matches!(response, Ok(Ok(metadata)) if metadata.instance_id == *self.instance_id.read())
+    }
+
     async fn cache_block_of(&self, hash: B256, error: &ErrorObjectOwned) -> RpcResult<bool>
     where
         Provider: TransactionsProvider,

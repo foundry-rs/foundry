@@ -274,8 +274,7 @@ impl EthApi {
 
     /// Returns the gas limit of the latest block.
     pub async fn gas_limit(&self) -> Result<U256> {
-        let block = self.block_by_number(BlockNumberOrTag::Latest).await?;
-        Ok(U256::from(block.map(|block| block.header.gas_limit).unwrap_or_default()))
+        Ok(U256::from(self.anvil_node_info().await?.environment.gas_limit))
     }
 
     /// Returns the receipts of a block.
@@ -796,6 +795,37 @@ impl EthApi {
     /// Replaces the fork endpoint.
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         self.request("anvil_setRpcUrl", params![url]).await
+    }
+
+    /// Sets the ERC-20 balance of an account.
+    pub async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token: Address,
+        balance: U256,
+    ) -> Result<()> {
+        self.request("anvil_dealERC20", params![address, token, balance]).await
+    }
+
+    /// Sets the ERC-20 allowance of a spender.
+    pub async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.request("anvil_setERC20Allowance", params![owner, spender, token, amount]).await
+    }
+
+    /// Returns the blob base fee of the next block.
+    pub async fn blob_base_fee(&self) -> Result<U256> {
+        self.request("eth_blobBaseFee", ArrayParams::new()).await
+    }
+
+    /// Returns the number of transactions in the block with the given hash.
+    pub async fn block_transaction_count_by_hash(&self, hash: B256) -> Result<Option<U256>> {
+        self.request("eth_getBlockTransactionCountByHash", params![hash]).await
     }
 }
 

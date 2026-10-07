@@ -113,6 +113,7 @@ axum.workspace = true
 alloy-pubsub.workspace = true
 alloy-rlp.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
+alloy-transport.workspace = true
 alloy-trie.workspace = true
 foundry-test-utils.workspace = true
 futures.workspace = true

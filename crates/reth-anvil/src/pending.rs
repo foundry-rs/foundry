@@ -5,7 +5,7 @@ use crate::{block_env::BlockEnvOverrides, evm::AnvilNextBlockEnv, time::TimeMana
 use alloy_network::Ethereum;
 use alloy_rpc_types_eth::BlockOverrides;
 use reth_ethereum::{
-    chainspec::{EthereumHardforks, Hardforks},
+    chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks},
     evm::primitives::ConfigureEvm,
     node::{
         api::{FullNodeComponents, HeaderTy, NodeTypes, PrimitivesTy, TxTy},
@@ -18,6 +18,17 @@ use reth_rpc_eth_api::{
     FromEvmError, RpcConvert, RpcTypes, SignableTxRequest,
     helpers::pending_block::{BuildPendingEnv, PendingEnvBuilder},
 };
+use std::{fmt, sync::Arc};
+
+/// Tells whether Cancun is active at a timestamp.
+#[derive(Clone)]
+struct CancunSchedule(Arc<dyn Fn(u64) -> bool + Send + Sync>);
+
+impl fmt::Debug for CancunSchedule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CancunSchedule").finish_non_exhaustive()
+    }
+}
 
 /// Builds the environment of the pending block from the time manager and the block environment
 /// overrides, as the miner does for the next block.
@@ -25,12 +36,13 @@ use reth_rpc_eth_api::{
 pub struct AnvilPendingEnv {
     time: TimeManager,
     block_env: BlockEnvOverrides,
+    cancun: Option<CancunSchedule>,
 }
 
 impl AnvilPendingEnv {
     /// Creates the builder over the node's time manager and block environment overrides.
     pub const fn new(time: TimeManager, block_env: BlockEnvOverrides) -> Self {
-        Self { time, block_env }
+        Self { time, block_env, cancun: None }
     }
 }
 
@@ -47,7 +59,12 @@ where
         block_overrides: Option<&BlockOverrides>,
     ) -> Result<Evm::NextBlockEnvCtx, EthApiError> {
         let mut attributes = Evm::NextBlockEnvCtx::build_pending_env(parent, block_overrides);
-        attributes.set_timestamp(self.time.current_call_timestamp());
+        let timestamp = self.time.current_call_timestamp();
+        attributes.set_timestamp(timestamp);
+        // Reth takes the root's presence from the parent; a pre-Cancun fork block has none.
+        if self.cancun.as_ref().is_some_and(|cancun| (cancun.0)(timestamp)) {
+            attributes.ensure_parent_beacon_block_root();
+        }
         if let Some(coinbase) = self.block_env.coinbase() {
             attributes.set_suggested_fee_recipient(coinbase);
         }
@@ -96,7 +113,11 @@ where
 {
     type EthApi = EthApiFor<N, Ethereum>;
 
-    async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
+    async fn build_eth_api(mut self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
+        let chain_spec = ctx.components.provider().chain_spec();
+        self.pending.cancun = Some(CancunSchedule(Arc::new(move |timestamp| {
+            chain_spec.is_cancun_active_at_timestamp(timestamp)
+        })));
         Ok(ctx
             .eth_api_builder()
             .map_converter(|converter| converter.with_network())

@@ -62,6 +62,9 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Dumps and loads anvil's state format with the chain's blocks, transactions, and historical states. A loaded dump's head becomes the genesis block, and the blocks below it are served through the fork backend in a dump mode, alone or on top of a fork endpoint, because reth's database starts at its genesis block. `anvil_loadState` at runtime merges the dump into the current chain and relaunches the node | `src/state_dump.rs`, `src/fork.rs` (`DumpHistory`, `from_dump`, `into_dump_fork`), `src/provider.rs` (`StateDump`), `src/config.rs` (`dump_chain_spec`) | ~900 | A way to import blocks with receipts and their states below the genesis block |
 | Executes a JSON-RPC notification, a request without an id, and answers it with `204 No Content`, as anvil does; jsonrpsee acknowledges a notification without running its method | `src/logging.rs` (`NodeInfoService::notification`), `src/server.rs` (`NotificationLayer`) | ~70 | A switch on jsonrpsee's server to execute notifications |
 | Serves the fork block's body, receipts, and body indices from the endpoint, because the fork block is the local genesis block and reth writes the genesis block with an empty body | `src/provider.rs` (`remote_for_body`, `remote_for_body_number`) | ~40 | A genesis block with a body, or a hook on the block readers |
+| Recomputes the withdrawals and the parent beacon block root of the payload attributes for the block's final timestamp: `LocalPayloadAttributesBuilder` picks them for the wall-clock time, and the time manager may move the block across a hardfork, as the replayed block of a fork at a transaction hash does | `src/time.rs` (`build_hooks`) | ~30 | A timestamp source on `LocalPayloadAttributesBuilder` |
+| Gives the pending block a zero parent beacon block root on a Cancun chain whose parent has none, the fork block of an older chain; reth takes the root's presence from the parent and builds no pending block | `src/pending.rs` | ~25 | The hardfork check in `BuildPendingEnv` |
+| Leaves the console precompile out of `eth_config` | `src/node.rs` | ~15 | An `eth_config` hook for node-specific precompiles |
 
 ## Gaps that are not hooks
 
@@ -125,11 +128,24 @@ be free if reth had a dev mode:
   from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
   on top of it, like anvil's pending block, and a call at an older block replays that block.
 
+- Remote blocks keep only the transactions the EVM can execute: an Arbitrum system transaction,
+  an OP-stack deposit, or another chain-specific type is left out of the blocks, receipts, and
+  lookups the fork serves, and indices count the kept transactions. Anvil serves remote blocks
+  as the endpoint returns them and skips those transactions only when it replays a block.
+- A fork at a transaction hash replays the block under the source block's hardfork when it is
+  older than the configured one; when it is newer, the replay runs under the configured one,
+  because a reth chain spec activates hardforks once and for good.
+- A call on a Cancun chain whose fork block lost its blob fields fails with reth's `excess blob
+  gas missing` error instead of anvil's `Excess blob gas not set`, and such a chain has no
+  pending block.
+- Arbitrum forks number blocks by the L2 block; anvil mirrors Arbitrum's L1 block numbers in
+  `NUMBER` and in the blocks' `l1BlockNumber`.
+
 ## Anvil's own tests
 
 `tests/it/{anvil_api,api,transaction,gas,revert,logs,filter,pubsub,sign,txpool,genesis,proof,
 block_index,storage_values,eip2935,eip4844,eip6110,eip7702,eip7928,otterscan,beacon_api,ipc,wsapi,
-anvil,traces,simulate,state}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
+anvil,traces,simulate,state,fork,fork_bal,fork_chains}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
 (`api.backend`, `api.execute`, pool types, `eth_callBundle`, the ready-transaction listener, the
 state dump's transaction records, the fee manager's blob fee, the Optimism variants, the block
 listener count, the precompile factory, the JavaScript tracer). Ignored tests carry the reason on the attribute: the pending
@@ -138,7 +154,11 @@ above, and the estimate that defaults to the pending block. Assertions on wall-c
 became lower bounds, because blocks take longer to build here than on anvil, error messages
 compare case-insensitively where reth's text differs only in case, and accept reth's text where
 it differs. `state.rs`'s history pruning tests are ignored, because reth keeps the full history.
-The other modules (`fork.rs`, `fork_bal.rs`, `fork_chains.rs`) are next.
+`fork_bal.rs` keeps the assertions on the state a fork serves and drops the ones on the fork
+cache, because the node reads remote state lazily and has no block access list prefill; its
+tests that need a deterministic block hash on a replacement endpoint start the endpoints from
+the same genesis. `eth_config`'s blob schedule compares as JSON, because the in-process API
+round-trips through EIP-7910's fields.
 
 ## Differences that cast's tests show
 

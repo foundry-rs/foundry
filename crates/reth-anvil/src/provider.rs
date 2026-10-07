@@ -1044,6 +1044,11 @@ impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
             return self.remote_state(fork, block);
         }
         let provider = self.with_fork(self.inner.history_by_block_number(block)?, block)?;
+        // A request for the fork block by number reads the endpoint's state, without the writes
+        // pending on top of it, as anvil does. `latest` and requests by hash keep them.
+        if self.fork.as_ref().is_some_and(|fork| fork.block_number() == block) {
+            return Ok(provider);
+        }
         self.overlay_for_block(block, provider)
     }
 

@@ -2,7 +2,7 @@
 
 use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, Prepared};
 use crate::{
-    config::NodeConfig,
+    config::{ForkSource, NodeConfig},
     engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
     fork::{ForkBackend, ForkInfo},
@@ -112,8 +112,8 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
     if config.is_fork() {
         let (fork, accounts) = ForkBackend::setup(config).await?;
         config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
-        if let Some(info) = fork.node_info().await {
-            config.adopt_fork_identity(&info);
+        if let Some(info) = fork.node_info() {
+            config.adopt_fork_identity(info);
         }
         // A state dump whose head lies above the fork block continues at its head, with the
         // dump's blocks above the fork block; one at or below it only overlays its accounts.
@@ -131,7 +131,12 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
             config.init_state = Some(state);
             return Ok(Prepared { chain_spec, fork: Some(Arc::new(fork)) });
         }
-        let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
+        let source = ForkSource {
+            chain_id: fork.chain_id(),
+            node_info: fork.node_info(),
+            replay_timestamp: fork.replay_timestamp(),
+        };
+        let chain_spec = config.fork_chain_spec(fork.header(), &accounts, source)?;
         return Ok(Prepared { chain_spec, fork: Some(fork) });
     }
     // A state dump with a block environment continues at its head block, which becomes the

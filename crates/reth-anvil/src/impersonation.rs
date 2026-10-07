@@ -69,6 +69,11 @@ impl ImpersonationState {
         self.inner.read().dropped_txs.contains(hash)
     }
 
+    /// Forgets that a revert removed the given transaction, once it is sent again.
+    pub fn undrop_tx(&self, hash: &B256) {
+        self.inner.write().dropped_txs.remove(hash);
+    }
+
     /// Starts impersonating the given account.
     pub fn impersonate(&self, address: Address) {
         self.inner.write().accounts.insert(address);

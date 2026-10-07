@@ -3,7 +3,9 @@ use crate::{
     state_dump::{CheckpointForks, SerializableState},
     types::{ForkChoice, ForkUrl, TransactionOrder},
 };
-use alloy_eips::{eip2935, eip4788, eip7002, eip7251};
+use alloy_eips::{
+    eip2935, eip4788, eip7002, eip7251, eip7840::BlobParams, eip7892::BlobScheduleBlobParams,
+};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, U256, hex, map::HashMap, utils::Unit};
 use alloy_rpc_types::anvil::NodeInfo;
@@ -11,11 +13,13 @@ use alloy_signer::Signer;
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use eyre::{Result, WrapErr};
 use foundry_common::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
-use foundry_evm_core::constants::{
-    DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
+use foundry_evm_core::{
+    constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
+    utils::get_blob_params_by_hardfork,
 };
 use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
+use parking_lot::RwLock;
 use rand_08::thread_rng;
 use reth_ethereum::{
     chainspec::{Chain, ChainSpec, ChainSpecBuilder, ForkCondition},
@@ -23,6 +27,7 @@ use reth_ethereum::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::HashSet,
     fmt::Write,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
@@ -191,6 +196,19 @@ pub struct NodeConfig {
     pub networks: NetworkConfigs,
     /// Whether a fork fixed `networks`. Resets to another endpoint keep it, as on anvil.
     pub adopted_fork_network: bool,
+    /// Whether a fork endpoint chose the chain id, so a reset to another endpoint adopts its
+    /// chain id again.
+    pub adopted_chain_id: bool,
+    /// Whether a fork endpoint chose the hardfork, so a reset to another endpoint adopts its
+    /// hardfork again.
+    pub adopted_hardfork: bool,
+    /// Whether a fork endpoint chose the base fee, so the next block keeps the fork block's fee
+    /// schedule instead of an explicit base fee.
+    pub adopted_base_fee: bool,
+    /// The fork endpoints that answered `anvil_nodeInfo` once, after which a failing probe is an
+    /// error instead of an unsupported method. Shared by every config of a node, so resets and
+    /// relaunches keep it, as anvil keeps an endpoint's identity.
+    pub anvil_endpoints: Arc<RwLock<HashSet<String>>>,
 }
 
 impl Default for NodeConfig {
@@ -255,6 +273,10 @@ impl Default for NodeConfig {
             no_request_size_limit: false,
             networks: NetworkConfigs::default(),
             adopted_fork_network: false,
+            adopted_chain_id: false,
+            adopted_hardfork: false,
+            adopted_base_fee: false,
+            anvil_endpoints: Default::default(),
         }
     }
 }
@@ -706,6 +728,7 @@ impl NodeConfig {
             compute_units_per_second: self.compute_units_per_second,
             no_storage_caching: self.no_storage_caching,
             state_by_number: self.fork_state_by_number,
+            instance_id: None,
         }
     }
 
@@ -714,6 +737,7 @@ impl NodeConfig {
     pub fn apply_fork(&mut self, chain_id: u64, header: &SealedHeader, gas_price: u128) {
         if self.chain_id.is_none() {
             self.set_chain_id(Some(chain_id));
+            self.adopted_chain_id = true;
         }
         if self.gas_limit.is_none() {
             self.gas_limit = Some(header.gas_limit);
@@ -723,6 +747,7 @@ impl NodeConfig {
         }
         if self.base_fee.is_none() {
             self.base_fee = header.base_fee_per_gas;
+            self.adopted_base_fee = true;
         }
         self.genesis_timestamp = Some(header.timestamp);
         self.genesis_block_number = Some(header.number);
@@ -747,15 +772,41 @@ impl NodeConfig {
         }
         // The first fork fixes the network, whatever it reported.
         self.adopted_fork_network = true;
-        if self.hardfork.is_some() {
+        if self.hardfork.is_some() && !self.adopted_hardfork {
             return;
         }
         match self.networks.execution_network().parse_hardfork(&info.hard_fork) {
-            Ok(hardfork) => self.hardfork = Some(hardfork),
+            Ok(hardfork) => {
+                self.hardfork = Some(hardfork);
+                self.adopted_hardfork = true;
+            }
             Err(error) => {
                 tracing::warn!(target: "node", %error, "ignoring the hardfork the fork endpoint reports");
             }
         }
+    }
+
+    /// Forgets what a fork endpoint chose, so a reset to another endpoint adopts that endpoint's
+    /// chain id, hardfork, and identity. The network stays, as on anvil.
+    pub const fn forget_fork_adoption(&mut self) {
+        if self.adopted_chain_id {
+            self.chain_id = None;
+            self.adopted_chain_id = false;
+        }
+        if self.adopted_hardfork {
+            self.hardfork = None;
+            self.adopted_hardfork = false;
+        }
+    }
+
+    /// Returns whether the endpoint answered `anvil_nodeInfo` before.
+    pub fn is_anvil_endpoint(&self, url: &str) -> bool {
+        self.anvil_endpoints.read().contains(url)
+    }
+
+    /// Records that the endpoint answered `anvil_nodeInfo`.
+    pub fn mark_anvil_endpoint(&self, url: &str) {
+        self.anvil_endpoints.write().insert(url.to_string());
     }
 
     /// Enables opcode tracing output.
@@ -996,9 +1047,21 @@ impl NodeConfig {
         &self,
         header: &SealedHeader,
         accounts: &[(Address, ForkGenesisAccount)],
+        source: ForkSource<'_>,
     ) -> Result<Arc<ChainSpec>> {
         let hardfork =
             self.ethereum_hardfork_at(Chain::from_id(self.get_chain_id()), header.timestamp)?;
+        // The replayed block of a fork at a transaction hash runs under the hardfork of the block
+        // it came from, as on anvil; a newer configured hardfork activates right after it.
+        let deferred = source.replay_timestamp.and_then(|timestamp| {
+            let replay = EthereumHardfork::from_chain_and_timestamp(
+                Chain::from_id(source.chain_id),
+                timestamp,
+            )?;
+            (replay >= EthereumHardfork::Paris && replay < hardfork)
+                .then_some((replay, timestamp + 1))
+        });
+        let genesis_hardfork = deferred.map_or(hardfork, |(replay, _)| replay);
         let mut genesis = self
             .genesis
             .clone()
@@ -1013,12 +1076,16 @@ impl NodeConfig {
         let remote = |address: &Address| {
             accounts.iter().find(|(remote, _)| remote == address).map(|(_, account)| account)
         };
+        // A funded account keeps what the genesis allocation gives it besides the balance, and
+        // the remote nonce and code otherwise.
+        let configured = genesis.alloc.clone();
         let fork_account = |address: &Address, balance: U256| {
-            let account = remote(address).cloned().unwrap_or_default();
-            GenesisAccount::default()
-                .with_balance(balance)
-                .with_nonce(Some(account.nonce))
-                .with_code(account.code)
+            let remote = remote(address).cloned().unwrap_or_default();
+            let mut account = configured.get(address).cloned().unwrap_or_default();
+            account.balance = balance;
+            account.nonce = account.nonce.or(Some(remote.nonce));
+            account.code = account.code.or(remote.code);
+            account
         };
         let mut alloc: Vec<(Address, GenesisAccount)> = self
             .genesis_accounts
@@ -1036,8 +1103,42 @@ impl NodeConfig {
 
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
-        let mut spec = activate_hardfork(builder, hardfork).build();
-        spec.genesis_header = SealedHeader::new(header.clone_header(), header.hash());
+        let mut spec = build_chain_spec(builder, hardfork, deferred);
+        // A fork block without blob fields starts the local blob schedule at zero excess when
+        // the source omits them legitimately: a block from before Cancun, or a chain whose
+        // headers carry none, as anvil decides. A Cancun block that lost them stays without, so
+        // blob execution fails as on anvil. The hash stays the remote one.
+        let mut genesis_header = header.clone_header();
+        if genesis_hardfork >= EthereumHardfork::Cancun && genesis_header.excess_blob_gas.is_none()
+        {
+            let explicit_hardfork = self.hardfork.is_some() && !self.adopted_hardfork;
+            let source_hardfork = source
+                .node_info
+                .and_then(|info| {
+                    self.networks.execution_network().parse_hardfork(&info.hard_fork).ok()
+                })
+                .and_then(|hardfork| match hardfork {
+                    FoundryHardfork::Ethereum(hardfork) => Some(hardfork),
+                    _ => None,
+                })
+                .or_else(|| {
+                    EthereumHardfork::from_chain_and_timestamp(
+                        Chain::from_id(source.chain_id),
+                        header.timestamp,
+                    )
+                });
+            let may_omit = source_hardfork
+                .map_or(explicit_hardfork, |hardfork| hardfork < EthereumHardfork::Cancun);
+            let source_chain = Chain::from_id(source.chain_id);
+            if (may_omit && genesis_header.blob_gas_used.is_none())
+                || source_chain.is_polygon()
+                || source_chain.is_arbitrum()
+            {
+                genesis_header.excess_blob_gas = Some(0);
+                genesis_header.blob_gas_used.get_or_insert(0);
+            }
+        }
+        spec.genesis_header = SealedHeader::new(genesis_header, header.hash());
         Ok(Arc::new(spec))
     }
 
@@ -1099,7 +1200,7 @@ impl NodeConfig {
         genesis = genesis.extend_accounts(alloc);
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
-        let mut spec = activate_hardfork(builder, hardfork).build();
+        let mut spec = build_chain_spec(builder, hardfork, None);
         spec.genesis_header = SealedHeader::new(header.clone_header(), header.hash());
         Ok(Arc::new(spec))
     }
@@ -1203,8 +1304,19 @@ impl NodeConfig {
 
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
-        Ok(Arc::new(activate_hardfork(builder, hardfork).build()))
+        Ok(Arc::new(build_chain_spec(builder, hardfork, None)))
     }
+}
+
+/// What the fork endpoint reported about its chain, for decisions about the fork block.
+#[derive(Clone, Copy, Debug)]
+pub struct ForkSource<'a> {
+    /// The chain id of the endpoint.
+    pub chain_id: u64,
+    /// The endpoint's node info, when it is an anvil node.
+    pub node_info: Option<&'a NodeInfo>,
+    /// The timestamp of the block a fork at a transaction hash replays, if any.
+    pub replay_timestamp: Option<u64>,
 }
 
 /// Returns the Ethereum hardfork a Monad hardfork is based on.
@@ -1214,6 +1326,41 @@ const fn ethereum_hardfork_of_monad(hardfork: MonadHardfork) -> EthereumHardfork
         SpecId::PRAGUE => EthereumHardfork::Prague,
         _ => EthereumHardfork::Osaka,
     }
+}
+
+/// Builds a chain spec with every hardfork up to and including `hardfork` active at genesis, and
+/// anvil's blob schedule for that hardfork.
+/// With `deferred`, only the hardforks up to the given one are active at genesis, and the rest up
+/// to `hardfork` activate at the given timestamp.
+fn build_chain_spec(
+    builder: ChainSpecBuilder,
+    hardfork: EthereumHardfork,
+    deferred: Option<(EthereumHardfork, u64)>,
+) -> ChainSpec {
+    let (builder, switch) = match deferred {
+        Some((at_genesis, timestamp)) => (
+            EthereumHardfork::VARIANTS
+                .iter()
+                .filter(|variant| **variant > at_genesis && **variant <= hardfork)
+                .fold(activate_hardfork(builder, at_genesis), |builder, variant| {
+                    builder.with_fork(*variant, ForkCondition::Timestamp(timestamp))
+                }),
+            timestamp,
+        ),
+        None => (activate_hardfork(builder, hardfork), 0),
+    };
+    let mut spec = builder.build();
+    let mut blob_params = BlobScheduleBlobParams {
+        cancun: BlobParams::cancun(),
+        prague: BlobParams::prague(),
+        osaka: BlobParams::osaka(),
+        scheduled: Vec::new(),
+    };
+    if hardfork > EthereumHardfork::Osaka {
+        blob_params.scheduled.push((switch, get_blob_params_by_hardfork(hardfork.into())));
+    }
+    spec.blob_params = blob_params;
+    spec
 }
 
 /// Activates every hardfork up to and including `hardfork` at genesis.

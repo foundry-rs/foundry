@@ -64,6 +64,9 @@ pub trait AnvilNextBlockEnv: Clone {
     fn set_gas_limit(&mut self, gas_limit: u64);
     /// Replaces the parent beacon block root, when the block has one.
     fn override_parent_beacon_block_root(&mut self, root: B256);
+    /// Gives the block a zero parent beacon block root when it has none: a Cancun block on top
+    /// of a pre-Cancun parent, such as the fork block of an older chain.
+    fn ensure_parent_beacon_block_root(&mut self);
 }
 
 impl AnvilNextBlockEnv for NextBlockEnvAttributes {
@@ -87,6 +90,10 @@ impl AnvilNextBlockEnv for NextBlockEnvAttributes {
         if self.parent_beacon_block_root.is_some() {
             self.parent_beacon_block_root = Some(root);
         }
+    }
+
+    fn ensure_parent_beacon_block_root(&mut self) {
+        self.parent_beacon_block_root.get_or_insert_default();
     }
 }
 

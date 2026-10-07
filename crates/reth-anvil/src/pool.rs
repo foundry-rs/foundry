@@ -80,11 +80,16 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> TransactionValidationOutcome<Self::Transaction> {
+        // Reth puts the transactions of reverted blocks back into the pool as external ones;
+        // anvil leaves them out. A user who sends one again gets it mined again.
         if self.state.is_dropped(transaction.hash()) {
-            return TransactionValidationOutcome::Invalid(
-                transaction,
-                InvalidPoolTransactionError::Other(Box::new(RevertedTransaction)),
-            );
+            if origin.is_external() {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidPoolTransactionError::Other(Box::new(RevertedTransaction)),
+                );
+            }
+            self.state.undrop_tx(transaction.hash());
         }
         if self.settings.reject_blob_transactions && transaction.ty() == EIP4844_TX_TYPE_ID {
             return TransactionValidationOutcome::Invalid(

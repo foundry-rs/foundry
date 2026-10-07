@@ -16,15 +16,14 @@ use crate::{
     types::ForkChoice,
 };
 use alloy_consensus::{
-    BlockHeader,
+    BlockHeader, TxReceipt, TxType,
     transaction::{SignerRecoverable, TransactionMeta, TxHashRef},
 };
 use alloy_eips::{BlockHashOrNumber, BlockId};
-use alloy_network::{Ethereum, Network};
+use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt, Network};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, StorageValue, TxNumber, U256, keccak256};
 use alloy_provider::Provider;
-use alloy_rpc_types::anvil::NodeInfo;
-use alloy_rpc_types_eth::{Block as RpcBlock, Transaction as RpcTransaction, TransactionReceipt};
+use alloy_rpc_types::anvil::{Metadata, NodeInfo};
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
@@ -105,25 +104,106 @@ pub trait ForkNetwork: Send + Sync + 'static {
     /// The node primitives the responses convert into.
     type Primitives: NodePrimitives;
 
-    /// Converts a remote block into a sealed block.
+    /// Returns the hash of a remote block and the number of its uncles.
+    fn uncles(response: &<Self::Network as Network>::BlockResponse) -> (B256, usize);
+
+    /// Converts a remote block and its uncles into a sealed block. The transactions of a type the
+    /// node cannot execute are left out, as anvil leaves them out of a replay.
     fn block(
         response: <Self::Network as Network>::BlockResponse,
+        uncles: Vec<<Self::Network as Network>::BlockResponse>,
     ) -> Result<SealedBlock<<Self::Primitives as NodePrimitives>::Block>, ProviderError>;
 
-    /// Converts a remote receipt.
+    /// Converts a remote receipt, or returns `None` for a transaction type the node cannot
+    /// execute.
     fn receipt(
         response: <Self::Network as Network>::ReceiptResponse,
-    ) -> Result<<Self::Primitives as NodePrimitives>::Receipt, ProviderError>;
+    ) -> Result<Option<<Self::Primitives as NodePrimitives>::Receipt>, ProviderError>;
 
     /// Converts a remote transaction into the signed transaction and its position in the chain,
-    /// when it is mined.
+    /// when it is mined, or returns `None` for a transaction type the node cannot execute.
+    #[expect(clippy::type_complexity)]
     fn transaction(
         response: <Self::Network as Network>::TransactionResponse,
-    ) -> Result<(<Self::Primitives as NodePrimitives>::SignedTx, Option<TxPosition>), ProviderError>;
+    ) -> Result<
+        Option<(<Self::Primitives as NodePrimitives>::SignedTx, Option<TxPosition>)>,
+        ProviderError,
+    >;
+}
+
+/// Fetches the uncles of a remote block, which the block response names by hash only.
+async fn fetch_uncles<F: ForkNetwork>(
+    chain: &RetryProvider<F::Network>,
+    block: &<F::Network as Network>::BlockResponse,
+) -> Result<Vec<<F::Network as Network>::BlockResponse>> {
+    let (hash, count) = F::uncles(block);
+    let mut uncles = Vec::with_capacity(count);
+    for index in 0..count {
+        if let Some(uncle) = chain.get_uncle(BlockId::hash(hash), index as u64).await? {
+            uncles.push(uncle);
+        }
+    }
+    Ok(uncles)
 }
 
 /// The block hash, block number, and index of a mined transaction.
 pub type TxPosition = (B256, u64, u64);
+
+/// How long an `anvil_nodeInfo` probe waits before the endpoint counts as not an anvil node.
+const NODE_INFO_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// The chain ids of zkSync Era and its testnet, whose EraVM bytecode the EVM cannot run.
+const ZKSYNC_CHAIN_IDS: [u64; 2] = [324, 300];
+
+/// Rejects a fork of a chain the EVM cannot execute, as anvil does.
+pub(crate) fn ensure_fork_network_supported(chain_id: u64) -> Result<()> {
+    if ZKSYNC_CHAIN_IDS.contains(&chain_id) {
+        eyre::bail!(
+            "unsupported fork network (chain id {chain_id}): Anvil's EVM backend cannot execute \
+             native EraVM bytecode; use `anvil-zksync` for zkSync Era forks"
+        );
+    }
+    Ok(())
+}
+
+/// Asks a fork endpoint whether it is an anvil node, as anvil does: a probe is optional until
+/// the endpoint answers once; after that, a failing probe is an error, because it may hide an
+/// endpoint reset. A probe that stalls or is rate limited counts as no answer.
+pub(crate) struct NodeInfoProbe {
+    identified: bool,
+    skip: bool,
+}
+
+impl NodeInfoProbe {
+    pub(crate) const fn new(identified: bool, skip: bool) -> Self {
+        Self { identified, skip }
+    }
+
+    pub(crate) async fn request<N: Network>(
+        &mut self,
+        provider: &RetryProvider<N>,
+    ) -> Result<Option<NodeInfo>> {
+        if self.skip {
+            return Ok(None);
+        }
+        let response = tokio::time::timeout(
+            NODE_INFO_PROBE_TIMEOUT,
+            provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()),
+        )
+        .await;
+        match response {
+            Err(_) => Ok(None),
+            Ok(Ok(info)) => {
+                self.identified = true;
+                Ok(Some(info))
+            }
+            Ok(Err(_)) if !self.identified => Ok(None),
+            Ok(Err(error)) => {
+                Err(error).wrap_err("failed to determine network family from fork endpoint")
+            }
+        }
+    }
+}
 
 /// The fork details the RPC namespace reports and changes.
 pub trait ForkInfo: Send + Sync + Debug + 'static {
@@ -143,6 +223,8 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn remote_serves(&self, number: u64) -> bool;
     /// Returns whether the state at the given block is available for a replay.
     fn has_state_at(&self, number: u64) -> bool;
+    /// Returns whether the endpoint identified itself as an anvil node.
+    fn is_anvil(&self) -> bool;
     /// Sends a raw JSON-RPC request to the fork endpoint.
     fn forward(&self, method: &str, params: serde_json::Value)
     -> ProviderResult<serde_json::Value>;
@@ -209,6 +291,10 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
         Self::has_state_at(self, number)
     }
 
+    fn is_anvil(&self) -> bool {
+        self.node_info.is_some()
+    }
+
     fn forward(
         &self,
         method: &str,
@@ -246,33 +332,60 @@ pub type ForkOf<P> = ForkBackend<<P as AnvilPrimitives>::Fork>;
 pub struct EthereumFork;
 
 impl ForkNetwork for EthereumFork {
-    type Network = Ethereum;
+    type Network = AnyNetwork;
     type Primitives = EthPrimitives;
 
-    fn block(response: RpcBlock) -> Result<SealedBlock<Block>, ProviderError> {
-        let hash = response.header.hash;
-        let block = response.into_consensus().map_transactions(|tx| tx.into_inner().into());
-        Ok(SealedBlock::new_unchecked(block, hash))
+    fn uncles(response: &AnyRpcBlock) -> (B256, usize) {
+        (response.header.hash, response.uncles.len())
     }
 
-    fn receipt(response: TransactionReceipt) -> Result<Receipt, ProviderError> {
-        Ok(Receipt {
-            tx_type: response.inner.tx_type(),
-            success: response.inner.status(),
-            cumulative_gas_used: response.inner.cumulative_gas_used(),
-            logs: response.inner.logs().iter().map(|log| log.inner.clone()).collect(),
-        })
+    fn block(
+        response: AnyRpcBlock,
+        uncles: Vec<AnyRpcBlock>,
+    ) -> Result<SealedBlock<Block>, ProviderError> {
+        let response = response.into_inner();
+        let hash = response.header.hash;
+        let header = response.header.inner.into_header_with_defaults();
+        let transactions = response
+            .transactions
+            .into_transactions()
+            .filter_map(|tx| tx.into_inner().inner.into_inner().try_into_envelope().ok())
+            .map(Into::into)
+            .collect();
+        let ommers = uncles
+            .into_iter()
+            .map(|uncle| uncle.into_inner().header.inner.into_header_with_defaults())
+            .collect();
+        let body =
+            alloy_consensus::BlockBody { transactions, ommers, withdrawals: response.withdrawals };
+        Ok(SealedBlock::new_unchecked(Block { header, body }, hash))
+    }
+
+    fn receipt(response: AnyTransactionReceipt) -> Result<Option<Receipt>, ProviderError> {
+        let envelope = &response.inner.inner;
+        let Ok(tx_type) = TxType::try_from(envelope.r#type) else { return Ok(None) };
+        let receipt = &envelope.inner;
+        Ok(Some(Receipt {
+            tx_type,
+            success: receipt.status(),
+            cumulative_gas_used: receipt.cumulative_gas_used(),
+            logs: receipt.logs().iter().map(|log| log.inner.clone()).collect(),
+        }))
     }
 
     fn transaction(
-        response: RpcTransaction,
-    ) -> Result<(TransactionSigned, Option<TxPosition>), ProviderError> {
+        response: AnyRpcTransaction,
+    ) -> Result<Option<(TransactionSigned, Option<TxPosition>)>, ProviderError> {
+        let response = response.into_inner();
         let position =
             match (response.block_hash, response.block_number, response.transaction_index) {
                 (Some(hash), Some(number), Some(index)) => Some((hash, number, index)),
                 _ => None,
             };
-        Ok((response.into_inner().into(), position))
+        let Ok(envelope) = response.inner.into_inner().try_into_envelope() else {
+            return Ok(None);
+        };
+        Ok(Some((envelope.into(), position)))
     }
 }
 
@@ -360,6 +473,9 @@ pub struct ForkSettings {
     pub no_storage_caching: bool,
     /// Fetch state by block number instead of block hash.
     pub state_by_number: bool,
+    /// The instance id of the endpoint, when it is an anvil node: a reset of that node is another
+    /// chain behind the same URL, so its cached state must not be reused.
+    pub instance_id: Option<B256>,
 }
 
 impl ForkSettings {
@@ -393,6 +509,9 @@ impl ForkSettings {
                 encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
                 encoded.extend_from_slice(part.as_bytes());
             }
+        }
+        if let Some(instance_id) = self.instance_id {
+            encoded.extend_from_slice(instance_id.as_slice());
         }
         keccak256(encoded)
     }
@@ -430,6 +549,8 @@ pub struct ForkBackend<F: ForkNetwork = EthereumFork> {
     receipts: RwLock<HashMap<B256, Arc<Vec<ForkReceipt<F>>>>>,
     /// The state dump this fork serves instead of an endpoint, if any.
     dump: Option<DumpHistory>,
+    /// What the endpoint reported about itself, when it is an anvil node.
+    node_info: Option<NodeInfo>,
 }
 
 /// What a state dump provides as the chain below its head block.
@@ -527,7 +648,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
     pub async fn setup(
         config: &NodeConfig,
     ) -> Result<(Arc<Self>, Vec<(Address, ForkGenesisAccount)>)> {
-        let settings = config.fork_settings();
+        let mut settings = config.fork_settings();
         let url = settings.urls.first().cloned().ok_or_else(|| eyre::eyre!("no fork url"))?;
         // The node runtime drives this provider. The backends get their own providers below, so
         // their connections live on the backend thread: a read may block the node runtime while
@@ -535,10 +656,40 @@ impl<F: ForkNetwork> ForkBackend<F> {
         let provider = settings.provider::<alloy_network::AnyNetwork>(&url)?;
         let chain = settings.provider::<F::Network>(&url)?;
 
+        let mut probe =
+            NodeInfoProbe::new(config.is_anvil_endpoint(&url), config.no_fork_node_info);
+        let node_info_before = probe.request(&provider).await?;
         let chain_id = match config.fork_chain_id {
             Some(chain_id) => chain_id,
             None => provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?,
         };
+        ensure_fork_network_supported(chain_id)?;
+        if settings.urls.len() > 1 {
+            eyre::ensure!(
+                config.fork_chain_id.is_none(),
+                "multiple fork URLs cannot be validated with --fork-chain-id; remove \
+                 --fork-chain-id to validate every endpoint"
+            );
+            for other in &settings.urls[1..] {
+                let other_provider = settings.provider::<alloy_network::AnyNetwork>(other)?;
+                // Mirrors are probed too, so their identity stays strict across resets.
+                let mut other_probe =
+                    NodeInfoProbe::new(config.is_anvil_endpoint(other), config.no_fork_node_info);
+                if other_probe.request(&other_provider).await?.is_some() {
+                    config.mark_anvil_endpoint(other);
+                }
+                let other_chain_id = other_provider
+                    .get_chain_id()
+                    .await
+                    .wrap_err_with(|| format!("failed to fetch the chain ID of {other}"))?;
+                ensure_fork_network_supported(other_chain_id)?;
+                eyre::ensure!(
+                    other_chain_id == chain_id,
+                    "fork endpoints must use the same chain ID: expected {chain_id}, got \
+                     {other_chain_id} from {other}"
+                );
+            }
+        }
 
         let mut replay_target = None;
         let block_number = match config.fork_choice.or_else(|| {
@@ -558,14 +709,16 @@ impl<F: ForkNetwork> ForkBackend<F> {
                     .get_transaction_by_hash(hash)
                     .await?
                     .ok_or_else(|| eyre::eyre!("transaction {hash} not found on the fork"))?;
-                let (_, position) = F::transaction(tx)?;
-                let Some((_, number, index)) = position else {
+                let Some((_, position)) = F::transaction(tx)? else {
+                    eyre::bail!("transaction {hash} has a type the node cannot execute");
+                };
+                let Some((_, number, _)) = position else {
                     eyre::bail!("transaction {hash} is not mined yet");
                 };
                 if number == 0 {
                     eyre::bail!("transaction {hash} is in the genesis block");
                 }
-                replay_target = Some((number, index));
+                replay_target = Some((number, hash));
                 number - 1
             }
             None => find_latest_fork_block(&provider)
@@ -585,21 +738,41 @@ impl<F: ForkNetwork> ForkBackend<F> {
             }
             eyre::bail!("{message}");
         };
-        let block = F::block(block)?;
+        let block = F::block(block, Vec::new())?;
         let hash = block.hash();
         let header = block.sealed_header().clone();
         let gas_price =
             provider.get_gas_price().await.unwrap_or(crate::config::INITIAL_BASE_FEE as u128);
+        // An endpoint that identified itself must still answer: a failure now hides a reset.
+        let node_info = probe.request(&provider).await?.or(node_info_before);
+        if node_info.is_some() {
+            config.mark_anvil_endpoint(&url);
+            settings.instance_id = tokio::time::timeout(
+                NODE_INFO_PROBE_TIMEOUT,
+                provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|metadata| metadata.instance_id);
+        }
         let replay = match replay_target {
-            Some((number, index)) => {
+            Some((number, target)) => {
                 let block = chain
                     .get_block_by_number(number.into())
                     .full()
                     .await?
                     .ok_or_else(|| eyre::eyre!("failed to get block {number} from the fork"))?;
-                let block = F::block(block)?;
-                let transactions =
-                    block.body().transactions().iter().take(index as usize + 1).cloned().collect();
+                // The block holds only the transactions the node can execute, so the prefix ends
+                // at the target's position among those.
+                let block = F::block(block, Vec::new())?;
+                let mut transactions = Vec::new();
+                for tx in block.body().transactions() {
+                    transactions.push(tx.clone());
+                    if *tx.tx_hash() == target {
+                        break;
+                    }
+                }
                 Some(ForkReplay { header: block.sealed_header().clone(), transactions })
             }
             None => None,
@@ -653,6 +826,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 hashes: RwLock::new(HashMap::from([(block_number, hash)])),
                 receipts: RwLock::new(HashMap::new()),
                 dump: None,
+                node_info,
             }),
             genesis_accounts,
         ))
@@ -714,6 +888,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             hashes: RwLock::new(hashes),
             receipts: RwLock::new(receipts),
             dump: Some(dump),
+            node_info: None,
         }))
     }
 
@@ -889,6 +1064,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             hashes: RwLock::new(hashes),
             receipts: RwLock::new(receipts),
             dump: Some(dump),
+            node_info: None,
         })
     }
 
@@ -957,6 +1133,11 @@ impl<F: ForkNetwork> ForkBackend<F> {
     /// Takes the transactions to replay at startup, if the fork is at a transaction hash.
     pub fn take_replay(&self) -> Option<ForkReplay<F>> {
         self.replay.write().take()
+    }
+
+    /// Returns the timestamp of the block the fork replays, if the fork is at a transaction hash.
+    pub fn replay_timestamp(&self) -> Option<u64> {
+        self.replay.read().as_ref().map(|replay| replay.header.timestamp())
     }
 
     /// Returns the chain id of the remote chain.
@@ -1144,24 +1325,31 @@ impl<F: ForkNetwork> ForkBackend<F> {
 
     fn cache_block(
         &self,
-        response: <F::Network as Network>::BlockResponse,
+        response: (
+            <F::Network as Network>::BlockResponse,
+            Vec<<F::Network as Network>::BlockResponse>,
+        ),
     ) -> ProviderResult<Arc<SealedBlock<ForkBlock<F>>>> {
-        let block = Arc::new(F::block(response)?);
+        let (response, uncles) = response;
+        let block = Arc::new(F::block(response, uncles)?);
         let hash = block.hash();
         self.hashes.write().insert(block.number(), hash);
         self.blocks.write().insert(hash, block.clone());
         Ok(block)
     }
 
-    /// Returns the node info of the endpoint when it is an anvil node, so a fork adopts its
-    /// hardfork, as anvil does. Awaits the request itself: the setup runs on the caller's
-    /// runtime, where a blocking request would stall a single-threaded one.
-    pub async fn node_info(&self) -> Option<NodeInfo> {
-        if !self.has_remote() {
-            return None;
+    /// Returns what the endpoint reported about itself at setup, when it is an anvil node, so a
+    /// fork adopts its hardfork, as anvil does.
+    pub const fn node_info(&self) -> Option<&NodeInfo> {
+        self.node_info.as_ref()
+    }
+
+    /// Removes the cache file of the remote state at the fork block, if any.
+    pub fn remove_cache(&self) {
+        let path = self.settings.cache_path(self.chain_id, self.header.number(), &self.url.read());
+        if let Some(path) = path {
+            let _ = std::fs::remove_file(path);
         }
-        let chain = self.chain.read().clone();
-        chain.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.ok()
     }
 
     /// Returns the remote account proof at the given block.
@@ -1190,7 +1378,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
             return Ok(None);
         }
         let block = self.request(move |chain| async move {
-            chain.get_block_by_hash(hash).full().await.map_err(Into::into)
+            let Some(block) = chain.get_block_by_hash(hash).full().await? else { return Ok(None) };
+            let uncles = fetch_uncles::<F>(&chain, &block).await?;
+            Ok(Some((block, uncles)))
         })?;
         block.map(|block| self.cache_block(block)).transpose()
     }
@@ -1209,7 +1399,11 @@ impl<F: ForkNetwork> ForkBackend<F> {
             return Ok(None);
         }
         let block = self.request(move |chain| async move {
-            chain.get_block_by_number(number.into()).full().await.map_err(Into::into)
+            let Some(block) = chain.get_block_by_number(number.into()).full().await? else {
+                return Ok(None);
+            };
+            let uncles = fetch_uncles::<F>(&chain, &block).await?;
+            Ok(Some((block, uncles)))
         })?;
         block.map(|block| self.cache_block(block)).transpose()
     }
@@ -1287,8 +1481,14 @@ impl<F: ForkNetwork> ForkBackend<F> {
             chain.get_block_receipts(hash.into()).await.map_err(Into::into)
         })?;
         let Some(receipts) = receipts else { return Ok(None) };
-        let receipts =
-            Arc::new(receipts.into_iter().map(F::receipt).collect::<ProviderResult<Vec<_>>>()?);
+        // The receipts of the transactions the block leaves out are left out too, so receipts
+        // and transactions keep the same positions.
+        let receipts = Arc::new(
+            receipts
+                .into_iter()
+                .filter_map(|receipt| F::receipt(receipt).transpose())
+                .collect::<ProviderResult<Vec<_>>>()?,
+        );
         self.receipts.write().insert(hash, receipts.clone());
         Ok(Some(receipts))
     }
@@ -1323,13 +1523,20 @@ impl<F: ForkNetwork> ForkBackend<F> {
             chain.get_transaction_by_hash(hash).await.map_err(Into::into)
         })?;
         let Some(tx) = tx else { return Ok(None) };
-        let (tx, Some((block_hash, block_number, index))) = F::transaction(tx)? else {
+        let Some((tx, Some((block_hash, block_number, _)))) = F::transaction(tx)? else {
             return Ok(None);
         };
         if !self.predates_fork(block_number) && block_number != self.header.number() {
             return Ok(None);
         }
         let Some(block) = self.block_by_hash(block_hash)? else { return Ok(None) };
+        // The position among the transactions the node keeps, not the remote one.
+        let Some(index) =
+            block.body().transactions().iter().position(|candidate| *candidate.tx_hash() == hash)
+        else {
+            return Ok(None);
+        };
+        let index = index as u64;
         let meta = TransactionMeta {
             tx_hash: hash,
             index,
