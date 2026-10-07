@@ -185,7 +185,8 @@ after its pair-consistency checks pass. Batch import additionally validates tran
 pending, and receipt associations. Resume then:
 
 1. reconciles hashes currently listed in `pending`, plus mined ordinary signed attempts and saved
-   operation hashes that lack a pending entry or receipt;
+   operation hashes that lack a pending entry or receipt, which are restored to `pending` so that
+   successful and reverted receipts both wait for `--confirmations` before they are saved;
 2. warns about every persisted reverted receipt;
 3. reuses available signers or re-executes only to collect missing script-provided signers;
 4. derives remaining ordinary work by operation hash and batch work by a validated contiguous
@@ -193,7 +194,8 @@ pending, and receipt associations. Resume then:
 5. prepares and submits that remaining work.
 
 A reverted receipt is terminal but unsuccessful. Resume never resubmits a reverted operation, but it
-continues with the remaining operations. `--resume-retry` resolves only an unknown delegated outcome
+continues with the remaining operations. Verification skips reverted receipts, including predicted
+CREATE2 addresses from a reverted batch. `--resume-retry` resolves only an unknown delegated outcome
 and cannot override a confirmed revert.
 
 The saved RPC is part of the sensitive sequence. Operator handoff therefore also hands off an

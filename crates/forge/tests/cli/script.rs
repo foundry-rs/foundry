@@ -1359,20 +1359,15 @@ contract RevertedResume is Script {
 }
 "#,
     );
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let lagging = Arc::new(AtomicBool::new(false));
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let receipt_lookups = Arc::new(AtomicUsize::new(0));
-    let lagging_rpc = lagging.clone();
     let lookups = receipt_lookups.clone();
     let endpoint = spawn_rpc_proxy_mapping_method(
         handle.http_endpoint(),
         "eth_getTransactionReceipt",
         move |_, result| {
-            if lagging_rpc.load(Ordering::SeqCst) && lookups.fetch_add(1, Ordering::SeqCst) > 0 {
-                Value::Null
-            } else {
-                result
-            }
+            lookups.fetch_add(1, Ordering::SeqCst);
+            result
         },
     )
     .await;
@@ -1413,8 +1408,9 @@ Error: Transaction Failure: 0x[..]
 
     // Older snapshots dropped the reverted hash from pending without its receipt, and an
     // interrupted checkpoint can also lose its operation hash. A fresh, non-sequential resume must
-    // reconcile that signed attempt instead of replaying it alongside the unsigned successor. It
-    // warns about the revert and, without a signer for the successor, fails before submitting.
+    // reconcile that signed attempt instead of replaying it alongside the unsigned successor. The
+    // revert only becomes the operation's outcome once it reaches the requested confirmations, and
+    // resume stops before requesting a signer for the successor.
     let recovery_path =
         prj.root().join("cache/RevertedResume.s.sol/31337/run-latest.json.recovery.json");
     let mut recovery: Value = foundry_common::fs::read_json_file(&recovery_path).unwrap();
@@ -1425,30 +1421,56 @@ Error: Transaction Failure: 0x[..]
         .retain(|receipt| receipt["transactionHash"] != reverted_hash);
     data["transactions"][1]["hash"] = Value::Null;
     foundry_common::fs::write_json_file(&recovery_path, &recovery).unwrap();
-    lagging.store(true, Ordering::SeqCst);
+    let recovered_receipt = |path: &Path| {
+        let recovery: Value = foundry_common::fs::read_json_file(path).unwrap();
+        recovery["data"]["sequence"]["receipts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|receipt| receipt["transactionHash"] == reverted_hash)
+            .cloned()
+    };
+    receipt_lookups.store(0, Ordering::SeqCst);
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "RevertedResume",
         "--rpc-url",
         &rpc,
         "--resume",
+        "--confirmations",
+        "3",
     ]);
-    cmd.assert_failure().stderr_eq(format!(
-        "Warning: transaction {reverted_hash} on chain 31337 reverted; resume will not resubmit it\n[..]"
-    ));
-    assert_eq!(receipt_lookups.load(Ordering::SeqCst), 1);
-    lagging.store(false, Ordering::SeqCst);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while receipt_lookups.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("Forge did not start waiting for the reverted receipt");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(child.is_running(), "Forge finished before the requested confirmations");
+    assert!(recovered_receipt(&recovery_path).is_none());
+    api.evm_mine(None).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("Forge did not finish after the requested confirmations");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert_data_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("Error: Transaction Failure: {reverted_hash}\n")
+    );
+    assert_eq!(recovered_receipt(&recovery_path).unwrap()["status"], "0x0");
     assert_eq!(submissions.lock().unwrap().len(), 2);
-    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
-    let reverted = sequence["receipts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|receipt| receipt["transactionHash"] == reverted_hash);
-    assert_eq!(reverted.unwrap()["status"], "0x0");
 
     // A generationless legacy pair can retain only the reverted operation hash. Resume reconciles
-    // it, warns, and submits only the remaining operation.
+    // and persists the revert, and the next resume warns and submits only the remaining operation.
     fs::remove_file(&recovery_path).unwrap();
     let mut legacy: Value = foundry_common::fs::read_json_file(&path).unwrap();
     legacy.as_object_mut().unwrap().remove("recovery_generation");
@@ -1470,6 +1492,8 @@ Error: Transaction Failure: 0x[..]
         private_key,
         "--resume",
     ]);
+    cmd.assert_failure().stderr_eq(format!("Error: Transaction Failure: {reverted_hash}\n"));
+    assert_eq!(submissions.lock().unwrap().len(), 2);
     cmd.assert_success().stderr_eq(format!(
         "Warning: transaction {reverted_hash} on chain 31337 reverted; resume will not resubmit it\n"
     ));
@@ -5918,7 +5942,8 @@ Error: Batch transaction 0x[..] failed (reverted)
     }
 
     // A later resume warns once about the reverted batch without requesting a signer or
-    // resubmitting.
+    // resubmitting. Verification skips the predicted CREATE2 addresses the batch never deployed,
+    // so the unreachable verifier is never asked to verify them.
     cmd.forge_fuse().arg("script").arg(&script).args([
         "--tc",
         "MultiDeploy",
@@ -5928,9 +5953,21 @@ Error: Batch transaction 0x[..] failed (reverted)
         "--batch",
         "--network",
         "tempo",
+        "--broadcast",
+        "--verify",
+        "--verifier-url",
+        "http://127.0.0.1:1/api",
+        "--etherscan-api-key",
+        "test",
     ]);
     cmd.assert_success().stderr_eq(format!(
-        "Warning: transaction {hash} on chain {} reverted; resume will not resubmit it\n",
+        "\
+Warning: transaction {hash} on chain {} reverted; resume will not resubmit it
+Warning: verifier credential check inconclusive, proceeding anyway
+##
+Start verification for (0) contracts
+All (0) contracts were verified!
+",
         sequence["chain"]
     ));
     assert_eq!(submissions.lock().unwrap().len(), 2);

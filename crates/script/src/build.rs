@@ -369,16 +369,9 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         && receipt.block_hash().is_some()
                         && receipt.transaction_index().is_some()
                     {
-                        let deployment = &mut sequence.sequences_mut()[index];
-                        if receipt.status() {
-                            // Successful transactions still wait for the requested confirmations.
-                            deployment.add_pending(operation, hash);
-                        } else {
-                            deployment.transactions[operation].hash = Some(hash);
-                            deployment.add_receipt(receipt);
-                            // Preserve the observed revert even if a later RPC lookup lags.
-                            sequence.save(true, false)?;
-                        }
+                        // Reverted receipts also wait for the requested confirmations before
+                        // they become the operation's terminal outcome.
+                        sequence.sequences_mut()[index].add_pending(operation, hash);
                     }
                 }
                 if sequence.sequences()[index].pending.is_empty() {
