@@ -692,7 +692,10 @@ impl PropertiesArgs {
                         stderr(&output)
                     )),
                     Ok((TestStatus::Failure, reason)) => {
-                        let reason = reason.unwrap_or_else(|| stderr(&output));
+                        let mut reason = reason.unwrap_or_else(|| stderr(&output));
+                        if reason.is_empty() {
+                            reason = "the test failed without a reason".to_string();
+                        }
                         reasons.push(format!(
                             "{}::{} failed on seed {seed}: {reason}",
                             test.contract, test.name
