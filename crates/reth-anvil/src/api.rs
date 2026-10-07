@@ -15,12 +15,13 @@ use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
 use alloy_json_rpc::RpcObject;
 use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U64, U256};
 use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_eth::{
     TransactionRequest,
+    erc4337::TransactionConditional,
     state::{AccountOverride, StateOverridesBuilder},
 };
 use foundry_evm_core::utils::block_env_from_header;
@@ -39,9 +40,12 @@ use reth_ethereum::{
     primitives::{Bytecode, SealedHeader},
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
-use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcTxReq, RpcTypes};
+use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTxReq, RpcTypes};
 use revm::context::BlockEnv;
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -217,11 +221,11 @@ pub trait AnvilApi<B: RpcObject, TxReq: RpcObject> {
     async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> RpcResult<()>;
 
     /// Sets the balance of an account.
-    #[method(name = "setBalance", aliases = ["hardhat_setBalance"])]
+    #[method(name = "setBalance", aliases = ["hardhat_setBalance", "tenderly_setBalance"])]
     async fn anvil_set_balance(&self, address: Address, balance: U256) -> RpcResult<()>;
 
     /// Adds to the balance of an account.
-    #[method(name = "addBalance", aliases = ["hardhat_addBalance"])]
+    #[method(name = "addBalance", aliases = ["hardhat_addBalance", "tenderly_addBalance"])]
     async fn anvil_add_balance(&self, address: Address, balance: U256) -> RpcResult<()>;
 
     /// Sets the nonce of an account.
@@ -250,11 +254,11 @@ pub trait AnvilApi<B: RpcObject, TxReq: RpcObject> {
     ) -> RpcResult<()>;
 
     /// Returns the state of the chain as gzipped JSON.
-    #[method(name = "dumpState")]
+    #[method(name = "dumpState", aliases = ["hardhat_dumpState"])]
     async fn anvil_dump_state(&self, preserve_historical_states: Option<bool>) -> RpcResult<Bytes>;
 
     /// Applies a state dump on top of the current state. Nonces take the higher value.
-    #[method(name = "loadState")]
+    #[method(name = "loadState", aliases = ["hardhat_loadState"])]
     async fn anvil_load_state(&self, buf: Bytes) -> RpcResult<bool>;
 }
 
@@ -268,7 +272,7 @@ pub trait EvmApi {
 
 /// The `eth_*` methods anvil adds on top of the standard namespace, or replaces.
 #[rpc(server, namespace = "eth")]
-pub trait EthExtApi<TxReq: RpcObject> {
+pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
     /// Signs and sends a transaction from a dev account. A request without `to` deploys a
     /// contract.
     ///
@@ -277,9 +281,39 @@ pub trait EthExtApi<TxReq: RpcObject> {
     #[method(name = "sendTransaction")]
     async fn eth_send_transaction(&self, request: TxReq) -> RpcResult<B256>;
 
+    /// Signs and sends a transaction, and waits for its receipt.
+    #[method(name = "sendTransactionSync")]
+    async fn eth_send_transaction_sync(&self, request: TxReq) -> RpcResult<Receipt>;
+
     /// Sends a transaction from `from` without a signature, as if the account were impersonated.
     #[method(name = "sendUnsignedTransaction")]
     async fn eth_send_unsigned_transaction(&self, request: TxReq) -> RpcResult<B256>;
+
+    /// Sends `request` again with a new gas price or gas limit, replacing the pending
+    /// transaction with the same nonce.
+    #[method(name = "resend")]
+    async fn eth_resend(
+        &self,
+        request: TxReq,
+        gas_price: Option<U256>,
+        gas_limit: Option<U64>,
+    ) -> RpcResult<B256>;
+
+    /// Sends a signed transaction. The condition is accepted and ignored, as anvil does.
+    #[method(name = "sendRawTransactionConditional")]
+    async fn eth_send_raw_transaction_conditional(
+        &self,
+        tx: Bytes,
+        condition: TransactionConditional,
+    ) -> RpcResult<B256>;
+
+    /// Returns the dev accounts, like `eth_accounts`.
+    #[method(name = "requestAccounts")]
+    async fn eth_request_accounts(&self) -> RpcResult<Vec<Address>>;
+
+    /// Returns the chain id as a decimal string, like `net_version`.
+    #[method(name = "networkId")]
+    async fn eth_network_id(&self) -> RpcResult<Option<String>>;
 }
 
 /// The `personal_*` namespace.
@@ -300,6 +334,12 @@ fn with_recipient<TxReq: AsMut<TransactionRequest>>(mut request: TxReq) -> TxReq
     }
     request
 }
+
+/// How long `eth_sendTransactionSync` waits for the receipt.
+const TRANSACTION_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often `eth_sendTransactionSync` polls for the receipt.
+const RECEIPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// What `anvil_nodeInfo` reports about the network the node runs.
 #[derive(Clone, Debug, Default)]
@@ -1106,7 +1146,8 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth, Spec> EthExtApiServer<RpcTxReq<Eth::NetworkTypes>>
+impl<Pool, Provider, Eth, Spec>
+    EthExtApiServer<RpcTxReq<Eth::NetworkTypes>, RpcReceipt<Eth::NetworkTypes>>
     for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: Send + Sync + 'static,
@@ -1116,6 +1157,66 @@ where
 {
     async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
         EthApiServer::send_transaction(&self.eth, with_recipient(request)).await
+    }
+
+    async fn eth_send_transaction_sync(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
+        let hash = EthApiServer::send_transaction(&self.eth, with_recipient(request)).await?;
+        let deadline = Instant::now() + TRANSACTION_CONFIRMATION_TIMEOUT;
+        loop {
+            if let Some(receipt) = EthApiServer::transaction_receipt(&self.eth, hash).await? {
+                return Ok(receipt);
+            }
+            if Instant::now() >= deadline {
+                return Err(internal_error(format!(
+                    "transaction {hash} was not mined within {TRANSACTION_CONFIRMATION_TIMEOUT:?}"
+                )));
+            }
+            tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
+        }
+    }
+
+    async fn eth_resend(
+        &self,
+        mut request: RpcTxReq<Eth::NetworkTypes>,
+        gas_price: Option<U256>,
+        gas_limit: Option<U64>,
+    ) -> RpcResult<B256> {
+        if request.as_ref().nonce.is_none() {
+            return Err(invalid_params("missing transaction nonce in transaction spec"));
+        }
+        if let Some(gas_price) = gas_price {
+            let gas_price =
+                gas_price.try_into().map_err(|_| invalid_params("gas price exceeds u128"))?;
+            let tx = request.as_mut();
+            if tx.max_fee_per_gas.is_some() || tx.max_priority_fee_per_gas.is_some() {
+                tx.max_fee_per_gas = Some(gas_price);
+            } else {
+                tx.gas_price = Some(gas_price);
+            }
+        }
+        if let Some(gas_limit) = gas_limit {
+            request.as_mut().gas = Some(gas_limit.to());
+        }
+        EthApiServer::send_transaction(&self.eth, with_recipient(request)).await
+    }
+
+    async fn eth_send_raw_transaction_conditional(
+        &self,
+        tx: Bytes,
+        _condition: TransactionConditional,
+    ) -> RpcResult<B256> {
+        EthApiServer::send_raw_transaction(&self.eth, tx).await
+    }
+
+    async fn eth_request_accounts(&self) -> RpcResult<Vec<Address>> {
+        EthApiServer::accounts(&self.eth)
+    }
+
+    async fn eth_network_id(&self) -> RpcResult<Option<String>> {
+        Ok(EthApiServer::chain_id(&self.eth).await?.map(|id| id.to::<u64>().to_string()))
     }
 
     async fn eth_send_unsigned_transaction(

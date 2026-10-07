@@ -1839,3 +1839,257 @@ async fn custom_chain_id_signs_dev_transactions() -> Result<()> {
     assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
     Ok(())
 }
+
+/// Every RPC method anvil serves, except the Tempo helpers, `eth_signRawTransaction` (Tempo
+/// only), the opcode gas traces, and `eth_callBundle`.
+const ANVIL_METHODS: &[&str] = &[
+    "anvil_addBalance",
+    "anvil_autoImpersonateAccount",
+    "anvil_dropAllTransactions",
+    "anvil_dropTransaction",
+    "anvil_dumpState",
+    "anvil_getAutomine",
+    "anvil_getBlobByHash",
+    "anvil_getBlobsByTransactionHash",
+    "anvil_getGenesisTime",
+    "anvil_getIntervalMining",
+    "anvil_getLastBlockWallTime",
+    "anvil_impersonateAccount",
+    "anvil_impersonateSignature",
+    "anvil_increaseTime",
+    "anvil_loadState",
+    "anvil_metadata",
+    "anvil_mine",
+    "anvil_mine_detailed",
+    "anvil_nodeInfo",
+    "anvil_removeBlockTimestampInterval",
+    "anvil_removePoolTransactions",
+    "anvil_reorg",
+    "anvil_reset",
+    "anvil_revert",
+    "anvil_rollback",
+    "anvil_setAutomine",
+    "anvil_setBalance",
+    "anvil_setBlockGasLimit",
+    "anvil_setBlockTimestampInterval",
+    "anvil_setChainId",
+    "anvil_setCode",
+    "anvil_setCoinbase",
+    "anvil_setIntervalMining",
+    "anvil_setLoggingEnabled",
+    "anvil_setMinGasPrice",
+    "anvil_setNextBlockBaseFeePerGas",
+    "anvil_setNextBlockParentBeaconBlockRoot",
+    "anvil_setNextBlockPrevRandao",
+    "anvil_setNextBlockTimestamp",
+    "anvil_setNonce",
+    "anvil_setRpcUrl",
+    "anvil_setStorageAt",
+    "anvil_setTime",
+    "anvil_snapshot",
+    "anvil_stopImpersonatingAccount",
+    "debug_accountInfoAt",
+    "debug_clearTxpool",
+    "debug_codeByHash",
+    "debug_dbGet",
+    "debug_executionWitness",
+    "debug_freeOSMemory",
+    "debug_getModifiedAccountsByNumber",
+    "debug_getRawBlock",
+    "debug_getRawHeader",
+    "debug_getRawReceipts",
+    "debug_getRawTransaction",
+    "debug_getRawTransactions",
+    "debug_traceBlock",
+    "debug_traceBlockByHash",
+    "debug_traceBlockByNumber",
+    "debug_traceCall",
+    "debug_traceTransaction",
+    "erigon_getHeaderByNumber",
+    "eth_accounts",
+    "eth_baseFee",
+    "eth_blobBaseFee",
+    "eth_blockNumber",
+    "eth_call",
+    "eth_callMany",
+    "eth_chainId",
+    "eth_coinbase",
+    "eth_config",
+    "eth_createAccessList",
+    "eth_estimateGas",
+    "eth_feeHistory",
+    "eth_fillTransaction",
+    "eth_gasPrice",
+    "eth_getAccount",
+    "eth_getAccountInfo",
+    "eth_getBalance",
+    "eth_getBlockAccessList",
+    "eth_getBlockAccessListByBlockHash",
+    "eth_getBlockAccessListByBlockNumber",
+    "eth_getBlockAccessListRaw",
+    "eth_getBlockByHash",
+    "eth_getBlockByNumber",
+    "eth_getBlockReceipts",
+    "eth_getBlockTransactionCountByHash",
+    "eth_getBlockTransactionCountByNumber",
+    "eth_getCode",
+    "eth_getFilterChanges",
+    "eth_getFilterLogs",
+    "eth_getHeaderByHash",
+    "eth_getHeaderByNumber",
+    "eth_getLogs",
+    "eth_getProof",
+    "eth_getRawTransactionByBlockHashAndIndex",
+    "eth_getRawTransactionByBlockNumberAndIndex",
+    "eth_getRawTransactionByHash",
+    "eth_getStorageAt",
+    "eth_getStorageValues",
+    "eth_getTransactionByBlockHashAndIndex",
+    "eth_getTransactionByBlockNumberAndIndex",
+    "eth_getTransactionByHash",
+    "eth_getTransactionBySenderAndNonce",
+    "eth_getTransactionCount",
+    "eth_getTransactionReceipt",
+    "eth_getUncleByBlockHashAndIndex",
+    "eth_getUncleByBlockNumberAndIndex",
+    "eth_getUncleCountByBlockHash",
+    "eth_getUncleCountByBlockNumber",
+    "eth_getWork",
+    "eth_hashrate",
+    "eth_maxPriorityFeePerGas",
+    "eth_networkId",
+    "eth_newBlockFilter",
+    "eth_newFilter",
+    "eth_newPendingTransactionFilter",
+    "eth_pendingTransactions",
+    "eth_protocolVersion",
+    "eth_requestAccounts",
+    "eth_resend",
+    "eth_sendRawTransaction",
+    "eth_sendRawTransactionConditional",
+    "eth_sendRawTransactionSync",
+    "eth_sendTransaction",
+    "eth_sendTransactionSync",
+    "eth_sendUnsignedTransaction",
+    "eth_sign",
+    "eth_signTransaction",
+    "eth_signTypedData",
+    "eth_submitHashrate",
+    "eth_submitWork",
+    "eth_subscribe",
+    "eth_syncing",
+    "eth_uninstallFilter",
+    "eth_unsubscribe",
+    "evm_increaseTime",
+    "evm_mine",
+    "evm_mine_detailed",
+    "evm_revert",
+    "evm_setAccountNonce",
+    "evm_setAutomine",
+    "evm_setBlockGasLimit",
+    "evm_setIntervalMining",
+    "evm_setNextBlockTimestamp",
+    "evm_setTime",
+    "evm_snapshot",
+    "hardhat_addBalance",
+    "hardhat_autoImpersonateAccount",
+    "hardhat_dropAllTransactions",
+    "hardhat_dropTransaction",
+    "hardhat_dumpState",
+    "hardhat_getAutomine",
+    "hardhat_impersonateAccount",
+    "hardhat_loadState",
+    "hardhat_metadata",
+    "hardhat_mine",
+    "hardhat_reset",
+    "hardhat_setBalance",
+    "hardhat_setCode",
+    "hardhat_setCoinbase",
+    "hardhat_setLoggingEnabled",
+    "hardhat_setMinGasPrice",
+    "hardhat_setNextBlockBaseFeePerGas",
+    "hardhat_setNonce",
+    "hardhat_setStorageAt",
+    "hardhat_stopImpersonatingAccount",
+    "net_listening",
+    "net_version",
+    "ots_getApiLevel",
+    "ots_getBlockDetails",
+    "ots_getBlockDetailsByHash",
+    "ots_getBlockTransactions",
+    "ots_getContractCreator",
+    "ots_getInternalOperations",
+    "ots_getTransactionBySenderAndNonce",
+    "ots_getTransactionError",
+    "ots_hasCode",
+    "ots_searchTransactionsAfter",
+    "ots_searchTransactionsBefore",
+    "ots_traceTransaction",
+    "personal_sign",
+    "tenderly_addBalance",
+    "tenderly_setBalance",
+    "trace_block",
+    "trace_call",
+    "trace_callMany",
+    "trace_filter",
+    "trace_get",
+    "trace_rawTransaction",
+    "trace_replayBlockTransactions",
+    "trace_replayTransaction",
+    "trace_transaction",
+    "txpool_content",
+    "txpool_contentFrom",
+    "txpool_inspect",
+    "txpool_status",
+];
+
+#[tokio::test]
+async fn serves_every_anvil_rpc_method() -> Result<()> {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let served = api.method_names();
+    let missing: Vec<_> =
+        ANVIL_METHODS.iter().filter(|name| !served.iter().any(|m| m == *name)).collect();
+    assert!(missing.is_empty(), "methods anvil serves but this node does not: {missing:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn eth_send_transaction_sync_returns_the_receipt() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let receipt: Value = client
+            .request(
+                "eth_sendTransactionSync",
+                rpc_params![transfer(funder, Address::repeat_byte(0x61), gas_price)],
+            )
+            .await?;
+        assert_eq!(receipt["status"], "0x1");
+        assert_eq!(receipt["blockNumber"], "0x1");
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn eth_resend_replaces_a_pending_transaction() -> Result<()> {
+    with_test_client(|client| async move {
+        client.request::<(), _>("anvil_setAutomine", rpc_params![false]).await?;
+        let (funder, gas_price) = funder_and_gas_price(&client).await?;
+        let tx = transfer(funder, Address::repeat_byte(0x62), gas_price).with_nonce(0);
+        let first: B256 = client.request("eth_sendTransaction", rpc_params![tx.clone()]).await?;
+        let second: B256 = client
+            .request("eth_resend", rpc_params![tx, U256::from(gas_price * 2), Option::<u64>::None])
+            .await?;
+        assert_ne!(first, second);
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        let receipt = wait_for_receipt(&client, second).await?;
+        assert_eq!(receipt["status"], "0x1");
+        assert_eq!(
+            U256::from_str(receipt["effectiveGasPrice"].as_str().ok_or_eyre("gas price")?)?,
+            U256::from(gas_price * 2)
+        );
+        assert!(get_receipt(&client, first).await?.is_none());
+        Ok(())
+    })
+    .await
+}

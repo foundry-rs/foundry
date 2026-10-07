@@ -35,6 +35,15 @@ impl EthApi {
         Ok(module.call(method, params).await?)
     }
 
+    /// Returns the names of every RPC method the node serves.
+    #[doc(hidden)]
+    pub fn method_names(&self) -> Vec<String> {
+        let mut names: Vec<String> =
+            self.module.read().method_names().map(str::to_string).collect();
+        names.sort_unstable();
+        names
+    }
+
     /// Returns the unique identifier of this node instance. It changes on `anvil_reset`.
     pub fn instance_id(&self) -> B256 {
         *self.instance_id.read()

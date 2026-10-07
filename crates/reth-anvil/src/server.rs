@@ -4,7 +4,10 @@
 //! `anvil_setChainId` can replace the node while the endpoint, the open connections, and the
 //! in-process API keep working. Every method forwards to the module of the current node.
 
-use crate::logging::{LoggingState, NodeInfoLayer};
+use crate::{
+    config::NodeConfig,
+    logging::{LoggingState, NodeInfoLayer},
+};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,
@@ -19,7 +22,7 @@ use parking_lot::RwLock;
 use reth_ethereum::rpc::builder::{IpcRpcServiceBuilder, IpcServerBuilder};
 use serde_json::value::RawValue;
 use std::{net::SocketAddr, sync::Arc};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 /// The RPC module of the current node, replaced on a relaunch.
 pub type SharedModule = Arc<RwLock<RpcModule<()>>>;
@@ -27,6 +30,50 @@ pub type SharedModule = Arc<RwLock<RpcModule<()>>>;
 const MAX_REQUEST_SIZE: u32 = 15 * 1024 * 1024;
 const MAX_RESPONSE_SIZE: u32 = 160 * 1024 * 1024;
 const MAX_CONNECTIONS: u32 = 500;
+
+/// The server options of the node config.
+#[derive(Clone, Debug)]
+pub struct ServerSettings {
+    /// The IPC endpoint, if any.
+    pub ipc_path: Option<String>,
+    /// The origins allowed by CORS: `*` or a comma-separated list.
+    pub allow_origin: String,
+    /// Whether to send no CORS headers at all.
+    pub no_cors: bool,
+    /// Whether to lift the request body size limit.
+    pub no_request_size_limit: bool,
+}
+
+impl ServerSettings {
+    /// Reads the settings from the node config.
+    pub fn from_config(config: &NodeConfig) -> Self {
+        Self {
+            ipc_path: config.ipc_path.clone(),
+            allow_origin: config.allow_origin.clone(),
+            no_cors: config.no_cors,
+            no_request_size_limit: config.no_request_size_limit,
+        }
+    }
+
+    /// Returns the CORS layer, if CORS is on.
+    fn cors(&self) -> Result<Option<CorsLayer>> {
+        if self.no_cors {
+            return Ok(None);
+        }
+        let origin = if self.allow_origin.trim() == "*" {
+            AllowOrigin::any()
+        } else {
+            let origins = self
+                .allow_origin
+                .split(',')
+                .map(|origin| origin.trim().parse())
+                .collect::<Result<Vec<_>, _>>()
+                .wrap_err("invalid --allow-origin")?;
+            AllowOrigin::list(origins)
+        };
+        Ok(Some(CorsLayer::new().allow_origin(origin).allow_methods(Any).allow_headers(Any)))
+    }
+}
 
 /// The HTTP, WebSocket, and IPC servers.
 #[derive(Debug)]
@@ -41,26 +88,30 @@ impl RpcServer {
     /// whichever module `shared` holds at the time.
     pub async fn start(
         address: SocketAddr,
-        ipc_path: Option<String>,
+        settings: ServerSettings,
         shared: SharedModule,
         logging: LoggingState,
     ) -> Result<Self> {
         let methods = forwarding_module(&shared.read().clone(), shared.clone())?;
         let config = ServerConfig::builder()
-            .max_request_body_size(MAX_REQUEST_SIZE)
+            .max_request_body_size(if settings.no_request_size_limit {
+                u32::MAX
+            } else {
+                MAX_REQUEST_SIZE
+            })
             .max_response_body_size(MAX_RESPONSE_SIZE)
             .max_connections(MAX_CONNECTIONS)
             .build();
         let server = ServerBuilder::default()
             .set_config(config)
-            .set_http_middleware(tower::ServiceBuilder::new().layer(CorsLayer::permissive()))
+            .set_http_middleware(tower::ServiceBuilder::new().option_layer(settings.cors()?))
             .set_rpc_middleware(RpcServiceBuilder::new().layer(NodeInfoLayer::new(logging.clone())))
             .build(address)
             .await
             .wrap_err_with(|| format!("failed to bind the rpc server to {address}"))?;
         let address = server.local_addr()?;
         let http = server.start(methods.clone());
-        let ipc = match ipc_path {
+        let ipc = match settings.ipc_path {
             Some(path) => Some(
                 IpcServerBuilder::default()
                     .set_rpc_middleware(

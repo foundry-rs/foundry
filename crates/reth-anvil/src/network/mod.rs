@@ -28,7 +28,7 @@ use reth_ethereum::{
             rpc::{EngineValidatorAddOn, RethRpcAddOns},
         },
     },
-    primitives::SignerRecoverable,
+    primitives::{SignerRecoverable, header::HeaderMut},
     provider::{db::DatabaseEnv, providers::NodeTypesForProvider},
 };
 use reth_rpc_eth_api::{FullEthApiServer, RpcTypes, helpers::EthTransactions};
@@ -89,6 +89,7 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
             Primitives: AnvilPrimitives<
                 SignedTx: Transaction + SignerRecoverable + TxHashRef,
                 Receipt: TxReceipt,
+                BlockHeader: HeaderMut,
             >,
             ChainSpec: EthChainSpec + EthereumHardforks + Hardforks,
             Payload: PayloadTypes<

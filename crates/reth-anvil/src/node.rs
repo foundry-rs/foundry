@@ -11,7 +11,7 @@ use crate::{
     mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
     network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
     provider::AnvilProvider,
-    server::{RpcServer, SharedModule},
+    server::{RpcServer, ServerSettings, SharedModule},
     signer::DevSigner,
     snapshot::SnapshotManager,
     state::{AnvilState, SharedAnvilState},
@@ -28,7 +28,7 @@ use parking_lot::RwLock;
 use reth_ethereum::{
     chainspec::EthChainSpec,
     node::{
-        api::NodeTypes,
+        api::{FullNodeComponents, NodeTypes},
         builder::{LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle},
         core::{
             args::{DatadirArgs, PayloadBuilderArgs, RpcServerArgs, StorageArgs},
@@ -49,7 +49,10 @@ use reth_ethereum::{
     storage::BlockNumReader,
     tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
-use reth_rpc_eth_api::helpers::EthTransactions;
+use reth_rpc_eth_api::helpers::{
+    EthTransactions,
+    config::{EthConfigApiServer, EthConfigHandler},
+};
 use std::{
     net::{SocketAddr, TcpListener},
     pin::Pin,
@@ -225,7 +228,8 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
     let module: SharedModule = Arc::new(RwLock::new(module));
     let logging = LoggingState::new(!config.silent);
     let server =
-        RpcServer::start(address, config.ipc_path.clone(), module.clone(), logging).await?;
+        RpcServer::start(address, ServerSettings::from_config(&config), module.clone(), logging)
+            .await?;
     let address = server.address();
 
     let (exit_tx, exit_rx) = oneshot::channel();
@@ -453,6 +457,11 @@ async fn launch_node<Net: AnvilNetwork>(
 
                 // The in-process API calls the same handlers the servers do.
                 let mut module = ctx.registry.module_for(&RpcModuleSelection::All);
+                // Reth adds `eth_config` to its transport modules, which are off here.
+                module.merge(EthConfigApiServer::into_rpc(EthConfigHandler::new(
+                    ctx.provider().clone(),
+                    ctx.node().evm_config().clone(),
+                )))?;
                 module.merge(anvil_module.clone())?;
                 module.merge(evm_module.clone())?;
                 for name in eth_module.method_names() {

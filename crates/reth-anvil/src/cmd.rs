@@ -11,6 +11,7 @@ use eyre::Result;
 use foundry_common::shell;
 use foundry_config::Chain;
 use foundry_evm_hardforks::FoundryHardfork;
+use foundry_evm_networks::NetworkConfigs;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
     net::IpAddr,
@@ -213,7 +214,34 @@ impl NodeArgs {
     pub fn into_node_config(self) -> Result<NodeConfig> {
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let funded_accounts = self.parse_funded_accounts()?;
-        let hardfork = self.hardfork.as_deref().map(parse_hardfork).transpose()?;
+        // A chain id of a known network selects it, unless a fork endpoint will tell.
+        let local_chain_id = self
+            .evm
+            .chain_id
+            .map(u64::from)
+            .or_else(|| self.init.as_ref().map(|genesis| genesis.config.chain_id));
+        let inferred_chain_id = self
+            .evm
+            .fork_chain_id
+            .map(u64::from)
+            .or(if self.evm.fork_url.is_empty() { local_chain_id } else { None });
+        let networks = match inferred_chain_id {
+            Some(chain_id) => {
+                self.evm.networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)?
+            }
+            None => self.evm.networks,
+        };
+        let hardfork = self
+            .hardfork
+            .as_deref()
+            .map(|hardfork| parse_hardfork(hardfork, &networks))
+            .transpose()?;
+        let networks = match hardfork {
+            Some(hardfork) => {
+                networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?
+            }
+            None => networks,
+        };
         let compute_units_per_second =
             if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
         let fork_choice = match (self.evm.fork_block_number, self.evm.fork_transaction_hash) {
@@ -228,6 +256,7 @@ impl NodeArgs {
             .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
+            .with_networks(networks)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
@@ -621,6 +650,9 @@ pub struct AnvilEvmArgs {
     /// The memory limit per EVM execution in bytes.
     #[arg(long)]
     pub memory_limit: Option<u64>,
+
+    #[command(flatten)]
+    pub networks: NetworkConfigs,
 }
 
 /// The server options.
@@ -640,8 +672,13 @@ pub struct ServerArgs {
     pub no_request_size_limit: bool,
 }
 
-fn parse_hardfork(hardfork: &str) -> Result<FoundryHardfork> {
-    FoundryHardfork::from_str(hardfork).map_err(eyre::Report::msg)
+/// Parses a hardfork name, in the namespace of the selected network when it carries none.
+fn parse_hardfork(hardfork: &str, networks: &NetworkConfigs) -> Result<FoundryHardfork> {
+    if let Ok(hardfork) = FoundryHardfork::from_str(hardfork) {
+        networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?;
+        return Ok(hardfork);
+    }
+    networks.execution_network().parse_hardfork(hardfork).map_err(eyre::Report::msg)
 }
 
 /// Clap's value parser for genesis. Loads a genesis.json file.
