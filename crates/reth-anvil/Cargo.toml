@@ -102,5 +102,11 @@ optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
 
 [dev-dependencies]
 alloy-chains.workspace = true
+alloy-contract.workspace = true
+alloy-provider = { workspace = true, features = ["txpool-api"] }
+alloy-pubsub.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
 foundry-test-utils.workspace = true
+futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }
+rand.workspace = true

@@ -34,7 +34,7 @@ use reth_ethereum::{
         api::{FullNodeComponents, NodeTypes},
         builder::{LaunchNode, NodeBuilder, NodeHandle as RethNodeHandle},
         core::{
-            args::{DatadirArgs, PayloadBuilderArgs, RpcServerArgs, StorageArgs},
+            args::{DatadirArgs, EngineArgs, PayloadBuilderArgs, RpcServerArgs, StorageArgs},
             dirs::{DataDirPath, MaybePlatformPath},
             exit::NodeExitFuture,
             node_config::NodeConfig as RethNodeConfig,
@@ -77,8 +77,8 @@ pub struct NodeHandle {
     address: SocketAddr,
     /// Resolves when the node exits.
     pub node_exit_future: NodeExit,
-    /// Stops the node when the handle drops.
-    _shutdown: oneshot::Sender<()>,
+    /// Stops the node when the handle and every in-process API drop.
+    _shutdown: Arc<oneshot::Sender<()>>,
 }
 
 /// Resolves when the node exits, with its exit result.
@@ -123,13 +123,32 @@ pub struct Relauncher {
     requests: mpsc::UnboundedSender<Relaunch>,
     /// The config the current node was launched from, before the network prepared it.
     config: Arc<RwLock<NodeConfig>>,
+    /// The config the first node was launched from.
+    original: Arc<NodeConfig>,
 }
 
 impl Relauncher {
     /// Replaces the running node with one launched from the current config changed by `update`.
     /// Returns once the new node serves requests.
     pub async fn relaunch(&self, update: impl FnOnce(&mut NodeConfig)) -> Result<(), String> {
-        let mut config = self.config.read().clone();
+        let config = self.config.read().clone();
+        self.relaunch_with(config, update).await
+    }
+
+    /// Replaces the running node with one launched from the first node's config changed by
+    /// `update`.
+    pub async fn relaunch_from_original(
+        &self,
+        update: impl FnOnce(&mut NodeConfig),
+    ) -> Result<(), String> {
+        self.relaunch_with((*self.original).clone(), update).await
+    }
+
+    async fn relaunch_with(
+        &self,
+        mut config: NodeConfig,
+        update: impl FnOnce(&mut NodeConfig),
+    ) -> Result<(), String> {
         update(&mut config);
         let (reply, rx) = oneshot::channel();
         let stopped = || "the node supervisor has stopped".to_string();
@@ -211,7 +230,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// impersonation controls.
 ///
 /// The node runs on a fresh MDBX database in a temporary directory that is removed when the
-/// returned handle drops. The node tasks run on the current tokio runtime.
+/// returned handle and every clone of the returned API drop. The node tasks run on the current
+/// tokio runtime.
 pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     match config.networks.resolved_network().unwrap_or_default() {
         NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
@@ -226,7 +246,11 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
     let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
     let instance_id = Arc::new(RwLock::new(B256::random()));
     let (requests, relaunches) = mpsc::unbounded_channel();
-    let relauncher = Relauncher { requests, config: Arc::new(RwLock::new(config.clone())) };
+    let relauncher = Relauncher {
+        requests,
+        config: Arc::new(RwLock::new(config.clone())),
+        original: Arc::new(config.clone()),
+    };
     let (module, running) =
         launch_node::<Net>(config.clone(), instance_id.clone(), relauncher.clone()).await?;
     let module: SharedModule = Arc::new(RwLock::new(module));
@@ -249,9 +273,10 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
         shutdown: shutdown_rx,
     }));
 
+    let shutdown = Arc::new(shutdown_tx);
     Ok((
-        EthApi::new(module, instance_id),
-        NodeHandle { config, address, node_exit_future: NodeExit(exit_rx), _shutdown: shutdown_tx },
+        EthApi::new(module, instance_id, shutdown.clone()),
+        NodeHandle { config, address, node_exit_future: NodeExit(exit_rx), _shutdown: shutdown },
     ))
 }
 
@@ -347,6 +372,12 @@ async fn launch_node<Net: AnvilNetwork>(
     )
     .build()?;
     let Prepared { chain_spec, fork } = Net::prepare(&mut config).await?;
+    {
+        // The network adopted from a fork endpoint stays across relaunches, as on anvil.
+        let mut launch_config = relauncher.config.write();
+        launch_config.networks = config.networks;
+        launch_config.adopted_fork_network = config.adopted_fork_network;
+    }
 
     let datadir = tempfile::tempdir()?;
     // The RPC servers run in front of the node, see `RpcServer`.
@@ -364,7 +395,7 @@ async fn launch_node<Net: AnvilNetwork>(
     rpc_args.rpc_gas_cap = config.get_gas_limit();
     // Proofs for any block, not only the latest.
     rpc_args.rpc_eth_proof_window = MAX_ETH_PROOF_WINDOW;
-    let node_config = RethNodeConfig::new(chain_spec.clone())
+    let mut node_config = RethNodeConfig::new(chain_spec.clone())
         .with_storage(StorageArgs { v2: false })
         .with_rpc(rpc_args)
         .with_datadir_args(DatadirArgs {
@@ -376,6 +407,13 @@ async fn launch_node<Net: AnvilNetwork>(
             gas_limit: Some(config.get_gas_limit()),
             ..Default::default()
         });
+    // A forkchoice update onto a canonical ancestor unwinds the chain to it, which snapshots,
+    // rollbacks, reorgs, and resets rely on.
+    node_config.engine = EngineArgs {
+        always_process_payload_attributes_on_canonical_head: true,
+        allow_unwind_canonical_header: true,
+        ..Default::default()
+    };
     // Reth reserves an 8 TiB map by default, which fails once a few dev nodes run side by side.
     // A dev node never approaches that size, so cap the map and grow it in smaller steps.
     let db_args = DatabaseArguments::new(ClientVersion::default())
@@ -500,14 +538,15 @@ async fn launch_node<Net: AnvilNetwork>(
         .provider
         .sealed_header(node.provider.best_block_number()?)?
         .ok_or_else(|| eyre::eyre!("missing head header"))?;
-    let rewind_provider = node.provider.clone();
     let insert_provider = node.provider.clone();
+    let (map_attributes, finish) = time.build_hooks(block_env.clone());
     let miner = AnvilMiner::<<Net::Node as NodeTypes>::Payload>::new(
         node.add_ons_handle.beacon_engine_handle.clone(),
         node.payload_builder_handle.clone(),
         Net::payload_attributes(chain_spec),
-        time.payload_attributes_hook(block_env.clone()),
-        move |header| Ok(rewind_provider.rewind_to(header)?),
+        map_attributes,
+        finish,
+        node.provider.clone(),
         move || Ok(insert_provider.materialize_fork_reads()?),
         head,
         miner_requests,

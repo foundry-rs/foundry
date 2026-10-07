@@ -11303,6 +11303,7 @@ version = "1.8.5"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
+ "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-evm",
@@ -11312,6 +11313,7 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-pubsub",
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -11338,6 +11340,7 @@ dependencies = [
  "monad-revm",
  "parking_lot",
  "rand 0.8.8",
+ "rand 0.9.5",
  "reth-chain-state",
  "reth-db-api",
  "reth-engine-tree",

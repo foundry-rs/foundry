@@ -397,7 +397,9 @@ where
     type Pool = AnvilTransactionPool<Node::Provider, Evm>;
 
     async fn build_pool(self, ctx: &BuilderContext<Node>, evm_config: Evm) -> Result<Self::Pool> {
-        let pool_config = ctx.pool_config();
+        let mut pool_config = ctx.pool_config();
+        // Anvil has no minimum fee: a zero gas price is fine with a zero base fee.
+        pool_config.minimal_protocol_basefee = 0;
         let blob_store = create_blob_store_with_cache(ctx, None)?;
 
         let minimum_priority_fee = if self.settings.disable_min_priority_fee {

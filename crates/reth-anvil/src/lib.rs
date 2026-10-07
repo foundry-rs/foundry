@@ -8,6 +8,7 @@ mod block_env;
 pub mod cmd;
 mod config;
 mod console;
+mod engine;
 mod eth_api;
 mod evm;
 mod fork;
@@ -30,7 +31,9 @@ mod state_provider;
 mod time;
 mod types;
 
-pub use api::{AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, PersonalApiServer};
+pub use api::{
+    AnvilApiServer, AnvilRpc, CLIENT_VERSION, EthExtApiServer, EvmApiServer, PersonalApiServer,
+};
 pub use config::{
     AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, DEFAULT_IPC_ENDPOINT, DEFAULT_MNEMONIC,
     DEFAULT_SLOTS_IN_AN_EPOCH, INITIAL_BASE_FEE, NODE_PORT, NodeConfig,

@@ -129,15 +129,13 @@ impl AnvilState {
     /// The first call for a block takes every pending write and freezes it for that block, so a
     /// repeated execution of the same block applies the same writes.
     pub fn overrides_for_block(&mut self, number: u64) -> Vec<StateOverride> {
-        if let Some(writes) = self.frozen.get(&number).or_else(|| self.applied.get(&number)) {
+        if let Some(writes) = self.applied.get(&number) {
             return writes.clone();
         }
-        if self.pending.is_empty() {
-            return Vec::new();
-        }
-        let frozen = std::mem::take(&mut self.pending);
-        self.frozen.insert(number, frozen.clone());
-        frozen
+        // A block whose build failed keeps its writes and takes the ones made since.
+        let frozen = self.frozen.entry(number).or_default();
+        frozen.append(&mut self.pending);
+        frozen.clone()
     }
 
     /// Drops the overlay entries for writes that the canonical chain now serves, up to and

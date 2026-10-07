@@ -6,6 +6,7 @@ use crate::{
 use alloy_eips::{eip2935, eip4788, eip7002, eip7251};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, U256, hex, map::HashMap, utils::Unit};
+use alloy_rpc_types::anvil::NodeInfo;
 use alloy_signer::Signer;
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use eyre::{Result, WrapErr};
@@ -188,6 +189,8 @@ pub struct NodeConfig {
     pub no_request_size_limit: bool,
     /// The network the node runs.
     pub networks: NetworkConfigs,
+    /// Whether a fork fixed `networks`. Resets to another endpoint keep it, as on anvil.
+    pub adopted_fork_network: bool,
 }
 
 impl Default for NodeConfig {
@@ -251,6 +254,7 @@ impl Default for NodeConfig {
             no_cors: false,
             no_request_size_limit: false,
             networks: NetworkConfigs::default(),
+            adopted_fork_network: false,
         }
     }
 }
@@ -319,9 +323,14 @@ impl NodeConfig {
     /// Sets the chain id, and the chain id the dev wallets sign for.
     pub fn set_chain_id<U: Into<u64>>(&mut self, chain_id: Option<U>) {
         self.chain_id = chain_id.map(Into::into);
-        let chain_id = Some(self.get_chain_id());
+        let chain_id = self.get_chain_id();
+        // A well-known chain id selects its network, unless one is selected already or a fork
+        // fixed it.
+        if !self.adopted_fork_network {
+            self.networks = self.networks.with_chain_id(chain_id);
+        }
         for wallet in self.genesis_accounts.iter_mut().chain(self.signer_accounts.iter_mut()) {
-            wallet.set_chain_id(chain_id);
+            wallet.set_chain_id(Some(chain_id));
         }
     }
 
@@ -699,6 +708,36 @@ impl NodeConfig {
         }
         self.genesis_timestamp = Some(header.timestamp);
         self.genesis_block_number = Some(header.number);
+    }
+
+    /// Adopts what an anvil endpoint reports about itself: its network, unless one is selected
+    /// or a fork adopted one before, and its hardfork, unless one is set explicitly. Anvil keeps
+    /// the network of the first fork across resets and re-resolves the hardfork.
+    pub fn adopt_fork_identity(&mut self, info: &NodeInfo) {
+        if !self.adopted_fork_network && !self.networks.has_network_selection() {
+            match NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                self.get_chain_id(),
+                Some(info.network.as_deref()),
+                None,
+            ) {
+                Ok(Some(networks)) => self.networks = networks,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(target: "node", %error, "ignoring the network the fork endpoint reports");
+                }
+            }
+        }
+        // The first fork fixes the network, whatever it reported.
+        self.adopted_fork_network = true;
+        if self.hardfork.is_some() {
+            return;
+        }
+        match self.networks.execution_network().parse_hardfork(&info.hard_fork) {
+            Ok(hardfork) => self.hardfork = Some(hardfork),
+            Err(error) => {
+                tracing::warn!(target: "node", %error, "ignoring the hardfork the fork endpoint reports");
+            }
+        }
     }
 
     /// Enables opcode tracing output.

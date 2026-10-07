@@ -13,6 +13,7 @@ use alloy_eips::{BlockHashOrNumber, BlockId};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, StorageValue, TxNumber, U256, keccak256};
 use alloy_provider::Provider;
+use alloy_rpc_types::anvil::NodeInfo;
 use alloy_rpc_types_eth::{Block as RpcBlock, Transaction as RpcTransaction, TransactionReceipt};
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -665,6 +666,15 @@ impl<F: ForkNetwork> ForkBackend<F> {
         self.hashes.write().insert(block.number(), hash);
         self.blocks.write().insert(hash, block.clone());
         Ok(block)
+    }
+
+    /// Returns the node info of the endpoint when it is an anvil node, so a fork adopts its
+    /// hardfork, as anvil does.
+    pub fn node_info(&self) -> Option<NodeInfo> {
+        self.request(move |chain| async move {
+            chain.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.map_err(Into::into)
+        })
+        .ok()
     }
 
     /// Returns the remote account proof at the given block.

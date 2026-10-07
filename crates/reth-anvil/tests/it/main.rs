@@ -22,8 +22,12 @@ use serde_json::Value;
 use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
+mod abi;
+mod anvil_api;
+mod fork;
 #[cfg(feature = "monad")]
 mod monad;
+pub mod utils;
 
 async fn with_test_client<F, Fut>(test: F) -> Result<()>
 where
@@ -445,14 +449,17 @@ async fn anvil_node_info_and_metadata_follow_latest_head() -> Result<()> {
         assert_eq!(node_info.current_block_hash, expected_hash);
         // The dev chain id is not a known chain, so the latest hardfork is active, as in anvil.
         let expected_hardfork = EthereumHardfork::default();
-        assert_eq!(node_info.hard_fork, expected_hardfork.to_string().to_lowercase());
+        assert_eq!(node_info.hard_fork, expected_hardfork.to_string());
         assert_eq!(node_info.transaction_order, "fees");
         assert_eq!(node_info.environment.chain_id, metadata.chain_id);
         assert_eq!(node_info.environment.gas_price, expected_gas_price);
         assert_eq!(metadata.latest_block_number, expected_block_number);
         assert_eq!(metadata.latest_block_hash, expected_hash);
         assert_eq!(metadata.client_version, format!("reth-anvil/v{}", env!("CARGO_PKG_VERSION")));
-        assert_eq!(metadata.client_semver.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            metadata.client_semver.as_deref(),
+            Some(foundry_common::version::SEMVER_VERSION)
+        );
         assert!(metadata.snapshots.is_empty());
         assert_eq!(hardhat_metadata, metadata);
 
@@ -941,7 +948,7 @@ async fn default_config_matches_anvil_defaults() -> Result<()> {
 
     let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
     assert_eq!(chain_id, U256::from(31337u64));
-    assert_eq!(api.chain_id().await?, chain_id);
+    assert_eq!(U256::from(api.chain_id().await?), chain_id);
 
     let accounts: Vec<Address> = client.request("eth_accounts", rpc_params![]).await?;
     let dev_accounts: Vec<Address> = handle.dev_accounts().collect();
@@ -982,13 +989,13 @@ async fn config_overrides_apply_to_genesis() -> Result<()> {
         .with_disable_default_create2_deployer(true);
     let (api, handle, client) = spawn_with_client(config).await?;
 
-    assert_eq!(api.chain_id().await?, U256::from(1337u64));
+    assert_eq!(api.chain_id().await?, 1337);
     let genesis = get_block(&client, "0x0").await?;
     assert_eq!(genesis["gasLimit"].as_str(), Some("0x2faf080"));
     assert_eq!(genesis["baseFeePerGas"].as_str(), Some("0x7"));
     assert_eq!(genesis["timestamp"].as_str(), Some("0x6553f100"));
     let node_info: NodeInfo = client.request("anvil_nodeInfo", rpc_params![]).await?;
-    assert_eq!(node_info.hard_fork, "prague");
+    assert_eq!(node_info.hard_fork, "Prague");
     let funder = handle.dev_accounts().next().ok_or_eyre("no dev account")?;
     assert_eq!(api.balance(funder, None).await?, U256::from(42u64));
     let create2_deployer: Bytes =
@@ -1775,7 +1782,7 @@ async fn anvil_set_chain_id_relaunches_with_state() -> Result<()> {
     api.anvil_set_chain_id(1234).await?;
 
     // The endpoint, the in-process api, the state, and the height survive the relaunch.
-    assert_eq!(api.chain_id().await?, U256::from(1234));
+    assert_eq!(api.chain_id().await?, 1234);
     let chain_id: U256 = client.request("eth_chainId", rpc_params![]).await?;
     assert_eq!(chain_id, U256::from(1234));
     assert_eq!(handle.http_endpoint(), format!("http://{}", handle.socket_address()));
@@ -1813,11 +1820,14 @@ async fn anvil_reset_switches_to_another_fork_block() -> Result<()> {
     let info: NodeInfo = client.request("anvil_nodeInfo", rpc_params![]).await?;
     assert_eq!(info.fork_config.fork_block_number, Some(earlier));
 
-    // Mining and a plain reset work on the new fork.
+    // Mining works on the new fork, and a plain reset turns the node into a plain one, as on
+    // anvil.
     client.request::<(), _>("anvil_mine", rpc_params![]).await?;
     assert_eq!(block_number(&client).await?, earlier + 1);
     client.request::<(), _>("anvil_reset", rpc_params![]).await?;
-    assert_eq!(block_number(&client).await?, earlier);
+    assert_eq!(block_number(&client).await?, 0);
+    let metadata: Metadata = client.request("anvil_metadata", rpc_params![]).await?;
+    assert!(metadata.forked_network.is_none());
     Ok(())
 }
 

@@ -1,14 +1,22 @@
-use crate::server::SharedModule;
-use alloy_eips::{BlockId, BlockNumberOrTag};
+use crate::{server::SharedModule, types::ReorgOptions};
+use alloy_eips::{BlockId, BlockNumberOrTag, eip7910::EthConfig};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types::{anvil::Forking, txpool::TxpoolStatus};
-use alloy_rpc_types_eth::{Account, Index, Transaction, TransactionReceipt, TransactionRequest};
+use alloy_rpc_types::{
+    anvil::{Forking, Metadata, MineOptions, NodeInfo},
+    trace::parity::{TraceResults, TraceType},
+    txpool::TxpoolStatus,
+};
+use alloy_rpc_types_eth::{
+    Account, Block, FeeHistory, Index, Transaction, TransactionReceipt, TransactionRequest,
+    state::StateOverride,
+};
 use alloy_serde::WithOtherFields;
 use eyre::Result;
 use jsonrpsee::core::params::ArrayParams;
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::oneshot;
 
 /// In-process access to the node's RPC handlers.
 ///
@@ -19,12 +27,18 @@ pub struct EthApi {
     module: SharedModule,
     /// The instance id, shared with the `anvil_*` namespace, which rotates it on `anvil_reset`.
     instance_id: Arc<RwLock<B256>>,
+    /// Keeps the node running while the API is alive.
+    _node: Arc<oneshot::Sender<()>>,
 }
 
 impl EthApi {
     /// Creates the API over the node's RPC module.
-    pub(crate) const fn new(module: SharedModule, instance_id: Arc<RwLock<B256>>) -> Self {
-        Self { module, instance_id }
+    pub(crate) const fn new(
+        module: SharedModule,
+        instance_id: Arc<RwLock<B256>>,
+        node: Arc<oneshot::Sender<()>>,
+    ) -> Self {
+        Self { module, instance_id, _node: node }
     }
 
     /// Calls an RPC method with positional parameters.
@@ -56,8 +70,8 @@ impl EthApi {
     }
 
     /// Returns the chain id.
-    pub async fn chain_id(&self) -> Result<U256> {
-        self.call("eth_chainId", ArrayParams::new()).await
+    pub async fn chain_id(&self) -> Result<u64> {
+        Ok(self.call::<U256>("eth_chainId", ArrayParams::new()).await?.to())
     }
 
     /// Returns the balance of an account.
@@ -217,6 +231,183 @@ impl EthApi {
     /// Reverts the chain to a snapshot.
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         self.call("anvil_revert", params![id]).await
+    }
+
+    /// Returns the dev accounts.
+    pub async fn accounts(&self) -> Result<Vec<Address>> {
+        self.call("eth_accounts", ArrayParams::new()).await
+    }
+
+    /// Returns the gas price.
+    pub async fn gas_price(&self) -> Result<u128> {
+        Ok(self.call::<U256>("eth_gasPrice", ArrayParams::new()).await?.to())
+    }
+
+    /// Returns the base fee of the next block.
+    pub async fn base_fee(&self) -> Result<Option<U256>> {
+        let block = self.block_by_number(BlockNumberOrTag::Pending).await?;
+        Ok(block.and_then(|block| block.header.base_fee_per_gas).map(U256::from))
+    }
+
+    /// Returns the gas limit of the latest block.
+    pub async fn gas_limit(&self) -> Result<U256> {
+        let block = self.block_by_number(BlockNumberOrTag::Latest).await?;
+        Ok(U256::from(block.map(|block| block.header.gas_limit).unwrap_or_default()))
+    }
+
+    /// Returns the block with the given number, with transaction hashes.
+    pub async fn block_by_number(&self, number: BlockNumberOrTag) -> Result<Option<Block>> {
+        self.call("eth_getBlockByNumber", params![number, false]).await
+    }
+
+    /// Returns the block with the given number, with full transactions.
+    pub async fn block_by_number_full(&self, number: BlockNumberOrTag) -> Result<Option<Block>> {
+        self.call("eth_getBlockByNumber", params![number, true]).await
+    }
+
+    /// Returns the storage value of an account at a slot.
+    pub async fn storage_at(
+        &self,
+        address: Address,
+        index: U256,
+        block: Option<BlockId>,
+    ) -> Result<B256> {
+        self.call("eth_getStorageAt", params![address, index, block.unwrap_or_default()]).await
+    }
+
+    /// Returns the fee history.
+    pub async fn fee_history(
+        &self,
+        block_count: U256,
+        newest_block: BlockNumberOrTag,
+        reward_percentiles: Vec<f64>,
+    ) -> Result<FeeHistory> {
+        self.call("eth_feeHistory", params![block_count, newest_block, reward_percentiles]).await
+    }
+
+    /// Estimates the gas of a call.
+    pub async fn estimate_gas(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+    ) -> Result<U256> {
+        self.call("eth_estimateGas", params![request, block.unwrap_or_default(), state_overrides])
+            .await
+    }
+
+    /// Sends a signed transaction.
+    pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<B256> {
+        self.call("eth_sendRawTransaction", params![tx]).await
+    }
+
+    /// Returns the chain configuration.
+    pub async fn config(&self) -> Result<EthConfig> {
+        self.call("eth_config", ArrayParams::new()).await
+    }
+
+    /// Replays a mined transaction and returns its traces.
+    pub async fn trace_replay_transaction(
+        &self,
+        hash: B256,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<Option<TraceResults>> {
+        self.call("trace_replayTransaction", params![hash, trace_types]).await
+    }
+
+    /// Mines a block, with optional timestamp and block count.
+    pub async fn evm_mine(&self, opts: Option<MineOptions>) -> Result<String> {
+        self.call("evm_mine", params![opts]).await
+    }
+
+    /// Sets the timestamp of the next block and shifts time by the difference.
+    pub async fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
+        self.call("evm_setTime", params![timestamp]).await
+    }
+
+    /// Moves time forward.
+    pub async fn evm_increase_time(&self, seconds: U256) -> Result<i64> {
+        self.call("evm_increaseTime", params![seconds]).await
+    }
+
+    /// Sets the interval between the timestamps of consecutive blocks.
+    pub async fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
+        self.call("anvil_setBlockTimestampInterval", params![seconds]).await
+    }
+
+    /// Removes the block timestamp interval.
+    pub async fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
+        self.call("anvil_removeBlockTimestampInterval", ArrayParams::new()).await
+    }
+
+    /// Sets the block gas limit.
+    pub async fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
+        self.call("evm_setBlockGasLimit", params![gas_limit]).await
+    }
+
+    /// Returns whether automine is on.
+    pub async fn anvil_get_auto_mine(&self) -> Result<bool> {
+        self.call("anvil_getAutomine", ArrayParams::new()).await
+    }
+
+    /// Mines a block every `secs` seconds.
+    pub async fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
+        self.call("evm_setIntervalMining", params![secs]).await
+    }
+
+    /// Stops impersonating an account.
+    pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
+        self.call("anvil_stopImpersonatingAccount", params![address]).await
+    }
+
+    /// Impersonates every sender.
+    pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
+        self.call("anvil_autoImpersonateAccount", params![enabled]).await
+    }
+
+    /// Returns the node info.
+    pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
+        self.call("anvil_nodeInfo", ArrayParams::new()).await
+    }
+
+    /// Returns the node metadata.
+    pub async fn anvil_metadata(&self) -> Result<Metadata> {
+        self.call("anvil_metadata", ArrayParams::new()).await
+    }
+
+    /// Reorganizes the chain.
+    pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
+        self.call("anvil_reorg", params![options]).await
+    }
+
+    /// Rolls the chain back by `depth` blocks.
+    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
+        self.call("anvil_rollback", params![depth]).await
+    }
+
+    /// Sets the minimum gas price before London.
+    pub async fn anvil_set_min_gas_price(&self, gas_price: U256) -> Result<()> {
+        self.call("anvil_setMinGasPrice", params![gas_price]).await
+    }
+
+    /// Sets the parent beacon block root of the next block.
+    pub async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> Result<()> {
+        self.call("anvil_setNextBlockParentBeaconBlockRoot", params![root]).await
+    }
+
+    /// Removes every pool transaction of a sender.
+    pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
+        self.call("anvil_removePoolTransactions", params![address]).await
+    }
+
+    /// Adds to the balance of an account.
+    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
+        self.call("anvil_addBalance", params![address, balance]).await
+    }
+
+    /// Replaces the fork endpoint.
+    pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
+        self.call("anvil_setRpcUrl", params![url]).await
     }
 }
 

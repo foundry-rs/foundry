@@ -24,6 +24,7 @@ use alloy_rpc_types_eth::{
     erc4337::TransactionConditional,
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
+use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm_core::utils::block_env_from_header;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -346,6 +347,9 @@ pub trait PersonalApi {
     async fn personal_sign(&self, message: Bytes, address: Address) -> RpcResult<Bytes>;
 }
 
+/// The client version `anvil_metadata` and `web3_clientVersion` report.
+pub const CLIENT_VERSION: &str = concat!(env!("CARGO_PKG_NAME"), "/v", env!("CARGO_PKG_VERSION"));
+
 /// The header type of a provider.
 type HeaderOf<Provider> = <Provider as HeaderProvider>::Header;
 
@@ -495,8 +499,15 @@ where
 
     /// Mines `blocks` blocks and returns their numbers.
     async fn mine_blocks(&self, blocks: u64) -> RpcResult<Vec<u64>> {
+        // Anvil mines the blocks of one request within the same second. Blocks take longer
+        // here, so they share the first block's timestamp.
+        let shared = (blocks > 1 && self.time.interval().is_none())
+            .then(|| self.time.current_call_timestamp());
         let mut mined = Vec::with_capacity(blocks as usize);
         for _ in 0..blocks {
+            if let Some(timestamp) = shared {
+                self.time.pin_next_timestamp(timestamp);
+            }
             mined.push(self.mining.mine_block().await.map_err(internal_error)?.number());
         }
         Ok(mined)
@@ -621,7 +632,7 @@ where
             .forks_iter()
             .filter(|(_, condition)| condition.active_at_timestamp_or_number(timestamp, number))
             .last()
-            .map(|(fork, _)| fork.name().to_lowercase())
+            .map(|(fork, _)| fork.name().to_string())
             .unwrap_or_default()
     }
 }
@@ -788,9 +799,10 @@ where
         for offset in 0..depth {
             while let Some((tx, _)) = pairs.next_if(|(_, number)| *number == offset) {
                 let sent = match tx {
-                    TransactionData::JSON(request) => {
-                        EthApiServer::send_transaction(&self.eth, request).await
-                    }
+                    TransactionData::JSON(request) => match self.with_sender(request) {
+                        Ok(request) => EthApiServer::send_transaction(&self.eth, request).await,
+                        Err(error) => Err(error),
+                    },
                     TransactionData::Raw(bytes) => {
                         EthApiServer::send_raw_transaction(&self.eth, bytes).await
                     }
@@ -839,6 +851,18 @@ where
                     .await
                     .map_err(internal_error);
             }
+        }
+        if self.fork.is_some() {
+            // Anvil turns a forked node back into a plain one.
+            return self
+                .relauncher
+                .relaunch_from_original(|config| {
+                    config.fork_urls.clear();
+                    config.fork_choice = None;
+                    config.init_state = None;
+                })
+                .await
+                .map_err(internal_error);
         }
         let genesis = self.sealed_header(self.chain_spec.genesis_header().number())?;
         self.rewind_to(&genesis).await?;
@@ -1007,9 +1031,9 @@ where
         let latest = self.latest_block().await?;
 
         Ok(Metadata {
-            client_version: format!("{}/v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
-            client_semver: Some(env!("CARGO_PKG_VERSION").to_string()),
-            client_commit_sha: None,
+            client_version: CLIENT_VERSION.to_string(),
+            client_semver: Some(SEMVER_VERSION.to_string()),
+            client_commit_sha: Some(COMMIT_SHA.to_string()),
             chain_id: self.chain_spec.chain().id(),
             instance_id: *self.instance_id.read(),
             latest_block_number: latest.header.number(),
@@ -1195,6 +1219,25 @@ where
     }
 }
 
+impl<Pool, Provider: HeaderProvider, Eth: FullEthApiServer, Spec>
+    AnvilRpc<Pool, Provider, Eth, Spec>
+{
+    /// Fills a missing `from` with the first dev account, as anvil does, and marks a missing
+    /// `to` as a contract creation.
+    fn with_sender(
+        &self,
+        mut request: RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
+        if request.as_ref().from.is_none() {
+            let accounts = EthApiServer::accounts(&self.eth)?;
+            let from =
+                accounts.first().copied().ok_or_else(|| invalid_params("No Signer available"))?;
+            request.as_mut().from = Some(from);
+        }
+        Ok(with_recipient(request))
+    }
+}
+
 #[async_trait]
 impl<Pool, Provider, Eth, Spec>
     EthExtApiServer<RpcTxReq<Eth::NetworkTypes>, RpcReceipt<Eth::NetworkTypes>>
@@ -1206,14 +1249,14 @@ where
     Spec: Send + Sync + 'static,
 {
     async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
-        EthApiServer::send_transaction(&self.eth, with_recipient(request)).await
+        EthApiServer::send_transaction(&self.eth, self.with_sender(request)?).await
     }
 
     async fn eth_send_transaction_sync(
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
-        let hash = EthApiServer::send_transaction(&self.eth, with_recipient(request)).await?;
+        let hash = EthApiServer::send_transaction(&self.eth, self.with_sender(request)?).await?;
         let deadline = Instant::now() + TRANSACTION_CONFIRMATION_TIMEOUT;
         loop {
             if let Some(receipt) = EthApiServer::transaction_receipt(&self.eth, hash).await? {
@@ -1328,7 +1371,7 @@ where
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<B256> {
-        let from = request.as_ref().from.ok_or_else(|| invalid_params("missing `from` address"))?;
+        let from = request.as_ref().from.ok_or_else(|| invalid_params("No Signer available"))?;
         let impersonated = self.impersonation.is_impersonated(&from);
         if !impersonated {
             self.impersonation.impersonate(from);

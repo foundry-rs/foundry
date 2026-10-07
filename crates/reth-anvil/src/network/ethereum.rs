@@ -3,6 +3,7 @@
 use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, Prepared};
 use crate::{
     config::NodeConfig,
+    engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
     fork::{ForkBackend, ForkInfo},
     logging::{LoggingState, NodeInfoLayer},
@@ -25,12 +26,12 @@ use reth_ethereum::{
                 BasicPayloadServiceBuilder, ComponentsBuilder, ExecutorBuilder,
                 NoopConsensusBuilder, NoopNetworkBuilder,
             },
-            rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder},
+            rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, RpcAddOns},
         },
-        node::EthereumEngineValidatorBuilder,
     },
 };
 use std::{fmt, sync::Arc};
+use tower::layer::util::Identity;
 
 /// The Ethereum network.
 #[derive(Clone, Copy, Debug, Default)]
@@ -49,9 +50,9 @@ impl AnvilNetwork for Ethereum {
     type AddOns = EthereumAddOns<
         super::NodeOf<Self>,
         EthereumEthApiBuilder,
-        EthereumEngineValidatorBuilder,
-        BasicEngineApiBuilder<EthereumEngineValidatorBuilder>,
-        BasicEngineValidatorBuilder<EthereumEngineValidatorBuilder>,
+        AnvilEngineValidatorBuilder,
+        BasicEngineApiBuilder<AnvilEngineValidatorBuilder>,
+        BasicEngineValidatorBuilder<AnvilEngineValidatorBuilder>,
         NodeInfoLayer,
     >;
     type Attributes = LocalPayloadAttributesBuilder<ChainSpec>;
@@ -84,7 +85,14 @@ impl AnvilNetwork for Ethereum {
     }
 
     fn add_ons(logging: LoggingState) -> Self::AddOns {
-        EthereumAddOns::default().with_rpc_middleware(NodeInfoLayer::new(logging))
+        EthereumAddOns::new(RpcAddOns::new(
+            EthereumEthApiBuilder::default(),
+            AnvilEngineValidatorBuilder,
+            BasicEngineApiBuilder::default(),
+            BasicEngineValidatorBuilder::default(),
+            NodeInfoLayer::new(logging),
+            Identity::new(),
+        ))
     }
 
     fn payload_attributes(chain_spec: Arc<ChainSpec>) -> Self::Attributes {
@@ -97,6 +105,9 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
     if config.is_fork() {
         let (fork, accounts) = ForkBackend::setup(config).await?;
         config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
+        if let Some(info) = fork.node_info() {
+            config.adopt_fork_identity(&info);
+        }
         let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
         return Ok(Prepared { chain_spec, fork: Some(fork) });
     }

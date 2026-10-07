@@ -10,6 +10,7 @@ use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, NodeOf, Prepared};
 use crate::{
     api::NodeIdentity,
     config::NodeConfig,
+    engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvm, AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, ForkHashDb},
     fork::ForkInfo,
     logging::{LoggingState, NodeInfoLayer},
@@ -53,9 +54,8 @@ use reth_ethereum::{
                 BasicPayloadServiceBuilder, ComponentsBuilder, ExecutorBuilder,
                 NoopConsensusBuilder, NoopNetworkBuilder,
             },
-            rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder},
+            rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, RpcAddOns},
         },
-        node::EthereumEngineValidatorBuilder,
     },
     primitives::{Header, SealedBlock, SealedHeader, SignedTransaction},
     provider::TransactionVariant,
@@ -78,6 +78,7 @@ use std::{
     fmt::{self, Debug},
     sync::Arc,
 };
+use tower::layer::util::Identity;
 
 /// The Monad network.
 #[derive(Clone, Copy, Debug, Default)]
@@ -96,9 +97,9 @@ impl AnvilNetwork for Monad {
     type AddOns = EthereumAddOns<
         NodeOf<Self>,
         EthereumEthApiBuilder,
-        EthereumEngineValidatorBuilder,
-        BasicEngineApiBuilder<EthereumEngineValidatorBuilder>,
-        BasicEngineValidatorBuilder<EthereumEngineValidatorBuilder>,
+        AnvilEngineValidatorBuilder,
+        BasicEngineApiBuilder<AnvilEngineValidatorBuilder>,
+        BasicEngineValidatorBuilder<AnvilEngineValidatorBuilder>,
         NodeInfoLayer,
     >;
     type Attributes = LocalPayloadAttributesBuilder<ChainSpec>;
@@ -140,7 +141,14 @@ impl AnvilNetwork for Monad {
     }
 
     fn add_ons(logging: LoggingState) -> Self::AddOns {
-        EthereumAddOns::default().with_rpc_middleware(NodeInfoLayer::new(logging))
+        EthereumAddOns::new(RpcAddOns::new(
+            EthereumEthApiBuilder::default(),
+            AnvilEngineValidatorBuilder,
+            BasicEngineApiBuilder::default(),
+            BasicEngineValidatorBuilder::default(),
+            NodeInfoLayer::new(logging),
+            Identity::new(),
+        ))
     }
 
     fn payload_attributes(chain_spec: Arc<ChainSpec>) -> Self::Attributes {

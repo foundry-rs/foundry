@@ -142,7 +142,6 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
 
     /// Returns what `anvil_nodeInfo` reports about the network.
     fn identity(config: &NodeConfig) -> Result<NodeIdentity> {
-        let _ = config;
-        Ok(NodeIdentity::default())
+        Ok(NodeIdentity { network: Some(config.networks.execution_profile_name()), hardfork: None })
     }
 }

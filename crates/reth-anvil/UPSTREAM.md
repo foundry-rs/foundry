@@ -16,7 +16,7 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | --- | --- | ---: | --- |
 | Copies `EngineNodeLauncher::launch_node` to swap the provider type passed to the engine and RPC | `src/launcher.rs` | ~460 | A `with_blockchain_db` style hook on the launcher, or a launcher generic over the `FullProvider` the node builder picks |
 | Copies remote reads into the database before `newPayload`, because the engine validates against `OverlayStateProviderFactory`, which reads MDBX tables directly and bypasses `StateProviderFactory` | `src/provider.rs` (`materialize_fork_reads`), `src/fork.rs` (`RemoteReads`) | ~120 | Let the engine validator take the state provider from the node's `StateProviderFactory`, or expose a hook to wrap the provider it executes against |
-| Rewinds the chain by editing `CanonicalInMemoryState` and the database itself, because an FCU below the in-memory chain is rejected and FCU to genesis fails with `StateForHashNotFound` | `src/provider.rs` (`rewind_to`), `src/miner.rs` | ~90 | An engine or tree API to unwind to any canonical ancestor and emit the reorg notification |
+| Rewinds through reth's `allow_unwind_canonical_header` engine option: a forkchoice update onto a canonical ancestor unwinds the in-memory chain, and the persistence task removes the blocks above it. Around it, the miner waits for the database to catch up, a stand-in pending block gives genesis the parent state the unwind loads, and the provider emits the reorg notification the unwind path does not | `src/miner.rs` (`rewind`), `src/provider.rs` (`RewindHooks`) | ~110 | An unwind that completes with the persistence removal, works for genesis, and notifies subscribers |
 | Records impersonated senders in `SenderRecoveryCache` so RPC lookups find them | `src/evm.rs` (`tx_iterator_for_payload`) | ~15 | paradigmxyz/reth#27757 makes `transaction_by_hash` consult the cache; after that, only the recording stays |
 | Wraps the block executor to apply `anvil_setBalance` and friends inside the next block, and overlays them on `latest`/`pending` reads | `src/evm.rs`, `src/state.rs`, `src/state_provider.rs` | ~450 | A pre-execution state hook on `ConfigureEvm` or `BlockExecutorFactory`, plus a provider-level overlay hook for pending state |
 | Wraps the pool validator to accept impersonated and signature-overridden senders | `src/pool.rs` (`AnvilValidator`) | ~90 | A sender-attribution hook on `EthTransactionValidator`, or a validator that can be told to trust a recovered sender |
@@ -33,6 +33,8 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Replaces `eth_gasPrice` to return the base fee alone under `--disable-min-priority-fee` | `src/api.rs` (`EthExtApi`) | ~10 | A gas price oracle option for a zero tip |
 | Installs a precompile at Hardhat's console address that decodes `console.log` calls, and prints the lines of every mined transaction from the executor wrapper, because the payload builder has no inspector hook. The precompile address is warm at the start of a transaction, so the first `console.log` of a transaction costs 2,500 gas less than on anvil | `src/console.rs`, `src/evm.rs` | ~120 | An inspector hook on the payload builder, or an `Inspector` slot on `ConfigureEvm::evm_for_block` |
 | Replaces `eth_estimateGas`: probes the calls between reth's estimate and 1.5% below it to return the exact limit, as anvil does, and funds the zero address when a request without `from` carries fee fields, because reth caps the estimate by that balance | `src/api.rs` (`EthExtApi`) | ~50 | A configurable `ESTIMATE_GAS_ERROR_RATIO`, and no allowance cap for a request without `from` |
+| Reports a failed block build as `failed to build payload <id>: missing payload`, because the payload service logs the build error and resolves with `MissingPayload`; anvil reports the EVM error | `src/miner.rs` | ~5 | Keep the job's error and return it from `resolve` |
+| Replaces reth's engine validator to accept payload attributes with a timestamp at or below the parent's, and to convert a payload of a block before London to a header without a base fee, which the engine API cannot express | `src/engine.rs` | ~100 | A dev-mode switch for the timestamp check, and an engine API that carries an optional base fee |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -61,6 +63,15 @@ be free if reth had a dev mode:
   from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
   on top of it, like anvil's pending block, and a call at an older block replays that block.
 
+## Anvil's own tests
+
+`tests/it/anvil_api.rs` is anvil's `anvil_api.rs` with the in-process calls made async and the
+anvil-internal hooks removed (`api.backend`, `api.execute`, pool types). Three tests are ignored,
+with the reason on the attribute: the pending call that expects the beacon root system call, the
+Arbitrum tip rule, and nothing else. Two assertions moved from "exactly one second later" to "at
+least one second later": blocks take longer to build here than on anvil, so the wall clock moves
+on between two blocks. The other modules (`api.rs`, `transaction.rs`, `fork.rs`, ...) are next.
+
 ## Differences that cast's tests show
 
 Running `crates/cast/tests` against this node instead of anvil (the `anvil` dev-dependency renamed
@@ -81,6 +92,10 @@ is a missing method.
   anvil only for blocks whose header carries one. `cast run` uses the list to skip replaying the
   earlier transactions of a block, so its progress output differs.
 
+- Pending calls. Reth runs `eth_call` at `pending` on the latest state without the beacon root
+  system call, so the EIP-4788 contract does not hold the pending block's root; anvil runs the
+  call on the pending block.
+- A tip above the fee cap. Reth's pool rejects it on every chain; anvil allows it on Arbitrum.
 - Amsterdam state gas. Anvil does not charge EIP-8037 state gas (foundry-rs/foundry#17428);
   this node does, so a transaction on Amsterdam that creates state with a tight gas limit runs
   out of gas here. Tests that pin such gas limits need more gas.

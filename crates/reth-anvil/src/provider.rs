@@ -3,6 +3,7 @@ use crate::{
         AnvilPrimitives, ForkOf, ForkStateProvider, LocalWrites, decode_remote_tx_number,
         remote_tx_number,
     },
+    miner::RewindHooks,
     state::{AnvilState, SharedAnvilState},
     state_dump::{AccountDump, SerializableAccountRecord},
     state_provider::AnvilStateProvider,
@@ -13,6 +14,7 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, TxHash, TxNumber,
 };
 use alloy_rpc_types_engine::ForkchoiceState;
+use eyre::Result;
 use parking_lot::RwLock;
 use reth_chain_state::{
     CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ExecutedBlock,
@@ -29,9 +31,12 @@ use reth_db_api::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_ethereum::{
-    chainspec::{ChainInfo, ChainSpecProvider},
+    chainspec::{ChainInfo, ChainSpecProvider, EthChainSpec},
     node::api::{BlockTy, HeaderTy, ReceiptTy, TxTy},
-    primitives::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry},
+    primitives::{
+        BlockBody, RecoveredBlock, SealedBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
+        header::HeaderMut,
+    },
     provider::{
         BlockExecutionOutput, BlockExecutionResult, BlockSource, ExecutionOutcome, ProviderError,
         RecoveredBlockAndExecutionOutput, RocksDBProviderFactory, StaticFileProviderFactory,
@@ -42,13 +47,13 @@ use reth_ethereum::{
         },
     },
     storage::{
-        BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockExecutionWriter,
-        BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt,
-        CanonChainTracker, ChangeSetReader, DBProvider, DatabaseProviderFactory, HeaderProvider,
-        HistoryWriter, NodePrimitivesProvider, PruneCheckpointReader, ReceiptProvider,
-        ReceiptProviderIdExt, StageCheckpointReader, StateProviderBox, StateProviderFactory,
-        StateRangeProviderFactory, StateRangeView, StateReader, StorageChangeSetReader,
-        TransactionsProvider, errors::provider::ProviderResult,
+        BalProvider, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader, BlockIdReader,
+        BlockNumReader, BlockReader, BlockReaderIdExt, CanonChainTracker, ChangeSetReader,
+        DBProvider, DatabaseProviderFactory, HeaderProvider, HistoryWriter, NodePrimitivesProvider,
+        PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt, StageCheckpointReader,
+        StateProviderBox, StateProviderFactory, StateRangeProviderFactory, StateRangeView,
+        StateReader, StorageChangeSetReader, TransactionsProvider,
+        errors::provider::ProviderResult,
     },
     trie::ComputedTrieData,
 };
@@ -85,6 +90,8 @@ pub struct AnvilProvider<N: AnvilNodeTypes> {
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
     fork: Option<Arc<NodeFork<N>>>,
+    /// The blocks a rewind in progress removes, for the reorg notification once it settles.
+    rewinding: Arc<RwLock<Vec<ExecutedBlock<N::Primitives>>>>,
 }
 
 impl<N: AnvilNodeTypes> Clone for AnvilProvider<N> {
@@ -94,22 +101,55 @@ impl<N: AnvilNodeTypes> Clone for AnvilProvider<N> {
             state: self.state.clone(),
             slots_in_an_epoch: self.slots_in_an_epoch,
             fork: self.fork.clone(),
+            rewinding: self.rewinding.clone(),
         }
     }
 }
 
 impl<N: AnvilNodeTypes> AnvilProvider<N> {
     /// Wraps the given provider.
-    pub const fn new(
+    pub fn new(
         inner: BlockchainProvider<N>,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
         fork: Option<Arc<NodeFork<N>>>,
     ) -> Self {
-        Self { inner, state, slots_in_an_epoch, fork }
+        Self { inner, state, slots_in_an_epoch, fork, rewinding: Arc::default() }
     }
 
-    /// Returns the fork when the block with the given number is below the fork block.
+    /// Returns the sealed genesis header.
+    fn genesis_header(&self) -> ProviderResult<SealedHeader<HeaderTy<N>>> {
+        let number = self.inner.chain_spec().genesis_header().number();
+        self.inner.sealed_header(number)?.ok_or(ProviderError::HeaderNotFound(number.into()))
+    }
+
+    /// Returns the canonical block with the given number as an executed block, from memory or
+    /// from the database.
+    fn executed_block(&self, number: BlockNumber) -> ProviderResult<ExecutedBlock<N::Primitives>> {
+        if let Some(state) = self.inner.canonical_in_memory_state().state_by_number(number) {
+            return Ok(state.block());
+        }
+        let header = self
+            .inner
+            .sealed_header(number)?
+            .ok_or(ProviderError::HeaderNotFound(number.into()))?;
+        let block = self
+            .inner
+            .recovered_block(header.hash().into(), TransactionVariant::WithHash)?
+            .ok_or(ProviderError::BlockHashNotFound(header.hash()))?;
+        let outcome = self.get_state(number)?.unwrap_or_default();
+        let output = BlockExecutionOutput {
+            state: outcome.bundle,
+            result: BlockExecutionResult {
+                receipts: outcome.receipts.into_iter().next().unwrap_or_default(),
+                requests: outcome.requests.into_iter().next().unwrap_or_default(),
+                gas_used: header.gas_used(),
+                blob_gas_used: header.blob_gas_used().unwrap_or_default(),
+            },
+        };
+        Ok(ExecutedBlock::new(Arc::new(block), Arc::new(output), ComputedTrieData::default()))
+    }
+
     fn remote_for(&self, number: BlockNumber) -> Option<&Arc<NodeFork<N>>> {
         self.fork.as_ref().filter(|fork| fork.predates_fork(number))
     }
@@ -190,43 +230,6 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         }
     }
 
-    /// Rewinds the canonical chain to the given header.
-    ///
-    /// This drops the in-memory blocks above the header and removes the persisted blocks above it,
-    /// so reads see the rewound chain at once. The engine learns about the rewind when the next
-    /// block builds on the header: it then reorgs its own view onto that block.
-    pub fn rewind_to(&self, header: &SealedHeader<HeaderTy<N>>) -> ProviderResult<()> {
-        let in_memory = self.inner.canonical_in_memory_state();
-        let old: Vec<_> = in_memory
-            .canonical_chain()
-            .filter(|state| state.number() > header.number())
-            .map(|state| state.block())
-            .collect();
-        let persisted_above = self.inner.last_block_number()? > header.number();
-        if old.is_empty() && !persisted_above {
-            // Already at the target: a reorg notification without removed blocks is invalid.
-            return Ok(());
-        }
-        let target = match in_memory.state_by_number(header.number()) {
-            Some(state) => state.block(),
-            None => self.executed_block_from_storage(header)?,
-        };
-        in_memory.update_chain(NewCanonicalChain::Reorg { new: Vec::new(), old: old.clone() });
-
-        if persisted_above {
-            let provider = self.inner.database_provider_rw()?;
-            provider.remove_block_and_execution_above(header.number())?;
-            provider.commit()?;
-        }
-
-        in_memory.set_canonical_head(header.clone());
-        // Subscribers such as the RPC caches and the pool learn about the rewind the same way
-        // they learn about a reorg.
-        let reorg = NewCanonicalChain::Reorg { new: vec![target], old };
-        in_memory.notify_canon_state(reorg.to_chain_notification());
-        Ok(())
-    }
-
     /// Copies the remote state read since the last block into the local database.
     ///
     /// The engine validates blocks against the local database, so the remote accounts, slots, and
@@ -270,28 +273,6 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         provider.insert_storage_history_index(storage_history)?;
         provider.commit()?;
         Ok(())
-    }
-
-    /// Rebuilds the executed block for a persisted canonical header.
-    fn executed_block_from_storage(
-        &self,
-        header: &SealedHeader<HeaderTy<N>>,
-    ) -> ProviderResult<ExecutedBlock<N::Primitives>> {
-        let block = self
-            .inner
-            .recovered_block(header.hash().into(), TransactionVariant::WithHash)?
-            .ok_or(ProviderError::BlockHashNotFound(header.hash()))?;
-        let outcome = self.inner.get_state(header.number())?.unwrap_or_default();
-        let output = BlockExecutionOutput {
-            state: outcome.bundle,
-            result: BlockExecutionResult {
-                receipts: outcome.receipts.into_iter().next().unwrap_or_default(),
-                requests: outcome.requests.into_iter().next().unwrap_or_default(),
-                gas_used: header.gas_used(),
-                blob_gas_used: header.blob_gas_used().unwrap_or_default(),
-            },
-        };
-        Ok(ExecutedBlock::new(Arc::new(block), Arc::new(output), ComputedTrieData::default()))
     }
 
     /// Returns the canonical block `depth` blocks behind the head, or genesis.
@@ -989,6 +970,13 @@ impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
                 fork.block_number_by_hash(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
             return self.remote_state(fork, number);
         }
+        // The engine loads an unwind target with the state at its parent, and hashes the
+        // target's writes against it. Genesis has no parent, and no writes: its own state does.
+        let chain_spec = self.inner.chain_spec();
+        let genesis = chain_spec.genesis_header();
+        if self.fork.is_none() && block == genesis.parent_hash() {
+            return self.history_by_block_number(genesis.number());
+        }
         let number =
             self.inner.block_number(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
         self.with_fork(self.inner.state_by_block_hash(block)?, number)
@@ -1175,7 +1163,14 @@ impl<N: AnvilNodeTypes> StateReader for AnvilProvider<N> {
         &self,
         block: BlockNumber,
     ) -> ProviderResult<Option<ExecutionOutcome<Self::Receipt>>> {
-        self.inner.get_state(block)
+        if let Some(state) = self.inner.get_state(block)? {
+            return Ok(Some(state));
+        }
+        // Genesis has no execution outcome. The engine loads the outcome of a canonical ancestor
+        // when it unwinds onto it, so genesis gets an empty one.
+        let genesis = self.inner.chain_spec().genesis_header().number();
+        Ok((block == genesis)
+            .then(|| ExecutionOutcome { first_block: block, ..Default::default() }))
     }
 }
 
@@ -1332,5 +1327,80 @@ impl<N: AnvilNodeTypes> AccountDump for AnvilProvider<N> {
             }
         }
         Ok(accounts)
+    }
+}
+
+impl<N: AnvilNodeTypes> RewindHooks for AnvilProvider<N>
+where
+    HeaderTy<N>: HeaderMut,
+{
+    /// The engine loads an unwind target with the state at its parent and hashes the target's
+    /// writes against it. Genesis has no parent state, so a pending block under the parent hash,
+    /// anchored on genesis, stands in; the unwind's chain update keeps it, and `settle` clears it.
+    fn prepare(&self, number: u64) -> Result<()> {
+        // The engine's unwind tells nobody about the removed blocks; the reorg notification
+        // in `settle` does, and needs them before the persistence task removes them.
+        let best = self.inner.best_block_number()?;
+        let removed = (number + 1..=best)
+            .map(|number| self.executed_block(number))
+            .collect::<Result<Vec<_>, _>>()?;
+        *self.rewinding.write() = removed;
+
+        let genesis = self.genesis_header()?;
+        if number != genesis.number() {
+            return Ok(());
+        }
+        let (block, senders) = self
+            .inner
+            .recovered_block(genesis.hash().into(), TransactionVariant::WithHash)?
+            .ok_or(ProviderError::BlockHashNotFound(genesis.hash()))?
+            .split_sealed();
+        let (header, body) = block.split_sealed_header_body();
+        let mut header = header.into_header();
+        header.set_parent_hash(genesis.hash());
+        header.set_number(genesis.number() + 1);
+        let header = SealedHeader::new(header, genesis.parent_hash());
+        let stand_in =
+            RecoveredBlock::new_sealed(SealedBlock::from_sealed_parts(header, body), senders);
+        let output = BlockExecutionOutput {
+            state: Default::default(),
+            result: BlockExecutionResult {
+                receipts: Vec::new(),
+                requests: Default::default(),
+                gas_used: 0,
+                blob_gas_used: 0,
+            },
+        };
+        self.inner.canonical_in_memory_state().set_pending_block(ExecutedBlock::new(
+            Arc::new(stand_in),
+            Arc::new(output),
+            ComputedTrieData::default(),
+        ));
+        Ok(())
+    }
+
+    /// A rewind to genesis leaves genesis as an in-memory block anchored on its missing parent
+    /// state, and the stand-in pending block; both go, and genesis is served from the database
+    /// again.
+    fn settle(&self, number: u64) -> Result<bool> {
+        // The database, not the in-memory head, which the unwind moved already.
+        if self.inner.database_provider_ro()?.last_block_number()? > number {
+            return Ok(false);
+        }
+        let in_memory = self.inner.canonical_in_memory_state();
+        let genesis = self.genesis_header()?;
+        if number == genesis.number() {
+            in_memory.clear_state();
+            in_memory.set_canonical_head(genesis);
+        }
+        // Subscribers such as the RPC caches, the pool, and the anvil state learn about the
+        // rewind the same way they learn about a reorg.
+        let old = std::mem::take(&mut *self.rewinding.write());
+        if !old.is_empty() {
+            let target = self.executed_block(number)?;
+            let reorg = NewCanonicalChain::Reorg { new: vec![target], old };
+            in_memory.notify_canon_state(reorg.to_chain_notification());
+        }
+        Ok(true)
     }
 }

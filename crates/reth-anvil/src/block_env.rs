@@ -17,6 +17,8 @@ pub struct BlockEnvOverrides {
     next_base_fee: Arc<RwLock<Option<u64>>>,
     next_prev_randao: Arc<RwLock<Option<B256>>>,
     next_parent_beacon_block_root: Arc<RwLock<Option<B256>>>,
+    /// The one-shot overrides of the block under construction.
+    building: Arc<RwLock<Option<BuildingOverrides>>>,
 }
 
 impl BlockEnvOverrides {
@@ -66,9 +68,9 @@ impl BlockEnvOverrides {
         *self.next_base_fee.write() = Some(fee);
     }
 
-    /// Takes the next block base fee override, consuming it.
-    pub fn take_next_base_fee(&self) -> Option<u64> {
-        self.next_base_fee.write().take()
+    /// Returns the next block base fee override.
+    pub fn next_base_fee(&self) -> Option<u64> {
+        *self.next_base_fee.read()
     }
 
     /// Sets the prevrandao of the next block only.
@@ -76,19 +78,56 @@ impl BlockEnvOverrides {
         *self.next_prev_randao.write() = Some(prev_randao);
     }
 
-    /// Takes the next block prevrandao override, consuming it.
-    pub fn take_next_prev_randao(&self) -> Option<B256> {
-        self.next_prev_randao.write().take()
-    }
-
     /// Sets the parent beacon block root of the next block only.
     pub fn set_next_parent_beacon_block_root(&self, root: B256) {
         *self.next_parent_beacon_block_root.write() = Some(root);
     }
 
-    /// Takes the next block parent beacon block root override, consuming it.
-    pub fn take_next_parent_beacon_block_root(&self) -> Option<B256> {
-        self.next_parent_beacon_block_root.write().take()
+    /// Returns the next block parent beacon block root override.
+    pub fn next_parent_beacon_block_root(&self) -> Option<B256> {
+        *self.next_parent_beacon_block_root.read()
+    }
+
+    /// Moves the one-shot overrides into the block under construction. [`Self::end_block`]
+    /// drops them when the block is mined, and puts them back when it is not, as anvil keeps
+    /// them for the next attempt.
+    pub fn begin_block(&self) {
+        let building = BuildingOverrides {
+            base_fee: self.next_base_fee.write().take(),
+            prev_randao: self.next_prev_randao.write().take(),
+            parent_beacon_block_root: self.next_parent_beacon_block_root.write().take(),
+        };
+        *self.building.write() = Some(building);
+    }
+
+    /// Finishes the block under construction.
+    pub fn end_block(&self, mined: bool) {
+        let Some(building) = self.building.write().take() else { return };
+        if mined {
+            return;
+        }
+        // An override set during the attempt wins over the one put back.
+        let mut base_fee = self.next_base_fee.write();
+        *base_fee = base_fee.or(building.base_fee);
+        let mut prev_randao = self.next_prev_randao.write();
+        *prev_randao = prev_randao.or(building.prev_randao);
+        let mut root = self.next_parent_beacon_block_root.write();
+        *root = root.or(building.parent_beacon_block_root);
+    }
+
+    /// Returns the base fee of the block under construction, if overridden.
+    pub fn building_base_fee(&self) -> Option<u64> {
+        self.building.read().and_then(|building| building.base_fee)
+    }
+
+    /// Returns the prevrandao of the block under construction, if overridden.
+    pub fn building_prev_randao(&self) -> Option<B256> {
+        self.building.read().and_then(|building| building.prev_randao)
+    }
+
+    /// Returns the parent beacon block root of the block under construction, if overridden.
+    pub fn building_parent_beacon_block_root(&self) -> Option<B256> {
+        self.building.read().and_then(|building| building.parent_beacon_block_root)
     }
 
     /// Captures the current overrides.
@@ -114,6 +153,14 @@ impl BlockEnvOverrides {
         *self.next_prev_randao.write() = snapshot.next_prev_randao;
         *self.next_parent_beacon_block_root.write() = snapshot.next_parent_beacon_block_root;
     }
+}
+
+/// The one-shot overrides of the block under construction.
+#[derive(Clone, Copy, Debug, Default)]
+struct BuildingOverrides {
+    base_fee: Option<u64>,
+    prev_randao: Option<B256>,
+    parent_beacon_block_root: Option<B256>,
 }
 
 /// A copy of the block environment overrides.

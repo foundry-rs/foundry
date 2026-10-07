@@ -49,15 +49,23 @@ use std::{
     sync::Arc,
 };
 
-/// Next-block attributes whose gas limit the block environment overrides can set.
+/// Next-block attributes the block environment overrides can set.
 pub trait AnvilNextBlockEnv: Clone {
     /// Sets the block gas limit.
     fn set_gas_limit(&mut self, gas_limit: u64);
+    /// Replaces the parent beacon block root, when the block has one.
+    fn override_parent_beacon_block_root(&mut self, root: B256);
 }
 
 impl AnvilNextBlockEnv for NextBlockEnvAttributes {
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = gas_limit;
+    }
+
+    fn override_parent_beacon_block_root(&mut self, root: B256) {
+        if self.parent_beacon_block_root.is_some() {
+            self.parent_beacon_block_root = Some(root);
+        }
     }
 }
 
@@ -359,6 +367,20 @@ pub struct AnvilEvmConfig<Evm: ConfigureEvm> {
     sender_cache: Option<SenderRecoveryCache>,
 }
 
+impl<Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>> AnvilEvmConfig<Evm> {
+    /// Applies the persistent block environment overrides, and the pending parent beacon block
+    /// root, so the pending block shows the root the next mined block gets.
+    fn next_block_attributes(&self, mut attributes: Evm::NextBlockEnvCtx) -> Evm::NextBlockEnvCtx {
+        if let Some(gas_limit) = self.block_env.gas_limit() {
+            attributes.set_gas_limit(gas_limit);
+        }
+        if let Some(root) = self.block_env.next_parent_beacon_block_root() {
+            attributes.override_parent_beacon_block_root(root);
+        }
+        attributes
+    }
+}
+
 impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
     /// Wraps the given EVM config.
     pub fn new(
@@ -434,12 +456,11 @@ where
         parent: &<Evm::Primitives as NodePrimitives>::BlockHeader,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnvFor<Self>, Self::Error> {
-        let mut attributes = attributes.clone();
-        if let Some(gas_limit) = self.block_env.gas_limit() {
-            attributes.set_gas_limit(gas_limit);
-        }
+        let attributes = self.next_block_attributes(attributes.clone());
         let mut env = self.inner.next_evm_env(parent, &attributes)?;
-        env.set_base_fee_opt(self.block_env.take_next_base_fee());
+        // The block under construction gets its override; the pending block shows the next one.
+        let base_fee = self.block_env.building_base_fee().or(self.block_env.next_base_fee());
+        env.set_base_fee_opt(base_fee);
         self.settings.apply(&mut env.cfg_env);
         Ok(env)
     }
@@ -456,7 +477,7 @@ where
         parent: &SealedHeader<<Evm::Primitives as NodePrimitives>::BlockHeader>,
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
-        self.inner.context_for_next_block(parent, attributes)
+        self.inner.context_for_next_block(parent, self.next_block_attributes(attributes))
     }
 }
 
