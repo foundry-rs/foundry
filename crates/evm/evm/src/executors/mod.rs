@@ -1710,7 +1710,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let stipend = calculate_stipend(&tx_env, &evm_env.cfg_env);
+    let stipend = calculate_stipend(&tx_env, evm_env.cfg_env());
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),

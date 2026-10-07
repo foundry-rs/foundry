@@ -2166,6 +2166,7 @@ const fn symbolic_result_schema_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_cli::utils::parse_json;
 
     const SYMBOLIC_RESULT_SCHEMA: &str =
         include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
@@ -2196,10 +2197,9 @@ mod tests {
 
     #[test]
     fn symbolic_schemas_match_result_types() {
-        let result_schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_RESULT_SCHEMA).unwrap();
+        let result_schema: serde_json::Value = parse_json(SYMBOLIC_RESULT_SCHEMA).unwrap();
         let counterexample_schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA).unwrap();
+            parse_json(SYMBOLIC_COUNTEREXAMPLE_SCHEMA).unwrap();
         let result_defs = schema_defs(&result_schema);
         let counterexample_defs = schema_defs(&counterexample_schema);
 

@@ -2418,7 +2418,7 @@ mod tests {
             "event DecoderAmbiguousIndexedPlacement(address indexed owner, uint256 id)",
         )
         .unwrap();
-        let mut abi = JsonAbi::default();
+        let mut abi = JsonAbi::new();
         abi.events.insert(event.name.clone(), vec![event.clone()]);
         let log = LogData::new_unchecked(
             vec![event.selector(), U256::from(42).into()],

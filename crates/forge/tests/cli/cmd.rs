@@ -1,6 +1,7 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
+use foundry_cli::utils::parse_json;
 use foundry_compilers::{
     artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping},
     solc::Solc,
@@ -3695,8 +3696,7 @@ object "Counter_21" {
     let json_out = json_out.trim();
     assert!(json_out.starts_with('"'), "expected quoted JSON string, got {json_out:?}");
     assert!(json_out.ends_with('"'), "expected quoted JSON string, got {json_out:?}");
-    let _: String =
-        serde_json::from_str(json_out).expect("ir --json stdout should be a valid JSON string");
+    let _: String = parse_json(json_out).expect("ir --json stdout should be a valid JSON string");
 }
 
 // checks forge bind works correctly on the default project

@@ -1019,7 +1019,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         // Record first address that reverted the call.
         if result.is_revert() && self.reverter.is_none() {
-            self.reverter = Some(inputs.target_address);
+            self.reverter = Some(inputs.transfer_to());
         }
     }
 
@@ -1861,7 +1861,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         .load_account_with_code(*target)
                         .expect("failed to load account");
                     call.known_bytecode =
-                        (target.info.code_hash, target.info.code.clone().unwrap_or_default());
+                        (target.info.code_hash(), target.info.code.clone().unwrap_or_default());
                 }
             }
 
@@ -1882,8 +1882,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             && let Some(tracer) = self.tracer.as_deref_mut()
         {
             let caller = match call.scheme {
-                CallScheme::DelegateCall | CallScheme::CallCode => call.target_address,
-                CallScheme::Call | CallScheme::StaticCall => call.caller,
+                CallScheme::DelegateCall | CallScheme::CallCode => call.transfer_to(),
+                CallScheme::Call | CallScheme::StaticCall => call.transfer_from(),
             };
             let node = &mut tracer.traces_mut().nodes_mut()[trace_idx];
             debug_assert_eq!(node.trace.depth, ecx.journal().depth());
@@ -1912,8 +1912,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         .then_some(ecx.cfg().gas_params().new_account_state_gas());
                     let (result, _, was_precompile_called) = self.transact_inner(
                         ecx,
-                        TxKind::Call(call.target_address),
-                        call.caller,
+                        TxKind::Call(call.transfer_to()),
+                        call.transfer_from(),
                         input,
                         IsolatedGas {
                             regular_limit: call.gas_limit,
@@ -2172,7 +2172,7 @@ fn handle_arbitrum_system_call<FEN: FoundryEvmNetwork>(
     ecx: &mut FoundryContextFor<'_, FEN>,
     call: &CallInputs,
 ) -> Option<CallOutcome> {
-    if call.target_address != arbitrum::ARB_SYS_ADDRESS
+    if call.transfer_to() != arbitrum::ARB_SYS_ADDRESS
         || call.bytecode_address != arbitrum::ARB_SYS_ADDRESS
         || !arbitrum::is_arbitrum_chain(ecx.cfg().chain_id())
     {

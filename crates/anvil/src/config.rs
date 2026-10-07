@@ -1467,7 +1467,7 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::default();
+        let mut cfg = CfgEnv::new();
         cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();

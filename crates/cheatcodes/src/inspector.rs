@@ -1228,7 +1228,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             e
         })?;
 
-        let caller = call.caller;
+        let caller = call.transfer_from();
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
@@ -1255,7 +1255,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         call: &CallInputs,
     ) -> Result {
         let input = call.input.bytes(ecx);
-        let caller = call.caller;
+        let caller = call.transfer_from();
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
@@ -1382,7 +1382,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
         }
 
-        if call.target_address == CHEATCODE_ADDRESS {
+        if call.transfer_to() == CHEATCODE_ADDRESS {
             return match self.apply_cheatcode(ecx, call, executor) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -1410,10 +1410,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        if crate::monad::is_monad_cheatcode_call(
-            self.extra_cheatcode_addresses,
-            call.target_address,
-        ) {
+        if crate::monad::is_monad_cheatcode_call(self.extra_cheatcode_addresses, call.transfer_to())
+        {
             let checkpoint = ecx.journal_mut().checkpoint();
             return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => {
@@ -1447,7 +1445,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             };
         }
 
-        if call.target_address == HARDHAT_CONSOLE_ADDRESS {
+        if call.transfer_to() == HARDHAT_CONSOLE_ADDRESS {
             return None;
         }
 
@@ -1481,7 +1479,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
 
-            if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
+            if let Some(changes) = prank.changes_for(curr_depth, call.transfer_from()) {
                 if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded and touched
                     let _ = journaled_account(ecx, new_caller);
@@ -1566,7 +1564,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // we only want to grab *this* call, not internal ones. `deployCode` routed through
             // the CREATE2 factory runs one level deeper in a nested EVM.
             if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
-                && call.caller == broadcast.original_caller
+                && call.transfer_from() == broadcast.original_caller
             {
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
@@ -1605,7 +1603,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     let mut tx_req = TransactionRequestFor::<FEN>::default()
                         .with_from(broadcast.new_origin)
-                        .with_to(call.target_address)
+                        .with_to(call.transfer_to())
                         .with_value(call.transfer_value().unwrap_or_default())
                         .with_input(input)
                         .with_nonce(nonce)
@@ -1700,7 +1698,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let (initialized, old_balance, old_nonce) =
-                if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                if let Ok(acc) = ecx.journal_mut().load_account(call.transfer_to()) {
                     (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
                 } else {
                     (false, U256::ZERO, 0)
@@ -1723,7 +1721,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     forkId: ecx.db().active_fork_id().unwrap_or_default(),
                     chainId: U256::from(ecx.cfg().chain_id()),
                 },
-                accessor: call.caller,
+                accessor: call.transfer_from(),
                 account: call.bytecode_address,
                 kind,
                 initialized,
@@ -1954,8 +1952,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.active_storage_hook.as_ref().is_some_and(|active| {
             active.outcome.is_none()
                 && ecx.journal().depth() == active.parent_depth
-                && call.caller == CHEATCODE_ADDRESS
-                && call.target_address == active.callback_target
+                && call.transfer_from() == CHEATCODE_ADDRESS
+                && call.transfer_to() == active.callback_target
                 && call.input.bytes(ecx) == active.callback_input
         })
     }
@@ -1969,8 +1967,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let Some(active) = self.active_storage_hook.as_mut() else { return false };
         if active.outcome.is_some()
             || ecx.journal().depth() != active.parent_depth
-            || call.caller != CHEATCODE_ADDRESS
-            || call.target_address != active.callback_target
+            || call.transfer_from() != CHEATCODE_ADDRESS
+            || call.transfer_to() != active.callback_target
             || call.input.bytes(ecx) != active.callback_input
         {
             return false;
@@ -2338,13 +2336,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
-            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let cheatcode_call = call.transfer_to() == CHEATCODE_ADDRESS
+            || call.transfer_to() == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call
             || crate::monad::is_monad_cheatcode_call(
                 self.extra_cheatcode_addresses,
-                call.target_address,
+                call.transfer_to(),
             );
         let curr_depth = ecx.journal().depth();
 
@@ -2388,7 +2386,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Record current reverter address before processing the expect revert if call reverted,
             // expect revert is set with expected reverter address and no actual reverter set yet.
             if outcome.result.is_revert() && assume_no_revert.reverted_by.is_none() {
-                assume_no_revert.reverted_by = Some(call.target_address);
+                assume_no_revert.reverted_by = Some(call.transfer_to());
             }
 
             // allow multiple cheatcode calls at the same depth
@@ -2435,7 +2433,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 if expected_revert.reverter.is_some()
                     && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
                 {
-                    expected_revert.reverted_by = Some(call.target_address);
+                    expected_revert.reverted_by = Some(call.transfer_to());
                 }
             }
 
@@ -2531,7 +2529,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     // calls to update if execution has percolated up to a higher depth.
                     let curr_depth = ecx.journal().depth();
                     if call_access.depth == curr_depth as u64
-                        && let Ok(acc) = ecx.journal_mut().load_account(call.target_address)
+                        && let Ok(acc) = ecx.journal_mut().load_account(call.transfer_to())
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.data.info.balance;
@@ -2583,10 +2581,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // `Stop` we check if the contract actually exists on the active fork
             if ecx.db().is_forked_mode()
                 && outcome.result.result == InstructionResult::Stop
-                && call.target_address != test_contract
+                && call.transfer_to() != test_contract
             {
                 self.fork_revert_diagnostic =
-                    ecx.db().diagnose_revert(call.target_address, ecx.journal().evm_state());
+                    ecx.db().diagnose_revert(call.transfer_to(), ecx.journal().evm_state());
             }
         }
 
@@ -3354,7 +3352,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         };
         let known_bytecode =
-            (account.info.code_hash, account.info.code.clone().unwrap_or_default());
+            (account.info.code_hash(), account.info.code.clone().unwrap_or_default());
         let saved_gas = interpreter.gas;
         let saved_return_data = Bytes::copy_from_slice(interpreter.return_data.buffer());
         let gas_limit = interpreter.gas.remaining();
@@ -3954,7 +3952,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     for auth in authorizations {
         if (!auth.chain_id.is_zero() && auth.chain_id != U256::from(chain_id))
-            || auth.nonce == u64::MAX
+            || auth.nonce() == u64::MAX
         {
             continue;
         }
@@ -3963,7 +3961,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // the local code that EIP-7702 validates.
         let account = journaled_account(ecx, authority)?;
         // The sender nonce has not been incremented for the transaction yet.
-        if auth.nonce == account.info.nonce + u64::from(authority == sender) {
+        if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
         }
     }
