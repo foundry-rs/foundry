@@ -64,7 +64,7 @@ use foundry_config::{
     filter::GlobMatcher,
     fs_permissions::FsAccessPermission,
 };
-use foundry_debugger::{Debugger, DebuggerLayout};
+use foundry_debugger::{Debugger, DebuggerFrontend, DebuggerLayout};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
@@ -514,6 +514,12 @@ pub struct TestArgs {
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
     debug_layout: Option<DebuggerLayout>,
 
+    /// Debugger frontend to use.
+    ///
+    /// The `soldb` frontend needs forge built with the `soldb` feature.
+    #[arg(long, requires = "debug", value_enum)]
+    debugger: Option<DebuggerFrontend>,
+
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
     /// A flame graph is used to visualize which functions or operations within the smart contract
@@ -562,6 +568,9 @@ pub struct TestArgs {
     tracing: TracingArgs,
 
     /// Dumps all debugger steps to file.
+    ///
+    /// With `--debugger soldb`, writes a directory that soldb's own tools read, e.g.
+    /// `soldb profile --trace-file <PATH>/trace.json --contracts <PATH>/contracts.json`.
     #[arg(
         long,
         requires = "debug",
@@ -1224,8 +1233,13 @@ impl TestArgs {
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
         }
-        if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if self.debug {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in test files.
+            config.build_info = true;
         }
     }
 
@@ -1876,6 +1890,7 @@ impl TestArgs {
         config.networks = evm_opts.networks;
         let verbosity = evm_opts.verbosity;
 
+        let build_info_dir = config.project_paths::<MultiCompilerLanguage>().build_infos;
         // Box each network's run so the dispatch arms' locals stay off this frame.
         dispatch_network!(&evm_opts, |Net| {
             Box::pin(async {
@@ -1960,11 +1975,12 @@ impl TestArgs {
                     // Get first non-empty suite result. We will have only one such entry.
                     let (_, _, test_result) =
                         outcome.remove_first().ok_or_eyre("no tests were executed")?;
-                    let sources = ContractSources::from_project_output(
+                    let mut sources = ContractSources::from_project_output(
                         output,
                         project_root,
                         Some(&libraries),
                     )?;
+                    sources.insert_compiled_sources(&build_info_dir)?;
 
                     // Prefer execution traces for normal debug runs, but when execution never
                     // starts (for example if `setUp()` reverts), fall back to available
@@ -1988,19 +2004,15 @@ impl TestArgs {
                         .traces(traces)
                         .sources(sources)
                         .breakpoints(test_result.breakpoints)
-                        .layout(self.debug_layout.unwrap_or_default());
+                        .layout(self.debug_layout.unwrap_or_default())
+                        .frontend(self.debugger.unwrap_or_default());
                     if let Some(decoder) = &outcome.last_run_decoder {
                         builder = builder.decoder(decoder);
                     }
                     if let Some(known_contracts) = &outcome.known_contracts {
                         builder = builder.known_contracts(known_contracts);
                     }
-                    let mut debugger = builder.build();
-                    if let Some(dump_path) = &self.dump {
-                        debugger.dump_to_file(dump_path)?;
-                    } else {
-                        debugger.try_run_tui()?;
-                    }
+                    builder.run(self.dump.as_deref())?;
                 }
 
                 // All tests have been run once before reaching this point
@@ -3932,6 +3944,7 @@ mod tests {
         args.apply_test_config_overrides(&mut config);
 
         assert_eq!(config.extra_output, vec![ContractOutputSelection::StorageLayout]);
+        assert!(config.build_info);
     }
 
     #[test]

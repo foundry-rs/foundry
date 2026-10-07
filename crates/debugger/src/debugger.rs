@@ -38,6 +38,17 @@ impl DebuggerLayout {
     }
 }
 
+/// Debugger frontend selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum DebuggerFrontend {
+    /// Foundry's opcode-level TUI.
+    #[default]
+    Foundry,
+    /// The soldb source-level debugger.
+    #[cfg(feature = "soldb")]
+    Soldb,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DebuggerStats {
     /// Sum of root-call gas used across every trace arena passed to the debugger.

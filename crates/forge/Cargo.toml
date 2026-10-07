@@ -141,6 +141,7 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 touch-id = ["foundry-wallets/touch-id"]
+soldb = ["foundry-debugger/soldb", "forge-script/soldb"]
 monad = [
     "anvil/monad",
     "foundry-config/monad",

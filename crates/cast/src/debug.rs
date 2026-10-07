@@ -3,7 +3,7 @@ use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler, shell};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
-use foundry_debugger::Debugger;
+use foundry_debugger::{Debugger, DebuggerFrontend};
 use foundry_evm::{
     opts::ForkEndpointIdentity,
     traces::{
@@ -63,18 +63,27 @@ pub(crate) async fn handle_traces(
     contracts_bytecode: &AddressHashMap<Bytes>,
     tracing: &TracingConfig,
     with_local_artifacts: bool,
-    debug: bool,
+    debugger: Option<DebuggerFrontend>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
         let mut config = config.clone();
-        if debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        if debugger.is_some() {
+            if !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+                config.extra_output.push(ContractOutputSelection::StorageLayout);
+            }
+            // Full build infos keep the sources the compiler saw, which dynamic test linking
+            // rewrites in tests and scripts.
+            config.build_info = true;
         }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;
+        let mut sources = ContractSources::from_project_output(&output, project.root(), None)?;
+        if debugger.is_some() {
+            sources.insert_compiled_sources(&project.paths.build_infos)?;
+        }
         (
             Some(
                 ContractsByArtifactBuilder::new(
@@ -85,7 +94,7 @@ pub(crate) async fn handle_traces(
                 }))
                 .build(),
             ),
-            ContractSources::from_project_output(&output, project.root(), None)?,
+            sources,
         )
     } else {
         (None, ContractSources::default())
@@ -109,22 +118,21 @@ pub(crate) async fn handle_traces(
         decoder.identify(trace, &mut identifier);
     }
 
-    if tracing.decode_internal || debug {
+    if tracing.decode_internal || debugger.is_some() {
         if let Some(ref etherscan_identifier) = identifier.external {
             sources.merge(etherscan_identifier.get_compiled_contracts().await?);
         }
 
-        if debug {
+        if let Some(frontend) = debugger {
             let mut builder = Debugger::builder()
                 .traces(result.traces.expect("missing traces"))
                 .decoder(&decoder)
-                .sources(sources);
+                .sources(sources)
+                .frontend(frontend);
             if let Some(known_contracts) = &known_contracts {
                 builder = builder.known_contracts(known_contracts);
             }
-            let mut debugger = builder.build();
-            debugger.try_run_tui()?;
-            return Ok(());
+            return builder.run(None);
         }
 
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));

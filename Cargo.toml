@@ -487,6 +487,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
+soldb-core = "0.4.0"
+soldb-debugger = "0.4.0"
+soldb-ethdebug = "0.4.0"
+soldb-repl = "0.4.0"
+soldb-tui = "0.4.0"
 soldeer-commands = "=0.12.0"
 soldeer-core = { version = "=0.12.0", features = ["serde"] }
 strum = "0.28"

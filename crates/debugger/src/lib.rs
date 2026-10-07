@@ -16,6 +16,8 @@ mod op;
 mod builder;
 mod debugger;
 mod dump;
+#[cfg(feature = "soldb")]
+mod soldb;
 mod tui;
 
 mod node;
@@ -23,5 +25,5 @@ mod node;
 pub use node::DebugNode;
 
 pub use builder::DebuggerBuilder;
-pub use debugger::{Debugger, DebuggerLayout};
+pub use debugger::{Debugger, DebuggerFrontend, DebuggerLayout};
 pub use tui::{ExitReason, TUI};
