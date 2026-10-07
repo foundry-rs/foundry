@@ -6,6 +6,7 @@ use crate::{
     engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
     fork::{ForkBackend, ForkInfo},
+    impersonation::ImpersonationState,
     logging::{LoggingState, NodeInfoLayer},
     pending::AnvilEthApiBuilder,
     pool::{AnvilPoolBuilder, PoolSettings},
@@ -78,6 +79,7 @@ impl AnvilNetwork for Ethereum {
                     network_precompiles(&anvil.config),
                     anvil.fork.clone(),
                     anvil.console.is_some(),
+                    anvil.impersonation.clone(),
                 ),
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
@@ -109,7 +111,7 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
     if config.is_fork() {
         let (fork, accounts) = ForkBackend::setup(config).await?;
         config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
-        if let Some(info) = fork.node_info() {
+        if let Some(info) = fork.node_info().await {
             config.adopt_fork_identity(&info);
         }
         let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
@@ -125,6 +127,7 @@ pub struct EthereumEvmBuilder {
     precompiles: Vec<(Address, PrecompileBuilder)>,
     fork: Option<Arc<dyn ForkInfo>>,
     console: bool,
+    impersonation: ImpersonationState,
 }
 
 impl fmt::Debug for EthereumEvmBuilder {
@@ -145,8 +148,9 @@ impl EthereumEvmBuilder {
         precompiles: Vec<(Address, PrecompileBuilder)>,
         fork: Option<Arc<dyn ForkInfo>>,
         console: bool,
+        impersonation: ImpersonationState,
     ) -> Self {
-        Self { precompiles, fork, console }
+        Self { precompiles, fork, console, impersonation }
     }
 }
 
@@ -166,6 +170,7 @@ where
             self.precompiles,
             self.fork,
             self.console,
+            self.impersonation,
         );
         let mut evm_config = EthEvmConfig::new_with_evm_factory(ctx.chain_spec(), factory);
         if let Some(cache) = ctx.sender_recovery_cache() {

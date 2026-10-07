@@ -60,6 +60,9 @@ pub struct AnvilMiner<T: PayloadTypes> {
     /// The pending transactions when the last automine block included none of them. Automine
     /// idles until they change, as a transaction that never fits must not keep it busy.
     idle: Option<PendingTxs>,
+    /// The genesis hash: the chain's safe and finalized block, so those tags resolve to the
+    /// genesis block, as on anvil, and a snapshot revert can rewind to any block above it.
+    genesis_hash: B256,
     last_header: SealedHeader<PayloadHeader<T>>,
     requests: UnboundedReceiver<MinerRequest<PayloadHeader<T>>>,
 }
@@ -82,6 +85,7 @@ impl<T: PayloadTypes> AnvilMiner<T> {
         before_insert: impl Fn() -> Result<()> + Send + Sync + 'static,
         automine: impl Fn() -> bool + Send + Sync + 'static,
         pending_after: impl Fn(B256) -> HookFuture<Option<PendingTxs>> + Send + Sync + 'static,
+        genesis_hash: B256,
         head: SealedHeader<PayloadHeader<T>>,
         requests: UnboundedReceiver<MinerRequest<PayloadHeader<T>>>,
     ) -> Self {
@@ -96,6 +100,7 @@ impl<T: PayloadTypes> AnvilMiner<T> {
             automine: Box::new(automine),
             pending_after: Box::new(pending_after),
             idle: None,
+            genesis_hash,
             last_header: head,
             requests,
         }
@@ -182,8 +187,8 @@ impl<T: PayloadTypes> AnvilMiner<T> {
     async fn rewind(&mut self, header: SealedHeader<PayloadHeader<T>>) -> Result<()> {
         let state = ForkchoiceState {
             head_block_hash: header.hash(),
-            safe_block_hash: B256::ZERO,
-            finalized_block_hash: B256::ZERO,
+            safe_block_hash: self.genesis_hash,
+            finalized_block_hash: self.genesis_hash,
         };
         self.hooks.prepare(header.number())?;
         let response = self.engine.fork_choice_updated(state, None).await?;
@@ -204,8 +209,8 @@ impl<T: PayloadTypes> AnvilMiner<T> {
     fn forkchoice_state(&self) -> ForkchoiceState {
         ForkchoiceState {
             head_block_hash: self.last_header.hash(),
-            safe_block_hash: B256::ZERO,
-            finalized_block_hash: B256::ZERO,
+            safe_block_hash: self.genesis_hash,
+            finalized_block_hash: self.genesis_hash,
         }
     }
 

@@ -118,7 +118,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     }
 
     /// Returns the sealed genesis header.
-    fn genesis_header(&self) -> ProviderResult<SealedHeader<HeaderTy<N>>> {
+    pub fn genesis_header(&self) -> ProviderResult<SealedHeader<HeaderTy<N>>> {
         let number = self.inner.chain_spec().genesis_header().number();
         self.inner.sealed_header(number)?.ok_or(ProviderError::HeaderNotFound(number.into()))
     }
@@ -275,10 +275,31 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         Ok(())
     }
 
-    /// Returns the canonical block `depth` blocks behind the head, or genesis.
+    /// Returns the local block `depth` blocks behind the head, or genesis. The engine reads the
+    /// safe and finalized blocks through this, so it never reaches out to a fork endpoint.
     fn num_hash_at_depth(&self, depth: u64) -> ProviderResult<Option<BlockNumHash>> {
-        let number = self.inner.best_block_number()?.saturating_sub(depth);
+        let genesis = self.inner.chain_spec().genesis_header().number();
+        let number = self.inner.best_block_number()?.saturating_sub(depth).max(genesis);
         Ok(self.inner.block_hash(number)?.map(|hash| BlockNumHash::new(number, hash)))
+    }
+
+    /// Returns the block the `safe` or `finalized` tag names in RPC: `depth` blocks behind the
+    /// head, as anvil counts, which on a fork can be a block the fork endpoint serves.
+    fn tag_num_hash_at_depth(&self, depth: u64) -> ProviderResult<Option<BlockNumHash>> {
+        if self.fork.is_none() {
+            return self.num_hash_at_depth(depth);
+        }
+        let number = self.inner.best_block_number()?.saturating_sub(depth);
+        Ok(self.block_hash(number)?.map(|hash| BlockNumHash::new(number, hash)))
+    }
+
+    /// Returns the depth of the `safe` and `finalized` tags, or `None` for another tag.
+    const fn tag_depth(&self, tag: BlockNumberOrTag) -> Option<u64> {
+        match tag {
+            BlockNumberOrTag::Safe => Some(self.slots_in_an_epoch),
+            BlockNumberOrTag::Finalized => Some(self.slots_in_an_epoch * 2),
+            _ => None,
+        }
     }
 
     /// Returns the wrapped provider.
@@ -502,7 +523,8 @@ impl<N: AnvilNodeTypes> BlockNumReader for AnvilProvider<N> {
         if self.fork.is_some() {
             return Ok(0);
         }
-        self.inner.earliest_block_number()
+        // The chain starts at the genesis block, which may have a non-zero number.
+        Ok(self.inner.chain_spec().genesis_header().number())
     }
 
     fn block_number(&self, hash: B256) -> ProviderResult<Option<BlockNumber>> {
@@ -529,6 +551,46 @@ impl<N: AnvilNodeTypes> BlockIdReader for AnvilProvider<N> {
 
     fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         self.num_hash_at_depth(self.slots_in_an_epoch * 2)
+    }
+
+    /// Resolves the `safe` and `finalized` tags as anvil does in RPC; the other ids as reth does,
+    /// through this provider's fork-aware lookups.
+    fn convert_block_number(&self, num: BlockNumberOrTag) -> ProviderResult<Option<BlockNumber>> {
+        if let Some(depth) = self.tag_depth(num) {
+            return Ok(self.tag_num_hash_at_depth(depth)?.map(|num_hash| num_hash.number));
+        }
+        let num = match num {
+            BlockNumberOrTag::Latest => self.best_block_number()?,
+            BlockNumberOrTag::Earliest => self.earliest_block_number()?,
+            BlockNumberOrTag::Pending => {
+                return Ok(self.pending_block_num_hash()?.map(|num_hash| num_hash.number));
+            }
+            BlockNumberOrTag::Number(num) => num,
+            BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized => {
+                unreachable!("tags have a depth")
+            }
+        };
+        Ok(Some(num))
+    }
+
+    fn block_hash_for_id(&self, block_id: BlockId) -> ProviderResult<Option<B256>> {
+        let BlockId::Number(num) = block_id else {
+            return Ok(Some(block_id.as_block_hash().expect("hash id")));
+        };
+        if let Some(depth) = self.tag_depth(num) {
+            return Ok(self.tag_num_hash_at_depth(depth)?.map(|num_hash| num_hash.hash));
+        }
+        match num {
+            BlockNumberOrTag::Latest => Ok(Some(self.chain_info()?.best_hash)),
+            BlockNumberOrTag::Pending => {
+                Ok(self.pending_block_num_hash()?.map(|num_hash| num_hash.hash))
+            }
+            BlockNumberOrTag::Earliest => self.block_hash(self.earliest_block_number()?),
+            BlockNumberOrTag::Number(num) => self.block_hash(num),
+            BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized => {
+                unreachable!("tags have a depth")
+            }
+        }
     }
 }
 
@@ -1051,6 +1113,13 @@ impl<N: AnvilNodeTypes> BlockReaderIdExt for AnvilProvider<N> {
                 self.sealed_header(number)
             }
             BlockNumberOrTag::Earliest if self.fork.is_some() => self.sealed_header(0),
+            BlockNumberOrTag::Safe | BlockNumberOrTag::Finalized => {
+                let depth = self.tag_depth(id).expect("safe and finalized have a depth");
+                match self.tag_num_hash_at_depth(depth)? {
+                    Some(num_hash) => self.sealed_header(num_hash.number),
+                    None => Ok(None),
+                }
+            }
             _ => self.inner.sealed_header_by_number_or_tag(id),
         }
     }

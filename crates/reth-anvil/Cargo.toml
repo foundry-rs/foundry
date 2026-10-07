@@ -54,6 +54,7 @@ alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "txpool"] }
+alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true
@@ -63,6 +64,8 @@ alloy-sol-types.workspace = true
 
 # revm
 revm.workspace = true
+ethereum_ssz.workspace = true
+hyper.workspace = true
 
 # monad
 alloy-monad-evm = { workspace = true, optional = true }
@@ -104,7 +107,8 @@ optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
 [dev-dependencies]
 alloy-chains.workspace = true
 alloy-contract = { workspace = true, features = ["pubsub"] }
-alloy-provider = { workspace = true, features = ["txpool-api"] }
+alloy-provider = { workspace = true, features = ["txpool-api", "trace-api"] }
+axum.workspace = true
 alloy-pubsub.workspace = true
 alloy-rlp.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }

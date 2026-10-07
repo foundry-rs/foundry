@@ -13,6 +13,7 @@ use crate::{
     engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvm, AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, ForkHashDb},
     fork::ForkInfo,
+    impersonation::ImpersonationState,
     logging::{LoggingState, NodeInfoLayer},
     pending::AnvilEthApiBuilder,
     pool::{AnvilPoolBuilder, BalanceRule, PoolSettings},
@@ -131,6 +132,7 @@ impl AnvilNetwork for Monad {
                     hardfork,
                     fork: anvil.fork.clone(),
                     console: anvil.console.is_some(),
+                    impersonation: anvil.impersonation.clone(),
                 },
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
@@ -173,6 +175,8 @@ pub struct MonadExecutorBuilder {
     pub fork: Option<Arc<dyn ForkInfo>>,
     /// Whether to collect `console.log` calls.
     pub console: bool,
+    /// The impersonation state, for the `ecrecover` override.
+    pub impersonation: ImpersonationState,
 }
 
 impl<Types, Node> ExecutorBuilder<Node> for MonadExecutorBuilder
@@ -189,6 +193,7 @@ where
             Arc::new(ctx.provider().clone()),
             self.fork,
             self.console,
+            self.impersonation,
         ))
     }
 }
@@ -484,6 +489,7 @@ impl MonadEvmConfig {
         participants: Arc<dyn ParticipantsLookup>,
         fork: Option<Arc<dyn ForkInfo>>,
         console: bool,
+        impersonation: ImpersonationState,
     ) -> Self {
         let executor_factory = MonadBlockExecutorFactory {
             inner: EthBlockExecutorFactory::new(
@@ -494,6 +500,7 @@ impl MonadEvmConfig {
                     Vec::new(),
                     fork,
                     console,
+                    impersonation,
                 ),
             ),
             hardfork,

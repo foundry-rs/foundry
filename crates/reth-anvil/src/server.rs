@@ -5,6 +5,7 @@
 //! in-process API keep working. Every method forwards to the module of the current node.
 
 use crate::{
+    beacon::BeaconLayer,
     config::NodeConfig,
     logging::{LoggingState, NodeInfoLayer},
 };
@@ -104,7 +105,11 @@ impl RpcServer {
             .build();
         let server = ServerBuilder::default()
             .set_config(config)
-            .set_http_middleware(tower::ServiceBuilder::new().option_layer(settings.cors()?))
+            .set_http_middleware(
+                tower::ServiceBuilder::new()
+                    .option_layer(settings.cors()?)
+                    .layer(BeaconLayer::new(shared.clone())),
+            )
             .set_rpc_middleware(RpcServiceBuilder::new().layer(NodeInfoLayer::new(logging.clone())))
             .build(address)
             .await

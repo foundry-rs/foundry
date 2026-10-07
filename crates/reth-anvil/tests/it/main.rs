@@ -23,24 +23,36 @@ use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
 mod abi;
+mod anvil;
 mod anvil_api;
 mod api;
+mod beacon_api;
 mod block_index;
+mod eip2935;
+mod eip4844;
+mod eip6110;
+mod eip7702;
+mod eip7928;
 mod filter;
 mod fork;
 mod gas;
 mod genesis;
+mod ipc;
 mod logs;
 #[cfg(feature = "monad")]
 mod monad;
+mod otterscan;
 mod proof;
 mod pubsub;
 mod revert;
 mod sign;
+mod simulate;
 mod storage_values;
+mod traces;
 mod transaction;
 mod txpool;
 pub mod utils;
+mod wsapi;
 
 async fn with_test_client<F, Fut>(test: F) -> Result<()>
 where

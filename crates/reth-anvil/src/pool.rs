@@ -134,6 +134,24 @@ where
         }
 
         let outcome = self.inner.validate_transaction(origin, transaction).await;
+        // Anvil mines a transaction from a sender with code: EIP-3607 is off for mining, as it is
+        // for calls. Reth's validator rejects it, so accept it here as a ready transaction.
+        if let TransactionValidationOutcome::Invalid(
+            transaction,
+            InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::SignerAccountHasBytecode,
+            ),
+        ) = outcome
+        {
+            return TransactionValidationOutcome::Valid {
+                balance: U256::MAX,
+                state_nonce: transaction.nonce(),
+                bytecode_hash: None,
+                transaction: ValidTransaction::Valid(transaction),
+                propagate: true,
+                authorities: None,
+            };
+        }
         let TransactionValidationOutcome::Valid {
             balance,
             state_nonce,

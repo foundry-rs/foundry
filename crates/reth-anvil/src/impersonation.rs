@@ -47,11 +47,16 @@ impl ImpersonationState {
 
     /// Returns the sender a signature override assigns to `signature`, if any.
     pub fn signature_override(&self, signature: &Signature) -> Option<Address> {
+        self.signature_override_raw(&signature.as_bytes())
+    }
+
+    /// Returns the sender a signature override assigns to the raw 65-byte `signature`, if any.
+    pub fn signature_override_raw(&self, signature: &[u8]) -> Option<Address> {
         let inner = self.inner.read();
         if inner.signature_overrides.is_empty() {
             return None;
         }
-        inner.signature_overrides.get(signature.as_bytes().as_slice()).copied()
+        inner.signature_overrides.get(signature).copied()
     }
 
     /// Marks transactions that a revert removed from the chain.

@@ -23,6 +23,10 @@ use foundry_fork_db::{
     BlockchainDb, ForkBlock as ForkAnchor, SharedBackend, backend::BlockingMode,
     cache::BlockchainDbMeta,
 };
+use jsonrpsee::{
+    core::RpcResult,
+    types::{ErrorObjectOwned, error::INTERNAL_ERROR_CODE},
+};
 use parking_lot::RwLock;
 use reth_ethereum::{
     Block, EthPrimitives, Receipt, TransactionSigned,
@@ -123,10 +127,37 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn block_hash(&self) -> B256;
     /// Returns the hash of the remote block with the given number.
     fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>>;
+    /// Sends a raw JSON-RPC request to the fork endpoint.
+    fn forward(&self, method: &str, params: serde_json::Value)
+    -> ProviderResult<serde_json::Value>;
     /// Returns the initial backoff of request retries.
     fn retry_backoff(&self) -> Duration;
     /// Replaces the fork endpoint.
     fn set_rpc_url(&self, url: String) -> Result<()>;
+}
+
+impl dyn ForkInfo {
+    /// Forwards a request to the fork endpoint and decodes its result.
+    pub fn forward_json<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> RpcResult<T> {
+        let value = self.forward(method, params).map_err(|error| {
+            ErrorObjectOwned::owned(
+                INTERNAL_ERROR_CODE,
+                format!("the fork endpoint failed: {error}"),
+                None::<()>,
+            )
+        })?;
+        serde_json::from_value(value).map_err(|error| {
+            ErrorObjectOwned::owned(
+                INTERNAL_ERROR_CODE,
+                format!("the fork endpoint answered: {error}"),
+                None::<()>,
+            )
+        })
+    }
 }
 
 impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
@@ -148,6 +179,20 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
 
     fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>> {
         Self::block_hash_by_number(self, number)
+    }
+
+    fn forward(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> ProviderResult<serde_json::Value> {
+        let method = method.to_string();
+        self.request(move |chain| async move {
+            chain
+                .raw_request::<_, serde_json::Value>(method.into(), params)
+                .await
+                .map_err(Into::into)
+        })
     }
 
     fn retry_backoff(&self) -> Duration {
@@ -684,12 +729,11 @@ impl<F: ForkNetwork> ForkBackend<F> {
     }
 
     /// Returns the node info of the endpoint when it is an anvil node, so a fork adopts its
-    /// hardfork, as anvil does.
-    pub fn node_info(&self) -> Option<NodeInfo> {
-        self.request(move |chain| async move {
-            chain.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.map_err(Into::into)
-        })
-        .ok()
+    /// hardfork, as anvil does. Awaits the request itself: the setup runs on the caller's
+    /// runtime, where a blocking request would stall a single-threaded one.
+    pub async fn node_info(&self) -> Option<NodeInfo> {
+        let chain = self.chain.read().clone();
+        chain.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.ok()
     }
 
     /// Returns the remote account proof at the given block.

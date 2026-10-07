@@ -63,14 +63,17 @@ impl<H> MiningController<H> {
         matches!(*self.mode_tx.borrow(), MiningMode::Automine | MiningMode::Mixed(_))
     }
 
-    /// Returns the interval mining period in seconds, if interval mining is enabled.
-    pub fn interval_mining(&self) -> Option<u64> {
+    /// Returns the interval mining period, if interval mining is enabled.
+    pub fn interval(&self) -> Option<Duration> {
         match *self.mode_tx.borrow() {
-            MiningMode::Interval(duration) | MiningMode::Mixed(duration) => {
-                Some(duration.as_secs())
-            }
+            MiningMode::Interval(duration) | MiningMode::Mixed(duration) => Some(duration),
             MiningMode::Automine | MiningMode::Manual => None,
         }
+    }
+
+    /// Returns the interval mining period in seconds, if interval mining is enabled.
+    pub fn interval_mining(&self) -> Option<u64> {
+        self.interval().map(|duration| duration.as_secs())
     }
 
     /// Enables or disables automine. The interval, if any, stays.

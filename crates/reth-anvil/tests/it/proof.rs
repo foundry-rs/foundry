@@ -20,7 +20,6 @@ async fn verify_account_proof(api: &EthApi, address: Address) {
         balance: proof.balance,
         storage_root: proof.storage_hash,
         code_hash: proof.code_hash,
-        ..Default::default()
     };
     let key = Nibbles::unpack(keccak256(address));
     verify_proof(root, key, Some(alloy_rlp::encode(account)), proof.account_proof.iter()).unwrap();

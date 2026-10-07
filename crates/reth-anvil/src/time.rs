@@ -165,6 +165,7 @@ impl TimeManager {
     pub fn build_hooks<A: AnvilPayloadAttributes>(
         &self,
         block_env: BlockEnvOverrides,
+        default_coinbase: Address,
     ) -> (impl Fn(A) -> A + Send + Sync + 'static, impl Fn(bool) + Send + Sync + 'static) {
         let snapshot = Arc::new(Mutex::new(None));
         let map_attributes = {
@@ -175,9 +176,10 @@ impl TimeManager {
                 *snapshot.lock() = Some(time.snapshot());
                 block_env.begin_block();
                 attributes.set_timestamp(time.next_timestamp());
-                if let Some(coinbase) = block_env.coinbase() {
-                    attributes.set_suggested_fee_recipient(coinbase);
-                }
+                // Anvil mines into the genesis coinbase unless one is set; reth picks a random
+                // address per block.
+                attributes
+                    .set_suggested_fee_recipient(block_env.coinbase().unwrap_or(default_coinbase));
                 if let Some(prev_randao) = block_env.building_prev_randao() {
                     attributes.set_prev_randao(prev_randao);
                 }

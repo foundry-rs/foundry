@@ -120,8 +120,10 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
     /// The RPC add-ons.
     type AddOns: RethRpcAddOns<
             NodeOf<Self>,
-            EthApi: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>
-                        + EthTransactions
+            EthApi: FullEthApiServer<
+                NetworkTypes: RpcTypes<TransactionRequest: Default>,
+                Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>,
+            > + EthTransactions
                         + Clone,
         > + EngineValidatorAddOn<NodeOf<Self>>;
     /// Builds the payload attributes of the next block.

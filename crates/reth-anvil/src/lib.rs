@@ -4,10 +4,12 @@
 
 mod api;
 pub mod args;
+mod beacon;
 mod block_env;
 pub mod cmd;
 mod config;
 mod console;
+mod debug;
 mod engine;
 mod eth_api;
 mod evm;
@@ -25,6 +27,7 @@ mod pool;
 mod provider;
 mod server;
 mod signer;
+mod simulate;
 mod snapshot;
 mod state;
 mod state_dump;

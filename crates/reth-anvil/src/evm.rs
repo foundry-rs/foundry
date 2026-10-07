@@ -13,14 +13,16 @@ use alloy_evm::{
     RecoveredTx, TransactionEnvMut,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockValidationError, ExecutableTx, GasOutput, StateDB,
+        BlockValidationError, ExecutableTx, GasOutput, StateDB, calc::base_block_reward,
     },
-    precompiles::{DynPrecompile, PrecompilesMap},
+    precompiles::{DynPrecompile, Precompile, PrecompileInput, PrecompilesMap},
 };
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_engine::ExecutionData;
 use eyre::Result;
+use foundry_evm_networks::apply_bsc_p256_precompile;
 use reth_ethereum::{
+    chainspec::EthereumHardforks,
     evm::primitives::{
         ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
         NextBlockEnvAttributes, SenderRecoveryCache, execute::BlockAssembler,
@@ -35,10 +37,11 @@ use reth_ethereum::{
 use revm::{
     Database as RevmDatabase, Inspector,
     context::{
-        Block as _, CfgEnv, DBErrorMarker,
+        Block, CfgEnv, DBErrorMarker,
         result::{InvalidTransaction, ResultAndState},
     },
     inspector::NoOpInspector,
+    precompile::{PrecompileOutput, PrecompileResult},
     primitives::hardfork::SpecId,
     state::{Account, AccountInfo, Bytecode, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -151,6 +154,7 @@ pub type PrecompileBuilder = Arc<dyn Fn(u64) -> DynPrecompile + Send + Sync>;
 pub struct AnvilEvmFactory<F> {
     inner: F,
     precompiles: Arc<Vec<(Address, PrecompileBuilder)>>,
+    impersonation: ImpersonationState,
     fork: Option<Arc<dyn ForkInfo>>,
     console: bool,
 }
@@ -175,8 +179,9 @@ impl<F> AnvilEvmFactory<F> {
         precompiles: Vec<(Address, PrecompileBuilder)>,
         fork: Option<Arc<dyn ForkInfo>>,
         console: bool,
+        impersonation: ImpersonationState,
     ) -> Self {
-        Self { inner, precompiles: Arc::new(precompiles), fork, console }
+        Self { inner, precompiles: Arc::new(precompiles), impersonation, fork, console }
     }
 
     /// Returns the wrapped factory.
@@ -186,14 +191,30 @@ impl<F> AnvilEvmFactory<F> {
     }
 
     /// Installs the precompiles for the block and returns the `console.log` buffer, when
-    /// collecting.
+    /// collecting: the network's, BSC's P256 verifier when Haber is active, and the `ecrecover`
+    /// override for impersonated signatures.
     fn install(
         &self,
         precompiles: &mut PrecompilesMap,
         block_number: u64,
+        chain_id: u64,
+        timestamp: u64,
     ) -> Option<ConsoleBuffer> {
         for (address, build) in self.precompiles.iter() {
             precompiles.apply_precompile(address, |_| Some(build(block_number)));
+        }
+        // A fork keeps the precompiles of the chain it forks, whatever chain id the node reports.
+        let chain_id = self.fork.as_ref().map_or(chain_id, |fork| fork.chain_id());
+        apply_bsc_p256_precompile(precompiles, chain_id, timestamp);
+        if self.impersonation.has_signature_overrides() {
+            let impersonation = self.impersonation.clone();
+            precompiles.apply_precompile(&EC_RECOVER_ADDRESS, |ecrecover| {
+                let ecrecover = ecrecover?;
+                let id = ecrecover.precompile_id().clone();
+                Some(DynPrecompile::new_stateful(id, move |input| {
+                    cheat_ecrecover(&impersonation, &ecrecover, input)
+                }))
+            });
         }
         let console = self.console.then(ConsoleBuffer::default)?;
         precompiles.apply_precompile(&HARDHAT_CONSOLE_ADDRESS, |_| Some(console.precompile()));
@@ -224,9 +245,9 @@ where
         db: DB,
         input: EvmEnv<F::Spec, F::BlockEnv>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let block_number = input.block_env.number().saturating_to();
+        let (block_number, chain_id, timestamp) = block_context(&input);
         let mut evm = self.inner.create_evm(self.wrap_db(db), input);
-        let console = self.install(evm.precompiles_mut(), block_number);
+        let console = self.install(evm.precompiles_mut(), block_number, chain_id, timestamp);
         AnvilEvm::new(evm, console)
     }
 
@@ -236,11 +257,50 @@ where
         input: EvmEnv<F::Spec, F::BlockEnv>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let block_number = input.block_env.number().saturating_to();
+        let (block_number, chain_id, timestamp) = block_context(&input);
         let mut evm = self.inner.create_evm_with_inspector(self.wrap_db(db), input, inspector);
-        let console = self.install(evm.precompiles_mut(), block_number);
+        let console = self.install(evm.precompiles_mut(), block_number, chain_id, timestamp);
         AnvilEvm::new(evm, console)
     }
+}
+
+/// The `ecrecover` precompile address.
+const EC_RECOVER_ADDRESS: Address = Address::with_last_byte(1);
+
+/// The gas `ecrecover` costs.
+const EC_RECOVER_GAS: u64 = 3_000;
+
+/// Returns the block number, chain id, and timestamp of an EVM environment.
+fn block_context<Spec, BlockEnv: Block>(input: &EvmEnv<Spec, BlockEnv>) -> (u64, u64, u64) {
+    (
+        input.block_env.number().saturating_to(),
+        input.cfg_env.chain_id,
+        input.block_env.timestamp().saturating_to(),
+    )
+}
+
+/// `ecrecover` with anvil's signature overrides: a signature `anvil_impersonateSignature`
+/// registered recovers to its address; every other signature recovers as usual.
+fn cheat_ecrecover(
+    impersonation: &ImpersonationState,
+    ecrecover: &DynPrecompile,
+    input: PrecompileInput<'_>,
+) -> PrecompileResult {
+    if input.gas < EC_RECOVER_GAS {
+        return ecrecover.call(input);
+    }
+    let mut padded = [0u8; 128];
+    let len = input.data.len().min(128);
+    padded[..len].copy_from_slice(&input.data[..len]);
+    let mut signature = [0u8; 65];
+    signature[..64].copy_from_slice(&padded[64..128]);
+    signature[64] = padded[63];
+    if let Some(address) = impersonation.signature_override_raw(&signature) {
+        let mut output = [0u8; 32];
+        output[12..].copy_from_slice(address.as_slice());
+        return Ok(PrecompileOutput::new(EC_RECOVER_GAS, output.into(), input.reservoir));
+    }
+    ecrecover.call(input)
 }
 
 /// Database adapter that serves the hashes of the blocks below the fork block from the fork.
@@ -408,6 +468,7 @@ impl<Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>> AnvilEvmConfig<Evm> 
 
 impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
     /// Wraps the given EVM config.
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         inner: Evm,
         state: ImpersonationState,
@@ -416,12 +477,14 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
         settings: EvmSettings,
         sender_cache: Option<SenderRecoveryCache>,
         console: Option<ConsolePrinter>,
+        reward: BlockReward,
     ) -> Self {
         let executor_factory = AnvilBlockExecutorFactory::new(
             inner.block_executor_factory().clone(),
             anvil_state,
             block_env.clone(),
             console,
+            reward,
         );
         Self { inner, executor_factory, state, block_env, settings, sender_cache }
     }
@@ -576,14 +639,34 @@ where
     }
 }
 
+/// Returns the block reward reth's executor credits to the beneficiary of the block with the
+/// given number, if any: pre-merge blocks get one, as the chain spec defines it.
+#[derive(Clone)]
+pub struct BlockReward(Arc<dyn Fn(u64) -> Option<u128> + Send + Sync>);
+
+impl BlockReward {
+    /// The rewards of the given chain spec.
+    pub fn new<Spec: EthereumHardforks + Send + Sync + 'static>(chain_spec: Arc<Spec>) -> Self {
+        Self(Arc::new(move |number| base_block_reward(&*chain_spec, number)))
+    }
+}
+
+impl fmt::Debug for BlockReward {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("BlockReward")
+    }
+}
+
 /// Block executor factory that applies the queued anvil state writes at the start of every
-/// block, caps the number of transactions per block, and prints `console.log` output.
+/// block, caps the number of transactions per block, takes back the block reward, and prints
+/// `console.log` output.
 #[derive(Debug, Clone)]
 pub struct AnvilBlockExecutorFactory<F> {
     inner: F,
     state: SharedAnvilState,
     block_env: BlockEnvOverrides,
     console: Option<ConsolePrinter>,
+    reward: BlockReward,
 }
 
 impl<F> AnvilBlockExecutorFactory<F> {
@@ -593,8 +676,9 @@ impl<F> AnvilBlockExecutorFactory<F> {
         state: SharedAnvilState,
         block_env: BlockEnvOverrides,
         console: Option<ConsolePrinter>,
+        reward: BlockReward,
     ) -> Self {
-        Self { inner, state, block_env, console }
+        Self { inner, state, block_env, console, reward }
     }
 }
 
@@ -627,19 +711,22 @@ where
         DB: StateDB,
         I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>,
     {
+        let reward = (self.reward.0)(evm.block().number().saturating_to());
         AnvilBlockExecutor {
             inner: self.inner.create_executor(evm, ctx),
             state: self.state.clone(),
             max_transactions: self.block_env.max_transactions(),
             console: self.console.clone(),
             current_tx: None,
+            reward,
         }
     }
 }
 
 /// Block executor that applies the queued anvil state writes after the pre-execution changes,
-/// rejects every transaction past the block's transaction count limit, and prints the
-/// `console.log` lines of every committed transaction.
+/// rejects every transaction past the block's transaction count limit, takes back the block
+/// reward reth credits pre-merge, and prints the `console.log` lines of every committed
+/// transaction.
 ///
 /// The payload builder skips a rejected transaction and leaves it in the pool for the next
 /// block, as anvil's miner does with the transactions past `--max-transactions`.
@@ -651,6 +738,8 @@ pub struct AnvilBlockExecutor<E> {
     console: Option<ConsolePrinter>,
     /// The hash of the transaction executed last, until it is committed.
     current_tx: Option<B256>,
+    /// The block reward reth's executor credits, which anvil does not pay.
+    reward: Option<u128>,
 }
 
 impl<E, Inner, DB> BlockExecutor for AnvilBlockExecutor<E>
@@ -711,9 +800,33 @@ where
     }
 
     fn finish(
-        self,
+        mut self,
     ) -> Result<(Self::Evm, BlockExecutionResult<Self::Receipt>), BlockExecutionError> {
-        self.inner.finish()
+        let Some(reward) = self.reward else {
+            return self.inner.finish();
+        };
+        // Anvil pays no block reward. Reth credits the pre-merge reward in `finish`, so take it
+        // back, and remove the account again when the reward created it.
+        let beneficiary = self.inner.evm().block().beneficiary();
+        let existed = self
+            .inner
+            .evm_mut()
+            .db_mut()
+            .basic(beneficiary)
+            .map_err(BlockExecutionError::other)?
+            .is_some();
+        let (mut evm, result) = self.inner.finish()?;
+        let db = evm.db_mut();
+        let mut info =
+            db.basic(beneficiary).map_err(BlockExecutionError::other)?.unwrap_or_default();
+        info.balance = info.balance.saturating_sub(U256::from(reward));
+        let mut account = Account::from(info);
+        account.mark_touch();
+        if !existed {
+            account.mark_selfdestruct();
+        }
+        db.commit(EvmState::from_iter([(beneficiary, account)]));
+        Ok((evm, result))
     }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {
@@ -780,7 +893,7 @@ where
                     + FromTxWithEncoded<SignedTxOf<Inner::EVM>>,
             Spec: Into<SpecId>,
         >,
-    Node: FullNodeTypes,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: EthereumHardforks>>,
     Inner: ExecutorBuilder<Node>,
     Inner::EVM: ConfigureEvm<
             Primitives = <Node::Types as NodeTypes>::Primitives,
@@ -812,6 +925,7 @@ where
             self.settings,
             ctx.sender_recovery_cache().cloned(),
             self.console,
+            BlockReward::new(ctx.chain_spec()),
         ))
     }
 }

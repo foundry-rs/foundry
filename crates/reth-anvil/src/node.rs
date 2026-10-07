@@ -6,6 +6,7 @@ use crate::{
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     console::ConsolePrinter,
+    debug::{AnvilDebugApi, AnvilDebugApiServer, AnvilTraceApi, AnvilTraceApiServer},
     eth_api::EthApi,
     fork::{ForkHeader, ForkInfo, ForkNetwork, ForkReplay},
     impersonation::{ImpersonatedSigner, ImpersonationState},
@@ -89,6 +90,9 @@ pub struct NodeHandle {
     pub node_exit_future: NodeExit,
     /// Stops the node when the handle and every in-process API drop.
     _shutdown: Arc<oneshot::Sender<()>>,
+    /// Stops the RPC servers when the handle drops, as on anvil; the in-process API keeps the
+    /// node.
+    _server_shutdown: oneshot::Sender<()>,
 }
 
 /// Resolves when the node exits, with its exit result.
@@ -193,6 +197,16 @@ impl NodeHandle {
         ProviderBuilder::new(&self.http_endpoint()).build().expect("failed to build HTTP provider")
     }
 
+    /// Returns the IPC endpoint path, if the node serves one.
+    pub fn ipc_path(&self) -> Option<String> {
+        self.config.get_ipc_path()
+    }
+
+    /// Returns a provider for the IPC endpoint, if the node serves one.
+    pub fn ipc_provider(&self) -> Option<RetryProvider> {
+        ProviderBuilder::new(&self.config.get_ipc_path()?).build().ok()
+    }
+
     /// Returns a provider for the WebSocket endpoint.
     pub fn ws_provider(&self) -> RetryProvider {
         ProviderBuilder::new(&self.ws_endpoint()).build().expect("failed to build WS provider")
@@ -272,6 +286,7 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
 
     let (exit_tx, exit_rx) = oneshot::channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (server_shutdown_tx, server_shutdown_rx) = oneshot::channel();
     tokio::spawn(supervise::<Net>(Supervisor {
         running: Some(running),
         server: Some(server),
@@ -281,12 +296,19 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
         relaunches,
         exit: Some(exit_tx),
         shutdown: shutdown_rx,
+        server_shutdown: Some(server_shutdown_rx),
     }));
 
     let shutdown = Arc::new(shutdown_tx);
     Ok((
         EthApi::new(module, instance_id, shutdown.clone()),
-        NodeHandle { config, address, node_exit_future: NodeExit(exit_rx), _shutdown: shutdown },
+        NodeHandle {
+            config,
+            address,
+            node_exit_future: NodeExit(exit_rx),
+            _shutdown: shutdown,
+            _server_shutdown: server_shutdown_tx,
+        },
     ))
 }
 
@@ -300,6 +322,8 @@ struct Supervisor {
     relaunches: mpsc::UnboundedReceiver<Relaunch>,
     exit: Option<oneshot::Sender<Result<()>>>,
     shutdown: oneshot::Receiver<()>,
+    /// Fires when the node handle drops; the RPC servers stop, the node runs on.
+    server_shutdown: Option<oneshot::Receiver<()>>,
 }
 
 async fn supervise<Net: AnvilNetwork>(mut supervisor: Supervisor) {
@@ -318,6 +342,19 @@ async fn supervise<Net: AnvilNetwork>(mut supervisor: Supervisor) {
                 break;
             }
             _ = &mut supervisor.shutdown => break,
+            _ = async {
+                match supervisor.server_shutdown.as_mut() {
+                    Some(server_shutdown) => {
+                        let _ = server_shutdown.await;
+                    }
+                    None => std::future::pending().await,
+                }
+            } => {
+                supervisor.server_shutdown = None;
+                if let Some(server) = supervisor.server.take() {
+                    server.stop();
+                }
+            }
         }
     }
     if let Some(server) = supervisor.server.take() {
@@ -534,6 +571,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     signers.push(Box::new(DevSigner::new(signer_accounts)));
                     signers.push(Box::new(ImpersonatedSigner::new(impersonation.clone())));
                 }
+                let fork_info = fork.map(|fork| fork as Arc<dyn ForkInfo>);
                 let rpc = AnvilRpc::new(
                     identity,
                     relauncher,
@@ -549,7 +587,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     transaction_order,
                     min_priority_fee_enforced,
                     enforce_tx_gas_limit,
-                    fork.map(|fork| fork as Arc<dyn ForkInfo>),
+                    fork_info.clone(),
                     ctx.pool().clone(),
                     ctx.provider().clone(),
                     eth_api,
@@ -560,6 +598,14 @@ async fn launch_node<Net: AnvilNetwork>(
                 let eth_module = EthExtApiServer::into_rpc(rpc.clone());
                 let web3_module = Web3ExtApiServer::into_rpc(rpc.clone());
                 let personal_module = PersonalApiServer::into_rpc(rpc);
+                let debug_module = AnvilDebugApiServer::into_rpc(AnvilDebugApi::new(
+                    ctx.registry.debug_api(),
+                    fork_info.clone(),
+                ));
+                let trace_module = AnvilTraceApiServer::into_rpc(AnvilTraceApi::new(
+                    ctx.registry.trace_api(),
+                    fork_info,
+                ));
 
                 // The in-process API calls the same handlers the servers do.
                 let mut module = ctx.registry.module_for(&RpcModuleSelection::All);
@@ -570,12 +616,19 @@ async fn launch_node<Net: AnvilNetwork>(
                 )))?;
                 module.merge(anvil_module.clone())?;
                 module.merge(evm_module.clone())?;
-                for name in eth_module.method_names().chain(web3_module.method_names()) {
+                for name in eth_module
+                    .method_names()
+                    .chain(web3_module.method_names())
+                    .chain(debug_module.method_names())
+                    .chain(trace_module.method_names())
+                {
                     module.remove_method(name);
                 }
                 module.merge(eth_module.clone())?;
                 module.merge(web3_module.clone())?;
                 module.merge(personal_module.clone())?;
+                module.merge(debug_module.clone())?;
+                module.merge(trace_module.clone())?;
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
                 ctx.modules.merge_configured(anvil_module)?;
@@ -583,6 +636,8 @@ async fn launch_node<Net: AnvilNetwork>(
                 ctx.modules.replace_configured(eth_module)?;
                 ctx.modules.replace_configured(web3_module)?;
                 ctx.modules.merge_configured(personal_module)?;
+                ctx.modules.replace_configured(debug_module)?;
+                ctx.modules.replace_configured(trace_module)?;
                 Ok(())
             }
         });
@@ -593,7 +648,9 @@ async fn launch_node<Net: AnvilNetwork>(
         .sealed_header(node.provider.best_block_number()?)?
         .ok_or_else(|| eyre::eyre!("missing head header"))?;
     let insert_provider = node.provider.clone();
-    let (map_attributes, finish) = time.build_hooks(block_env.clone());
+    let (map_attributes, finish) =
+        time.build_hooks(block_env.clone(), chain_spec.genesis().coinbase);
+    let genesis_hash = node.provider.genesis_header()?.hash();
     let automine = {
         let mining = mining.clone();
         move || mining.is_automine()
@@ -614,6 +671,7 @@ async fn launch_node<Net: AnvilNetwork>(
         move || Ok(insert_provider.materialize_fork_reads()?),
         automine,
         pending_after,
+        genesis_hash,
         head,
         miner_requests,
     );

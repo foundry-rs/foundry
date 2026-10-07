@@ -1,17 +1,28 @@
 use crate::{server::SharedModule, state_dump::SerializableState, types::ReorgOptions};
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{Blob, TxEnvelope};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7910::EthConfig};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{
     anvil::{Forking, Metadata, MineOptions, NodeInfo},
     debug::ExecutionWitness,
-    trace::parity::{TraceResults, TraceType},
+    trace::{
+        filter::TraceFilter,
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
+        otterscan::{
+            BlockDetails, ContractCreator, InternalOperation, OtsBlockTransactions, TraceEntry,
+            TransactionsWithReceipts,
+        },
+        parity::{
+            LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
+        },
+    },
     txpool::TxpoolStatus,
 };
 use alloy_rpc_types_eth::{
     AccessListResult, Account, Block, EIP1186AccountProofResponse, FeeHistory, FillTransaction,
-    Index, Transaction, TransactionReceipt, TransactionRequest,
+    Header, Index, Transaction, TransactionReceipt, TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
 };
 use alloy_serde::WithOtherFields;
@@ -408,6 +419,66 @@ impl EthApi {
         self.request("trace_replayTransaction", params![hash, trace_types]).await
     }
 
+    /// Traces a mined transaction with a geth tracer.
+    pub async fn debug_trace_transaction(
+        &self,
+        hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace> {
+        self.request("debug_traceTransaction", params![hash, opts]).await
+    }
+
+    /// Traces a call with a geth tracer.
+    pub async fn debug_trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        block: Option<BlockId>,
+        opts: GethDebugTracingCallOptions,
+    ) -> Result<GethTrace> {
+        self.request("debug_traceCall", params![request, block, opts]).await
+    }
+
+    /// Traces the transactions of a block by number with a geth tracer.
+    pub async fn debug_trace_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        self.request("debug_traceBlockByNumber", params![number, opts]).await
+    }
+
+    /// Traces the transactions of a block by hash with a geth tracer.
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        self.request("debug_traceBlockByHash", params![hash, opts]).await
+    }
+
+    /// Replays the transactions of a block and returns their traces.
+    pub async fn trace_replay_block_transactions(
+        &self,
+        block: BlockNumberOrTag,
+        trace_types: HashSet<TraceType>,
+    ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>> {
+        self.request("trace_replayBlockTransactions", params![block, trace_types]).await
+    }
+
+    /// Returns the traces matching a filter.
+    pub async fn trace_filter(
+        &self,
+        filter: TraceFilter,
+    ) -> Result<Vec<LocalizedTransactionTrace>> {
+        self.request("trace_filter", params![filter]).await
+    }
+
+    /// Returns the state root of the latest block.
+    pub async fn state_root(&self) -> Result<Option<B256>> {
+        let block = self.block_by_number(BlockNumberOrTag::Latest).await?;
+        Ok(block.map(|block| block.header.state_root))
+    }
+
     /// Executes a call and returns its traces.
     pub async fn trace_call(
         &self,
@@ -448,6 +519,173 @@ impl EthApi {
         block: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse> {
         self.request("eth_getProof", params![address, keys, block]).await
+    }
+
+    /// Simulates blocks of calls on top of a block.
+    pub async fn simulate_v1(
+        &self,
+        payload: SimulatePayload,
+        block: Option<BlockId>,
+    ) -> Result<Vec<SimulatedBlock<Block>>> {
+        self.request("eth_simulateV1", params![payload, block]).await
+    }
+
+    /// Returns the pool blobs of a transaction.
+    pub async fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
+        let encoded: Option<Vec<String>> =
+            self.request("anvil_getBlobsByTransactionHash", params![hash]).await?;
+        let Some(encoded) = encoded else { return Ok(None) };
+        // Decode in place: a blob is 128 KiB, so moving one through the stack is a cost, and a
+        // few of them more than a test thread's stack holds.
+        let mut blobs = Vec::with_capacity(encoded.len());
+        for hex in &encoded {
+            blobs.push(Blob::ZERO);
+            let blob = blobs.last_mut().expect("just pushed");
+            alloy_primitives::hex::decode_to_slice(hex, blob.as_mut_slice())?;
+        }
+        Ok(Some(blobs))
+    }
+
+    /// Returns the pool blob with the given versioned hash.
+    pub async fn anvil_get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Box<Blob>>> {
+        let blob: Option<String> = self.request("anvil_getBlobByHash", params![hash]).await?;
+        blob.as_deref().map(decode_blob).transpose()
+    }
+
+    /// Attributes the transactions carrying `signature` to `address`.
+    pub async fn anvil_impersonate_signature(
+        &self,
+        signature: Bytes,
+        address: Address,
+    ) -> Result<()> {
+        self.request("anvil_impersonateSignature", params![signature, address]).await
+    }
+
+    /// Returns the interval mining period in seconds, if interval mining is enabled.
+    pub async fn anvil_get_interval_mining(&self) -> Result<Option<u64>> {
+        self.request("anvil_getIntervalMining", ArrayParams::new()).await
+    }
+
+    /// Returns the block access list of a block by hash.
+    pub async fn block_access_list_by_hash(&self, hash: B256) -> Result<Option<serde_json::Value>> {
+        self.request("eth_getBlockAccessListByBlockHash", params![hash]).await
+    }
+
+    /// Returns the block access list of a block by number.
+    pub async fn block_access_list_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> Result<Option<serde_json::Value>> {
+        self.request("eth_getBlockAccessListByBlockNumber", params![number]).await
+    }
+
+    /// Returns a block by hash, with transaction hashes.
+    pub async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>> {
+        self.request("eth_getBlockByHash", params![hash, false]).await
+    }
+
+    /// Returns the transaction count of a block.
+    pub async fn block_transaction_count_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> Result<Option<U256>> {
+        self.request("eth_getBlockTransactionCountByNumber", params![number]).await
+    }
+
+    /// Returns a transaction by hash, mined or pending.
+    pub async fn transaction_by_hash(&self, hash: B256) -> Result<Option<Transaction>> {
+        self.request("eth_getTransactionByHash", params![hash]).await
+    }
+
+    /// Returns a block header by number.
+    pub async fn erigon_get_header_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> Result<Option<Block>> {
+        self.request("erigon_getHeaderByNumber", params![number]).await
+    }
+
+    /// Returns the Otterscan API level.
+    pub async fn ots_get_api_level(&self) -> Result<u64> {
+        self.request("ots_getApiLevel", ArrayParams::new()).await
+    }
+
+    /// Returns the internal ETH transfers of a transaction.
+    pub async fn ots_get_internal_operations(&self, hash: B256) -> Result<Vec<InternalOperation>> {
+        self.request("ots_getInternalOperations", params![hash]).await
+    }
+
+    /// Returns whether an address has code at a block.
+    pub async fn ots_has_code(&self, address: Address, number: BlockNumberOrTag) -> Result<bool> {
+        self.request("ots_hasCode", params![address, number]).await
+    }
+
+    /// Returns the call trace of a transaction.
+    pub async fn ots_trace_transaction(&self, hash: B256) -> Result<Vec<TraceEntry>> {
+        self.request("ots_traceTransaction", params![hash]).await
+    }
+
+    /// Returns the revert data of a transaction.
+    pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
+        self.request("ots_getTransactionError", params![hash]).await
+    }
+
+    /// Returns a block with its issuance and fees.
+    pub async fn ots_get_block_details(&self, number: BlockNumberOrTag) -> Result<BlockDetails> {
+        self.request("ots_getBlockDetails", params![number]).await
+    }
+
+    /// Returns a block with its issuance and fees, by hash.
+    pub async fn ots_get_block_details_by_hash(&self, hash: B256) -> Result<BlockDetails> {
+        self.request("ots_getBlockDetailsByHash", params![hash]).await
+    }
+
+    /// Returns a page of a block's transactions with their receipts.
+    pub async fn ots_get_block_transactions(
+        &self,
+        number: u64,
+        page: usize,
+        page_size: usize,
+    ) -> Result<OtsBlockTransactions<Transaction, Header>> {
+        self.request("ots_getBlockTransactions", params![number, page, page_size]).await
+    }
+
+    /// Returns the transactions of an address before a block.
+    pub async fn ots_search_transactions_before(
+        &self,
+        address: Address,
+        number: u64,
+        page_size: usize,
+    ) -> Result<TransactionsWithReceipts<Transaction>> {
+        self.request("ots_searchTransactionsBefore", params![address, number, page_size]).await
+    }
+
+    /// Returns the transactions of an address after a block.
+    pub async fn ots_search_transactions_after(
+        &self,
+        address: Address,
+        number: u64,
+        page_size: usize,
+    ) -> Result<TransactionsWithReceipts<Transaction>> {
+        self.request("ots_searchTransactionsAfter", params![address, number, page_size]).await
+    }
+
+    /// Returns the hash of the transaction an address sent with the given nonce.
+    pub async fn ots_get_transaction_by_sender_and_nonce(
+        &self,
+        address: Address,
+        nonce: U256,
+    ) -> Result<Option<B256>> {
+        self.request("ots_getTransactionBySenderAndNonce", params![address, nonce.to::<u64>()])
+            .await
+    }
+
+    /// Returns the creator of a contract.
+    pub async fn ots_get_contract_creator(
+        &self,
+        address: Address,
+    ) -> Result<Option<ContractCreator>> {
+        self.request("ots_getContractCreator", params![address]).await
     }
 
     /// Creates the access list of a call.
@@ -570,3 +808,28 @@ macro_rules! params {
     }};
 }
 use params;
+
+/// Decodes a hex blob on the heap: a blob is 128 KiB, and deserializing one through serde puts
+/// several copies on the stack.
+pub(crate) fn decode_blob(hex: &str) -> Result<Box<Blob>> {
+    let mut blob = Box::<Blob>::default();
+    alloy_primitives::hex::decode_to_slice(hex, blob.as_mut_slice())?;
+    Ok(blob)
+}
+
+/// Runs `work` on a thread with a large stack and returns its result.
+pub(crate) async fn on_large_stack<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let (tx, rx) = oneshot::channel();
+    std::thread::Builder::new()
+        .stack_size(LARGE_STACK_SIZE)
+        .spawn(move || {
+            let _ = tx.send(work());
+        })
+        .expect("spawn a thread");
+    rx.await.expect("the worker thread finished")
+}
+
+/// The stack size of the threads [`on_large_stack`] spawns.
+const LARGE_STACK_SIZE: usize = 32 * 1024 * 1024;
