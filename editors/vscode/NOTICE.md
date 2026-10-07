@@ -12,5 +12,4 @@ VS Code Solidity extension; see `syntaxes/README.md` and `syntaxes/LICENSE`.
 
 The package name `solar-lsp`, language and command IDs, `solarLsp.*` settings and
 initialization protocol remain unchanged. The source manifest had no publisher;
-none has been invented during migration. Local VSIX packaging is supported;
-Marketplace ownership and publishing are separate maintainer decisions.
+Foundry publishes it as `tempo-labs.solar-lsp`.

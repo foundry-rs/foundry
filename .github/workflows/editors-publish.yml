@@ -1,0 +1,53 @@
+name: Publish VS Code extension
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pre-release:
+        description: Publish as a pre-release version
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  vscode:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      id-token: write # Sign in to Azure for the Marketplace.
+      contents: read
+    defaults:
+      run:
+        working-directory: editors/vscode
+    env:
+      PRE_RELEASE: ${{ inputs.pre-release && '--pre-release' || '' }}
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run check && npm test && npm run package
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Publish to the Visual Studio Marketplace
+        run: npx vsce publish --packagePath bundle/solar-lsp.vsix --azure-credential $PRE_RELEASE
+      - name: Publish to Open VSX
+        run: npx ovsx publish bundle/solar-lsp.vsix $PRE_RELEASE
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}

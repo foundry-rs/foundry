@@ -113,10 +113,10 @@ Zed's tree-sitter grammar remains pinned in `extension.toml`.
 
 Public identities are retained: VS Code `solar-lsp`, Solidity language ID,
 `solarLsp.*` settings and commands, server-returned `solar.*` commands, and
-Zed extension/server ID `solar`. The source VS Code manifest has no publisher;
-local packaging preserves that state. Choosing a store publisher and publishing
-are separate work. In particular, `solar.copySelector`, `solar.showReferences`
-and `solar.showTypeHierarchy` remain registered by the VS Code client.
+Zed extension/server ID `solar`. The VS Code extension ID is
+`tempo-labs.solar-lsp`. In particular, `solar.copySelector`,
+`solar.showReferences` and `solar.showTypeHierarchy` remain registered by the
+VS Code client.
 
 Executable settings require explicit migration; the old Solar path is never
 silently treated as Forge. See each client's README for exact settings and
@@ -131,6 +131,5 @@ in its documentation. Remove Solar's `editors/vscode` npm Dependabot entry after
 ownership moves, and redirect any editor packaging or release references. The
 inspected Solar workflows did not contain an editor build or store-publishing
 job; recheck at cutover. Keep Solar's language server implementation and its
-tests there. Coordinate Zed registry ownership and the VS Code publisher/ID
-before publishing; no store publication or source repository deletion is part
-of this import.
+tests there. Coordinate Zed registry ownership before publishing; no source
+repository deletion is part of this import.

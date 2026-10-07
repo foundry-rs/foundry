@@ -8,7 +8,12 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then run this in your Solidity project's
+[Foundry](https://getfoundry.sh), then install `tempo-labs.solar-lsp` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=tempo-labs.solar-lsp)
+or, for Cursor, VSCodium and other VS Code forks,
+[Open VSX](https://open-vsx.org/extension/tempo-labs/solar-lsp).
+
+To try the extension without installing it, run this in your Solidity project's
 terminal:
 
 ```sh
@@ -68,9 +73,8 @@ ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
 are never reinterpreted as Forge paths. The package name `solar-lsp`, language
 ID `solidity`, `solarLsp.*` setting keys and `solar.*` commands remain unchanged.
-The original manifest has no publisher; local packaging retains that state.
-Marketplace ownership and publishing require separate maintainer decisions;
-`forge lsp` does not require a Marketplace installation.
+The extension ID is `tempo-labs.solar-lsp`; `forge lsp` does not require a
+Marketplace installation.
 
 ## Formatting
 
@@ -180,7 +184,20 @@ after packaging; the checkout's license links are unchanged. Use `npm run packag
 for this preparation instead of invoking `vsce package` directly. The VSIX is
 local and ignored by Git. To preserve a normal profile, supply isolated
 `--user-data-dir` and `--extensions-dir` arguments when installing or opening
-VS Code. No automated Marketplace publishing is configured.
+VS Code.
+
+### Publishing
+
+The manual `Publish VS Code extension` workflow packages the VSIX and publishes
+it to the Visual Studio Marketplace and Open VSX. Bump `version` in
+`package.json` first; neither registry accepts a version twice. The Marketplace
+step signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credential`,
+so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
+variables for a federated identity that trusts
+`repo:foundry-rs/foundry:environment:release` and is a member of the `tempo-labs`
+publisher. The Open VSX step needs an `OVSX_PAT` environment secret from an
+account that owns the `tempo-labs` namespace. Select `pre-release` to publish a
+pre-release version.
 
 ## Protocol tracing and CodeLens
 
