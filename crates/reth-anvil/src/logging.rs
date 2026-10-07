@@ -9,7 +9,7 @@ use jsonrpsee::{
     MethodResponse,
     core::middleware::{Batch, Notification},
     server::middleware::rpc::RpcServiceT,
-    types::Request,
+    types::{Id, Request},
 };
 use reth_ethereum::{
     primitives::{BlockBody, NodePrimitives, SignerRecoverable},
@@ -103,7 +103,10 @@ pub async fn log_mined_blocks<N>(
     }
 }
 
-/// RPC middleware that prints the name of every method served.
+/// RPC middleware that prints the name of every method served and executes notifications.
+///
+/// jsonrpsee acknowledges a notification without running its method; anvil runs it and answers
+/// with no body.
 #[derive(Clone, Debug)]
 pub struct NodeInfoLayer {
     logging: LoggingState,
@@ -161,6 +164,19 @@ where
         &self,
         notification: Notification<'a>,
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
-        self.inner.notification(notification)
+        node_info(&self.logging, notification.method_name());
+        let request = Request {
+            jsonrpc: notification.jsonrpc,
+            id: Id::Null,
+            method: notification.method.clone(),
+            params: notification.params.clone(),
+            extensions: notification.extensions.clone(),
+        };
+        let call = self.inner.call(request);
+        let acknowledgement = self.inner.notification(notification);
+        async move {
+            let _ = call.await;
+            acknowledgement.await
+        }
     }
 }

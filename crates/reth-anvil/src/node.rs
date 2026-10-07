@@ -49,7 +49,7 @@ use reth_ethereum::{
         },
     },
     pool::{PoolTransaction, TransactionOrigin, TransactionPool},
-    primitives::{NodePrimitives, Recovered, SignedTransaction},
+    primitives::{Bytecode, NodePrimitives, Recovered, SignedTransaction},
     provider::{
         CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
         db::{
@@ -470,6 +470,12 @@ async fn launch_node<Net: AnvilNetwork>(
 
     let impersonation = ImpersonationState::default();
     impersonation.set_auto_impersonate(config.enable_auto_impersonate);
+    // The dump names the senders of its impersonated transactions, which no signature recovers.
+    if let Some(fork) = &fork {
+        for (hash, sender) in fork.impersonated_transactions() {
+            impersonation.remember_tx_sender(hash, sender);
+        }
+    }
     let (mining, miner_requests) = MiningController::new(initial_mining_mode(&config));
     let time = TimeManager::new(chain_spec.genesis().timestamp);
     let block_env = BlockEnvOverrides::default();
@@ -485,12 +491,30 @@ async fn launch_node<Net: AnvilNetwork>(
     block_env.set_gas_price(config.get_gas_price());
     // Anvil gives the first block the genesis base fee, not the EIP-1559 decrease of an empty
     // parent. A fork starts from the fork block's fee.
+    // A chain loaded from a dump continues the dump's fee timeline instead.
     if fork.is_none()
+        && config.init_state.is_none()
         && let Some(base_fee) = chain_spec.genesis_header().base_fee_per_gas()
     {
         block_env.set_next_base_fee(base_fee);
     }
     let anvil_state = AnvilState::shared();
+    // A dump at or below the fork block only overlays its accounts on the fork, as anvil does.
+    if let Some(state) = &config.init_state
+        && fork.as_ref().is_some_and(|fork| !fork.is_dump())
+    {
+        let mut writes = anvil_state.write();
+        for (address, record) in &state.accounts {
+            writes.set_nonce(*address, record.nonce);
+            writes.set_balance(*address, record.balance);
+            if !record.code.is_empty() {
+                writes.set_code(*address, Bytecode::new_raw(record.code.clone()));
+            }
+            for (slot, value) in &record.storage {
+                writes.set_storage_at(*address, *slot, (*value).into());
+            }
+        }
+    }
     let snapshots = SnapshotManager::default();
     let logging = LoggingState::new(!config.silent);
     let rpc_module = Arc::new(Mutex::new(None));

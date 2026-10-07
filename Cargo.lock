@@ -11341,6 +11341,7 @@ dependencies = [
  "foundry-fork-db",
  "foundry-test-utils",
  "futures",
+ "http-body-util",
  "hyper",
  "jsonrpsee",
  "monad-revm",

@@ -34,6 +34,7 @@ use reth_ethereum::{
             rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, RpcAddOns},
         },
     },
+    primitives::SealedHeader,
 };
 use std::{fmt, sync::Arc};
 use tower::layer::util::Identity;
@@ -114,7 +115,35 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
         if let Some(info) = fork.node_info().await {
             config.adopt_fork_identity(&info);
         }
+        // A state dump whose head lies above the fork block continues at its head, with the
+        // dump's blocks above the fork block; one at or below it only overlays its accounts.
+        if config.init_state.as_ref().is_some_and(|state| {
+            state.head_number().is_some_and(|number| number > fork.block_number())
+        }) && let Some(mut state) = config.init_state.take()
+        {
+            config.ensure_dump_head(&mut state)?;
+            let head =
+                SealedHeader::seal_slow(state.head_block().expect("ensured above").header.clone());
+            let fork = Arc::try_unwrap(fork)
+                .map_err(|_| eyre::eyre!("the fork backend is shared"))?
+                .into_dump_fork(&state, &head)?;
+            let chain_spec = config.dump_chain_spec(&head, &state)?;
+            config.init_state = Some(state);
+            return Ok(Prepared { chain_spec, fork: Some(Arc::new(fork)) });
+        }
         let chain_spec = config.fork_chain_spec(fork.header(), &accounts)?;
+        return Ok(Prepared { chain_spec, fork: Some(fork) });
+    }
+    // A state dump with a block environment continues at its head block, which becomes the
+    // genesis block; the blocks before it come from the dump.
+    if config.init_state.as_ref().is_some_and(|state| state.block.is_some()) {
+        let mut state = config.init_state.take().expect("checked above");
+        config.ensure_dump_head(&mut state)?;
+        let head = state.head_block().expect("ensured above").header.clone();
+        let head = SealedHeader::seal_slow(head);
+        let fork = ForkBackend::from_dump(config, &state, &head)?;
+        let chain_spec = config.dump_chain_spec(&head, &state)?;
+        config.init_state = Some(state);
         return Ok(Prepared { chain_spec, fork: Some(fork) });
     }
     Ok(Prepared { chain_spec: config.chain_spec()?, fork: None })

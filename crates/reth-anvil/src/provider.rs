@@ -5,13 +5,21 @@ use crate::{
     },
     miner::RewindHooks,
     state::{AnvilState, SharedAnvilState},
-    state_dump::{AccountDump, SerializableAccountRecord},
+    state_dump::{
+        ImpersonatedTransaction, SerializableAccountRecord, SerializableBlock,
+        SerializableTransaction, SerializableTransactionType, SnapshotAccount, StateDump,
+        StateSnapshot, TransactionInfo, json_convert,
+    },
     state_provider::AnvilStateProvider,
 };
-use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
+use alloy_consensus::{
+    BlockHeader, Transaction, TxReceipt, Typed2718,
+    transaction::{TransactionMeta, TxHashRef},
+};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{
-    Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, TxHash, TxNumber,
+    Address, B256, BlockHash, BlockNumber, Bytes, KECCAK256_EMPTY, StorageKey, TxHash, TxNumber,
+    U256,
 };
 use alloy_rpc_types_engine::ForkchoiceState;
 use eyre::Result;
@@ -34,8 +42,8 @@ use reth_ethereum::{
     chainspec::{ChainInfo, ChainSpecProvider, EthChainSpec},
     node::api::{BlockTy, HeaderTy, ReceiptTy, TxTy},
     primitives::{
-        BlockBody, RecoveredBlock, SealedBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
-        header::HeaderMut,
+        BlockBody, RecoveredBlock, SealedBlock, SealedHeader, SealedOrRecoveredBlock,
+        SignerRecoverable, StorageEntry, header::HeaderMut,
     },
     provider::{
         BlockExecutionOutput, BlockExecutionResult, BlockSource, ExecutionOutcome, ProviderError,
@@ -160,17 +168,48 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         if self.inner.block_number(hash)?.is_some() {
             return Ok(None);
         }
+        // A dump keeps blocks above its head too, as anvil keeps the blocks a state load
+        // replaced, reachable by hash alone.
         Ok(fork
             .block_number_by_hash(hash)?
-            .filter(|number| fork.predates_fork(*number))
+            .filter(|number| fork.is_dump() || fork.predates_fork(*number))
             .map(|_| fork))
     }
 
-    /// Returns the fork when the block id names a remote block below the fork block.
-    fn remote_for_id(&self, id: BlockHashOrNumber) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+    /// Returns the fork when it serves the body of the block with the given hash: a remote block
+    /// below the fork block, or the fork block itself. The fork block is the local genesis block,
+    /// whose body is empty; anvil serves its transactions from the endpoint.
+    fn remote_for_body(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+        if let Some(fork) = &self.fork
+            && hash == fork.block_hash()
+        {
+            return Ok(fork.block_by_hash(hash)?.is_some().then_some(fork));
+        }
+        self.remote_for_hash(hash)
+    }
+
+    /// Returns the fork when it serves the body of the block with the given number: a remote
+    /// block below the fork block, or the fork block itself.
+    fn remote_for_body_number(
+        &self,
+        number: BlockNumber,
+    ) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+        if let Some(fork) = &self.fork
+            && number == fork.block_number()
+        {
+            return Ok(fork.block_by_number(number)?.is_some().then_some(fork));
+        }
+        Ok(self.remote_for(number))
+    }
+
+    /// Returns the fork when it serves the body of the block with the given id.
+    fn remote_for_body_id(
+        &self,
+        id: BlockHashOrNumber,
+    ) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
         match id {
-            BlockHashOrNumber::Hash(hash) => self.remote_for_hash(hash),
-            BlockHashOrNumber::Number(number) => Ok(self.remote_for(number)),
+            BlockHashOrNumber::Hash(hash) => self.remote_for_body(hash),
+            BlockHashOrNumber::Number(number) => self.remote_for_body_number(number),
         }
     }
 
@@ -602,12 +641,9 @@ impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
         hash: B256,
         source: BlockSource,
     ) -> ProviderResult<Option<Self::Block>> {
-        if let Some(block) = self.inner.find_block_by_hash(hash, source)? {
-            return Ok(Some(block));
-        }
-        match self.remote_for_hash(hash)? {
+        match self.remote_for_body(hash)? {
             Some(fork) => Ok(fork.block_by_hash(hash)?.map(|block| (*block).clone().into_block())),
-            None => Ok(None),
+            None => self.inner.find_block_by_hash(hash, source),
         }
     }
 
@@ -616,19 +652,16 @@ impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
         hash: B256,
         source: BlockSource,
     ) -> ProviderResult<Option<SealedOrRecoveredBlock<Self::Block>>> {
-        if let Some(block) = self.inner.find_sealed_or_recovered_block(hash, source)? {
-            return Ok(Some(block));
-        }
-        match self.remote_for_hash(hash)? {
+        match self.remote_for_body(hash)? {
             Some(fork) => Ok(fork
                 .recovered_block(hash.into())?
                 .map(|block| SealedOrRecoveredBlock::Recovered(Arc::new(block)))),
-            None => Ok(None),
+            None => self.inner.find_sealed_or_recovered_block(hash, source),
         }
     }
 
     fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
-        match self.remote_for_id(id)? {
+        match self.remote_for_body_id(id)? {
             Some(fork) => Ok(fork.block(id)?.map(|block| (*block).clone().into_block())),
             None => self.inner.block(id),
         }
@@ -649,7 +682,7 @@ impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
     ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
-        match self.remote_for_id(id)? {
+        match self.remote_for_body_id(id)? {
             Some(fork) => fork.recovered_block(id),
             None => self.inner.recovered_block(id, transaction_kind),
         }
@@ -660,7 +693,7 @@ impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
         id: BlockHashOrNumber,
         transaction_kind: TransactionVariant,
     ) -> ProviderResult<Option<RecoveredBlock<Self::Block>>> {
-        match self.remote_for_id(id)? {
+        match self.remote_for_body_id(id)? {
             Some(fork) => fork.recovered_block(id),
             None => self.inner.sealed_block_with_senders(id, transaction_kind),
         }
@@ -775,7 +808,7 @@ impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
         &self,
         id: BlockHashOrNumber,
     ) -> ProviderResult<Option<Vec<Self::Transaction>>> {
-        match self.remote_for_id(id)? {
+        match self.remote_for_body_id(id)? {
             Some(fork) => Ok(fork.block(id)?.map(|block| block.body().transactions().to_vec())),
             None => self.inner.transactions_by_block(id),
         }
@@ -853,7 +886,7 @@ impl<N: AnvilNodeTypes> ReceiptProvider for AnvilProvider<N> {
         &self,
         block: BlockHashOrNumber,
     ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
-        match self.remote_for_id(block)? {
+        match self.remote_for_body_id(block)? {
             Some(fork) => {
                 let Some(hash) = fork.block(block)?.map(|block| block.hash()) else {
                     return Ok(None);
@@ -906,7 +939,7 @@ impl<N: AnvilNodeTypes> BlockBodyIndicesProvider for AnvilProvider<N> {
         &self,
         number: BlockNumber,
     ) -> ProviderResult<Option<StoredBlockBodyIndices>> {
-        match self.remote_for(number) {
+        match self.remote_for_body_number(number)? {
             Some(fork) => Ok(fork.block_by_number(number)?.map(|block| StoredBlockBodyIndices {
                 first_tx_num: remote_tx_number(number, 0),
                 tx_count: block.body().transactions().len() as u64,
@@ -1324,7 +1357,141 @@ impl<DB: DBProvider + Send + Sync, N: reth_ethereum::primitives::NodePrimitives>
     }
 }
 
-impl<N: AnvilNodeTypes> AccountDump for AnvilProvider<N> {
+impl<N: AnvilNodeTypes> StateDump for AnvilProvider<N> {
+    fn dump_blocks(
+        &self,
+        impersonated: &dyn Fn(B256) -> Option<Address>,
+    ) -> ProviderResult<(Vec<SerializableBlock>, Vec<SerializableTransaction>)> {
+        let best = self.inner.best_block_number()?;
+        // A chain loaded from a dump keeps the dump's blocks, its head among them.
+        let (mut first, mut blocks, mut transactions) =
+            (self.inner.chain_spec().genesis_header().number(), Vec::new(), Vec::new());
+        if let Some(fork) = self.fork.as_ref().filter(|fork| fork.is_dump()) {
+            (blocks, transactions) = fork.dumped_history();
+            first += 1;
+        }
+        for number in first..=best {
+            let Some(block) =
+                self.inner.recovered_block(number.into(), TransactionVariant::WithHash)?
+            else {
+                continue;
+            };
+            let hash = block.hash();
+            let receipts = self.inner.receipts_by_block(number.into())?.unwrap_or_default();
+            let mut dumped = Vec::with_capacity(block.body().transactions().len());
+            let mut cumulative_gas_used = 0;
+            for (index, (tx, sender)) in
+                block.body().transactions().iter().zip(block.senders()).enumerate()
+            {
+                let tx_hash = *tx.tx_hash();
+                let recovered = tx.recover_signer().ok();
+                let impersonated_sender = (recovered != Some(*sender))
+                    .then_some(*sender)
+                    .or_else(|| impersonated(tx_hash));
+                dumped.push(SerializableTransactionType::MaybeImpersonatedTransaction(
+                    ImpersonatedTransaction { transaction: json_convert(tx)?, impersonated_sender },
+                ));
+                let Some(receipt) = receipts.get(index) else { continue };
+                let gas_used = receipt.cumulative_gas_used().saturating_sub(cumulative_gas_used);
+                cumulative_gas_used = receipt.cumulative_gas_used();
+                let envelope = alloy_consensus::ReceiptEnvelope::from_typed(
+                    alloy_consensus::TxType::try_from(receipt.ty())
+                        .map_err(|error| ProviderError::other(std::io::Error::other(error)))?,
+                    alloy_consensus::ReceiptWithBloom {
+                        receipt: alloy_consensus::Receipt {
+                            status: receipt.status_or_post_state(),
+                            cumulative_gas_used: receipt.cumulative_gas_used(),
+                            logs: receipt.logs().to_vec(),
+                        },
+                        logs_bloom: receipt.bloom(),
+                    },
+                );
+                transactions.push(SerializableTransaction {
+                    info: TransactionInfo {
+                        transaction_hash: tx_hash,
+                        transaction_index: index as u64,
+                        from: *sender,
+                        to: tx.to(),
+                        contract_address: tx.to().is_none().then(|| sender.create(tx.nonce())),
+                        traces: Vec::new(),
+                        exit: if receipt.status() { "Stop" } else { "Revert" }.to_string(),
+                        out: None,
+                        nonce: tx.nonce(),
+                        gas_used,
+                    },
+                    receipt: json_convert(&envelope)?,
+                    block_hash: hash,
+                    block_number: number,
+                });
+            }
+            blocks.push(SerializableBlock {
+                header: json_convert(block.header())?,
+                transactions: dumped,
+                ommers: block
+                    .body()
+                    .ommers()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(json_convert)
+                    .collect::<ProviderResult<_>>()?,
+                withdrawals: block.body().withdrawals().cloned(),
+            });
+        }
+        Ok((blocks, transactions))
+    }
+
+    fn dump_snapshots(&self) -> ProviderResult<Vec<(B256, StateSnapshot)>> {
+        // The accounts and slots of the latest state name what every snapshot reads.
+        let accounts = self.dump_accounts()?;
+        let best = self.inner.best_block_number()?;
+        let (mut first, mut snapshots) =
+            (self.inner.chain_spec().genesis_header().number(), Vec::new());
+        if let Some(fork) = self.fork.as_ref().filter(|fork| fork.is_dump()) {
+            snapshots = fork.dumped_snapshots();
+            first += 1;
+        }
+        for number in first..=best {
+            let Some(hash) = self.inner.block_hash(number)? else { continue };
+            // With the state writes the next block applies, which a replay of it reads.
+            let state = self.history_by_block_number(number)?;
+            let mut snapshot = StateSnapshot::default();
+            for (address, record) in &accounts {
+                let Some(account) = state.basic_account(address)? else { continue };
+                let code = match account.bytecode_hash {
+                    Some(code_hash) => state.bytecode_by_hash(&code_hash)?,
+                    None => None,
+                };
+                snapshot.accounts.insert(
+                    *address,
+                    SnapshotAccount {
+                        balance: account.balance,
+                        nonce: account.nonce,
+                        code_hash: account.bytecode_hash.unwrap_or(KECCAK256_EMPTY),
+                        code: code.map(|code| json_convert(&code.0)).transpose()?,
+                    },
+                );
+                let mut storage = BTreeMap::new();
+                for slot in record.storage.keys() {
+                    if let Some(value) = state.storage(*address, *slot)?
+                        && !value.is_zero()
+                    {
+                        storage.insert(U256::from_be_bytes(slot.0), value);
+                    }
+                }
+                if !storage.is_empty() {
+                    snapshot.storage.insert(*address, storage);
+                }
+            }
+            for ancestor in first..number {
+                if let Some(ancestor_hash) = self.inner.block_hash(ancestor)? {
+                    snapshot.block_hashes.insert(U256::from(ancestor), ancestor_hash);
+                }
+            }
+            snapshots.push((hash, snapshot));
+        }
+        Ok(snapshots)
+    }
+
     fn dump_accounts(&self) -> ProviderResult<BTreeMap<Address, SerializableAccountRecord>> {
         let provider = self.inner.database_provider_ro()?;
         let tx = provider.tx_ref();

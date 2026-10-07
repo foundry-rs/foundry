@@ -1065,7 +1065,7 @@ async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "anvil_setChainId relaunches the node from a state dump, which carries no blocks"]
+#[ignore = "replays run with the precompiles of the current chain id; anvil serves the traces it recorded at mining"]
 async fn test_mined_precompile_traces_survive_chain_id_changes() {
     let p256 = Address::left_padding_from(&[1, 0]);
     let target = Address::left_padding_from(&[0xbe, 0xef]);
@@ -1488,7 +1488,6 @@ async fn test_debug_trace_transaction_struct_logs_with_steps_tracing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "state dumps carry accounts only, so the restored node does not know the transaction"]
 async fn test_trace_replays_report_unavailable_historical_state() {
     let (api, handle) = spawn(NodeConfig::test().with_steps_tracing(true)).await;
     let from = handle.dev_wallets().next().unwrap().address();
@@ -1515,7 +1514,7 @@ async fn test_trace_replays_report_unavailable_historical_state() {
         let error =
             provider.debug_trace_transaction(receipt.transaction_hash, opts).await.unwrap_err();
         let error = error.as_error_resp().unwrap();
-        assert_eq!(error.code, -32000);
+        assert_eq!(error.code, -32000, "{}", error.message);
         assert_eq!(error.message, message);
     }
 
@@ -1526,7 +1525,13 @@ async fn test_trace_replays_report_unavailable_historical_state() {
         )
         .await
         .unwrap_err();
-    assert_eq!(error.to_string(), message);
+    let jsonrpsee::core::server::MethodsError::JsonRpc(error) =
+        error.downcast::<jsonrpsee::core::server::MethodsError>().unwrap()
+    else {
+        panic!("expected a JSON-RPC error");
+    };
+    assert_eq!(error.code(), -32000);
+    assert_eq!(error.message(), message);
 
     // Genesis has no transactions to replay.
     let genesis = api

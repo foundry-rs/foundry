@@ -65,6 +65,7 @@ alloy-sol-types.workspace = true
 # revm
 revm.workspace = true
 ethereum_ssz.workspace = true
+http-body-util.workspace = true
 hyper.workspace = true
 
 # monad

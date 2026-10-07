@@ -1,6 +1,6 @@
 use crate::{
     fork::{ForkGenesisAccount, ForkSettings},
-    state_dump::SerializableState,
+    state_dump::{CheckpointForks, SerializableState},
     types::{ForkChoice, ForkUrl, TransactionOrder},
 };
 use alloy_eips::{eip2935, eip4788, eip7002, eip7251};
@@ -578,6 +578,13 @@ impl NodeConfig {
         self
     }
 
+    /// Loads the state to load at startup from a file. A file that does not load is ignored,
+    /// as on anvil.
+    pub fn with_init_state_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.init_state = SerializableState::load(path).ok();
+        self
+    }
+
     /// Sets the fork endpoints.
     pub fn with_fork_urls(mut self, fork_urls: Vec<ForkUrl>) -> Self {
         self.fork_urls = fork_urls;
@@ -1027,6 +1034,69 @@ impl NodeConfig {
         );
         genesis = genesis.extend_accounts(alloc);
 
+        let builder =
+            ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
+        let mut spec = activate_hardfork(builder, hardfork).build();
+        spec.genesis_header = SealedHeader::new(header.clone_header(), header.hash());
+        Ok(Arc::new(spec))
+    }
+
+    /// Gives a state dump with a block environment but no block at its head a checkpoint block
+    /// to continue from, as anvil does, on top of the dump's block before it, if any.
+    pub fn ensure_dump_head(&self, state: &mut SerializableState) -> Result<()> {
+        let Some(number) = state.head_number() else { return Ok(()) };
+        if state.blocks.iter().any(|block| block.header.number == number) {
+            return Ok(());
+        }
+        if !state.blocks.is_empty() {
+            eyre::bail!("Best hash not found for best number {number}");
+        }
+        let hardfork = self.get_hardfork()?;
+        let parent_hash =
+            number.checked_sub(1).and_then(|parent| state.block_hash(parent)).unwrap_or_default();
+        state.synthesize_head(
+            parent_hash,
+            CheckpointForks {
+                london: hardfork >= EthereumHardfork::London,
+                shanghai: hardfork >= EthereumHardfork::Shanghai,
+                cancun: hardfork >= EthereumHardfork::Cancun,
+                prague: hardfork >= EthereumHardfork::Prague,
+            },
+        );
+        Ok(())
+    }
+
+    /// Builds the chain spec of a chain loaded from a state dump: the dump's head block is the
+    /// genesis block, with the dump's accounts as the genesis allocation.
+    pub fn dump_chain_spec(
+        &self,
+        header: &SealedHeader,
+        state: &SerializableState,
+    ) -> Result<Arc<ChainSpec>> {
+        let hardfork =
+            self.ethereum_hardfork_at(Chain::from_id(self.get_chain_id()), header.timestamp)?;
+        let mut genesis = self
+            .genesis
+            .clone()
+            .unwrap_or_default()
+            .with_timestamp(header.timestamp)
+            .with_gas_limit(header.gas_limit)
+            .with_difficulty(header.difficulty)
+            .with_base_fee(header.base_fee_per_gas.map(u128::from));
+        genesis.number = Some(header.number);
+        genesis.config.chain_id = self.get_chain_id();
+        let alloc = state.accounts.iter().map(|(address, record)| {
+            let storage = (!record.storage.is_empty()).then(|| record.storage.clone());
+            (
+                *address,
+                GenesisAccount::default()
+                    .with_nonce(Some(record.nonce))
+                    .with_balance(record.balance)
+                    .with_code((!record.code.is_empty()).then(|| record.code.clone()))
+                    .with_storage(storage),
+            )
+        });
+        genesis = genesis.extend_accounts(alloc);
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
         let mut spec = activate_hardfork(builder, hardfork).build();

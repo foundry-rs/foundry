@@ -7,8 +7,18 @@
 //! blocks; everything else is read from the remote endpoint at the fork block, through foundry's
 //! cached fork database.
 
-use crate::{config::NodeConfig, types::ForkChoice};
-use alloy_consensus::{BlockHeader, transaction::TransactionMeta};
+use crate::{
+    config::NodeConfig,
+    state_dump::{
+        SerializableBlock, SerializableState, SerializableTransaction, SnapshotAccount,
+        StateSnapshot, json_convert,
+    },
+    types::ForkChoice,
+};
+use alloy_consensus::{
+    BlockHeader,
+    transaction::{SignerRecoverable, TransactionMeta, TxHashRef},
+};
 use alloy_eips::{BlockHashOrNumber, BlockId};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, StorageValue, TxNumber, U256, keccak256};
@@ -127,6 +137,12 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn block_hash(&self) -> B256;
     /// Returns the hash of the remote block with the given number.
     fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>>;
+    /// Returns whether an endpoint stands below this fork; a state dump may serve alone.
+    fn has_remote(&self) -> bool;
+    /// Returns whether the endpoint serves the block with the given number.
+    fn remote_serves(&self, number: u64) -> bool;
+    /// Returns whether the state at the given block is available for a replay.
+    fn has_state_at(&self, number: u64) -> bool;
     /// Sends a raw JSON-RPC request to the fork endpoint.
     fn forward(&self, method: &str, params: serde_json::Value)
     -> ProviderResult<serde_json::Value>;
@@ -179,6 +195,18 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
 
     fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>> {
         Self::block_hash_by_number(self, number)
+    }
+
+    fn has_remote(&self) -> bool {
+        Self::has_remote(self)
+    }
+
+    fn remote_serves(&self, number: u64) -> bool {
+        Self::remote_serves(self, number)
+    }
+
+    fn has_state_at(&self, number: u64) -> bool {
+        Self::has_state_at(self, number)
     }
 
     fn forward(
@@ -400,6 +428,86 @@ pub struct ForkBackend<F: ForkNetwork = EthereumFork> {
     blocks: RwLock<HashMap<B256, Arc<SealedBlock<ForkBlock<F>>>>>,
     hashes: RwLock<HashMap<u64, B256>>,
     receipts: RwLock<HashMap<B256, Arc<Vec<ForkReceipt<F>>>>>,
+    /// The state dump this fork serves instead of an endpoint, if any.
+    dump: Option<DumpHistory>,
+}
+
+/// What a state dump provides as the chain below its head block.
+struct DumpHistory {
+    /// The blocks and transactions of the dump, for the next dump.
+    blocks: Vec<SerializableBlock>,
+    transactions: Vec<SerializableTransaction>,
+    /// The state at every block, by block hash.
+    snapshots: HashMap<B256, Arc<StateSnapshot>>,
+    /// The senders of the transactions of every block, by block hash.
+    senders: HashMap<B256, Vec<Address>>,
+    /// The block hash and index of every mined transaction.
+    positions: HashMap<B256, (B256, u64)>,
+    /// The transactions whose signature does not recover their sender.
+    impersonated: Vec<(B256, Address)>,
+    /// The fork block of the endpoint below the dump, when the dump sits on top of a fork.
+    remote_head: Option<u64>,
+}
+
+/// The state a fork serves under the local state: a remote endpoint's, the one a state dump
+/// recorded at the block, or none.
+#[derive(Clone)]
+pub enum RemoteState {
+    /// The state of a remote endpoint.
+    Shared(SharedBackend),
+    /// The state a dump recorded at the block.
+    Snapshot(Arc<StateSnapshot>),
+    /// No state below the local one.
+    None,
+}
+
+impl RemoteState {
+    fn with_blocking_mode(self, mode: BlockingMode) -> Self {
+        match self {
+            Self::Shared(backend) => Self::Shared(backend.with_blocking_mode(mode)),
+            other => other,
+        }
+    }
+
+    fn basic(&self, address: Address) -> ProviderResult<Option<AccountInfo>> {
+        match self {
+            Self::Shared(backend) => backend.basic_ref(address).map_err(ProviderError::other),
+            Self::Snapshot(snapshot) => {
+                snapshot.accounts.get(&address).map(snapshot_account_info).transpose()
+            }
+            Self::None => Ok(None),
+        }
+    }
+
+    fn storage(&self, address: Address, slot: U256) -> ProviderResult<StorageValue> {
+        match self {
+            Self::Shared(backend) => {
+                backend.storage_ref(address, slot).map_err(ProviderError::other)
+            }
+            Self::Snapshot(snapshot) => Ok(snapshot
+                .storage
+                .get(&address)
+                .and_then(|storage| storage.get(&slot))
+                .copied()
+                .unwrap_or_default()),
+            Self::None => Ok(StorageValue::ZERO),
+        }
+    }
+}
+
+/// Converts a snapshot account into revm's account info.
+fn snapshot_account_info(account: &SnapshotAccount) -> ProviderResult<AccountInfo> {
+    let code = match &account.code {
+        Some(code) => Some(json_convert(code)?),
+        None => None,
+    };
+    Ok(AccountInfo {
+        balance: account.balance,
+        nonce: account.nonce,
+        code_hash: account.code_hash,
+        code,
+        ..Default::default()
+    })
 }
 
 impl<F: ForkNetwork> Debug for ForkBackend<F> {
@@ -544,9 +652,301 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 blocks: RwLock::new(HashMap::new()),
                 hashes: RwLock::new(HashMap::from([(block_number, hash)])),
                 receipts: RwLock::new(HashMap::new()),
+                dump: None,
             }),
             genesis_accounts,
         ))
+    }
+
+    /// Serves the blocks, transactions, receipts, and states of a state dump as the chain below
+    /// its head block, which becomes the local genesis. A dump has no endpoint: what it does not
+    /// hold does not exist.
+    pub fn from_dump(
+        config: &NodeConfig,
+        state: &SerializableState,
+        head: &SealedHeader<ForkHeader<F>>,
+    ) -> Result<Arc<Self>> {
+        let mut settings = config.fork_settings();
+        settings.retries = 0;
+        settings.timeout = Duration::from_secs(1);
+        settings.no_storage_caching = true;
+        let url = "http://dump.invalid".to_string();
+        let chain_id = config.get_chain_id();
+        let gas_price =
+            head.base_fee_per_gas().map_or(crate::config::INITIAL_BASE_FEE as u128, u128::from);
+
+        let mut blocks = HashMap::new();
+        let mut hashes = HashMap::new();
+        let mut receipts = HashMap::new();
+        let mut codes = HashMap::new();
+        let dump = Self::dump_history(
+            state,
+            head,
+            None,
+            &mut blocks,
+            &mut hashes,
+            &mut receipts,
+            &mut codes,
+        )?;
+
+        let meta =
+            BlockchainDbMeta::new(block_env_from_header::<BlockEnv>(head.header()), url.clone());
+        let (shared, handler) = SharedBackend::new(
+            Arc::new(settings.provider::<alloy_network::AnyNetwork>(&url)?),
+            BlockchainDb::new(meta, None),
+            None,
+        );
+        spawn_backend_handler(handler)?;
+        let chain = settings.provider::<F::Network>(&url)?;
+        Ok(Arc::new(Self {
+            settings,
+            replay: RwLock::new(None),
+            url: RwLock::new(String::new()),
+            chain_id,
+            header: head.clone(),
+            gas_price,
+            state: RwLock::new(shared),
+            history: RwLock::new(HashMap::new()),
+            chain: RwLock::new(chain),
+            codes: RwLock::new(codes),
+            reads: RwLock::new(RemoteReads::default()),
+            blocks: RwLock::new(blocks),
+            hashes: RwLock::new(hashes),
+            receipts: RwLock::new(receipts),
+            dump: Some(dump),
+        }))
+    }
+
+    /// Reads a dump into the caches: its blocks, receipts, transaction positions, senders,
+    /// codes, and states.
+    fn dump_history(
+        state: &SerializableState,
+        head: &SealedHeader<ForkHeader<F>>,
+        remote_head: Option<u64>,
+        blocks: &mut HashMap<B256, Arc<SealedBlock<ForkBlock<F>>>>,
+        hashes: &mut HashMap<u64, B256>,
+        receipts: &mut HashMap<B256, Arc<Vec<ForkReceipt<F>>>>,
+        codes: &mut HashMap<B256, Bytecode>,
+    ) -> Result<DumpHistory> {
+        let mut senders = HashMap::new();
+        let mut impersonated = Vec::new();
+        // One entry per block, as anvil stores them by hash.
+        let mut dumped_blocks = HashMap::new();
+        for block in &state.blocks {
+            let header: ForkHeader<F> = json_convert(&block.header)?;
+            let transactions = block
+                .transactions
+                .iter()
+                .map(|transaction| transaction.transaction())
+                .collect::<Vec<_>>();
+            let body = json_convert(&serde_json::json!({
+                "transactions": transactions,
+                "ommers": block.ommers,
+                "withdrawals": block.withdrawals,
+            }))?;
+            let sealed = SealedBlock::seal_slow(
+                <ForkBlock<F> as reth_ethereum::primitives::Block>::new(header, body),
+            );
+            let hash = sealed.hash();
+            let mut block_senders = Vec::with_capacity(block.transactions.len());
+            for (tx, dumped) in sealed.body().transactions().iter().zip(&block.transactions) {
+                let recovered = tx.recover_signer().ok();
+                let sender = match (dumped.impersonated_sender(), recovered) {
+                    (Some(sender), _) => {
+                        if recovered != Some(sender) {
+                            impersonated.push((*tx.tx_hash(), sender));
+                        }
+                        sender
+                    }
+                    (None, Some(sender)) => sender,
+                    (None, None) => eyre::bail!(
+                        "transaction {} of block {} in the state dump has no sender",
+                        tx.tx_hash(),
+                        sealed.number()
+                    ),
+                };
+                block_senders.push(sender);
+            }
+            // Blocks above the head stay reachable by hash, as anvil keeps them, but no number
+            // names them.
+            if sealed.number() <= head.number() {
+                hashes.insert(sealed.number(), hash);
+            }
+            senders.insert(hash, block_senders);
+            blocks.insert(hash, Arc::new(sealed));
+            dumped_blocks.entry(hash).or_insert_with(|| block.clone());
+        }
+        hashes.insert(head.number(), head.hash());
+        // Anvil's order: by number, the canonical block last among its height, then by hash.
+        let mut dumped_blocks = dumped_blocks.into_iter().collect::<Vec<_>>();
+        dumped_blocks.sort_unstable_by_key(|(hash, block)| {
+            let number = block.header.number;
+            (number, hashes.get(&number) == Some(hash), *hash)
+        });
+        let dumped_blocks = dumped_blocks.into_iter().map(|(_, block)| block).collect();
+        let mut dumped_transactions = state
+            .transactions
+            .iter()
+            .map(|transaction| {
+                (
+                    (
+                        transaction.block_number,
+                        transaction.info.transaction_index,
+                        transaction.info.transaction_hash,
+                    ),
+                    transaction.clone(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect::<Vec<_>>();
+        dumped_transactions.dedup_by_key(|transaction| transaction.info.transaction_hash);
+
+        let mut by_block = HashMap::<B256, Vec<(u64, ForkReceipt<F>)>>::new();
+        let mut positions = HashMap::new();
+        for transaction in &state.transactions {
+            let receipt: ForkReceipt<F> = json_convert(&transaction.receipt)?;
+            by_block
+                .entry(transaction.block_hash)
+                .or_default()
+                .push((transaction.info.transaction_index, receipt));
+            positions.insert(
+                transaction.info.transaction_hash,
+                (transaction.block_hash, transaction.info.transaction_index),
+            );
+        }
+        for hash in blocks.keys() {
+            let mut block_receipts = by_block.remove(hash).unwrap_or_default();
+            block_receipts.sort_by_key(|(index, _)| *index);
+            receipts.insert(
+                *hash,
+                Arc::new(block_receipts.into_iter().map(|(_, receipt)| receipt).collect()),
+            );
+        }
+
+        for record in state.accounts.values() {
+            if !record.code.is_empty() {
+                codes.insert(keccak256(&record.code), Bytecode::new_raw(record.code.clone()));
+            }
+        }
+        let mut snapshots = HashMap::new();
+        if let Some(states) = &state.historical_states {
+            for (hash, snapshot) in &states.0 {
+                for account in snapshot.accounts.values() {
+                    if let Some(code) = &account.code {
+                        codes.insert(account.code_hash, Bytecode(json_convert(code)?));
+                    }
+                }
+                snapshots.insert(*hash, Arc::new(snapshot.clone()));
+            }
+        }
+        Ok(DumpHistory {
+            blocks: dumped_blocks,
+            transactions: dumped_transactions,
+            snapshots,
+            senders,
+            positions,
+            impersonated,
+            remote_head,
+        })
+    }
+
+    /// Puts a state dump on top of this fork: the dump's head block becomes the local genesis,
+    /// the dump's blocks above the fork block come from the dump, and the chain below the fork
+    /// block stays with the endpoint.
+    pub fn into_dump_fork(
+        self,
+        state: &SerializableState,
+        head: &SealedHeader<ForkHeader<F>>,
+    ) -> Result<Self> {
+        let remote_head = self.header.number();
+        let mut blocks = self.blocks.into_inner();
+        let mut hashes = self.hashes.into_inner();
+        let mut receipts = self.receipts.into_inner();
+        let mut codes = self.codes.into_inner();
+        let dump = Self::dump_history(
+            state,
+            head,
+            Some(remote_head),
+            &mut blocks,
+            &mut hashes,
+            &mut receipts,
+            &mut codes,
+        )?;
+        Ok(Self {
+            settings: self.settings,
+            replay: RwLock::new(None),
+            url: self.url,
+            chain_id: self.chain_id,
+            header: head.clone(),
+            gas_price: self.gas_price,
+            state: self.state,
+            history: self.history,
+            chain: self.chain,
+            codes: RwLock::new(codes),
+            reads: self.reads,
+            blocks: RwLock::new(blocks),
+            hashes: RwLock::new(hashes),
+            receipts: RwLock::new(receipts),
+            dump: Some(dump),
+        })
+    }
+
+    /// Returns whether this fork serves a state dump, on top of an endpoint or alone.
+    pub const fn is_dump(&self) -> bool {
+        self.dump.is_some()
+    }
+
+    /// Returns whether an endpoint stands below this fork.
+    pub fn has_remote(&self) -> bool {
+        self.dump.as_ref().is_none_or(|dump| dump.remote_head.is_some())
+    }
+
+    /// Returns whether the endpoint serves the block with the given number.
+    pub fn remote_serves(&self, number: u64) -> bool {
+        match &self.dump {
+            None => true,
+            Some(dump) => dump.remote_head.is_some_and(|head| number <= head),
+        }
+    }
+
+    /// Returns whether the state at the given block is available for a replay: the local chain
+    /// holds the fork block and the blocks above it, the endpoint serves the blocks it stands
+    /// below, and a dump the blocks it carries a state snapshot for.
+    pub fn has_state_at(&self, number: u64) -> bool {
+        if number >= self.header.number() || self.remote_serves(number) {
+            return true;
+        }
+        let Some(dump) = &self.dump else { return true };
+        self.hashes.read().get(&number).is_some_and(|hash| dump.snapshots.contains_key(hash))
+    }
+
+    /// Returns the blocks and transactions of the state dump this fork serves, if any.
+    pub fn dumped_history(&self) -> (Vec<SerializableBlock>, Vec<SerializableTransaction>) {
+        match &self.dump {
+            Some(dump) => (dump.blocks.clone(), dump.transactions.clone()),
+            None => (Vec::new(), Vec::new()),
+        }
+    }
+
+    /// Returns the states of the dump this fork serves, oldest block first.
+    pub fn dumped_snapshots(&self) -> Vec<(B256, StateSnapshot)> {
+        let Some(dump) = &self.dump else { return Vec::new() };
+        let hashes = self.hashes.read();
+        let mut numbers = hashes.iter().map(|(number, hash)| (*number, *hash)).collect::<Vec<_>>();
+        numbers.sort_unstable();
+        numbers
+            .into_iter()
+            .filter_map(|(_, hash)| {
+                dump.snapshots.get(&hash).map(|state| (hash, (**state).clone()))
+            })
+            .collect()
+    }
+
+    /// Returns the transactions of the dump whose signature does not recover their sender, with
+    /// the sender the dump names.
+    pub fn impersonated_transactions(&self) -> Vec<(B256, Address)> {
+        self.dump.as_ref().map(|dump| dump.impersonated.clone()).unwrap_or_default()
     }
 
     /// Returns the fork endpoint.
@@ -629,12 +1029,29 @@ impl<F: ForkNetwork> ForkBackend<F> {
     }
 
     /// Returns the remote state at the given block, which must not be above the fork block.
-    pub fn state_at(&self, number: u64) -> ProviderResult<SharedBackend> {
+    pub fn state_at(&self, number: u64) -> ProviderResult<RemoteState> {
+        if let Some(dump) = &self.dump
+            && !self.remote_serves(number)
+        {
+            // At the dump's head and above, the endpoint's state at its fork block stands under
+            // the local state; without an endpoint, nothing does.
+            if number >= self.header.number() {
+                return Ok(match dump.remote_head {
+                    Some(_) => RemoteState::Shared(self.state.read().clone()),
+                    None => RemoteState::None,
+                });
+            }
+            let hash = self.hashes.read().get(&number).copied();
+            return Ok(match hash.and_then(|hash| dump.snapshots.get(&hash)) {
+                Some(snapshot) => RemoteState::Snapshot(snapshot.clone()),
+                None => RemoteState::None,
+            });
+        }
         if number >= self.header.number() {
-            return Ok(self.state.read().clone());
+            return Ok(RemoteState::Shared(self.state.read().clone()));
         }
         if let Some(backend) = self.history.read().get(&number) {
-            return Ok(backend.clone());
+            return Ok(RemoteState::Shared(backend.clone()));
         }
         let header = self
             .header_by_number(number)?
@@ -652,7 +1069,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             Some(BlockId::number(number)),
         );
         self.history.write().insert(number, backend.clone());
-        Ok(backend)
+        Ok(RemoteState::Shared(backend))
     }
 
     /// Returns the remote bytecode with the given hash: one a remote account read fetched, or
@@ -660,6 +1077,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
     pub fn code_by_hash(&self, hash: &B256) -> ProviderResult<Option<Bytecode>> {
         if let Some(code) = self.codes.read().get(hash) {
             return Ok(Some(code.clone()));
+        }
+        if !self.has_remote() {
+            return Ok(None);
         }
         let hash = *hash;
         let code = self.request(move |chain| async move {
@@ -712,6 +1132,11 @@ impl<F: ForkNetwork> ForkBackend<F> {
         Fut: Future<Output = Result<T>> + Send + 'static,
         T: Debug + Send + 'static,
     {
+        if !self.has_remote() {
+            return Err(ProviderError::other(std::io::Error::other(
+                "a chain loaded from a state dump has no fork endpoint",
+            )));
+        }
         let future = request(self.chain.read().clone());
         let mut state = self.state.read().with_blocking_mode(blocking_mode());
         state.do_any_request(future).map_err(ProviderError::other)
@@ -732,6 +1157,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
     /// hardfork, as anvil does. Awaits the request itself: the setup runs on the caller's
     /// runtime, where a blocking request would stall a single-threaded one.
     pub async fn node_info(&self) -> Option<NodeInfo> {
+        if !self.has_remote() {
+            return None;
+        }
         let chain = self.chain.read().clone();
         chain.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await.ok()
     }
@@ -758,6 +1186,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
         if let Some(block) = self.blocks.read().get(&hash) {
             return Ok(Some(block.clone()));
         }
+        if !self.has_remote() {
+            return Ok(None);
+        }
         let block = self.request(move |chain| async move {
             chain.get_block_by_hash(hash).full().await.map_err(Into::into)
         })?;
@@ -773,6 +1204,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
             && let Some(block) = self.blocks.read().get(hash)
         {
             return Ok(Some(block.clone()));
+        }
+        if !self.remote_serves(number) {
+            return Ok(None);
         }
         let block = self.request(move |chain| async move {
             chain.get_block_by_number(number.into()).full().await.map_err(Into::into)
@@ -797,6 +1231,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
         id: BlockHashOrNumber,
     ) -> ProviderResult<Option<RecoveredBlock<ForkBlock<F>>>> {
         let Some(block) = self.block(id)? else { return Ok(None) };
+        if let Some(senders) = self.dump.as_ref().and_then(|dump| dump.senders.get(&block.hash())) {
+            return Ok(Some(RecoveredBlock::new_sealed((*block).clone(), senders.clone())));
+        }
         let block = (*block)
             .clone()
             .try_recover_unchecked()
@@ -843,6 +1280,9 @@ impl<F: ForkNetwork> ForkBackend<F> {
         if let Some(receipts) = self.receipts.read().get(&hash) {
             return Ok(Some(receipts.clone()));
         }
+        if !self.has_remote() {
+            return Ok(None);
+        }
         let receipts = self.request(move |chain| async move {
             chain.get_block_receipts(hash.into()).await.map_err(Into::into)
         })?;
@@ -858,6 +1298,27 @@ impl<F: ForkNetwork> ForkBackend<F> {
         &self,
         hash: B256,
     ) -> ProviderResult<Option<(ForkTx<F>, TransactionMeta)>> {
+        if let Some(dump) = &self.dump
+            && let Some((block_hash, index)) = dump.positions.get(&hash).copied()
+        {
+            let Some(block) = self.block_by_hash(block_hash)? else { return Ok(None) };
+            let Some(tx) = block.body().transactions().get(index as usize).cloned() else {
+                return Ok(None);
+            };
+            let meta = TransactionMeta {
+                tx_hash: hash,
+                index,
+                block_hash,
+                block_number: block.number(),
+                base_fee: block.base_fee_per_gas(),
+                excess_blob_gas: block.excess_blob_gas(),
+                timestamp: block.timestamp(),
+            };
+            return Ok(Some((tx, meta)));
+        }
+        if !self.has_remote() {
+            return Ok(None);
+        }
         let tx = self.request(move |chain| async move {
             chain.get_transaction_by_hash(hash).await.map_err(Into::into)
         })?;
@@ -900,8 +1361,13 @@ fn spawn_state_backend(
     } else {
         SharedBackend::new_with_anchor(provider, db, anchor)?
     };
-    // The handler gets its own thread and runtime: the backend blocks the calling thread while it
-    // waits, so it must not depend on the node runtime to make progress.
+    spawn_backend_handler(handler)?;
+    Ok(backend)
+}
+
+/// Runs a backend handler on its own thread and runtime: the backend blocks the calling thread
+/// while it waits, so it must not depend on the node runtime to make progress.
+fn spawn_backend_handler<H: Future<Output = ()> + Send + 'static>(handler: H) -> Result<()> {
     std::thread::Builder::new().name("fork-backend".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -909,7 +1375,7 @@ fn spawn_state_backend(
             .expect("failed to build fork backend runtime")
             .block_on(handler)
     })?;
-    Ok(backend)
+    Ok(())
 }
 
 /// Returns the latest remote block that has a hash, walking back at most two blocks.
@@ -935,7 +1401,7 @@ pub struct ForkStateProvider<F: ForkNetwork = EthereumFork> {
     /// The local state and its write index. `None` below the fork block, where the local chain has
     /// no state.
     local: Option<(StateProviderBox, Box<dyn LocalWrites>)>,
-    remote: SharedBackend,
+    remote: RemoteState,
     /// The block whose state this provider serves.
     block: u64,
 }
@@ -983,7 +1449,7 @@ impl<F: ForkNetwork> AccountReader for ForkStateProvider<F> {
         if let Some(local) = self.local_account(address)? {
             return local.basic_account(address);
         }
-        let Some(info) = self.remote.basic_ref(*address).map_err(ProviderError::other)? else {
+        let Some(info) = self.remote.basic(*address)? else {
             return Ok(None);
         };
         if info.is_empty() {
@@ -1023,10 +1489,7 @@ impl<F: ForkNetwork> StateProvider for ForkStateProvider<F> {
         if let Some(local) = self.local_slot(&account, &storage_key)? {
             return local.storage(account, storage_key);
         }
-        let value = self
-            .remote
-            .storage_ref(account, U256::from_be_bytes(storage_key.0))
-            .map_err(ProviderError::other)?;
+        let value = self.remote.storage(account, U256::from_be_bytes(storage_key.0))?;
         if self.local.is_some() {
             self.fork.record_slot(account, storage_key, value);
         }
@@ -1037,7 +1500,7 @@ impl<F: ForkNetwork> StateProvider for ForkStateProvider<F> {
         if let Some(local) = self.local_account(addr)? {
             return local.account_code(addr);
         }
-        let Some(info) = self.remote.basic_ref(*addr).map_err(ProviderError::other)? else {
+        let Some(info) = self.remote.basic(*addr)? else {
             return Ok(None);
         };
         if info.is_empty() {

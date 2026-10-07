@@ -536,6 +536,10 @@ where
     ) -> Result<EvmEnvFor<Self>, Self::Error> {
         let mut env = self.inner.evm_env(header)?;
         self.settings.apply(&mut env.cfg_env);
+        // A replay of a mined block runs under the chain id of the node, which `anvil_setChainId`
+        // may have changed since the block was mined. The pool checks the chain id of a new
+        // transaction, and the API the chain id of a request.
+        env.cfg_env.tx_chain_id_check = false;
         Ok(env)
     }
 

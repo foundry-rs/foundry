@@ -24,13 +24,13 @@ use reth_ethereum::{
     rpc::{
         DebugApi, TraceApi,
         api::{DebugApiServer, TraceApiServer},
-        eth::{EthApiError, utils::recover_raw_transaction},
+        eth::{EthApiError, TransactionSource, utils::recover_raw_transaction},
     },
     storage::StateProvider,
 };
 use reth_rpc_eth_api::{
     RpcNodeCore, RpcTxReq,
-    helpers::{EthTransactions, LoadBlock, TraceExt},
+    helpers::{EthTransactions, LoadBlock, LoadTransaction, TraceExt},
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -41,6 +41,9 @@ const TRANSACTION_NOT_FOUND_CODE: i32 = -32001;
 
 /// The error code anvil reports for a raw transaction from a sender with code.
 const SENDER_NOT_EOA_CODE: i32 = -32003;
+
+/// The error code anvil reports for a replay without the state of the parent block.
+const HISTORICAL_STATE_CODE: i32 = -32000;
 
 /// The `debug_*` methods with anvil's error codes and fork routing.
 #[rpc(server, namespace = "debug")]
@@ -133,25 +136,78 @@ fn ensure_mined(block: BlockId) -> RpcResult<()> {
     Ok(())
 }
 
-/// Returns the block id to ask the fork endpoint for, when the block is the fork block or one
-/// before it, which the local chain does not store. A hash keeps selecting the endpoint's block.
+/// Where the traces of a block come from.
+enum Route {
+    /// The fork endpoint serves the block, under this id.
+    Remote(BlockId),
+    /// The node replays the block, with this number when it knows the block.
+    Local(Option<u64>),
+}
+
+/// Routes a block to the fork endpoint when it serves the block, which the local chain does not
+/// store. A hash keeps selecting the endpoint's block.
+async fn route<Eth: LoadBlock>(
+    eth: &Eth,
+    fork: Option<&Arc<dyn ForkInfo>>,
+    block: BlockId,
+) -> RpcResult<Route> {
+    let Some(fork) = fork else { return Ok(Route::Local(None)) };
+    let Some(base) = eth.recovered_block(block).await.map_err(Into::into)? else {
+        return Ok(match block {
+            BlockId::Hash(_) if fork.has_remote() => Route::Remote(block),
+            _ => Route::Local(None),
+        });
+    };
+    let number = base.header().number();
+    if number > fork.block_number() || !fork.remote_serves(number) {
+        return Ok(Route::Local(Some(number)));
+    }
+    Ok(Route::Remote(match block {
+        BlockId::Hash(hash) => BlockId::Hash(hash),
+        _ => BlockId::number(number),
+    }))
+}
+
+/// Returns the block id to ask the fork endpoint for, when it serves the block.
 async fn remote_block<Eth: LoadBlock>(
     eth: &Eth,
     fork: Option<&Arc<dyn ForkInfo>>,
     block: BlockId,
 ) -> RpcResult<Option<BlockId>> {
-    let Some(fork) = fork else { return Ok(None) };
-    let Some(base) = eth.recovered_block(block).await.map_err(Into::into)? else {
-        return Ok(matches!(block, BlockId::Hash(_)).then_some(block));
-    };
-    let number = base.header().number();
-    if number > fork.block_number() {
-        return Ok(None);
+    Ok(match route(eth, fork, block).await? {
+        Route::Remote(id) => Some(id),
+        Route::Local(_) => None,
+    })
+}
+
+/// Rejects the replay of a block whose parent state the node does not have: a state dump
+/// restored without its historical states, as anvil reports it.
+fn ensure_replayable(fork: Option<&Arc<dyn ForkInfo>>, number: u64) -> RpcResult<()> {
+    if let Some(fork) = fork
+        && let Some(parent) = number.checked_sub(1)
+        && !fork.has_state_at(parent)
+    {
+        return Err(ErrorObjectOwned::owned(
+            HISTORICAL_STATE_CODE,
+            format!("historical state needed to replay block {number} is not available"),
+            None::<()>,
+        ));
     }
-    Ok(Some(match block {
-        BlockId::Hash(hash) => BlockId::Hash(hash),
-        _ => BlockId::number(number),
-    }))
+    Ok(())
+}
+
+/// Rejects the replay of a mined transaction whose parent block state the node does not have.
+async fn ensure_transaction_replayable<Eth: LoadTransaction>(
+    eth: &Eth,
+    fork: Option<&Arc<dyn ForkInfo>>,
+    hash: B256,
+) -> RpcResult<()> {
+    if let Some(TransactionSource::Block { block_number, .. }) =
+        LoadTransaction::transaction_by_hash(eth, hash).await.map_err(Into::into)?
+    {
+        ensure_replayable(fork, block_number)?;
+    }
+    Ok(())
 }
 
 /// Reth's `debug` API with anvil's error codes and fork routing.
@@ -184,6 +240,7 @@ where
         hash: B256,
         opts: Option<GethDebugTracingOptions>,
     ) -> RpcResult<GethTrace> {
+        ensure_transaction_replayable(self.inner.eth_api(), self.fork.as_ref(), hash).await?;
         <DebugApi<Eth> as DebugApiServer<RpcTxReq<Eth::NetworkTypes>>>::debug_trace_transaction(
             &self.inner,
             hash,
@@ -250,12 +307,17 @@ impl<Eth: TraceExt + 'static> AnvilTraceApi<Eth> {
         params: impl FnOnce(BlockId) -> Value,
     ) -> RpcResult<Option<T>> {
         ensure_mined(block)?;
-        if let Some(remote) = remote_block(self.inner.eth_api(), self.fork.as_ref(), block).await?
-            && let Some(fork) = &self.fork
-        {
-            return fork.forward_json(method, params(remote)).map(Some);
+        match route(self.inner.eth_api(), self.fork.as_ref(), block).await? {
+            Route::Remote(remote) => {
+                let fork = self.fork.as_ref().expect("a remote route has a fork");
+                fork.forward_json(method, params(remote)).map(Some)
+            }
+            Route::Local(Some(number)) => {
+                ensure_replayable(self.fork.as_ref(), number)?;
+                Ok(None)
+            }
+            Route::Local(None) => Ok(None),
         }
-        Ok(None)
     }
 
     /// Reth's answer to `trace_filter`.
@@ -321,6 +383,7 @@ where
         &self,
         hash: B256,
     ) -> RpcResult<Option<Vec<LocalizedTransactionTrace>>> {
+        ensure_transaction_replayable(self.inner.eth_api(), self.fork.as_ref(), hash).await?;
         let traces =
             <TraceApi<Eth> as TraceApiServer<RpcTxReq<Eth::NetworkTypes>>>::trace_transaction(
                 &self.inner,
@@ -353,6 +416,7 @@ where
                 })
             })
             .collect::<RpcResult<Vec<_>>>()?;
+        ensure_transaction_replayable(self.inner.eth_api(), self.fork.as_ref(), hash).await?;
         <TraceApi<Eth> as TraceApiServer<RpcTxReq<Eth::NetworkTypes>>>::trace_get(
             &self.inner,
             hash,

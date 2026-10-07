@@ -11,7 +11,7 @@ use crate::{
     simulate,
     snapshot::{Snapshot, SnapshotManager},
     state::{AnvilState, SharedAnvilState},
-    state_dump::{AccountDump, SerializableState},
+    state_dump::{CheckpointForks, SerializableHistoricalStates, SerializableState, StateDump},
     time::TimeManager,
     types::{ForkChoice, ForkUrl, ReorgOptions, ReorgParams, TransactionData, TransactionOrder},
 };
@@ -490,6 +490,11 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject, Tx: RpcObject, Blk: Rp
     #[method(name = "signTransaction")]
     async fn eth_sign_transaction(&self, request: TxReq) -> RpcResult<Bytes>;
 
+    /// Returns the coinbase of the next block: the override set by `anvil_setCoinbase`, else the
+    /// genesis coinbase.
+    #[method(name = "coinbase")]
+    async fn eth_coinbase(&self) -> RpcResult<Address>;
+
     /// Signs typed data, like `eth_signTypedData`.
     #[method(name = "signTypedData_v4")]
     async fn eth_sign_typed_data_v4(&self, address: Address, data: TypedData) -> RpcResult<Bytes>;
@@ -557,6 +562,9 @@ fn with_revert_data(error: ErrorObjectOwned) -> ErrorObjectOwned {
 
 /// The error code of a reverted call, as anvil and reth report it.
 const REVERT_ERROR_CODE: i32 = 3;
+
+/// The error code anvil reports for a transaction or a call it rejects.
+const TRANSACTION_REJECTED_CODE: i32 = -32003;
 
 /// Encodes a blob as a hex string on the heap: serde's encoding of a 128 KiB blob goes through
 /// a buffer of twice that size on the stack.
@@ -743,7 +751,7 @@ impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool,
     Provider:
-        BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + AccountDump,
+        BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + StateDump,
     Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks,
 {
@@ -903,9 +911,10 @@ where
         Err(internal_error("Unable to find storage slot"))
     }
 
-    /// Reads the accounts, the pending anvil state writes, and the block environment into a
-    /// state dump.
-    fn serializable_state(&self) -> RpcResult<SerializableState> {
+    /// Reads the accounts, the pending anvil state writes, the block environment, the blocks
+    /// and their transactions, and with `preserve_historical_states` the state at every block,
+    /// into a state dump.
+    fn serializable_state(&self, preserve_historical_states: bool) -> RpcResult<SerializableState> {
         let best = self.best_block_number()?;
         let header = self.sealed_header(best)?;
         let mut accounts = self
@@ -938,15 +947,23 @@ where
             }
         }
         let block = block_env_from_header::<BlockEnv>(header.header());
-        let state = SerializableState {
-            block: Some(
-                serde_json::to_value(block).map_err(|error| internal_error(error.to_string()))?,
-            ),
+        let (blocks, transactions) = self
+            .provider
+            .dump_blocks(&|hash| self.impersonation.tx_sender(&hash))
+            .map_err(|error| internal_error(format!("failed to read blocks: {error}")))?;
+        let historical_states = preserve_historical_states
+            .then(|| self.provider.dump_snapshots())
+            .transpose()
+            .map_err(|error| internal_error(format!("failed to read states: {error}")))?
+            .map(SerializableHistoricalStates);
+        Ok(SerializableState {
+            block: Some(block),
             accounts,
             best_block_number: Some(best),
-            ..Default::default()
-        };
-        Ok(state)
+            blocks,
+            transactions,
+            historical_states,
+        })
     }
 
     /// Returns the lowercase name of the latest hardfork active at the given block.
@@ -970,7 +987,7 @@ where
         + HeaderProvider
         + TransactionsProvider
         + StateProviderFactory
-        + AccountDump
+        + StateDump
         + Send
         + Sync
         + 'static,
@@ -1366,13 +1383,14 @@ where
                 gas_limit: latest.header.gas_limit(),
                 gas_price: gas_price.to(),
             },
-            fork_config: self.fork.as_ref().map_or_else(NodeForkConfig::default, |fork| {
-                NodeForkConfig {
+            fork_config: self.fork.as_ref().filter(|fork| !fork.url().is_empty()).map_or_else(
+                NodeForkConfig::default,
+                |fork| NodeForkConfig {
                     fork_url: Some(fork.url()),
                     fork_block_number: Some(fork.block_number()),
                     fork_retry_backoff: Some(fork.retry_backoff().as_millis()),
-                }
-            }),
+                },
+            ),
             network: self.identity.network.map(str::to_string),
         })
     }
@@ -1497,7 +1515,8 @@ where
     }
 
     async fn anvil_set_chain_id(&self, chain_id: u64) -> RpcResult<()> {
-        let state = self.serializable_state()?;
+        // The historical states keep the blocks mined so far traceable, as on anvil.
+        let state = self.serializable_state(true)?;
         self.relauncher
             .relaunch(|config| {
                 config.set_chain_id(Some(chain_id));
@@ -1507,16 +1526,56 @@ where
             .map_err(internal_error)
     }
 
-    async fn anvil_dump_state(
-        &self,
-        _preserve_historical_states: Option<bool>,
-    ) -> RpcResult<Bytes> {
-        self.serializable_state()?.encode().map_err(|error| internal_error(error.to_string()))
+    async fn anvil_dump_state(&self, preserve_historical_states: Option<bool>) -> RpcResult<Bytes> {
+        self.serializable_state(preserve_historical_states.unwrap_or(false))?
+            .encode()
+            .map_err(|error| internal_error(error.to_string()))
     }
 
     async fn anvil_load_state(&self, buf: Bytes) -> RpcResult<bool> {
-        let state = SerializableState::decode(&buf)
+        let mut state = SerializableState::decode(&buf)
             .map_err(|error| invalid_params(format!("invalid state dump: {error}")))?;
+        // A dump with a block environment replaces the chain head, as anvil does: the node
+        // relaunches on the dump, keeping the blocks of the current chain as history.
+        if state.block.is_some() {
+            let current = self.serializable_state(false)?;
+            let number = state.head_number().unwrap_or_default();
+            if state.blocks.is_empty() {
+                // A dump without blocks continues from a checkpoint block on top of the chain's
+                // block before the head, as anvil does.
+                let parent = number
+                    .checked_sub(1)
+                    .and_then(|parent| current.block_hash(parent))
+                    .unwrap_or_default();
+                let timestamp = state.block_env().map(|block| block.timestamp.saturating_to());
+                let forks = CheckpointForks {
+                    london: self.chain_spec.is_london_active_at_block(number),
+                    shanghai: timestamp
+                        .is_some_and(|ts| self.chain_spec.is_shanghai_active_at_timestamp(ts)),
+                    cancun: timestamp
+                        .is_some_and(|ts| self.chain_spec.is_cancun_active_at_timestamp(ts)),
+                    prague: timestamp
+                        .is_some_and(|ts| self.chain_spec.is_prague_active_at_timestamp(ts)),
+                };
+                state.synthesize_head(parent, forks);
+            } else if state.head_block().is_none() {
+                return Err(internal_error(format!(
+                    "Best hash not found for best number {number}"
+                )));
+            }
+            // The chain's blocks stay as history; the dump's blocks win at equal heights.
+            let mut blocks = current.blocks;
+            blocks.extend(state.blocks);
+            state.blocks = blocks;
+            let mut transactions = current.transactions;
+            transactions.extend(state.transactions);
+            state.transactions = transactions;
+            self.relauncher
+                .relaunch(move |config| config.init_state = Some(state))
+                .await
+                .map_err(internal_error)?;
+            return Ok(true);
+        }
         let latest = self
             .provider
             .latest()
@@ -1533,6 +1592,10 @@ where
             nonces.push(record.nonce.max(current_nonce));
         }
         drop(latest);
+        // An account-only dump keeps the chain, so the next blocks continue the chain's own
+        // timeline, not the pending timestamp controls.
+        let head = self.sealed_header(self.best_block_number()?)?;
+        self.time.reset(head.timestamp());
         let mut writes = self.state.write();
         for ((address, record), nonce) in state.accounts.into_iter().zip(nonces) {
             writes.set_nonce(address, nonce);
@@ -1556,7 +1619,7 @@ where
         + HeaderProvider
         + TransactionsProvider
         + StateProviderFactory
-        + AccountDump
+        + StateDump
         + Send
         + Sync
         + 'static,
@@ -1705,6 +1768,7 @@ where
     /// requests get distinct nonces and a replacement is checked against the pool it meets.
     async fn send(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
         simulate::validate_request(request.as_ref())?;
+        ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
         let request = self.with_sender(request)?;
         let _guard = self.nonce_lock(request.as_ref().from.unwrap_or_default()).lock_owned().await;
         let mut request = self.prepare_send(request).await?;
@@ -2122,6 +2186,7 @@ where
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         simulate::validate_request(request.as_ref())?;
+        ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
         self.estimate_gas_exact(request, block, state_overrides, block_overrides)
             .await
             .map_err(with_revert_data)
@@ -2135,6 +2200,7 @@ where
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<Bytes> {
         simulate::validate_request(request.as_ref())?;
+        ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
         self.ensure_call_funds(&request, block, state_overrides.as_ref())?;
         let request = self.with_call_fees(request)?;
         EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides)
@@ -2348,6 +2414,10 @@ where
         EthApiServer::sign_transaction(&self.eth, request).await
     }
 
+    async fn eth_coinbase(&self) -> RpcResult<Address> {
+        Ok(self.block_env.coinbase().unwrap_or(self.chain_spec.genesis().coinbase))
+    }
+
     async fn eth_sign_typed_data_v4(&self, address: Address, data: TypedData) -> RpcResult<Bytes> {
         EthApiServer::sign_typed_data(&self.eth, address, data).await
     }
@@ -2469,6 +2539,19 @@ fn internal_error(message: impl Into<String>) -> ErrorObjectOwned {
 
 fn invalid_params(message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(INVALID_PARAMS_CODE, message.into(), None::<()>)
+}
+
+/// Rejects a request for another chain, as anvil does. The EVM skips the check on replays, so
+/// blocks mined before `anvil_setChainId` stay traceable.
+fn ensure_chain_id(request: &TransactionRequest, chain_id: u64) -> RpcResult<()> {
+    if request.chain_id.is_some_and(|id| id != chain_id) {
+        return Err(ErrorObjectOwned::owned(
+            TRANSACTION_REJECTED_CODE,
+            "invalid chain id for signer",
+            None::<()>,
+        ));
+    }
+    Ok(())
 }
 
 #[async_trait]
