@@ -357,10 +357,18 @@ impl CloneArgs {
             true
         })?;
 
-        // update configuration
+        // update configuration, surfacing any error instead of silently discarding it
+        let mut config_update_error = Ok(());
         Config::update_at(root, |config, doc| {
-            update_config_by_metadata(config, doc, meta, chain).is_ok()
+            match update_config_by_metadata(config, doc, meta, chain) {
+                Ok(()) => true,
+                Err(err) => {
+                    config_update_error = Err(err);
+                    false
+                }
+            }
         })?;
+        config_update_error?;
 
         // write remappings to remappings.txt if necessary
         if !no_remappings_txt {
@@ -370,21 +378,28 @@ impl CloneArgs {
                 "remappings.txt already exists, please remove it first"
             );
 
+            // Propagate remappings.txt write errors instead of silently discarding them.
+            let mut remappings_write_error = Ok(());
             Config::update_at(root, |config, doc| {
                 let remappings_txt_content =
                     config.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
-                if fs::write(&remappings_txt, remappings_txt_content).is_err() {
-                    return false;
-                }
-
-                let profile = config.profile.as_str().as_str();
-                if let Some(elem) = doc[Config::PROFILE_SECTION][profile].as_table_mut() {
-                    elem.remove_entry("remappings");
-                    true
-                } else {
-                    false
+                match fs::write(&remappings_txt, remappings_txt_content) {
+                    Ok(()) => {
+                        let profile = config.profile.as_str().as_str();
+                        if let Some(elem) = doc[Config::PROFILE_SECTION][profile].as_table_mut() {
+                            elem.remove_entry("remappings");
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Err(err) => {
+                        remappings_write_error = Err(err.into());
+                        false
+                    }
                 }
             })?;
+            remappings_write_error?;
         }
 
         Ok(())
@@ -1195,6 +1210,27 @@ mod tests {
                 swarm_source: String::new(),
             }],
         }
+    }
+
+    #[test]
+    fn test_update_config_by_metadata_propagates_compiler_version_error() {
+        // `update_config_by_metadata` is not infallible: it calls `meta.compiler_version()?`,
+        // which fails on an unparseable version. This must surface as an `Err` rather than be
+        // swallowed via `.is_ok()` (the bug fixed alongside this test).
+        let mut doc = toml_edit::DocumentMut::new();
+        let mut metadata = contract_metadata("Contract", false, None);
+        let mut inner = metadata.items.remove(0);
+        inner.compiler_version = "definitely-not-a-version".to_string();
+
+        let err = update_config_by_metadata(
+            &Config::default(),
+            &mut doc,
+            &inner,
+            Chain::mainnet(),
+        )
+        .unwrap_err();
+
+        assert!(!err.to_string().is_empty());
     }
 
     #[test]
