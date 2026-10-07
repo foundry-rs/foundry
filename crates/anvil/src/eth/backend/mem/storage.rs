@@ -3,7 +3,7 @@ use crate::eth::{
     backend::{
         db::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
-            SerializableTransaction, StateDb,
+            SerializableTransaction, SerializedBlockStates, StateDb,
         },
         mem::cache::{CacheSlot, DiskStateCache},
     },
@@ -28,7 +28,7 @@ use anvil_core::eth::{
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
 use foundry_evm::{
-    backend::MemDb,
+    backend::{MemDb, StateSnapshot},
     traces::{
         CallKind, CallTraceNode, ParityTraceBuilder, TraceMemberOrder, TracingInspectorConfig,
     },
@@ -341,36 +341,64 @@ impl InMemoryBlockStates {
 
     /// Serialize all states to a list of serializable historical states
     pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
-        // Get in-memory states
-        let mut states = self
-            .states
+        let states = Self::serialize_tier(
+            &mut self.states,
+            &mut self.on_disk_states,
+            &mut self.disk_cache,
+            CacheSlot::ChildExecution,
+        );
+        let post_block_states = Self::serialize_tier(
+            &mut self.post_block_states,
+            &mut self.on_disk_post_block_states,
+            &mut self.disk_cache,
+            CacheSlot::PostBlock,
+        );
+
+        SerializableHistoricalStates::new(states, post_block_states)
+    }
+
+    /// Serializes one memory tier together with its secondary tier, sorted by block hash.
+    fn serialize_tier(
+        in_memory: &mut B256HashMap<StateDb>,
+        secondary: &mut B256HashMap<StateDb>,
+        disk_cache: &mut DiskStateCache,
+        slot: CacheSlot,
+    ) -> SerializedBlockStates {
+        let mut states = in_memory
             .iter_mut()
             .map(|(hash, state)| (*hash, state.serialize_state()))
             .collect::<Vec<_>>();
 
-        // Get on-disk state snapshots
-        for (hash, state) in &mut self.on_disk_states {
+        for (hash, state) in secondary {
             if state.is_persistent() {
                 states.push((*hash, state.serialize_state()));
-            } else if let Some(state_snapshot) =
-                self.disk_cache.read(*hash, CacheSlot::ChildExecution)
-            {
+            } else if let Some(state_snapshot) = disk_cache.read(*hash, slot) {
                 states.push((*hash, state_snapshot));
             }
         }
         states.sort_unstable_by_key(|(hash, _)| *hash);
-
-        SerializableHistoricalStates::new(states)
+        states
     }
 
     /// Load states from serialized data
     pub fn load_states(&mut self, states: SerializableHistoricalStates) {
+        let (states, post_block_states) = states.into_parts();
+        // Record the post-block states first so that inserting their blocks moves them through the
+        // disk-cache lifecycle just like a running node would.
+        for (hash, state_snapshot) in post_block_states {
+            self.post_block_states.insert(hash, load_state_db(state_snapshot));
+        }
         for (hash, state_snapshot) in states {
-            let mut state_db = StateDb::new(MemDb::default());
-            state_db.init_from_state_snapshot(state_snapshot);
-            self.insert(hash, state_db);
+            self.insert(hash, load_state_db(state_snapshot));
         }
     }
+}
+
+/// Builds an in-memory state database from a serialized snapshot.
+fn load_state_db(state_snapshot: StateSnapshot) -> StateDb {
+    let mut state_db = StateDb::new(MemDb::default());
+    state_db.init_from_state_snapshot(state_snapshot);
+    state_db
 }
 
 impl fmt::Debug for InMemoryBlockStates {

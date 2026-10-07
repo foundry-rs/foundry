@@ -713,6 +713,36 @@ async fn can_preserve_historical_states_between_dump_and_load() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn post_block_states_survive_dump_and_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+    let account = Address::repeat_byte(0x11);
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_balance(account, U256::from(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+    let number = provider.get_block_number().await.unwrap();
+
+    // Override the head after it was mined, then give it a child.
+    api.anvil_set_balance(account, U256::from(2)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let before = provider.get_balance(account).block_id(BlockId::number(number)).await.unwrap();
+    assert_eq!(before, U256::from(1));
+
+    let ser_state = api.serialized_state(true).await.unwrap();
+    foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+    let provider = handle.http_provider();
+
+    let after = provider.get_balance(account).block_id(BlockId::number(number)).await.unwrap();
+    assert_eq!(after, U256::from(1), "post-block state was lost in the dump/load round trip");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn revert_removes_historical_states_of_discarded_blocks() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let genesis_hash = api.backend.best_hash();
