@@ -771,8 +771,8 @@ impl PropertiesArgs {
         command.output().wrap_err("failed to run candidate test")
     }
 
-    /// Runs mutation testing for every seed concurrently. Each seed keeps one worker, because
-    /// adaptive span skipping depends on execution order, and builds into its own directories.
+    /// Runs mutation testing for every seed concurrently. Each seed builds into its own
+    /// directories.
     fn run_mutations(
         &self,
         forge: &Path,
@@ -815,9 +815,11 @@ impl PropertiesArgs {
         if let Some(timeout) = self.mutation_timeout {
             command.args(["--mutation-timeout", &timeout.to_string()]);
         }
-        // Adaptive mutation skipping is concurrency-sensitive, so candidate comparisons must use
-        // the same stable execution order.
-        command.args(["--mutation-jobs", "1"]);
+        // Seeds run concurrently, so each seed gets an equal share of the cores. Mutation results
+        // do not depend on the worker count.
+        let jobs = std::thread::available_parallelism()
+            .map_or(1, |cores| (cores.get() / self.seed.len()).max(1));
+        command.args(["--mutation-jobs", &jobs.to_string()]);
         command.args(filter_args);
         // Candidate workspaces materialize the project's libraries; point remappings at them.
         if workspace != config.root {
