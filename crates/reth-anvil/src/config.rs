@@ -32,6 +32,8 @@ use yansi::Paint;
 
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
+#[cfg(feature = "optimism")]
+use reth_ethereum::chainspec::NamedChain;
 #[cfg(feature = "monad")]
 use revm::primitives::hardfork::SpecId;
 
@@ -278,6 +280,28 @@ impl NodeConfig {
     #[doc(hidden)]
     pub fn test_base() -> Self {
         Self { networks: NetworkConfigs::with_base(), ..Self::test() }
+    }
+
+    /// Runs the Tempo network.
+    pub fn with_tempo(mut self) -> Self {
+        self.networks = NetworkConfigs::with_tempo();
+        self
+    }
+
+    /// Runs the Monad network.
+    #[cfg(feature = "monad")]
+    pub fn with_monad(mut self) -> Self {
+        self.networks = NetworkConfigs::with_monad();
+        self
+    }
+
+    /// Runs the Optimism network.
+    #[cfg(feature = "optimism")]
+    pub fn with_optimism(mut self) -> Self {
+        self.networks = NetworkConfigs::default()
+            .try_with_chain_id(NamedChain::Optimism as u64)
+            .expect("optimism is a known chain");
+        self
     }
 
     /// Sets the network the node runs.
