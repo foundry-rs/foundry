@@ -77,6 +77,11 @@ pub struct NodeArgs {
     #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
     pub tempo_fee_payer: Option<Address>,
 
+    /// Override the Base activation-registry administrator.
+    #[cfg(feature = "base")]
+    #[arg(long, value_name = "ADDRESS")]
+    pub base_activation_admin: Option<Address>,
+
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
@@ -317,6 +322,8 @@ impl NodeArgs {
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
             .with_funded_accounts(funded_accounts);
+        #[cfg(feature = "base")]
+        let config = config.with_base_activation_admin(self.base_activation_admin);
         Ok(config)
     }
 

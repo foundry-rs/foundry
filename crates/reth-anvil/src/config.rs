@@ -192,6 +192,10 @@ pub struct NodeConfig {
     pub disable_pool_balance_checks: bool,
     /// The account that sponsors Tempo fee-payer requests. Defaults to the last dev account.
     pub tempo_fee_payer: Option<Address>,
+    /// Overrides the Base activation-registry administrator. The Base network reads it once it
+    /// runs; see `docs/networks.md`.
+    #[cfg(feature = "base")]
+    pub base_activation_admin: Option<Address>,
     /// The coinbase `anvil_setCoinbase` set. A reset to a fork keeps it, as on anvil; a reset
     /// back to a plain node starts from the original config without it.
     pub coinbase: Option<Address>,
@@ -282,6 +286,8 @@ impl Default for NodeConfig {
             max_transactions: 1_000,
             disable_pool_balance_checks: false,
             tempo_fee_payer: None,
+            #[cfg(feature = "base")]
+            base_activation_admin: None,
             coinbase: None,
             cache_path: None,
             allow_origin: "*".to_string(),
@@ -339,6 +345,13 @@ impl NodeConfig {
     /// Runs the Tempo network.
     pub fn with_tempo(mut self) -> Self {
         self.networks = NetworkConfigs::with_tempo();
+        self
+    }
+
+    /// Sets the Base activation-registry administrator override.
+    #[cfg(feature = "base")]
+    pub const fn with_base_activation_admin(mut self, admin: Option<Address>) -> Self {
+        self.base_activation_admin = admin;
         self
     }
 

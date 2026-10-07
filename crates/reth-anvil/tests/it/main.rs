@@ -26,6 +26,8 @@ mod abi;
 mod anvil;
 mod anvil_api;
 mod api;
+#[cfg(feature = "base")]
+mod base;
 mod beacon_api;
 mod block_index;
 mod eip2935;
@@ -45,6 +47,8 @@ mod logs;
 mod monad;
 #[cfg(feature = "monad")]
 mod monad_rpc;
+#[cfg(feature = "optimism")]
+mod optimism;
 mod otterscan;
 mod proof;
 mod pubsub;

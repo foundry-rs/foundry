@@ -72,6 +72,14 @@ hyper.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 
+# base
+base-common-consensus = { workspace = true, optional = true, features = ["evm", "k256", "serde", "std"] }
+base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
+
+# optimism
+op-alloy-consensus = { workspace = true, features = ["serde"], optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+
 # tempo
 alloy-rlp = { workspace = true, optional = true }
 reth-basic-payload-builder = { workspace = true, optional = true }
@@ -130,8 +138,21 @@ tempo = [
     "dep:tempo-revm",
     "dep:tempo-transaction-pool",
 ]
-base = ["foundry-evm-networks/base", "foundry-evm-hardforks/base"]
-optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
+base = [
+    "foundry-evm-networks/base",
+    "foundry-evm-hardforks/base",
+    "dep:base-common-consensus",
+    "dep:base-common-precompiles",
+    "dep:op-alloy-consensus",
+    "foundry-primitives/base",
+]
+optimism = [
+    "foundry-evm-networks/optimism",
+    "foundry-evm-hardforks/optimism",
+    "dep:op-alloy-consensus",
+    "dep:op-alloy-rpc-types",
+    "foundry-primitives/optimism",
+]
 
 [dev-dependencies]
 alloy-chains.workspace = true
