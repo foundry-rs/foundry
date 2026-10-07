@@ -1,5 +1,7 @@
 // Tests in which we want to assert failures.
 
+use foundry_test_utils::util::SOLC_VERSION;
+
 #[forgetest]
 fn test_fail_deprecation(prj: _, cmd: _) {
     prj.insert_ds_test();
@@ -42,6 +44,7 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 
 #[forgetest]
 fn expect_revert_tests_should_fail(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
     let expect_revert_failure_tests = include_str!("../fixtures/ExpectRevertFailures.t.sol");
@@ -119,6 +122,7 @@ Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn expect_call_tests_should_fail(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -179,6 +183,7 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn expect_create_tests_should_fail(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -382,6 +387,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn mem_safety_test_should_fail(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 

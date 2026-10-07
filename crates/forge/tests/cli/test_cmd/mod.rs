@@ -397,7 +397,7 @@ Warning: No tests found in project! Forge looks for functions that start with `t
 // fetched from Etherscan when using state diff recording on a fork.
 // Uses 1inch token (non-proxy, Solidity 0.6.12) which supports storageLayout output.
 #[forgetest_init]
-fn decode_external_storage_on_fork(prj: _, cmd: _) {
+fn compiler_compat_decode_external_storage_on_fork(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     let etherscan_api_key = next_etherscan_api_key();
 
@@ -457,7 +457,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 // Test that `--decode-external-storage` correctly resolves proxy contracts
 // by fetching the implementation's storage layout (e.g., USDC is an EIP-1967 proxy).
 #[forgetest_init]
-fn decode_external_storage_proxy_on_fork(prj: _, cmd: _) {
+fn compiler_compat_decode_external_storage_proxy_on_fork(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     let etherscan_api_key = next_etherscan_api_key();
 
@@ -1217,15 +1217,17 @@ fn links_library_artifacts_across_versions(prj: _, cmd: _) {
 
     prj.add_source(
         "Lib.sol",
-        r#"
-pragma solidity >=0.8.0;
+        &format!(
+            r#"
+pragma solidity >=0.8.0 <={SOLC_VERSION};
 
-library Lib {
-    function identity(uint256 value) external pure returns (uint256) {
+library Lib {{
+    function identity(uint256 value) external pure returns (uint256) {{
         return value;
-    }
-}
-"#,
+    }}
+}}
+"#
+        ),
     );
     prj.add_test(
         "New.t.sol",
@@ -1373,14 +1375,17 @@ fn links_libraries_through_workspace_symlinks(prj: _, cmd: _) {
 
     fs::write(
         airdrops.join("foundry.toml"),
-        r#"
+        format!(
+            r#"
 [profile.default]
+solc = "{SOLC_VERSION}"
 allow_paths = ["../"]
 src = "src"
 test = "test"
 out = "out"
 remappings = ["@workspace/=../node_modules/@workspace/"]
-"#,
+"#
+        ),
     )
     .unwrap();
     fs::write(

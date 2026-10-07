@@ -438,6 +438,10 @@ mod tests {
     #[test]
     fn deserialized_sessions_use_active_monad_tooling() {
         let session = ChiselSession::<MonadEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(foundry_test_utils::util::SOLC_VERSION.into()),
+                ..Default::default()
+            },
             executor_builder: ExecutorBuilder::<MonadEvmNetwork>::new(),
             ..Default::default()
         })

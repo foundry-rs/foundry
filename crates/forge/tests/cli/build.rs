@@ -5,7 +5,7 @@ use foundry_test_utils::{
     forgetest, forgetest_init,
     snapbox::IntoData,
     str,
-    util::{OTHER_SOLC_VERSION, OutputExt},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use globset::Glob;
 use std::{
@@ -423,6 +423,7 @@ fn project_dotenv_loads_without_warning(prj: _, cmd: _) {
 #[forgetest]
 #[cfg(unix)]
 fn can_build_physical_and_symlinked_dependency_configs(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let external = tempfile::tempdir().unwrap();
     let physical = prj.root().join("lib/linked");
     let linked = external.path().join("cache/actual-package");
@@ -504,6 +505,7 @@ special-alias/=lib/linked/vendor/inner/src/
 #[forgetest]
 #[cfg(unix)]
 fn can_build_symlinked_dependency_with_existing_standard_source(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let external = tempfile::tempdir().unwrap();
     let dependency = external.path().join("dependency");
     fs::create_dir_all(dependency.join("src")).unwrap();
@@ -534,6 +536,7 @@ linked/=node_modules/linked/
 #[forgetest]
 #[cfg(unix)]
 fn can_build_multiple_aliases_to_symlinked_dependency_config(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let external = tempfile::tempdir().unwrap();
     let dependency = external.path().join("dependency");
     fs::create_dir_all(dependency.join("custom-source")).unwrap();
@@ -1549,7 +1552,9 @@ fn build_locked_supports_projects_nested_in_parent_repository(prj: _, cmd: _) {
     }
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
-    cmd.forge_fuse().args(["build", "--locked", "--no-lint", "--root", "nested"]).assert_success();
+    cmd.forge_fuse()
+        .args(["build", "--locked", "--no-lint", "--root", "nested", "--use", SOLC_VERSION])
+        .assert_success();
 }
 
 #[forgetest_init]
@@ -1668,6 +1673,7 @@ Error: foundry.lock does not match installed dependencies:
 
 #[forgetest]
 fn deny_warnings_checks_warm_cache(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source(
         "Warn.sol",
         r#"// SPDX-License-Identifier: MIT

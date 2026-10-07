@@ -7,12 +7,7 @@ permissions: {}
 on:
   schedule:
     - cron: "0 1 * * *" # Run daily at 1 AM UTC
-  workflow_dispatch:
-    inputs:
-      compiler_compat_only:
-        description: Run only the compiler compatibility suite
-        type: boolean
-        default: false
+  workflow_dispatch: # Needed so we can run it manually
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -57,7 +52,6 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test flaky tests
-        if: ${{ !inputs.compiler_compat_only }}
         env:
           SVM_TARGET_PLATFORM: linux-amd64
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
@@ -81,7 +75,7 @@ jobs:
       # Broader and slower symbolic coverage that PR CI skips; the tests return early unless these
       # variables are set.
       - name: Test symbolic conformance and limits
-        if: ${{ !cancelled() && !inputs.compiler_compat_only }}
+        if: ${{ !cancelled() }}
         env:
           SVM_TARGET_PLATFORM: linux-amd64
           SYMBOLIC_CONFORMANCE: 1
@@ -95,7 +89,7 @@ jobs:
     name: Open an issue
     runs-on: ubuntu-latest
     needs: [test]
-    if: failure() && !inputs.compiler_compat_only
+    if: failure()
     permissions:
       contents: read
       issues: write

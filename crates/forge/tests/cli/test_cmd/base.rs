@@ -9,11 +9,12 @@ use foundry_evm::{
     core::evm::{BaseEvmNetwork, TxEnvelopeFor},
     hardforks::BaseUpgrade,
 };
-use foundry_test_utils::util::OutputExt;
+use foundry_test_utils::util::{OutputExt, SOLC_VERSION};
 use serde_json::json;
 
 #[forgetest]
 fn base_azul_excludes_beryl_precompiles(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     cmd.args([
@@ -39,6 +40,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn base_defaults_to_azul(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     cmd.args([
@@ -62,6 +64,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn base_beryl_precompiles_and_nested_evm(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     let stdout = cmd
@@ -86,6 +89,7 @@ fn base_beryl_precompiles_and_nested_evm(prj: _, cmd: _) {
 
 #[forgetest]
 fn base_list_accepts_base_network(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_test("BaseEvm.t.sol", include_str!("../../fixtures/BaseEvm.t.sol"));
 
     cmd.args([

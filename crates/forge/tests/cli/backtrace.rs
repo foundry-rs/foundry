@@ -1,9 +1,13 @@
 //! Tests for backtrace functionality
 
-use foundry_test_utils::rpc::{next_etherscan_api_key, next_http_rpc_endpoint};
+use foundry_test_utils::{
+    rpc::{next_etherscan_api_key, next_http_rpc_endpoint},
+    util::SOLC_VERSION,
+};
 
 #[forgetest]
 fn test_backtraces(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
@@ -101,6 +105,7 @@ Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn test_backtrace_with_mixed_compilation(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -267,6 +272,7 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn test_library_backtrace(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -292,6 +298,7 @@ fn test_library_backtrace(prj: _, cmd: _) {
 
     // Configure the linked library.
     let config = foundry_config::Config {
+        solc: Some(SOLC_VERSION.into()),
         libraries: vec!["src/libraries/ExternalMathLib.sol:ExternalMathLib:0x1234567890123456789012345678901234567890".to_string()],
         ..Default::default()
     };
@@ -376,6 +383,7 @@ Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn test_multiple_libraries_same_file(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
 
     prj.add_source(
@@ -437,6 +445,7 @@ Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn test_fork_backtrace(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -529,6 +538,7 @@ Backtrace:
 
 #[forgetest]
 fn test_backtrace_via_ir_disables_source_lines(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source("SimpleRevert.sol", include_str!("../fixtures/backtraces/SimpleRevert.sol"));
@@ -559,6 +569,7 @@ Backtrace:
 // Runs the same failing test at every verbosity level to assert correct output.
 #[forgetest]
 fn test_backtrace_verbosity_levels(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 

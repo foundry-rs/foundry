@@ -1045,6 +1045,7 @@ fn can_execute_test_and_script_with_default_tempo_config(prj: _, cmd: _) {
 
     // Initialize a Tempo project.
     cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     // Run tests, Tempo EVM selection is made by reading foundry.toml config
     cmd.forge_fuse().arg("test").arg("--root").arg(prj.root()).assert_success();
@@ -1065,6 +1066,7 @@ fn can_execute_test_and_script_with_default_tempo_config(prj: _, cmd: _) {
 fn network_flag_tempo_equivalent_to_legacy_tempo(prj: _, cmd: _) {
     prj.wipe();
     cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     // --network tempo (new flag)
     cmd.forge_fuse()
@@ -1761,6 +1763,7 @@ contract FailingSnapshotTest is DSTest {
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 #[forgetest]
 fn can_compile_without_warnings_ignored_file_paths(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     // Ignoring path and setting empty error_codes as default would set some error codes
     prj.update_config(|config| {
         config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
@@ -1803,6 +1806,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 #[forgetest]
 fn can_compile_without_warnings(prj: _, cmd: _) {
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
     });
     prj.add_raw_source(
@@ -1844,6 +1848,7 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 #[forgetest]
 fn can_fail_compile_with_warnings(prj: _, cmd: _) {
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.ignored_error_codes = vec![];
         config.deny = DenyLevel::Never;
     });
@@ -1904,6 +1909,7 @@ Compiler run successful!
 // test that `forge build` ignores error codes only from matching path prefixes
 #[forgetest]
 fn can_compile_without_warnings_ignored_error_codes_from(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let contract = r"
 pragma solidity *;
 contract A {}
@@ -4346,6 +4352,7 @@ fn inspect_multiple_contracts_with_different_paths(prj: _, cmd: _) {
 // <https://github.com/foundry-rs/foundry/issues/11146>
 #[forgetest]
 fn inspect_contracts_by_exact_input_path(prj: _, cmd: _) {
+    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_test(
         "InspectTarget.t.sol",
         r#"

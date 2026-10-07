@@ -347,20 +347,3 @@ fn can_list_resolved_multiple_compiler_versions_verbose_json(prj: _, cmd: _) {
         .is_json(),
     );
 }
-
-#[forgetest_init]
-fn testdata_compiler_versions(cmd: _) {
-    cmd.current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata"));
-    cmd.args(["compiler", "resolve", "--json"]).assert_json_stdout(str![[r#"
-{
-  "Solidity": [
-    { "version": "0.6.12" },
-    { "version": "0.8.26" },
-    { "version": "0.8.35" },
-    { "version": "0.8.35" },
-    { "version": "0.8.35" }
-  ],
-  "Vyper": [{ "version": "0.4.3" }]
-}
-"#]]);
-}

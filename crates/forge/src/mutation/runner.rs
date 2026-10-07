@@ -694,6 +694,7 @@ fn compile_and_test<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+    use foundry_test_utils::util::SOLC_VERSION;
     use std::process::Command;
 
     #[test]
@@ -708,6 +709,7 @@ mod tests {
             )
             .unwrap();
             let mut config = Config::with_root(workspace.path());
+            config.solc = Some(SOLC_VERSION.into());
             config.out = workspace.path().join("out");
             config.cache_path = workspace.path().join("cache/solidity-files-cache.json");
             let config = Arc::new(config);
