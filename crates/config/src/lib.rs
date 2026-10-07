@@ -4863,6 +4863,80 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_solc_env_preserves_standalone_sections() {
+        for env in ["FOUNDRY_SOLC_VERSION", "DAPP_SOLC_VERSION"] {
+            figment::Jail::expect_with(|jail| {
+                jail.create_file(
+                    "foundry.toml",
+                    r#"
+                    [profile.default]
+                    solc_version = "0.8.12"
+
+                    [profile.ci]
+                    solc = "0.8.20"
+
+                    [etherscan]
+                    mainnet = { key = "test-key" }
+
+                    [labels]
+                    0x0000000000000000000000000000000000000001 = "test-label"
+
+                    [rpc_endpoints]
+                    mainnet = "https://example.com"
+                "#,
+                )?;
+
+                for (profile, version) in [("default", 12), ("ci", 20)] {
+                    jail.clear_env();
+                    jail.set_env("FOUNDRY_PROFILE", profile);
+                    let config = Config::load().unwrap();
+                    assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, version))));
+
+                    jail.set_env(env, "0.6.6");
+                    let overridden = Config::load().unwrap();
+                    assert_eq!(overridden.solc, Some(SolcReq::Version(Version::new(0, 6, 6))));
+                    assert_eq!(overridden.rpc_endpoints, config.rpc_endpoints);
+                    assert_eq!(overridden.etherscan, config.etherscan);
+                    assert_eq!(overridden.labels, config.labels);
+                    assert_eq!(overridden.tracing.labels, config.tracing.labels);
+                }
+
+                jail.set_env("DAPP_SOLC_VERSION", "0.7.6");
+                jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
+                assert_eq!(
+                    Config::load().unwrap().solc,
+                    Some(SolcReq::Version(Version::new(0, 6, 6))),
+                );
+                Ok(())
+            });
+        }
+    }
+
+    #[test]
+    fn test_legacy_keys_preserve_rpc_aliases() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [rpc_endpoints]
+                solc_version = "https://compiler.example.com"
+                deny_warnings = "https://warnings.example.com"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.rpc_endpoints,
+                RpcEndpoints::new([
+                    ("solc_version", RpcEndpointUrl::Url("https://compiler.example.com".into())),
+                    ("deny_warnings", RpcEndpointUrl::Url("https://warnings.example.com".into())),
+                ]),
+            );
+            Ok(())
+        });
+    }
+
     // ensures the newer `solc` takes precedence over `solc_version`
     #[test]
     fn test_backwards_solc_version() {

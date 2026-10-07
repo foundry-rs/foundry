@@ -456,6 +456,11 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
             .map(Value::from)
             .ok();
         for (profile, mut dict) in self.0.data()? {
+            if Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+                map.insert(profile, dict);
+                continue;
+            }
+
             if let Some(v) = solc_env.clone() {
                 // ENV var takes precedence over config file
                 dict.insert("solc".to_string(), v);
