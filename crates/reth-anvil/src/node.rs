@@ -414,6 +414,7 @@ async fn launch_node<Net: AnvilNetwork>(
         anvil_state: anvil_state.clone(),
         order: order.clone(),
         config: config.clone(),
+        fork: fork.clone().map(|fork| fork as Arc<dyn ForkInfo>),
     };
 
     let builder = NodeBuilder::new(node_config)

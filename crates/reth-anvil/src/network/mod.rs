@@ -6,7 +6,7 @@ use crate::{
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     evm::{AnvilExecutionPayload, AnvilNextBlockEnv},
-    fork::{AnvilPrimitives, ForkOf},
+    fork::{AnvilPrimitives, ForkInfo, ForkOf},
     impersonation::ImpersonationState,
     logging::LoggingState,
     pool::SharedTransactionOrder,
@@ -72,6 +72,8 @@ pub struct AnvilComponents {
     pub order: SharedTransactionOrder,
     /// The node config.
     pub config: NodeConfig,
+    /// The fork, if any.
+    pub fork: Option<Arc<dyn ForkInfo>>,
 }
 
 /// What a network prepares before the node launches: the chain spec, and the fork when the

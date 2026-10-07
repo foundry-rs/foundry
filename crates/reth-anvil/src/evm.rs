@@ -1,6 +1,7 @@
 use crate::{
     block_env::BlockEnvOverrides,
     config::NodeConfig,
+    fork::ForkInfo,
     impersonation::ImpersonationState,
     state::{SharedAnvilState, StateOverride},
 };
@@ -13,7 +14,7 @@ use alloy_evm::{
     },
     precompiles::{DynPrecompile, PrecompilesMap},
 };
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_engine::ExecutionData;
 use eyre::Result;
 use reth_ethereum::{
@@ -29,14 +30,15 @@ use reth_ethereum::{
     storage::errors::any::AnyError,
 };
 use revm::{
-    Inspector,
-    context::{Block as _, CfgEnv, DBErrorMarker},
+    Database as RevmDatabase, Inspector,
+    context::{Block as _, CfgEnv, DBErrorMarker, result::ResultAndState},
     inspector::NoOpInspector,
-    state::{Account, EvmState, EvmStorageSlot, TransactionId},
+    state::{Account, AccountInfo, Bytecode, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
     collections::hash_map::Entry,
     fmt::{self, Debug},
+    marker::PhantomData,
     sync::Arc,
 };
 
@@ -110,11 +112,12 @@ impl EvmSettings {
 pub type PrecompileBuilder = Arc<dyn Fn() -> DynPrecompile + Send + Sync>;
 
 /// EVM factory that installs extra precompiles, such as Celo's native transfer, into every EVM
-/// it creates.
+/// it creates, and that answers `BLOCKHASH` for the blocks below a fork from the fork.
 #[derive(Clone)]
 pub struct AnvilEvmFactory<F> {
     inner: F,
     precompiles: Arc<Vec<(Address, PrecompileBuilder)>>,
+    fork: Option<Arc<dyn ForkInfo>>,
 }
 
 impl<F: Debug> Debug for AnvilEvmFactory<F> {
@@ -123,14 +126,25 @@ impl<F: Debug> Debug for AnvilEvmFactory<F> {
         f.debug_struct("AnvilEvmFactory")
             .field("inner", &self.inner)
             .field("precompiles", &addresses)
+            .field("fork", &self.fork)
             .finish()
     }
 }
 
 impl<F> AnvilEvmFactory<F> {
-    /// Wraps the factory with the precompiles to install.
-    pub fn new(inner: F, precompiles: Vec<(Address, PrecompileBuilder)>) -> Self {
-        Self { inner, precompiles: Arc::new(precompiles) }
+    /// Wraps the factory with the precompiles to install and the fork, if any.
+    pub fn new(
+        inner: F,
+        precompiles: Vec<(Address, PrecompileBuilder)>,
+        fork: Option<Arc<dyn ForkInfo>>,
+    ) -> Self {
+        Self { inner, precompiles: Arc::new(precompiles), fork }
+    }
+
+    /// Returns the wrapped factory.
+    #[cfg(feature = "monad")]
+    pub const fn inner(&self) -> &F {
+        &self.inner
     }
 
     fn install(&self, precompiles: &mut PrecompilesMap) {
@@ -138,14 +152,19 @@ impl<F> AnvilEvmFactory<F> {
             precompiles.apply_precompile(address, |_| Some(build()));
         }
     }
+
+    fn wrap_db<DB>(&self, db: DB) -> ForkHashDb<DB> {
+        ForkHashDb { inner: db, fork: self.fork.clone() }
+    }
 }
 
 impl<F> EvmFactory for AnvilEvmFactory<F>
 where
     F: EvmFactory<Precompiles = PrecompilesMap>,
 {
-    type Evm<DB: Database, I: Inspector<F::Context<DB>>> = F::Evm<DB, I>;
-    type Context<DB: Database> = F::Context<DB>;
+    type Evm<DB: Database, I: Inspector<F::Context<ForkHashDb<DB>>>> =
+        AnvilEvm<F::Evm<ForkHashDb<DB>, I>, DB>;
+    type Context<DB: Database> = F::Context<ForkHashDb<DB>>;
     type Tx = F::Tx;
     type Error<DBError: DBErrorMarker> = F::Error<DBError>;
     type HaltReason = F::HaltReason;
@@ -158,20 +177,144 @@ where
         db: DB,
         input: EvmEnv<F::Spec, F::BlockEnv>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let mut evm = self.inner.create_evm(db, input);
+        let mut evm = self.inner.create_evm(self.wrap_db(db), input);
         self.install(evm.precompiles_mut());
-        evm
+        AnvilEvm::new(evm)
     }
 
-    fn create_evm_with_inspector<DB: Database, I: Inspector<F::Context<DB>>>(
+    fn create_evm_with_inspector<DB: Database, I: Inspector<F::Context<ForkHashDb<DB>>>>(
         &self,
         db: DB,
         input: EvmEnv<F::Spec, F::BlockEnv>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let mut evm = self.inner.create_evm_with_inspector(db, input, inspector);
+        let mut evm = self.inner.create_evm_with_inspector(self.wrap_db(db), input, inspector);
         self.install(evm.precompiles_mut());
-        evm
+        AnvilEvm::new(evm)
+    }
+}
+
+/// Database adapter that serves the hashes of the blocks below the fork block from the fork.
+///
+/// The local database starts at the fork block, and the engine executes blocks against it
+/// directly, so without the adapter `BLOCKHASH` of an older block reads as zero there while the
+/// block builder, which reads through the fork, sees the real hash.
+#[derive(Debug)]
+pub struct ForkHashDb<DB> {
+    inner: DB,
+    fork: Option<Arc<dyn ForkInfo>>,
+}
+
+impl<DB: Database> RevmDatabase for ForkHashDb<DB> {
+    type Error = DB::Error;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.inner.basic(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.inner.code_by_hash(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.inner.storage(address, index)
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+        if let Some(fork) = &self.fork
+            && number < fork.block_number()
+            && let Ok(Some(hash)) = fork.block_hash_by_number(number)
+        {
+            return Ok(hash);
+        }
+        self.inner.block_hash(number)
+    }
+}
+
+/// EVM over a [`ForkHashDb`] that exposes the wrapped database as its own.
+pub struct AnvilEvm<E, DB> {
+    inner: E,
+    _db: PhantomData<fn() -> DB>,
+}
+
+impl<E: Debug, DB> Debug for AnvilEvm<E, DB> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnvilEvm").field("inner", &self.inner).finish()
+    }
+}
+
+impl<E, DB> AnvilEvm<E, DB> {
+    /// Wraps the EVM.
+    pub const fn new(inner: E) -> Self {
+        Self { inner, _db: PhantomData }
+    }
+
+    /// Returns the wrapped EVM mutably.
+    #[cfg(feature = "monad")]
+    pub const fn inner_mut(&mut self) -> &mut E {
+        &mut self.inner
+    }
+}
+
+impl<E, DB> Evm for AnvilEvm<E, DB>
+where
+    DB: Database,
+    E: Evm<DB = ForkHashDb<DB>>,
+{
+    type DB = DB;
+    type Tx = E::Tx;
+    type Error = E::Error;
+    type HaltReason = E::HaltReason;
+    type Spec = E::Spec;
+    type BlockEnv = E::BlockEnv;
+    type Precompiles = E::Precompiles;
+    type Inspector = E::Inspector;
+
+    fn block(&self) -> &Self::BlockEnv {
+        self.inner.block()
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        self.inner.cfg_env()
+    }
+
+    fn chain_id(&self) -> u64 {
+        self.inner.chain_id()
+    }
+
+    fn transact_raw(
+        &mut self,
+        tx: Self::Tx,
+    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        self.inner.transact_raw(tx)
+    }
+
+    fn transact_system_call(
+        &mut self,
+        caller: Address,
+        contract: Address,
+        data: Bytes,
+    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        self.inner.transact_system_call(caller, contract, data)
+    }
+
+    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec, Self::BlockEnv>) {
+        let (db, env) = self.inner.finish();
+        (db.inner, env)
+    }
+
+    fn set_inspector_enabled(&mut self, enabled: bool) {
+        self.inner.set_inspector_enabled(enabled)
+    }
+
+    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
+        let (db, inspector, precompiles) = self.inner.components();
+        (&db.inner, inspector, precompiles)
+    }
+
+    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        let (db, inspector, precompiles) = self.inner.components_mut();
+        (&mut db.inner, inspector, precompiles)
     }
 }
 

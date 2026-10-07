@@ -4,7 +4,7 @@ use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, Prepared};
 use crate::{
     config::NodeConfig,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
-    fork::ForkBackend,
+    fork::{ForkBackend, ForkInfo},
     logging::{LoggingState, NodeInfoLayer},
     pool::{AnvilPoolBuilder, PoolSettings},
 };
@@ -69,7 +69,10 @@ impl AnvilNetwork for Ethereum {
                 settings: PoolSettings::from_config(&anvil.config),
             })
             .executor(AnvilExecutorBuilder {
-                inner: EthereumEvmBuilder::new(network_precompiles(&anvil.config)),
+                inner: EthereumEvmBuilder::new(
+                    network_precompiles(&anvil.config),
+                    anvil.fork.clone(),
+                ),
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
                 anvil_state: anvil.anvil_state.clone(),
@@ -98,23 +101,31 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
     Ok(Prepared { chain_spec: config.chain_spec()?, fork: None })
 }
 
-/// Builds reth's Ethereum EVM config with the anvil precompiles installed.
+/// Builds reth's Ethereum EVM config with the anvil precompiles installed and the fork's block
+/// hashes.
 #[derive(Clone)]
 pub struct EthereumEvmBuilder {
     precompiles: Vec<(Address, PrecompileBuilder)>,
+    fork: Option<Arc<dyn ForkInfo>>,
 }
 
 impl fmt::Debug for EthereumEvmBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let addresses: Vec<_> = self.precompiles.iter().map(|(address, _)| address).collect();
-        f.debug_struct("EthereumEvmBuilder").field("precompiles", &addresses).finish()
+        f.debug_struct("EthereumEvmBuilder")
+            .field("precompiles", &addresses)
+            .field("fork", &self.fork)
+            .finish()
     }
 }
 
 impl EthereumEvmBuilder {
-    /// Creates the builder with the precompiles to install.
-    pub const fn new(precompiles: Vec<(Address, PrecompileBuilder)>) -> Self {
-        Self { precompiles }
+    /// Creates the builder with the precompiles to install and the fork, if any.
+    pub const fn new(
+        precompiles: Vec<(Address, PrecompileBuilder)>,
+        fork: Option<Arc<dyn ForkInfo>>,
+    ) -> Self {
+        Self { precompiles, fork }
     }
 }
 
@@ -129,7 +140,7 @@ where
     type EVM = EthEvmConfig<Types::ChainSpec, AnvilEvmFactory<RethEvmFactory>>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
-        let factory = AnvilEvmFactory::new(RethEvmFactory::default(), self.precompiles);
+        let factory = AnvilEvmFactory::new(RethEvmFactory::default(), self.precompiles, self.fork);
         let mut evm_config = EthEvmConfig::new_with_evm_factory(ctx.chain_spec(), factory);
         if let Some(cache) = ctx.sender_recovery_cache() {
             evm_config = evm_config.with_sender_recovery_cache(cache.clone());

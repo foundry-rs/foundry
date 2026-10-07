@@ -120,6 +120,8 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn block_number(&self) -> u64;
     /// Returns the fork block hash.
     fn block_hash(&self) -> B256;
+    /// Returns the hash of the remote block with the given number.
+    fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>>;
     /// Returns the initial backoff of request retries.
     fn retry_backoff(&self) -> Duration;
     /// Replaces the fork endpoint.
@@ -141,6 +143,10 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
 
     fn block_hash(&self) -> B256 {
         Self::block_hash(self)
+    }
+
+    fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>> {
+        Self::block_hash_by_number(self, number)
     }
 
     fn retry_backoff(&self) -> Duration {

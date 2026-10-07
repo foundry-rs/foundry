@@ -10,7 +10,8 @@ use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, NodeOf, Prepared};
 use crate::{
     api::NodeIdentity,
     config::NodeConfig,
-    evm::{AnvilExecutorBuilder, EvmSettings},
+    evm::{AnvilEvm, AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, ForkHashDb},
+    fork::ForkInfo,
     logging::{LoggingState, NodeInfoLayer},
     pool::{AnvilPoolBuilder, BalanceRule, PoolSettings},
 };
@@ -124,7 +125,7 @@ impl AnvilNetwork for Monad {
                 },
             })
             .executor(AnvilExecutorBuilder {
-                inner: MonadExecutorBuilder { hardfork },
+                inner: MonadExecutorBuilder { hardfork, fork: anvil.fork.clone() },
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
                 anvil_state: anvil.anvil_state.clone(),
@@ -150,10 +151,12 @@ impl AnvilNetwork for Monad {
 }
 
 /// Builds the [`MonadEvmConfig`] of a node.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct MonadExecutorBuilder {
     /// The Monad hardfork the node runs.
     pub hardfork: MonadHardfork,
+    /// The fork, if any.
+    pub fork: Option<Arc<dyn ForkInfo>>,
 }
 
 impl<Types, Node> ExecutorBuilder<Node> for MonadExecutorBuilder
@@ -164,7 +167,12 @@ where
     type EVM = MonadEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
-        Ok(MonadEvmConfig::new(ctx.chain_spec(), self.hardfork, Arc::new(ctx.provider().clone())))
+        Ok(MonadEvmConfig::new(
+            ctx.chain_spec(),
+            self.hardfork,
+            Arc::new(ctx.provider().clone()),
+            self.fork,
+        ))
     }
 }
 
@@ -305,9 +313,21 @@ impl<DB: Database, I, P> MonadChain for MonadEvm<DB, I, P> {
     }
 }
 
+impl<E: MonadChain, DB> MonadChain for AnvilEvm<E, DB> {
+    fn chain_mut(&mut self) -> &mut MonadChainContext {
+        self.inner_mut().chain_mut()
+    }
+}
+
+/// Monad's EVM factory behind the anvil adapter, which serves the block hashes of a fork.
+type EvmFactoryOf = AnvilEvmFactory<MonadContextEvmFactory>;
+
+/// The EVM the factory creates.
+type EvmOf<DB, I> = AnvilEvm<MonadEvm<ForkHashDb<DB>, I>, DB>;
+
 /// The Ethereum block executor factory with Monad's EVM.
 type InnerExecutorFactory =
-    EthBlockExecutorFactory<RethReceiptBuilder, Arc<ChainSpec>, MonadContextEvmFactory>;
+    EthBlockExecutorFactory<RethReceiptBuilder, Arc<ChainSpec>, EvmFactoryOf>;
 
 /// Block executor factory that tracks the current block's participants in the Monad chain
 /// context.
@@ -318,13 +338,13 @@ pub struct MonadBlockExecutorFactory {
 }
 
 impl BlockExecutorFactory for MonadBlockExecutorFactory {
-    type EvmFactory = MonadContextEvmFactory;
+    type EvmFactory = EvmFactoryOf;
     type TxExecutionResult = <InnerExecutorFactory as BlockExecutorFactory>::TxExecutionResult;
     type ExecutionCtx<'a> = EthBlockExecutionCtx<'a>;
     type Transaction = TransactionSigned;
     type Receipt = Receipt;
-    type Executor<'a, DB: StateDB, I: Inspector<MonadContext<DB>>> = MonadBlockExecutor<
-        EthBlockExecutor<'a, MonadEvm<DB, I>, &'a Arc<ChainSpec>, &'a RethReceiptBuilder>,
+    type Executor<'a, DB: StateDB, I: Inspector<MonadContext<ForkHashDb<DB>>>> = MonadBlockExecutor<
+        EthBlockExecutor<'a, EvmOf<DB, I>, &'a Arc<ChainSpec>, &'a RethReceiptBuilder>,
     >;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
@@ -333,15 +353,16 @@ impl BlockExecutorFactory for MonadBlockExecutorFactory {
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: MonadEvm<DB, I>,
+        evm: EvmOf<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
     ) -> Self::Executor<'a, DB, I>
     where
         DB: StateDB,
-        I: Inspector<MonadContext<DB>>,
+        I: Inspector<MonadContext<ForkHashDb<DB>>>,
     {
         let mut evm = evm;
-        *evm.chain_mut() = self.inner.evm_factory().context_for_parent(ctx.parent_hash.into());
+        *evm.chain_mut() =
+            self.inner.evm_factory().inner().context_for_parent(ctx.parent_hash.into());
         MonadBlockExecutor { inner: self.inner.create_executor(evm, ctx), hardfork: self.hardfork }
     }
 }
@@ -444,12 +465,13 @@ impl MonadEvmConfig {
         chain_spec: Arc<ChainSpec>,
         hardfork: MonadHardfork,
         participants: Arc<dyn ParticipantsLookup>,
+        fork: Option<Arc<dyn ForkInfo>>,
     ) -> Self {
         let executor_factory = MonadBlockExecutorFactory {
             inner: EthBlockExecutorFactory::new(
                 RethReceiptBuilder::default(),
                 chain_spec.clone(),
-                MonadContextEvmFactory::new(participants),
+                AnvilEvmFactory::new(MonadContextEvmFactory::new(participants), Vec::new(), fork),
             ),
             hardfork,
         };

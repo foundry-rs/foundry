@@ -2370,3 +2370,33 @@ async fn rollback_and_reorg_keep_state_writes() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn fork_executes_blockhash_of_remote_blocks() -> Result<()> {
+    // The origin keeps three blocks and the fork starts at the third. A contract created in the
+    // first local block, number four, reads `blockhash(block.number - 2)`, the hash of the
+    // remote block two, and stores it in slot zero.
+    let (_origin_api, origin, origin_client) = spawn_with_client(NodeConfig::test()).await?;
+    origin_client.request::<(), _>("anvil_mine", rpc_params![U256::from(3), U256::ZERO]).await?;
+    let remote = get_block(&origin_client, "0x2").await?;
+    let config = NodeConfig::test()
+        .with_eth_rpc_url(Some(origin.http_endpoint()))
+        .with_fork_block_number(Some(3u64));
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+
+    // PUSH1 2, NUMBER, SUB, BLOCKHASH, PUSH0, SSTORE, STOP.
+    let create = TransactionRequest::default()
+        .with_from(funder)
+        .with_gas_price(gas_price)
+        .with_input(Bytes::from_static(&[0x60, 0x02, 0x43, 0x03, 0x40, 0x5f, 0x55, 0x00]));
+    let tx_hash: B256 = client.request("eth_sendTransaction", rpc_params![create]).await?;
+    let receipt = wait_for_receipt(&client, tx_hash).await?;
+    assert_eq!(receipt["status"], "0x1");
+    assert_eq!(receipt["blockNumber"], "0x4");
+    let contract = receipt["contractAddress"].clone();
+    let stored: B256 =
+        client.request("eth_getStorageAt", rpc_params![contract, U256::ZERO, "latest"]).await?;
+    assert_eq!(stored.to_string(), remote["hash"]);
+    Ok(())
+}
