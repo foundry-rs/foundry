@@ -208,9 +208,20 @@ impl InMemoryBlockStates {
         self.post_block_states.get(hash)
     }
 
+    /// Number of tracked post-block states, including those moved to the secondary tier.
+    #[cfg(test)]
+    pub(crate) fn post_block_state_count(&self) -> usize {
+        self.post_block_states.len()
+    }
+
     /// Records the post-block state for the given `hash`, unless one was already recorded.
     pub fn insert_post_block_state_with(&mut self, hash: B256, state: impl FnOnce() -> StateDb) {
         self.post_block_states.entry(hash).or_insert_with(state);
+    }
+
+    /// Drops the post-block state recorded for the given `hash`, if any.
+    pub fn remove_post_block_state(&mut self, hash: &B256) {
+        self.post_block_states.remove(hash);
     }
 
     /// Returns on-disk state for the given `hash` if present

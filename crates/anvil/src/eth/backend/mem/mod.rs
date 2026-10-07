@@ -1082,6 +1082,11 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time: TimeSnapshot,
     next_block: NextBlockOverrides,
+    /// Whether the head block already had a post-block state when the snapshot was taken.
+    ///
+    /// If it did not, any post-block state recorded afterwards belongs to overrides this snapshot
+    /// discards, so reverting must drop it again.
+    head_post_block_state: bool,
 }
 
 #[cfg(test)]
@@ -1994,6 +1999,7 @@ impl<N: Network> Backend<N> {
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
+        let head_post_block_state = self.states.read().get_post_block_state(&hash).is_some();
         self.active_state_snapshots.lock().insert(
             id,
             StateSnapshot {
@@ -2002,6 +2008,7 @@ impl<N: Network> Backend<N> {
                 fees: self.fees.snapshot(),
                 time: self.time.snapshot(),
                 next_block: self.cheats.next_block_overrides(),
+                head_post_block_state,
             },
         );
         id
@@ -5533,7 +5540,7 @@ impl<N: Network> Backend<N> {
     where
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
-        let Some((num, hash, fees, time, next_block)) =
+        let Some((num, hash, fees, time, next_block, head_post_block_state)) =
             self.active_state_snapshots.lock().get(&id).map(|snapshot| {
                 (
                     snapshot.block_number,
@@ -5541,6 +5548,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time,
                     snapshot.next_block,
+                    snapshot.head_post_block_state,
                 )
             })
         else {
@@ -5559,7 +5567,14 @@ impl<N: Network> Backend<N> {
         // Revert the storage that's newer than the snapshot.
         let removed_blocks = self.blockchain.storage.write().unwind_to(num, hash);
         let removed_hashes: Vec<_> = removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
-        self.states.write().remove_block_states(&removed_hashes);
+        {
+            let mut states = self.states.write();
+            states.remove_block_states(&removed_hashes);
+            // The overrides that split the restored head's state are gone with the revert.
+            if !head_post_block_state {
+                states.remove_post_block_state(&hash);
+            }
+        }
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
         }
@@ -11628,5 +11643,37 @@ mod tests {
             decoder.labels.get(&ActivationRegistryStorage::ADDRESS).map(String::as_str),
             Some("ActivationRegistry")
         );
+    }
+
+    #[tokio::test]
+    async fn reverting_a_discarded_override_drops_its_post_block_state() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let account = Address::repeat_byte(0x11);
+
+        // Each round mines a block, snapshots it, overrides the head and then throws the override
+        // away again. The discarded override must not leave a post-block state behind.
+        for round in 0..5u64 {
+            api.mine_one().await.unwrap();
+            let snapshot = api.backend.create_state_snapshot().await;
+            api.backend.set_balance(account, U256::from(round + 1)).await.unwrap();
+            assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+        }
+
+        assert_eq!(api.backend.states.read().post_block_state_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn reverting_keeps_a_post_block_state_the_snapshot_already_needed() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let account = Address::repeat_byte(0x11);
+
+        api.mine_one().await.unwrap();
+        // The override precedes the snapshot, so block 1 genuinely needs its post-block state.
+        api.backend.set_balance(account, U256::from(1)).await.unwrap();
+        let snapshot = api.backend.create_state_snapshot().await;
+        api.backend.set_balance(account, U256::from(2)).await.unwrap();
+        assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+
+        assert_eq!(api.backend.states.read().post_block_state_count(), 1);
     }
 }
