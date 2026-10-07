@@ -28,6 +28,8 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Registers `eth_config` itself, because reth adds it only to its transport modules, not to the registry the in-process module is built from | `src/node.rs` | ~5 | Register `eth_config` in the RPC registry like the other `eth_*` methods |
 | Runs its own RPC server in front of the node, forwarding every method to the current node's module, so `anvil_reset` to another fork and `anvil_setChainId` can relaunch the node without losing the endpoint, the connections, or the in-process API | `src/server.rs`, `src/node.rs` (`Relauncher`) | ~300 | A way to replace a running node's chain spec and database in place, or to restart the node behind reth's RPC servers |
 | Replays the transactions before a fork transaction through the pool into the first local block, with the remote block's environment and the pool in arrival order | `src/node.rs` (`replay_fork_transactions`) | ~70 | A way to build and insert a block from a given transaction list |
+| Rejects every transaction past `--max-transactions` in the executor wrapper, so the payload builder leaves it in the pool for the next block | `src/evm.rs` (`AnvilBlockExecutor`) | ~25 | A transaction count limit in `PayloadBuilderArgs` |
+| Replaces `eth_gasPrice` to return the base fee alone under `--disable-min-priority-fee` | `src/api.rs` (`EthExtApi`) | ~10 | A gas price oracle option for a zero tip |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -39,14 +41,11 @@ be free if reth had a dev mode:
   earlier blocks are no longer served; anvil keeps them.
 - `--disable-block-gas-limit` sets the block gas limit to `u64::MAX` instead of only skipping the
   check, because reth's payload builder and pool enforce the header's limit.
-- `--disable-min-priority-fee` only affects the pool: reth's gas price oracle suggests its own tip,
-  so `eth_gasPrice` keeps a priority fee.
-- `--max-transactions`: reth's payload builder has no cap on the number of transactions per block.
+- `--disable-min-priority-fee` leaves `eth_maxPriorityFeePerGas` and `eth_feeHistory` to reth's
+  gas price oracle; only `eth_gasPrice` drops the tip, as in anvil.
 - `--prune-history`, `--max-persisted-states`, and `--transaction-block-keeper` are accepted and have
   no effect: reth keeps the full history on disk, which is what these flags bound in anvil's
   memory.
-- Dev accounts keep their history on a forked chain: anvil resets their nonces and balances in the
-  fork genesis, reth-anvil only sets the balances.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
   `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; Tempo
   through `tempo-node`. Monad runs

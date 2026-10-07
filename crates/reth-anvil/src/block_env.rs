@@ -2,15 +2,17 @@ use alloy_primitives::{Address, B256};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-/// Shared block environment overrides for the block gas limit, the coinbase, and the next block
-/// base fee.
+/// Shared block environment overrides for the block gas limit, the coinbase, the transaction
+/// count limit, and the next block base fee.
 ///
-/// The gas limit and the coinbase persist and apply to every following block until changed again.
-/// The next base fee is consumed once, when the next block is built.
+/// The gas limit, the coinbase, and the transaction count limit persist and apply to every
+/// following block until changed again. The next base fee is consumed once, when the next block
+/// is built.
 #[derive(Clone, Debug, Default)]
 pub struct BlockEnvOverrides {
     gas_limit: Arc<RwLock<Option<u64>>>,
     coinbase: Arc<RwLock<Option<Address>>>,
+    max_transactions: Arc<RwLock<Option<usize>>>,
     next_base_fee: Arc<RwLock<Option<u64>>>,
     next_prev_randao: Arc<RwLock<Option<B256>>>,
     next_parent_beacon_block_root: Arc<RwLock<Option<B256>>>,
@@ -35,6 +37,17 @@ impl BlockEnvOverrides {
     /// Returns the coinbase override, if set.
     pub fn coinbase(&self) -> Option<Address> {
         *self.coinbase.read()
+    }
+
+    /// Sets the number of transactions a block may hold for all future blocks. `None` lifts the
+    /// limit.
+    pub fn set_max_transactions(&self, limit: Option<usize>) {
+        *self.max_transactions.write() = limit;
+    }
+
+    /// Returns the number of transactions a block may hold, if limited.
+    pub fn max_transactions(&self) -> Option<usize> {
+        *self.max_transactions.read()
     }
 
     /// Sets the base fee for the next block only.
@@ -72,6 +85,7 @@ impl BlockEnvOverrides {
         BlockEnvSnapshot {
             gas_limit: *self.gas_limit.read(),
             coinbase: *self.coinbase.read(),
+            max_transactions: *self.max_transactions.read(),
             next_base_fee: *self.next_base_fee.read(),
             next_prev_randao: *self.next_prev_randao.read(),
             next_parent_beacon_block_root: *self.next_parent_beacon_block_root.read(),
@@ -82,6 +96,7 @@ impl BlockEnvOverrides {
     pub fn restore(&self, snapshot: BlockEnvSnapshot) {
         *self.gas_limit.write() = snapshot.gas_limit;
         *self.coinbase.write() = snapshot.coinbase;
+        *self.max_transactions.write() = snapshot.max_transactions;
         *self.next_base_fee.write() = snapshot.next_base_fee;
         *self.next_prev_randao.write() = snapshot.next_prev_randao;
         *self.next_parent_beacon_block_root.write() = snapshot.next_parent_beacon_block_root;
@@ -93,6 +108,7 @@ impl BlockEnvOverrides {
 pub struct BlockEnvSnapshot {
     gas_limit: Option<u64>,
     coinbase: Option<Address>,
+    max_transactions: Option<usize>,
     next_base_fee: Option<u64>,
     next_prev_randao: Option<B256>,
     next_parent_beacon_block_root: Option<B256>,

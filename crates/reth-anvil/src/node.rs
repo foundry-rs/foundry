@@ -395,6 +395,7 @@ async fn launch_node<Net: AnvilNetwork>(
     {
         block_env.set_gas_limit(gas_limit);
     }
+    block_env.set_max_transactions(Some(config.max_transactions));
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
     let logging = LoggingState::new(!config.silent);
@@ -434,6 +435,7 @@ async fn launch_node<Net: AnvilNetwork>(
             let fork = fork.clone();
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
+            let min_priority_fee_enforced = !config.disable_min_priority_fee;
             let identity = Net::identity(&config)?;
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
@@ -455,6 +457,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     instance_id,
                     logging,
                     transaction_order,
+                    min_priority_fee_enforced,
                     fork.map(|fork| fork as Arc<dyn ForkInfo>),
                     ctx.pool().clone(),
                     ctx.provider().clone(),
@@ -556,10 +559,11 @@ where
     let ForkReplay { header, transactions } = replay;
     let snapshot = block_env.snapshot();
     let previous_order = order.get();
-    // The block keeps the remote order, and the remote block environment.
+    // The block keeps the remote order, the remote block environment, and every transaction.
     order.set(TransactionOrder::Fifo);
     block_env.set_coinbase(header.beneficiary());
     block_env.set_gas_limit(header.gas_limit());
+    block_env.set_max_transactions(None);
     if let Some(base_fee) = header.base_fee_per_gas() {
         block_env.set_next_base_fee(base_fee);
     }

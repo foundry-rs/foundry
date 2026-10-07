@@ -5,12 +5,13 @@ use crate::{
     impersonation::ImpersonationState,
     state::{SharedAnvilState, StateOverride},
 };
+use alloy_consensus::transaction::TxHashRef;
 use alloy_eips::Decodable2718;
 use alloy_evm::{
-    Database, Evm, EvmEnv, EvmFactory,
+    Database, Evm, EvmEnv, EvmFactory, InvalidTxError, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        ExecutableTx, GasOutput, StateDB,
+        BlockValidationError, ExecutableTx, GasOutput, StateDB,
     },
     precompiles::{DynPrecompile, PrecompilesMap},
 };
@@ -31,7 +32,10 @@ use reth_ethereum::{
 };
 use revm::{
     Database as RevmDatabase, Inspector,
-    context::{Block as _, CfgEnv, DBErrorMarker, result::ResultAndState},
+    context::{
+        Block as _, CfgEnv, DBErrorMarker,
+        result::{InvalidTransaction, ResultAndState},
+    },
     inspector::NoOpInspector,
     state::{Account, AccountInfo, Bytecode, EvmState, EvmStorageSlot, TransactionId},
 };
@@ -343,8 +347,11 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
         settings: EvmSettings,
         sender_cache: Option<SenderRecoveryCache>,
     ) -> Self {
-        let executor_factory =
-            AnvilBlockExecutorFactory::new(inner.block_executor_factory().clone(), anvil_state);
+        let executor_factory = AnvilBlockExecutorFactory::new(
+            inner.block_executor_factory().clone(),
+            anvil_state,
+            block_env.clone(),
+        );
         Self { inner, executor_factory, state, block_env, settings, sender_cache }
     }
 }
@@ -469,21 +476,26 @@ where
     }
 }
 
-/// Block executor factory that applies the queued anvil state writes at the start of every block.
+/// Block executor factory that applies the queued anvil state writes at the start of every block
+/// and caps the number of transactions per block.
 #[derive(Debug, Clone)]
 pub struct AnvilBlockExecutorFactory<F> {
     inner: F,
     state: SharedAnvilState,
+    block_env: BlockEnvOverrides,
 }
 
 impl<F> AnvilBlockExecutorFactory<F> {
     /// Wraps the given factory.
-    pub const fn new(inner: F, state: SharedAnvilState) -> Self {
-        Self { inner, state }
+    pub const fn new(inner: F, state: SharedAnvilState, block_env: BlockEnvOverrides) -> Self {
+        Self { inner, state, block_env }
     }
 }
 
-impl<F: BlockExecutorFactory> BlockExecutorFactory for AnvilBlockExecutorFactory<F> {
+impl<F> BlockExecutorFactory for AnvilBlockExecutorFactory<F>
+where
+    F: BlockExecutorFactory<Transaction: TxHashRef>,
+{
     type EvmFactory = F::EvmFactory;
     type TxExecutionResult = F::TxExecutionResult;
     type ExecutionCtx<'a> = F::ExecutionCtx<'a>;
@@ -508,20 +520,26 @@ impl<F: BlockExecutorFactory> BlockExecutorFactory for AnvilBlockExecutorFactory
         AnvilBlockExecutor {
             inner: self.inner.create_executor(evm, ctx),
             state: self.state.clone(),
+            max_transactions: self.block_env.max_transactions(),
         }
     }
 }
 
-/// Block executor that applies the queued anvil state writes after the pre-execution changes.
+/// Block executor that applies the queued anvil state writes after the pre-execution changes,
+/// and rejects every transaction past the block's transaction count limit.
+///
+/// The payload builder skips a rejected transaction and leaves it in the pool for the next
+/// block, as anvil's miner does with the transactions past `--max-transactions`.
 #[derive(Debug)]
 pub struct AnvilBlockExecutor<E> {
     inner: E,
     state: SharedAnvilState,
+    max_transactions: Option<usize>,
 }
 
 impl<E> BlockExecutor for AnvilBlockExecutor<E>
 where
-    E: BlockExecutor,
+    E: BlockExecutor<Transaction: TxHashRef>,
     <E::Evm as Evm>::DB: StateDB,
 {
     type Transaction = E::Transaction;
@@ -543,6 +561,16 @@ where
         &mut self,
         tx: impl ExecutableTx<Self>,
     ) -> Result<Self::Result, BlockExecutionError> {
+        if let Some(limit) = self.max_transactions
+            && self.inner.receipts().len() >= limit
+        {
+            let (_, recovered) = tx.into_parts();
+            return Err(BlockValidationError::InvalidTx {
+                hash: *recovered.tx().tx_hash(),
+                error: Box::new(BlockFull(limit)),
+            }
+            .into());
+        }
         self.inner.execute_transaction_without_commit(tx)
     }
 
@@ -566,6 +594,24 @@ where
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.inner.receipts()
+    }
+}
+
+/// The block already holds the configured number of transactions.
+#[derive(Debug)]
+struct BlockFull(usize);
+
+impl fmt::Display for BlockFull {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "block holds the maximum of {} transactions", self.0)
+    }
+}
+
+impl std::error::Error for BlockFull {}
+
+impl InvalidTxError for BlockFull {
+    fn as_invalid_tx_err(&self) -> Option<&InvalidTransaction> {
+        None
     }
 }
 

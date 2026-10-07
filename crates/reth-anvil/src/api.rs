@@ -318,6 +318,11 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
     /// Returns the chain id as a decimal string, like `net_version`.
     #[method(name = "networkId")]
     async fn eth_network_id(&self) -> RpcResult<Option<String>>;
+
+    /// Returns the gas price: the base fee plus the suggested tip, or the base fee alone when the
+    /// minimum priority fee is disabled, as anvil does.
+    #[method(name = "gasPrice")]
+    async fn eth_gas_price(&self) -> RpcResult<U256>;
 }
 
 /// The `personal_*` namespace.
@@ -369,6 +374,7 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     instance_id: Arc<RwLock<B256>>,
     logging: LoggingState,
     transaction_order: TransactionOrder,
+    min_priority_fee_enforced: bool,
     fork: Option<Arc<dyn ForkInfo>>,
     pool: Pool,
     provider: Provider,
@@ -391,6 +397,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
         instance_id: Arc<RwLock<B256>>,
         logging: LoggingState,
         transaction_order: TransactionOrder,
+        min_priority_fee_enforced: bool,
         fork: Option<Arc<dyn ForkInfo>>,
         pool: Pool,
         provider: Provider,
@@ -409,6 +416,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
             instance_id,
             logging,
             transaction_order,
+            min_priority_fee_enforced,
             fork,
             pool,
             provider,
@@ -417,12 +425,8 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
     }
 }
 
-impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
-where
-    Provider:
-        BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + AccountDump,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
-    Spec: EthChainSpec + EthereumHardforks + Hardforks,
+impl<Pool, Provider: BlockNumReader + HeaderProvider, Eth, Spec>
+    AnvilRpc<Pool, Provider, Eth, Spec>
 {
     fn best_block_number(&self) -> RpcResult<u64> {
         self.provider
@@ -436,7 +440,15 @@ where
             .map_err(|error| internal_error(format!("failed to read header {number}: {error}")))?
             .ok_or_else(|| internal_error(format!("missing block header {number}")))
     }
+}
 
+impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+where
+    Provider:
+        BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + AccountDump,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
+    Spec: EthChainSpec + EthereumHardforks + Hardforks,
+{
     async fn block_by_number(
         &self,
         number: u64,
@@ -1158,7 +1170,7 @@ impl<Pool, Provider, Eth, Spec>
     for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: Send + Sync + 'static,
-    Provider: HeaderProvider + Send + Sync + 'static,
+    Provider: BlockNumReader + HeaderProvider + Send + Sync + 'static,
     Eth: FullEthApiServer,
     Spec: Send + Sync + 'static,
 {
@@ -1224,6 +1236,16 @@ where
 
     async fn eth_network_id(&self) -> RpcResult<Option<String>> {
         Ok(EthApiServer::chain_id(&self.eth).await?.map(|id| id.to::<u64>().to_string()))
+    }
+
+    async fn eth_gas_price(&self) -> RpcResult<U256> {
+        if !self.min_priority_fee_enforced
+            && let Some(base_fee) =
+                self.sealed_header(self.best_block_number()?)?.base_fee_per_gas()
+        {
+            return Ok(U256::from(base_fee));
+        }
+        EthApiServer::gas_price(&self.eth).await
     }
 
     async fn eth_send_unsigned_transaction(

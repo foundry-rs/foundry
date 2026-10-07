@@ -2400,3 +2400,45 @@ async fn fork_executes_blockhash_of_remote_blocks() -> Result<()> {
     assert_eq!(stored.to_string(), remote["hash"]);
     Ok(())
 }
+
+#[tokio::test]
+async fn max_transactions_caps_the_transactions_per_block() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_max_transactions(Some(2))).await?;
+    client.request::<(), _>("evm_setAutomine", rpc_params![false]).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let mut hashes = Vec::new();
+    for byte in 1..=3u8 {
+        let tx = transfer(funder, Address::repeat_byte(byte), gas_price);
+        hashes.push(client.request::<B256, _>("eth_sendTransaction", rpc_params![tx]).await?);
+    }
+
+    // The first block takes two transactions, the third stays pending for the next block.
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let block = get_block(&client, "0x1").await?;
+    let mined: Vec<B256> = serde_json::from_value(block["transactions"].clone())?;
+    assert_eq!(mined, hashes[..2]);
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let block = get_block(&client, "0x2").await?;
+    let mined: Vec<B256> = serde_json::from_value(block["transactions"].clone())?;
+    assert_eq!(mined, hashes[2..]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn disabled_min_priority_fee_suggests_the_base_fee() -> Result<()> {
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().disable_min_priority_fee(true)).await?;
+    let base_fee: U256 =
+        serde_json::from_value(get_block(&client, "latest").await?["baseFeePerGas"].clone())?;
+    let gas_price: U256 = client.request("eth_gasPrice", rpc_params![]).await?;
+    assert_eq!(gas_price, base_fee);
+
+    // With the minimum priority fee enforced, the suggestion carries a tip.
+    let (_api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let base_fee: U256 =
+        serde_json::from_value(get_block(&client, "latest").await?["baseFeePerGas"].clone())?;
+    let gas_price: U256 = client.request("eth_gasPrice", rpc_params![]).await?;
+    assert!(gas_price > base_fee, "{gas_price} > {base_fee}");
+    Ok(())
+}
