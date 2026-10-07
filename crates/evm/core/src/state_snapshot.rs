@@ -68,6 +68,11 @@ impl<T> StateSnapshots<T> {
     pub fn insert_at(&mut self, state_snapshot: T, id: U256) {
         self.state_snapshots.insert(id, state_snapshot);
     }
+
+    /// Returns a mutable iterator over all stored state snapshots.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.state_snapshots.values_mut()
+    }
 }
 
 impl<T> Default for StateSnapshots<T> {

@@ -1023,6 +1023,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     fn commit(&mut self, result: &mut RawCallResult<FEN>) {
         // Persist changes to db.
         self.backend_mut().commit(result.state_changeset.clone());
+        // End the transaction in journals saved by fork selection and state snapshots.
+        self.backend_mut().end_saved_transactions();
 
         // Persist cheatcode state.
         self.inspector_mut().cheatcodes = result.cheatcodes.take();

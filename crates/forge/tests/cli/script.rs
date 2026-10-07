@@ -7173,3 +7173,64 @@ contract HandoffResume is Script {
     assert!(fresh.root().join(sensitive).exists());
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
 }
+
+// Per-transaction state saved on a fork left in `setUp` must not leak into `run`.
+#[forgetest]
+async fn script_fork_select_starts_fresh_tx(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    let script = prj.add_script(
+        "ForkTxBoundary.s.sol",
+        &r#"
+interface Vm {
+    function createSelectFork(string calldata) external returns (uint256);
+    function selectFork(uint256) external;
+}
+
+contract ForkTxBoundaryScript {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 forkA;
+
+    function setUp() public {
+        forkA = vm.createSelectFork("<rpc>");
+        assembly {
+            if balance(0xBEEF) { revert(0, 0) }
+            sstore(100, 5)
+            tstore(7, 42)
+        }
+        vm.createSelectFork("<rpc>");
+    }
+
+    function run() public {
+        vm.selectFork(forkA);
+        uint256 balanceGas;
+        uint256 sstoreGas;
+        uint256 transientValue;
+        assembly {
+            let start := gas()
+            if balance(0xBEEF) { revert(0, 0) }
+            balanceGas := sub(start, gas())
+            start := gas()
+            sstore(100, 6)
+            sstoreGas := sub(start, gas())
+            transientValue := tload(7)
+        }
+        require(balanceGas >= 2600, "account stayed warm");
+        require(sstoreGas >= 5000, "slot stayed warm or kept its original value");
+        require(transientValue == 0, "transient storage leaked");
+    }
+}
+"#
+        .replace("<rpc>", &rpc),
+    );
+
+    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+"#]]);
+}

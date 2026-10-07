@@ -5,7 +5,7 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
+        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor, prepare_child_state,
     },
     fork::{CreateFork, Fork as RemoteFork, ForkId, ForkResult, MultiFork},
     opts::EvmOpts,
@@ -984,6 +984,26 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Returns the memory db used if not in forking mode
     pub const fn mem_db(&self) -> &FoundryEvmInMemoryDB {
         &self.mem_db
+    }
+
+    /// Ends the committed transaction in every journal saved outside the active one.
+    ///
+    /// Inactive forks, state snapshots and the fork init journal keep the journal captured
+    /// mid-transaction and reinstall it in a later transaction. Their state stays, but warmth,
+    /// original values, transient storage and logs must not carry into the next transaction.
+    pub fn end_saved_transactions(&mut self) {
+        let active = self.active_fork_ids.map(|(_, idx)| idx);
+        for (idx, fork) in self.inner.forks.iter_mut().enumerate() {
+            if Some(idx) != active
+                && let Some(fork) = fork
+            {
+                end_saved_transaction(&mut fork.journaled_state);
+            }
+        }
+        for snapshot in self.inner.state_snapshots.values_mut() {
+            end_saved_transaction(&mut snapshot.journaled_state);
+        }
+        end_saved_transaction(&mut self.fork_init_journaled_state);
     }
 
     /// Returns true if the `id` is currently active
@@ -3536,6 +3556,20 @@ fn inject_replay_precompiles(
 ) {
     networks.inject_precompiles(precompiles);
     apply_bsc_p256_precompile(precompiles, chain_id, timestamp);
+}
+
+/// Ends the transaction recorded in a saved journal, keeping its state and transaction ID.
+///
+/// Accounts and slots become cold with their current values as originals, and per-transaction
+/// data is dropped. The transaction ID is kept so the journal stays in step with the others when
+/// accounts are merged between forks.
+fn end_saved_transaction(journal: &mut JournaledState) {
+    journal.warm_addresses.clear_coinbase_and_access_list();
+    journal.state = prepare_child_state(journal);
+    journal.transient_storage.clear();
+    journal.logs.clear();
+    journal.journal.clear();
+    journal.selfdestructed_addresses.clear();
 }
 
 #[cfg(test)]

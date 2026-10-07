@@ -1421,3 +1421,145 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
 }
+
+/// Asserts that the test runs in a fresh transaction after `touch` ran in an earlier one.
+const TX_BOUNDARY_PROBE: &str = r#"
+interface Vm {
+    function createSelectFork(string calldata) external returns (uint256);
+    function revertToState(uint256) external returns (bool);
+    function selectFork(uint256) external;
+    function snapshotState() external returns (uint256);
+}
+
+abstract contract TxBoundaryProbe {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function touch() internal {
+        assembly {
+            if balance(0xBEEF) { revert(0, 0) }
+            sstore(100, 5)
+            tstore(7, 42)
+        }
+    }
+
+    function assertFreshTx() internal {
+        uint256 balanceGas;
+        uint256 sstoreGas;
+        uint256 transientValue;
+        assembly {
+            let start := gas()
+            if balance(0xBEEF) { revert(0, 0) }
+            balanceGas := sub(start, gas())
+            start := gas()
+            sstore(100, 6)
+            sstoreGas := sub(start, gas())
+            transientValue := tload(7)
+        }
+        require(balanceGas >= 2600, "account stayed warm");
+        require(sstoreGas >= 5000, "slot stayed warm or kept its original value");
+        require(transientValue == 0, "transient storage leaked");
+    }
+}
+"#;
+
+// Per-transaction state saved by `snapshotState` in `setUp` must not leak into the test.
+#[forgetest]
+fn state_snapshot_revert_starts_fresh_tx(prj: _, cmd: _) {
+    prj.update_config(|config| config.fuzz.runs = 16);
+    prj.add_source("TxBoundaryProbe.sol", TX_BOUNDARY_PROBE);
+    prj.add_test(
+        "SnapshotTxBoundary.t.sol",
+        r#"
+import "../src/TxBoundaryProbe.sol";
+
+contract SnapshotTxBoundaryTest is TxBoundaryProbe {
+    uint256 snapshot;
+
+    function setUp() public {
+        touch();
+        snapshot = vm.snapshotState();
+    }
+
+    function test_revertToState() public {
+        vm.revertToState(snapshot);
+        assertFreshTx();
+    }
+
+    function testFuzz_revertToState(uint256) public {
+        vm.revertToState(snapshot);
+        assertFreshTx();
+    }
+}
+"#,
+    );
+
+    for args in [&["test"][..], &["test", "--isolate"]] {
+        cmd.forge_fuse().args(args).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SnapshotTxBoundary.t.sol:SnapshotTxBoundaryTest
+[PASS] testFuzz_revertToState(uint256) (runs: 16, [AVG_GAS])
+[PASS] test_revertToState() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+    }
+}
+
+// Per-transaction state saved on forks left in `setUp` must not leak into the test.
+#[forgetest]
+async fn fork_select_starts_fresh_tx(prj: _, cmd: _) {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    prj.update_config(|config| config.fuzz.runs = 16);
+    prj.add_source("TxBoundaryProbe.sol", TX_BOUNDARY_PROBE);
+    prj.add_test(
+        "ForkTxBoundary.t.sol",
+        &r#"
+import "../src/TxBoundaryProbe.sol";
+
+contract ForkTxBoundaryTest is TxBoundaryProbe {
+    uint256 forkA;
+
+    function setUp() public {
+        touch();
+        forkA = vm.createSelectFork("<rpc>");
+        touch();
+        vm.createSelectFork("<rpc>");
+    }
+
+    function test_selectFork() public {
+        vm.selectFork(forkA);
+        assertFreshTx();
+    }
+
+    function testFuzz_selectFork(uint256) public {
+        vm.selectFork(forkA);
+        assertFreshTx();
+    }
+
+    function test_createSelectFork() public {
+        vm.createSelectFork("<rpc>");
+        assertFreshTx();
+    }
+}
+"#
+        .replace("<rpc>", &rpc),
+    );
+
+    for args in [&["test"][..], &["test", "--isolate"]] {
+        cmd.forge_fuse().args(args).assert_success().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/ForkTxBoundary.t.sol:ForkTxBoundaryTest
+[PASS] testFuzz_selectFork(uint256) (runs: 16, [AVG_GAS])
+[PASS] test_createSelectFork() ([GAS])
+[PASS] test_selectFork() ([GAS])
+Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+    }
+}
