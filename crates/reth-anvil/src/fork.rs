@@ -661,6 +661,20 @@ impl<F: ForkNetwork> ForkBackend<F> {
         Ok(block)
     }
 
+    /// Returns the remote account proof at the given block.
+    pub fn account_proof(
+        &self,
+        address: Address,
+        slots: &[B256],
+        block: u64,
+    ) -> ProviderResult<AccountProof> {
+        let keys = slots.to_vec();
+        let response = self.request(move |chain| async move {
+            chain.get_proof(address, keys).block_id(block.into()).await.map_err(Into::into)
+        })?;
+        Ok(AccountProof::from_eip1186_proof(response))
+    }
+
     /// Returns the remote block with the given hash.
     pub fn block_by_hash(
         &self,
@@ -1042,7 +1056,11 @@ impl<F: ForkNetwork> StateProofProvider for ForkStateProvider<F> {
         address: Address,
         slots: &[B256],
     ) -> ProviderResult<AccountProof> {
-        self.local()?.proof(input, address, slots)
+        // Below the fork block, the remote endpoint holds the state and its proofs.
+        match &self.local {
+            Some((local, _)) => local.proof(input, address, slots),
+            None => self.fork.account_proof(address, slots, self.block),
+        }
     }
 
     fn multiproof(

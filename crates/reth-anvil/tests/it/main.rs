@@ -2264,3 +2264,25 @@ async fn eth_get_proof_serves_older_blocks() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn fork_serves_proofs_for_remote_blocks() -> Result<()> {
+    // The origin keeps three blocks; the fork starts at the third and asks for a proof at the
+    // first, which only the origin can produce.
+    let (_origin_api, origin, origin_client) = spawn_with_client(NodeConfig::test()).await?;
+    let (funder, _) = funder_and_gas_price(&origin_client).await?;
+    origin_client.request::<(), _>("anvil_mine", rpc_params![U256::from(3), U256::ZERO]).await?;
+    let config = NodeConfig::test()
+        .with_eth_rpc_url(Some(origin.http_endpoint()))
+        .with_fork_block_number(Some(3u64));
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+
+    let proof: Value =
+        client.request("eth_getProof", rpc_params![funder, Vec::<U256>::new(), "0x1"]).await?;
+    assert_eq!(
+        proof["address"].as_str().map(str::to_lowercase),
+        Some(funder.to_string().to_lowercase())
+    );
+    assert!(proof["accountProof"].as_array().is_some_and(|nodes| !nodes.is_empty()));
+    Ok(())
+}
