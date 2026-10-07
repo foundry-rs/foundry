@@ -52,7 +52,7 @@ alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
-alloy-rpc-types = { workspace = true, features = ["anvil", "txpool"] }
+alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "txpool"] }
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-serde.workspace = true

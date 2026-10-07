@@ -1,14 +1,16 @@
 use crate::{server::SharedModule, types::ReorgOptions};
+use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7910::EthConfig};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{
     anvil::{Forking, Metadata, MineOptions, NodeInfo},
+    debug::ExecutionWitness,
     trace::parity::{TraceResults, TraceType},
     txpool::TxpoolStatus,
 };
 use alloy_rpc_types_eth::{
-    Account, Block, FeeHistory, Index, Transaction, TransactionReceipt, TransactionRequest,
-    state::StateOverride,
+    Account, Block, FeeHistory, FillTransaction, Index, Transaction, TransactionReceipt,
+    TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
 use eyre::Result;
@@ -301,6 +303,53 @@ impl EthApi {
         self.call("eth_sendRawTransaction", params![tx]).await
     }
 
+    /// Sends a signed transaction and waits for its receipt.
+    pub async fn send_raw_transaction_sync(
+        &self,
+        tx: Bytes,
+        timeout_ms: Option<u64>,
+    ) -> Result<TransactionReceipt> {
+        self.call("eth_sendRawTransactionSync", params![tx, timeout_ms]).await
+    }
+
+    /// Signs and sends a transaction from a dev account, and waits for its receipt.
+    pub async fn send_transaction_sync(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<TransactionReceipt> {
+        self.call("eth_sendTransactionSync", params![request]).await
+    }
+
+    /// Fills the missing fields of a transaction request.
+    pub async fn fill_transaction(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<FillTransaction<TxEnvelope>> {
+        self.call("eth_fillTransaction", params![request]).await
+    }
+
+    /// Returns the chain id as a decimal string.
+    pub async fn network_id(&self) -> Result<Option<String>> {
+        self.call("net_version", ArrayParams::new()).await.map(Some)
+    }
+
+    /// Returns the bytecode with the given hash.
+    pub async fn debug_code_by_hash(
+        &self,
+        hash: B256,
+        block: Option<BlockId>,
+    ) -> Result<Option<Bytes>> {
+        self.call("debug_codeByHash", params![hash, block]).await
+    }
+
+    /// Returns the execution witness of a block.
+    pub async fn debug_execution_witness(
+        &self,
+        block: BlockNumberOrTag,
+    ) -> Result<ExecutionWitness> {
+        self.call("debug_executionWitness", params![block]).await
+    }
+
     /// Returns the chain configuration.
     pub async fn config(&self) -> Result<EthConfig> {
         self.call("eth_config", ArrayParams::new()).await
@@ -403,6 +452,11 @@ impl EthApi {
     /// Adds to the balance of an account.
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
         self.call("anvil_addBalance", params![address, balance]).await
+    }
+
+    /// Sets the coinbase of the following blocks.
+    pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
+        self.call("anvil_setCoinbase", params![address]).await
     }
 
     /// Replaces the fork endpoint.

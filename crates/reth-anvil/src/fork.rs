@@ -610,9 +610,24 @@ impl<F: ForkNetwork> ForkBackend<F> {
         Ok(backend)
     }
 
-    /// Returns the remote bytecode with the given hash, if a remote account read fetched it.
-    pub fn code_by_hash(&self, hash: &B256) -> Option<Bytecode> {
-        self.codes.read().get(hash).cloned()
+    /// Returns the remote bytecode with the given hash: one a remote account read fetched, or
+    /// one the endpoint serves through `debug_codeByHash`, as anvil endpoints do.
+    pub fn code_by_hash(&self, hash: &B256) -> ProviderResult<Option<Bytecode>> {
+        if let Some(code) = self.codes.read().get(hash) {
+            return Ok(Some(code.clone()));
+        }
+        let hash = *hash;
+        let code = self.request(move |chain| async move {
+            chain
+                .raw_request::<_, Option<Bytes>>("debug_codeByHash".into(), (hash, None::<BlockId>))
+                .await
+                .map_err(Into::into)
+        });
+        // Endpoints without the method serve no code by hash.
+        let Ok(Some(code)) = code else { return Ok(None) };
+        let code = Bytecode::new_raw(code);
+        self.codes.write().insert(hash, code.clone());
+        Ok(Some(code))
     }
 
     /// Takes the remote reads made since the last call.
@@ -951,7 +966,7 @@ impl<F: ForkNetwork> BytecodeReader for ForkStateProvider<F> {
         {
             return Ok(Some(code));
         }
-        Ok(self.fork.code_by_hash(code_hash))
+        self.fork.code_by_hash(code_hash)
     }
 }
 

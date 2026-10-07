@@ -20,7 +20,7 @@ use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_eth::{
-    BlockOverrides, TransactionRequest,
+    BlockOverrides, Bundle, EthCallResponse, StateContext, TransactionRequest,
     erc4337::TransactionConditional,
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
@@ -43,7 +43,7 @@ use reth_ethereum::{
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTxReq, RpcTypes};
 use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
-use revm::context::BlockEnv;
+use revm::{context::BlockEnv, primitives::eip7825::TX_GAS_LIMIT_CAP};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -328,7 +328,7 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
 
     /// Estimates the gas of a call down to the exact limit, as anvil does; reth stops its search
     /// within 1.5% above it. A request without `from` is not capped by the zero address's
-    /// balance.
+    /// balance, and fee fields below the base fee do not fail the call.
     #[method(name = "estimateGas")]
     async fn eth_estimate_gas(
         &self,
@@ -337,6 +337,47 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
+
+    /// Runs a call. Fee fields below the base fee do not fail the call, as on anvil.
+    #[method(name = "call")]
+    async fn eth_call(
+        &self,
+        request: TxReq,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes>;
+
+    /// Runs bundles of calls. Every bundle answers, an empty one with no results, and each
+    /// bundle runs one block later than the one before it, as on anvil.
+    #[method(name = "callMany")]
+    async fn eth_call_many(
+        &self,
+        bundles: Vec<Bundle<TxReq>>,
+        state_context: Option<StateContext>,
+        state_override: Option<StateOverride>,
+    ) -> RpcResult<Vec<Vec<EthCallResponse>>>;
+
+    /// Returns the base fee of the next block, with the `anvil_setNextBlockBaseFeePerGas`
+    /// override.
+    #[method(name = "baseFee")]
+    async fn eth_base_fee(&self) -> RpcResult<Option<U256>>;
+
+    /// Sends a signed transaction and waits for its receipt, for `timeout_ms` at most.
+    #[method(name = "sendRawTransactionSync")]
+    async fn eth_send_raw_transaction_sync(
+        &self,
+        tx: Bytes,
+        timeout_ms: Option<u64>,
+    ) -> RpcResult<Receipt>;
+}
+
+/// The `web3_*` methods anvil replaces.
+#[rpc(server, namespace = "web3")]
+pub trait Web3ExtApi {
+    /// Returns the client version, `reth-anvil/v<version>`.
+    #[method(name = "clientVersion")]
+    async fn web3_client_version(&self) -> RpcResult<String>;
 }
 
 /// The `personal_*` namespace.
@@ -381,6 +422,9 @@ fn fund_default_caller(
 /// How long `eth_sendTransactionSync` waits for the receipt.
 const TRANSACTION_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The error code of a transaction confirmation timeout, as anvil reports it.
+const TRANSACTION_CONFIRMATION_TIMEOUT_CODE: i32 = 4;
+
 /// How often `eth_sendTransactionSync` polls for the receipt.
 const RECEIPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -409,6 +453,7 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     logging: LoggingState,
     transaction_order: TransactionOrder,
     min_priority_fee_enforced: bool,
+    enforce_tx_gas_limit: bool,
     fork: Option<Arc<dyn ForkInfo>>,
     pool: Pool,
     provider: Provider,
@@ -432,6 +477,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
         logging: LoggingState,
         transaction_order: TransactionOrder,
         min_priority_fee_enforced: bool,
+        enforce_tx_gas_limit: bool,
         fork: Option<Arc<dyn ForkInfo>>,
         pool: Pool,
         provider: Provider,
@@ -451,6 +497,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
             logging,
             transaction_order,
             min_priority_fee_enforced,
+            enforce_tx_gas_limit,
             fork,
             pool,
             provider,
@@ -1219,8 +1266,11 @@ where
     }
 }
 
-impl<Pool, Provider: HeaderProvider, Eth: FullEthApiServer, Spec>
-    AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+where
+    Provider: BlockNumReader + HeaderProvider,
+    Eth: FullEthApiServer,
+    Spec: EthereumHardforks,
 {
     /// Fills a missing `from` with the first dev account, as anvil does, and marks a missing
     /// `to` as a contract creation.
@@ -1236,6 +1286,128 @@ impl<Pool, Provider: HeaderProvider, Eth: FullEthApiServer, Spec>
         }
         Ok(with_recipient(request))
     }
+
+    /// Estimates the gas of a call down to the exact limit; see `eth_estimateGas`.
+    async fn estimate_gas_exact(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<U256> {
+        let request = self.with_call_fees(request)?;
+        let state_overrides = fund_default_caller(request.as_ref(), state_overrides);
+        let estimate = EthApiServer::estimate_gas(
+            &self.eth,
+            request.clone(),
+            block,
+            state_overrides.clone(),
+            block_overrides.clone(),
+        )
+        .await?;
+        let mut high = estimate.saturating_to::<u64>();
+        if high <= MIN_TRANSACTION_GAS {
+            return Ok(estimate);
+        }
+        // Reth stops once the failing and the passing limit are within the error ratio, so the
+        // exact limit is above `low`. Probe the calls between them.
+        let mut low = (high as f64 * (1.0 - ESTIMATE_GAS_ERROR_RATIO)) as u64;
+        while low + 1 < high {
+            let mid = low + (high - low) / 2;
+            let mut probe = request.clone();
+            probe.as_mut().gas = Some(mid);
+            let passes = EthApiServer::call(
+                &self.eth,
+                probe,
+                block,
+                state_overrides.clone(),
+                block_overrides.clone(),
+            )
+            .await
+            .is_ok();
+            if passes {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+        Ok(U256::from(high))
+    }
+
+    /// Prepares a request for `eth_sendTransaction`: the sender and the recipient as
+    /// [`Self::with_sender`], and a gas limit. A request without one gets the estimate, or, when
+    /// the estimate fails because the call reverts, the largest limit a transaction may have,
+    /// so the transaction is mined and reverts, as on anvil.
+    async fn prepare_send(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
+        let mut request = self.with_sender(request)?;
+        if request.as_ref().gas.is_none() {
+            let gas = match self.estimate_gas_exact(request.clone(), None, None, None).await {
+                Ok(gas) => gas.saturating_to(),
+                Err(_) => self.fallback_gas_limit()?,
+            };
+            request.as_mut().gas = Some(gas);
+        }
+        Ok(request)
+    }
+
+    /// Returns the largest gas limit a transaction may have: the block gas limit, capped by
+    /// EIP-7825 when the cap is enforced and Osaka is active.
+    fn fallback_gas_limit(&self) -> RpcResult<u64> {
+        let header = self.sealed_header(self.best_block_number()?)?;
+        let mut limit = header.gas_limit();
+        if self.enforce_tx_gas_limit
+            && self.chain_spec.is_osaka_active_at_timestamp(header.timestamp())
+        {
+            limit = limit.min(TX_GAS_LIMIT_CAP);
+        }
+        Ok(limit)
+    }
+
+    /// Drops fee fields below the base fee from a call, so the call runs instead of failing
+    /// the fee check; anvil runs calls with the base fee check off.
+    fn with_call_fees(
+        &self,
+        mut request: RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
+        let Some(base_fee) = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas()
+        else {
+            return Ok(request);
+        };
+        let fees = request.as_mut();
+        let below = |fee: Option<u128>| fee.is_some_and(|fee| fee < u128::from(base_fee));
+        if below(fees.gas_price) || below(fees.max_fee_per_gas) {
+            fees.gas_price = None;
+            fees.max_fee_per_gas = None;
+            fees.max_priority_fee_per_gas = None;
+        }
+        Ok(request)
+    }
+
+    /// Waits for the receipt of a transaction. Anvil reports a timeout with code 4 and the
+    /// transaction hash as data.
+    async fn await_receipt(
+        &self,
+        hash: B256,
+        timeout: Duration,
+    ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(receipt) = EthApiServer::transaction_receipt(&self.eth, hash).await? {
+                return Ok(receipt);
+            }
+            if Instant::now() >= deadline {
+                return Err(ErrorObjectOwned::owned(
+                    TRANSACTION_CONFIRMATION_TIMEOUT_CODE,
+                    "Transaction confirmation timeout",
+                    Some(hash),
+                ));
+            }
+            tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
+        }
+    }
 }
 
 #[async_trait]
@@ -1246,29 +1418,19 @@ where
     Pool: Send + Sync + 'static,
     Provider: BlockNumReader + HeaderProvider + Send + Sync + 'static,
     Eth: FullEthApiServer,
-    Spec: Send + Sync + 'static,
+    Spec: EthereumHardforks + Send + Sync + 'static,
 {
     async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
-        EthApiServer::send_transaction(&self.eth, self.with_sender(request)?).await
+        EthApiServer::send_transaction(&self.eth, self.prepare_send(request).await?).await
     }
 
     async fn eth_send_transaction_sync(
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
-        let hash = EthApiServer::send_transaction(&self.eth, self.with_sender(request)?).await?;
-        let deadline = Instant::now() + TRANSACTION_CONFIRMATION_TIMEOUT;
-        loop {
-            if let Some(receipt) = EthApiServer::transaction_receipt(&self.eth, hash).await? {
-                return Ok(receipt);
-            }
-            if Instant::now() >= deadline {
-                return Err(internal_error(format!(
-                    "transaction {hash} was not mined within {TRANSACTION_CONFIRMATION_TIMEOUT:?}"
-                )));
-            }
-            tokio::time::sleep(RECEIPT_POLL_INTERVAL).await;
-        }
+        let hash =
+            EthApiServer::send_transaction(&self.eth, self.prepare_send(request).await?).await?;
+        self.await_receipt(hash, TRANSACTION_CONFIRMATION_TIMEOUT).await
     }
 
     async fn eth_resend(
@@ -1329,42 +1491,77 @@ where
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
-        let state_overrides = fund_default_caller(request.as_ref(), state_overrides);
-        let estimate = EthApiServer::estimate_gas(
-            &self.eth,
-            request.clone(),
-            block,
-            state_overrides.clone(),
-            block_overrides.clone(),
-        )
-        .await?;
-        let mut high = estimate.saturating_to::<u64>();
-        if high <= MIN_TRANSACTION_GAS {
-            return Ok(estimate);
-        }
-        // Reth stops once the failing and the passing limit are within the error ratio, so the
-        // exact limit is above `low`. Probe the calls between them.
-        let mut low = (high as f64 * (1.0 - ESTIMATE_GAS_ERROR_RATIO)) as u64;
-        while low + 1 < high {
-            let mid = low + (high - low) / 2;
-            let mut probe = request.clone();
-            probe.as_mut().gas = Some(mid);
-            let passes = EthApiServer::call(
-                &self.eth,
-                probe,
-                block,
-                state_overrides.clone(),
-                block_overrides.clone(),
-            )
-            .await
-            .is_ok();
-            if passes {
-                high = mid;
-            } else {
-                low = mid;
+        self.estimate_gas_exact(request, block, state_overrides, block_overrides).await
+    }
+
+    async fn eth_call(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes> {
+        let request = self.with_call_fees(request)?;
+        EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides).await
+    }
+
+    async fn eth_call_many(
+        &self,
+        bundles: Vec<Bundle<RpcTxReq<Eth::NetworkTypes>>>,
+        state_context: Option<StateContext>,
+        state_override: Option<StateOverride>,
+    ) -> RpcResult<Vec<Vec<EthCallResponse>>> {
+        // Reth skips empty bundles and runs every bundle in the same block. Anvil answers every
+        // bundle and moves each one a block and a second past the one before, from the block
+        // the first bundle names or the pending block.
+        let latest = self.sealed_header(self.best_block_number()?)?;
+        let mut number = U256::from(latest.number() + 1);
+        let mut time = latest.timestamp() + 1;
+        let mut requests = Vec::with_capacity(bundles.len());
+        let mut layout = Vec::with_capacity(bundles.len());
+        for Bundle { transactions, block_override } in bundles {
+            let mut block_override = block_override.unwrap_or_default();
+            number = block_override.number.unwrap_or(number);
+            time = block_override.time.unwrap_or(time);
+            block_override.number = Some(number);
+            block_override.time = Some(time);
+            number += U256::ONE;
+            time += 1;
+            layout.push(transactions.is_empty());
+            if !transactions.is_empty() {
+                let transactions = transactions
+                    .into_iter()
+                    .map(|request| self.with_call_fees(request))
+                    .collect::<RpcResult<Vec<_>>>()?;
+                requests.push(Bundle { transactions, block_override: Some(block_override) });
             }
         }
-        Ok(U256::from(high))
+        let mut results =
+            EthApiServer::call_many(&self.eth, requests, state_context, state_override)
+                .await?
+                .into_iter();
+        Ok(layout
+            .into_iter()
+            .map(|empty| if empty { Vec::new() } else { results.next().unwrap_or_default() })
+            .collect())
+    }
+
+    async fn eth_base_fee(&self) -> RpcResult<Option<U256>> {
+        let fee = self.block_env.building_base_fee().or(self.block_env.next_base_fee());
+        match fee {
+            Some(fee) => Ok(Some(U256::from(fee))),
+            None => EthApiServer::base_fee(&self.eth).await,
+        }
+    }
+
+    async fn eth_send_raw_transaction_sync(
+        &self,
+        tx: Bytes,
+        timeout_ms: Option<u64>,
+    ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
+        let hash = EthApiServer::send_raw_transaction(&self.eth, tx).await?;
+        let timeout = timeout_ms.map_or(TRANSACTION_CONFIRMATION_TIMEOUT, Duration::from_millis);
+        self.await_receipt(hash, timeout).await
     }
 
     async fn eth_send_unsigned_transaction(
@@ -1403,4 +1600,17 @@ fn internal_error(message: impl Into<String>) -> ErrorObjectOwned {
 
 fn invalid_params(message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(INVALID_PARAMS_CODE, message.into(), None::<()>)
+}
+
+#[async_trait]
+impl<Pool, Provider, Eth, Spec> Web3ExtApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
+where
+    Pool: Send + Sync + 'static,
+    Provider: HeaderProvider + Send + Sync + 'static,
+    Eth: Send + Sync + 'static,
+    Spec: Send + Sync + 'static,
+{
+    async fn web3_client_version(&self) -> RpcResult<String> {
+        Ok(CLIENT_VERSION.to_string())
+    }
 }

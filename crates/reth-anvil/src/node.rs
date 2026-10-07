@@ -1,5 +1,8 @@
 use crate::{
-    api::{AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, PersonalApiServer},
+    api::{
+        AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, PersonalApiServer,
+        Web3ExtApiServer,
+    },
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     console::ConsolePrinter,
@@ -477,6 +480,7 @@ async fn launch_node<Net: AnvilNetwork>(
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
             let min_priority_fee_enforced = !config.disable_min_priority_fee;
+            let enforce_tx_gas_limit = config.enable_tx_gas_limit;
             let identity = Net::identity(&config)?;
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
@@ -499,6 +503,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     logging,
                     transaction_order,
                     min_priority_fee_enforced,
+                    enforce_tx_gas_limit,
                     fork.map(|fork| fork as Arc<dyn ForkInfo>),
                     ctx.pool().clone(),
                     ctx.provider().clone(),
@@ -507,6 +512,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
                 let evm_module = EvmApiServer::into_rpc(rpc.clone());
                 let eth_module = EthExtApiServer::into_rpc(rpc.clone());
+                let web3_module = Web3ExtApiServer::into_rpc(rpc.clone());
                 let personal_module = PersonalApiServer::into_rpc(rpc);
 
                 // The in-process API calls the same handlers the servers do.
@@ -518,16 +524,18 @@ async fn launch_node<Net: AnvilNetwork>(
                 )))?;
                 module.merge(anvil_module.clone())?;
                 module.merge(evm_module.clone())?;
-                for name in eth_module.method_names() {
+                for name in eth_module.method_names().chain(web3_module.method_names()) {
                     module.remove_method(name);
                 }
                 module.merge(eth_module.clone())?;
+                module.merge(web3_module.clone())?;
                 module.merge(personal_module.clone())?;
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
                 ctx.modules.merge_configured(anvil_module)?;
                 ctx.modules.merge_configured(evm_module)?;
                 ctx.modules.replace_configured(eth_module)?;
+                ctx.modules.replace_configured(web3_module)?;
                 ctx.modules.merge_configured(personal_module)?;
                 Ok(())
             }

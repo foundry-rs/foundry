@@ -24,6 +24,7 @@ use tokio::time::sleep;
 
 mod abi;
 mod anvil_api;
+mod api;
 mod fork;
 #[cfg(feature = "monad")]
 mod monad;

@@ -33,6 +33,7 @@ mod types;
 
 pub use api::{
     AnvilApiServer, AnvilRpc, CLIENT_VERSION, EthExtApiServer, EvmApiServer, PersonalApiServer,
+    Web3ExtApiServer,
 };
 pub use config::{
     AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, DEFAULT_IPC_ENDPOINT, DEFAULT_MNEMONIC,

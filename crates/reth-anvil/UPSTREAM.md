@@ -35,6 +35,7 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Replaces `eth_estimateGas`: probes the calls between reth's estimate and 1.5% below it to return the exact limit, as anvil does, and funds the zero address when a request without `from` carries fee fields, because reth caps the estimate by that balance | `src/api.rs` (`EthExtApi`) | ~50 | A configurable `ESTIMATE_GAS_ERROR_RATIO`, and no allowance cap for a request without `from` |
 | Reports a failed block build as `failed to build payload <id>: missing payload`, because the payload service logs the build error and resolves with `MissingPayload`; anvil reports the EVM error | `src/miner.rs` | ~5 | Keep the job's error and return it from `resolve` |
 | Replaces reth's engine validator to accept payload attributes with a timestamp at or below the parent's, and to convert a payload of a block before London to a header without a base fee, which the engine API cannot express | `src/engine.rs` | ~100 | A dev-mode switch for the timestamp check, and an engine API that carries an optional base fee |
+| Replaces `eth_call` and `eth_estimateGas` to drop fee fields below the base fee, `eth_callMany` to answer every bundle and move each one a block past the one before, `eth_baseFee` to report the next-block override, `eth_sendRawTransactionSync` and `eth_sendTransactionSync` to report a timeout with code 4 and the hash, `eth_sendTransaction` to fall back to the largest gas limit when the estimate reverts, and `web3_clientVersion` to name this node | `src/api.rs` (`EthExtApi`, `Web3ExtApi`) | ~150 | Anvil's semantics for these are dev-node conveniences; a dev mode in reth could carry them |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -51,6 +52,9 @@ be free if reth had a dev mode:
 - `--prune-history`, `--max-persisted-states`, and `--transaction-block-keeper` are accepted and have
   no effect: reth keeps the full history on disk, which is what these flags bound in anvil's
   memory.
+- Reth caches its pending block for a second, so a transaction that reaches the pool shows in
+  `eth_getBlockByNumber("pending")` and in calls at `pending` up to a second late; anvil builds
+  the pending block on every request.
 - `--print-traces` and `--steps-tracing` are accepted and have no effect: printing the trace of
   every mined transaction needs an inspector during block building, or a replay of every block.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
@@ -65,12 +69,13 @@ be free if reth had a dev mode:
 
 ## Anvil's own tests
 
-`tests/it/anvil_api.rs` is anvil's `anvil_api.rs` with the in-process calls made async and the
-anvil-internal hooks removed (`api.backend`, `api.execute`, pool types). Three tests are ignored,
-with the reason on the attribute: the pending call that expects the beacon root system call, the
-Arbitrum tip rule, and nothing else. Two assertions moved from "exactly one second later" to "at
-least one second later": blocks take longer to build here than on anvil, so the wall clock moves
-on between two blocks. The other modules (`api.rs`, `transaction.rs`, `fork.rs`, ...) are next.
+`tests/it/anvil_api.rs` and `tests/it/api.rs` are anvil's modules of the same name with the
+in-process calls made async and the anvil-internal hooks removed (`api.backend`, `api.execute`,
+pool types, `eth_callBundle`). Ignored tests carry the reason on the attribute: the pending call
+that expects the beacon root system call, the Arbitrum tip rule, and the pending block cache
+above. Assertions on wall-clock seconds became lower bounds, because blocks take longer to build
+here than on anvil, and error messages compare case-insensitively where reth's text differs only
+in case. The other modules (`transaction.rs`, `gas.rs`, `fork.rs`, ...) are next.
 
 ## Differences that cast's tests show
 
