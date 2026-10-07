@@ -1076,6 +1076,24 @@ impl<T> BlockRequest<T> {
     }
 }
 
+/// Which version of a historical block's state a read should be served.
+#[derive(Clone, Copy, Debug)]
+enum HistoricalState {
+    /// The state as of the end of the block, without later `anvil_set*` overrides.
+    PostBlock,
+    /// The state the block's child was executed on, including those overrides.
+    ChildExecution,
+}
+
+impl HistoricalState {
+    fn select<'a>(&self, states: &'a InMemoryBlockStates, hash: &B256) -> Option<&'a StateDb> {
+        match self {
+            Self::PostBlock => states.get_post_block_state(hash).or_else(|| states.get_state(hash)),
+            Self::ChildExecution => states.get_state(hash),
+        }
+    }
+}
+
 struct StateSnapshot {
     block_number: u64,
     block_hash: B256,
@@ -7115,9 +7133,37 @@ where
     }
 
     /// Helper function to execute a closure with the database at a specific block
+    ///
+    /// Historical blocks are served their post-block state, i.e. without any `anvil_set*` override
+    /// applied to them while they were the head.
     pub async fn with_database_at<F, T>(
         &self,
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+    {
+        self.with_historical_state_at(block_request, HistoricalState::PostBlock, f).await
+    }
+
+    /// Like [`Self::with_database_at`], but serves the state the block's child was executed on,
+    /// including any `anvil_set*` override applied after the block was mined.
+    pub async fn with_child_execution_database_at<F, T>(
+        &self,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        f: F,
+    ) -> Result<T, BlockchainError>
+    where
+        F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+    {
+        self.with_historical_state_at(block_request, HistoricalState::ChildExecution, f).await
+    }
+
+    async fn with_historical_state_at<F, T>(
+        &self,
+        block_request: Option<BlockRequest<FoundryTxEnvelope>>,
+        historical: HistoricalState,
         f: F,
     ) -> Result<T, BlockchainError>
     where
@@ -7166,10 +7212,7 @@ where
             .map(|block| (block.header.hash, block))
         {
             let read_guard = self.states.upgradable_read();
-            if let Some(state_db) = read_guard
-                .get_post_block_state(&block_hash)
-                .or_else(|| read_guard.get_state(&block_hash))
-            {
+            if let Some(state_db) = historical.select(&read_guard, &block_hash) {
                 return Ok(f(Box::new(state_db), self.block_env_from_header(&block.header)));
             }
 
@@ -7248,10 +7291,7 @@ where
             .map(|block| (block.header.hash, block))
         {
             let read_guard = self.states.upgradable_read();
-            if let Some(state_db) = read_guard
-                .get_post_block_state(&block_hash)
-                .or_else(|| read_guard.get_state(&block_hash))
-            {
+            if let Some(state_db) = HistoricalState::PostBlock.select(&read_guard, &block_hash) {
                 return f(Box::new(state_db), self.block_env_from_header(&block.header), context);
             }
 
@@ -7630,7 +7670,9 @@ where
             headers.push(alloy_rlp::encode(&block.header).into());
         }
 
-        self.with_database_at(Some(BlockRequest::Number(parent)), |state, _| {
+        // The witness must describe the state this block actually executed on, so any override
+        // applied to the parent while it was the head belongs in it.
+        self.with_child_execution_database_at(Some(BlockRequest::Number(parent)), |state, _| {
             let Some(accounts) = state.maybe_full_db() else {
                 return Err(BlockchainError::Message(
                     "debug_executionWitness is not supported while forking".to_string(),
