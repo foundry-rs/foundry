@@ -2296,3 +2296,28 @@ async fn fork_serves_proofs_for_remote_blocks() -> Result<()> {
     assert_eq!(proof["balance"].as_str(), Some("0x5"));
     Ok(())
 }
+
+#[tokio::test]
+async fn anvil_reorg_accepts_positional_parameters() -> Result<()> {
+    with_test_client(|client| async move {
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(2), U256::ZERO]).await?;
+        let before = get_block(&client, "0x2").await?;
+        client.request::<(), _>("anvil_reorg", rpc_params![1u64, Vec::<Value>::new()]).await?;
+        assert_eq!(block_number(&client).await?, 2);
+        assert_ne!(get_block(&client, "0x2").await?["hash"], before["hash"]);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn anvil_reset_at_genesis_is_a_no_op() -> Result<()> {
+    with_test_client(|client| async move {
+        client.request::<(), _>("anvil_reset", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, 0);
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, 1);
+        Ok(())
+    })
+    .await
+}

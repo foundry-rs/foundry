@@ -106,6 +106,33 @@ pub struct ReorgOptions<TxReq = TransactionRequest> {
     pub tx_block_pairs: Vec<(TransactionData<TxReq>, u64)>,
 }
 
+/// The first parameter of `anvil_reorg`. Anvil accepts the options as one object, or the depth
+/// and the transactions as two positional parameters.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+#[serde(bound(deserialize = "TxReq: serde::de::DeserializeOwned", serialize = "TxReq: Serialize"))]
+pub enum ReorgParams<TxReq = TransactionRequest> {
+    /// The depth; the transactions follow as the second parameter.
+    Depth(u64),
+    /// The options as one object.
+    Options(ReorgOptions<TxReq>),
+}
+
+impl<TxReq> ReorgParams<TxReq> {
+    /// Builds the options from the two positional parameters.
+    pub fn into_options(
+        self,
+        tx_block_pairs: Option<Vec<(TransactionData<TxReq>, u64)>>,
+    ) -> ReorgOptions<TxReq> {
+        match self {
+            Self::Depth(depth) => {
+                ReorgOptions { depth, tx_block_pairs: tx_block_pairs.unwrap_or_default() }
+            }
+            Self::Options(options) => options,
+        }
+    }
+}
+
 /// A transaction given to `anvil_reorg`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]

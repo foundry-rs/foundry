@@ -202,13 +202,18 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
             .filter(|state| state.number() > header.number())
             .map(|state| state.block())
             .collect();
+        let persisted_above = self.inner.last_block_number()? > header.number();
+        if old.is_empty() && !persisted_above {
+            // Already at the target: a reorg notification without removed blocks is invalid.
+            return Ok(());
+        }
         let target = match in_memory.state_by_number(header.number()) {
             Some(state) => state.block(),
             None => self.executed_block_from_storage(header)?,
         };
         in_memory.update_chain(NewCanonicalChain::Reorg { new: Vec::new(), old: old.clone() });
 
-        if self.inner.last_block_number()? > header.number() {
+        if persisted_above {
             let provider = self.inner.database_provider_rw()?;
             provider.remove_block_and_execution_above(header.number())?;
             provider.commit()?;

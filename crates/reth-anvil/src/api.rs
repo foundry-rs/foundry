@@ -9,7 +9,7 @@ use crate::{
     state::{AnvilState, SharedAnvilState},
     state_dump::{AccountDump, SerializableState},
     time::TimeManager,
-    types::{ForkChoice, ForkUrl, ReorgOptions, TransactionData, TransactionOrder},
+    types::{ForkChoice, ForkUrl, ReorgOptions, ReorgParams, TransactionData, TransactionOrder},
 };
 use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
@@ -100,7 +100,11 @@ pub trait AnvilApi<B: RpcObject, TxReq: RpcObject> {
 
     /// Rewinds the chain by `depth` blocks and mines `depth` blocks with the given transactions.
     #[method(name = "reorg")]
-    async fn anvil_reorg(&self, options: ReorgOptions<TxReq>) -> RpcResult<()>;
+    async fn anvil_reorg(
+        &self,
+        params: ReorgParams<TxReq>,
+        tx_block_pairs: Option<Vec<(TransactionData<TxReq>, u64)>>,
+    ) -> RpcResult<()>;
 
     /// Resets the chain to genesis, or to the fork block when forking. Changing the fork endpoint
     /// or block is not supported yet.
@@ -708,9 +712,10 @@ where
 
     async fn anvil_reorg(
         &self,
-        options: ReorgOptions<RpcTxReq<Eth::NetworkTypes>>,
+        params: ReorgParams<RpcTxReq<Eth::NetworkTypes>>,
+        tx_block_pairs: Option<Vec<(TransactionData<RpcTxReq<Eth::NetworkTypes>>, u64)>>,
     ) -> RpcResult<()> {
-        let ReorgOptions { depth, mut tx_block_pairs } = options;
+        let ReorgOptions { depth, mut tx_block_pairs } = params.into_options(tx_block_pairs);
         if let Some((_, number)) = tx_block_pairs.iter().find(|(_, number)| *number >= depth) {
             let Some(last_block) = depth.checked_sub(1) else {
                 return Err(invalid_params(

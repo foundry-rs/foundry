@@ -77,10 +77,18 @@ is a missing method.
   anvil only for blocks whose header carries one. `cast run` uses the list to skip replaying the
   earlier transactions of a block, so its progress output differs.
 
+- Amsterdam state gas. Anvil does not charge EIP-8037 state gas (foundry-rs/foundry#17428);
+  this node does, so a transaction on Amsterdam that creates state with a tight gas limit runs
+  out of gas here. Tests that pin such gas limits need more gas.
+
 Running `crates/forge/tests/cli` the same way passes everything that does not need Tempo, except
 `forge create`'s gas estimate snapshot (the estimate margin above) and a `--fork-bal` test: anvil's
 block access lists carry no storage reads, reth's do, and forge's parent cache then does not fall
 back to the endpoint for read-only slots.
+
+The unit tests of `forge-script` and `foundry-evm-core` that spawn a node pass as well, except
+those that need Tempo or Optimism, and a Celo test: anvil installs Celo's native transfer
+precompile when run as a Celo node; this node does not have it yet.
 
 ## What Tempo needs
 
