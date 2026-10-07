@@ -359,6 +359,8 @@ async fn launch_node<Net: AnvilNetwork>(
     if let Some(memory_limit) = config.memory_limit {
         rpc_args.rpc_evm_memory_limit = memory_limit;
     }
+    // Calls and estimates without a gas limit get the block gas limit, as in anvil.
+    rpc_args.rpc_gas_cap = config.get_gas_limit();
     let node_config = RethNodeConfig::new(chain_spec.clone())
         .with_storage(StorageArgs { v2: false })
         .with_rpc(rpc_args)

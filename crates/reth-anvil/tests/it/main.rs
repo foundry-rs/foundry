@@ -2194,3 +2194,30 @@ async fn state_writes_are_visible_at_the_block_they_were_made_at() -> Result<()>
     })
     .await
 }
+
+#[tokio::test]
+async fn eth_call_without_gas_gets_the_block_gas_limit() -> Result<()> {
+    with_test_client(|client| async move {
+        // Runtime code that returns `GAS`.
+        let probe = Address::repeat_byte(0xA1);
+        client
+            .request::<(), _>(
+                "anvil_setCode",
+                rpc_params![
+                    probe,
+                    Bytes::from_static(&[0x5a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3])
+                ],
+            )
+            .await?;
+        let result: Bytes = client
+            .request(
+                "eth_call",
+                rpc_params![TransactionRequest::default().with_to(probe), "latest"],
+            )
+            .await?;
+        let gas_left = U256::from_be_slice(result.as_ref()).to::<u64>();
+        assert!((29_900_000..30_000_000).contains(&gas_left), "gas left: {gas_left}");
+        Ok(())
+    })
+    .await
+}

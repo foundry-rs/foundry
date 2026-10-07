@@ -75,8 +75,6 @@ is a missing method.
   a block, so its progress output differs, and the replay from that prestate reports less gas than
   the receipt for calls into contracts set with `anvil_setCode`; anvil serves no lists for its
   blocks. To be investigated with cast.
-- `cast call --trace` and `--override-state-diff` traces show a few hundred gas more in the outer
-  call than against anvil. To be investigated.
 
 ## What Tempo needs
 
