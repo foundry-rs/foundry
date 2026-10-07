@@ -4,6 +4,7 @@ use crate::{
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
     recovery::recovery_exists,
     sequence::ScriptSequenceKind,
     session::{
@@ -362,9 +363,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                         && !deployment.pending.contains(&hash)
                         && !deployment.receipts.iter().any(|r| r.transaction_hash() == hash)
                         && let Some(receipt) = provider.get_transaction_receipt(hash).await?
-                        && receipt.block_number().is_some()
-                        && receipt.block_hash().is_some()
-                        && receipt.transaction_index().is_some()
+                        && is_mined_receipt_for(&receipt, hash)
                     {
                         sequence.sequences_mut()[index].add_pending(operation, hash);
                     }

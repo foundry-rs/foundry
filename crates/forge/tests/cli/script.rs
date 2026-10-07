@@ -5298,8 +5298,8 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [9882] DeployScript::run()
-    ├─ [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
+  [12182] DeployScript::run()
+    ├─ [2300] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
