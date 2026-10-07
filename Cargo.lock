@@ -11347,6 +11347,7 @@ dependencies = [
  "reth-payload-builder",
  "reth-prune-types",
  "reth-rpc-eth-api",
+ "reth-rpc-server-types",
  "reth-stages-types",
  "reth-storage-overlay",
  "reth-tokio-util",

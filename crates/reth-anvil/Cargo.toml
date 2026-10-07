@@ -37,6 +37,7 @@ reth-node-events.workspace = true
 reth-payload-builder.workspace = true
 reth-prune-types.workspace = true
 reth-rpc-eth-api.workspace = true
+reth-rpc-server-types.workspace = true
 reth-stages-types.workspace = true
 reth-storage-overlay.workspace = true
 reth-tokio-util.workspace = true

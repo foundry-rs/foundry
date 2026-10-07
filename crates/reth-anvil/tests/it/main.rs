@@ -2504,3 +2504,29 @@ async fn min_gas_price_drives_the_gas_price_before_london() -> Result<()> {
     assert!(error.to_string().contains("EIP-1559"), "{error}");
     Ok(())
 }
+
+#[tokio::test]
+async fn estimate_gas_is_exact_and_uncapped_without_from() -> Result<()> {
+    with_test_client(|client| async move {
+        let reader = Address::with_last_byte(0xbe);
+        let code = balance_of_code(Address::repeat_byte(0x11));
+        client.request::<(), _>("anvil_setCode", rpc_params![reader, code]).await?;
+        let call = TransactionRequest::default().with_to(reader);
+        let estimate: U256 = client.request("eth_estimateGas", rpc_params![call.clone()]).await?;
+        let estimate = estimate.to::<u64>();
+        assert!(estimate > 21_000, "{estimate}");
+
+        // The estimate passes, one unit less does not.
+        let probe = |gas| rpc_params![call.clone().with_gas_limit(gas), "latest"];
+        client.request::<Bytes, _>("eth_call", probe(estimate)).await?;
+        assert!(client.request::<Bytes, _>("eth_call", probe(estimate - 1)).await.is_err());
+
+        // Fee fields without `from` are not capped by the zero address's balance.
+        let (_, gas_price) = funder_and_gas_price(&client).await?;
+        let priced: U256 =
+            client.request("eth_estimateGas", rpc_params![call.with_gas_price(gas_price)]).await?;
+        assert_eq!(priced.to::<u64>(), estimate);
+        Ok(())
+    })
+    .await
+}

@@ -12,7 +12,7 @@ use crate::{
     types::{ForkChoice, ForkUrl, ReorgOptions, ReorgParams, TransactionData, TransactionOrder},
 };
 use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
-use alloy_eips::{BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
+use alloy_eips::{BlockId, BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
 use alloy_json_rpc::RpcObject;
 use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U64, U256};
@@ -20,9 +20,9 @@ use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_eth::{
-    TransactionRequest,
+    BlockOverrides, TransactionRequest,
     erc4337::TransactionConditional,
-    state::{AccountOverride, StateOverridesBuilder},
+    state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
 use foundry_evm_core::utils::block_env_from_header;
 use jsonrpsee::{
@@ -35,12 +35,13 @@ use jsonrpsee::{
 };
 use parking_lot::RwLock;
 use reth_ethereum::{
-    chainspec::{EthChainSpec, EthereumHardforks, Hardforks},
+    chainspec::{EthChainSpec, EthereumHardforks, Hardforks, MIN_TRANSACTION_GAS},
     pool::TransactionPool,
     primitives::{Bytecode, SealedHeader},
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTxReq, RpcTypes};
+use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
 use revm::context::BlockEnv;
 use std::{
     sync::Arc,
@@ -323,6 +324,18 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
     /// minimum priority fee is disabled, or the node's gas price before London, as anvil does.
     #[method(name = "gasPrice")]
     async fn eth_gas_price(&self) -> RpcResult<U256>;
+
+    /// Estimates the gas of a call down to the exact limit, as anvil does; reth stops its search
+    /// within 1.5% above it. A request without `from` is not capped by the zero address's
+    /// balance.
+    #[method(name = "estimateGas")]
+    async fn eth_estimate_gas(
+        &self,
+        request: TxReq,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<U256>;
 }
 
 /// The `personal_*` namespace.
@@ -342,6 +355,23 @@ fn with_recipient<TxReq: AsMut<TransactionRequest>>(mut request: TxReq) -> TxReq
         request.as_mut().to = Some(TxKind::Create);
     }
     request
+}
+
+/// Funds the zero address, which stands in for a missing `from`, so a request with fee fields is
+/// not capped by that balance. Anvil charges no fee for a request without `from`.
+fn fund_default_caller(
+    request: &TransactionRequest,
+    overrides: Option<StateOverride>,
+) -> Option<StateOverride> {
+    let has_fees = request.gas_price.is_some()
+        || request.max_fee_per_gas.is_some()
+        || request.max_fee_per_blob_gas.is_some();
+    if request.from.is_some() || !has_fees {
+        return overrides;
+    }
+    let mut overrides = overrides.unwrap_or_default();
+    overrides.entry(Address::ZERO).or_default().balance.get_or_insert(U256::from(u128::MAX));
+    Some(overrides)
 }
 
 /// How long `eth_sendTransactionSync` waits for the receipt.
@@ -1247,6 +1277,51 @@ where
             Some(base_fee) if !self.min_priority_fee_enforced => Ok(U256::from(base_fee)),
             _ => EthApiServer::gas_price(&self.eth).await,
         }
+    }
+
+    async fn eth_estimate_gas(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<U256> {
+        let state_overrides = fund_default_caller(request.as_ref(), state_overrides);
+        let estimate = EthApiServer::estimate_gas(
+            &self.eth,
+            request.clone(),
+            block,
+            state_overrides.clone(),
+            block_overrides.clone(),
+        )
+        .await?;
+        let mut high = estimate.saturating_to::<u64>();
+        if high <= MIN_TRANSACTION_GAS {
+            return Ok(estimate);
+        }
+        // Reth stops once the failing and the passing limit are within the error ratio, so the
+        // exact limit is above `low`. Probe the calls between them.
+        let mut low = (high as f64 * (1.0 - ESTIMATE_GAS_ERROR_RATIO)) as u64;
+        while low + 1 < high {
+            let mid = low + (high - low) / 2;
+            let mut probe = request.clone();
+            probe.as_mut().gas = Some(mid);
+            let passes = EthApiServer::call(
+                &self.eth,
+                probe,
+                block,
+                state_overrides.clone(),
+                block_overrides.clone(),
+            )
+            .await
+            .is_ok();
+            if passes {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+        Ok(U256::from(high))
     }
 
     async fn eth_send_unsigned_transaction(

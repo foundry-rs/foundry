@@ -32,6 +32,7 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Rejects every transaction past `--max-transactions` in the executor wrapper, so the payload builder leaves it in the pool for the next block | `src/evm.rs` (`AnvilBlockExecutor`) | ~25 | A transaction count limit in `PayloadBuilderArgs` |
 | Replaces `eth_gasPrice` to return the base fee alone under `--disable-min-priority-fee` | `src/api.rs` (`EthExtApi`) | ~10 | A gas price oracle option for a zero tip |
 | Installs a precompile at Hardhat's console address that decodes `console.log` calls, and prints the lines of every mined transaction from the executor wrapper, because the payload builder has no inspector hook. The precompile address is warm at the start of a transaction, so the first `console.log` of a transaction costs 2,500 gas less than on anvil | `src/console.rs`, `src/evm.rs` | ~120 | An inspector hook on the payload builder, or an `Inspector` slot on `ConfigureEvm::evm_for_block` |
+| Replaces `eth_estimateGas`: probes the calls between reth's estimate and 1.5% below it to return the exact limit, as anvil does, and funds the zero address when a request without `from` carries fee fields, because reth caps the estimate by that balance | `src/api.rs` (`EthExtApi`) | ~50 | A configurable `ESTIMATE_GAS_ERROR_RATIO`, and no allowance cap for a request without `from` |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -71,10 +72,6 @@ is a missing method.
   Tests that snapshot these messages need new snapshots.
 - `eth_getBlockAccessListByBlockNumber` for a block without a list answers `block not found`
   (reth) instead of anvil's `block access list ... not found`.
-- `eth_estimateGas` without `from` and with fee fields set fails with `gas required exceeds
-  allowance (0)`: reth caps the estimate by the zero address's balance, anvil does not. Reth's
-  estimates also carry a small margin over the gas a call uses, where anvil returns the exact
-  amount, so a replay with the transaction's gas limit as its budget reports a different number.
 - Storage on a plain address. `anvil_setStorageAt` on an account without balance, nonce, or code
   keeps the storage in anvil; here the next block clears the empty account (EIP-161). An account
   without nonce and code keeps the storage, but revm treats it as known to be empty once the
@@ -89,9 +86,8 @@ is a missing method.
   out of gas here. Tests that pin such gas limits need more gas.
 
 Running `crates/forge/tests/cli` the same way passes everything that does not need Tempo, except
-`forge create`'s gas estimate snapshot (the estimate margin above) and a `--fork-bal` test: anvil's
-block access lists carry no storage reads, reth's do, and forge's parent cache then does not fall
-back to the endpoint for read-only slots.
+a `--fork-bal` test: anvil's block access lists carry no storage reads, reth's do, and forge's
+parent cache then does not fall back to the endpoint for read-only slots.
 
 The unit tests of `forge-script` and `foundry-evm-core` that spawn a node pass as well, except
 those that need Tempo or Optimism.
