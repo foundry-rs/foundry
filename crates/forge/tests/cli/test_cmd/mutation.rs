@@ -2163,3 +2163,62 @@ contract ArithmeticTest {
     assert!(summary["survived"].as_u64().unwrap() > 0, "{summary}");
     assert_eq!(fs::read_to_string(&dependency).unwrap(), source);
 }
+
+// Links next to a mutated dependency source keep their meaning: an alias sees the mutant, and an
+// unused dangling link does not make mutants invalid.
+#[cfg(unix)]
+#[forgetest_init]
+fn mutation_keeps_links_next_to_dependency_sources(prj: _, cmd: _) {
+    let dependency = prj.root().join("lib/bucket");
+    fs::create_dir_all(&dependency).unwrap();
+    fs::write(
+        dependency.join("Arithmetic.sol"),
+        r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        return 2;
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("Arithmetic.sol", dependency.join("Alias.sol")).unwrap();
+    std::os::unix::fs::symlink("nonexistent", dependency.join("unused")).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/Alias.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testBoundary() public view {
+        assert(arithmetic.bucket(9) == 1);
+        assert(arithmetic.bucket(10) == 2);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let result = serde_json::from_str::<serde_json::Value>(output.trim()).unwrap();
+    assert_eq!(result["summary"]["invalid"], 0, "{result}");
+    let survived = &result["survived_mutants"]["lib/bucket/Arithmetic.sol"];
+    let boundary_survived = survived.as_array().is_some_and(|mutants| {
+        mutants
+            .iter()
+            .any(|mutant| mutant["original"] == "value < 10" && mutant["mutant"] == "value <= 10")
+    });
+    assert!(!boundary_survived, "{result}");
+}

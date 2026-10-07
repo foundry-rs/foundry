@@ -732,9 +732,10 @@ fn copy_dir_recursive_inner(
 
 /// Makes `root/rel` writable without changing the files that `copy_project` links into `root`.
 ///
-/// Every symlinked directory on the path becomes a real directory whose entries link to (or, for
-/// files, copy) the original entries, and a symlinked file at `rel` is removed. Writing the file
-/// afterwards then changes only the workspace, not the shared dependency tree.
+/// Every symlinked directory on the path becomes a real directory: its files are copied, its
+/// directories are linked, and its symlinks are recreated without being followed, so aliases of
+/// the file see the mutant and dangling links stay harmless. A symlinked file at `rel` is removed.
+/// Writing the file afterwards then changes only the workspace, not the shared dependency tree.
 pub fn unshare_path(root: &Path, rel: &Path) -> Result<()> {
     let mut current = root.to_path_buf();
     let mut components = rel.components().peekable();
@@ -757,13 +758,38 @@ pub fn unshare_path(root: &Path, rel: &Path) -> Result<()> {
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
             let destination = current.join(entry.file_name());
-            if entry.path().is_dir() {
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                // Keep links as links, without following them: an alias of the mutated file
+                // must see the mutant, and a dangling link must not fail the copy.
+                let target = fs::read_link(entry.path())?;
+                let target = target
+                    .strip_prefix(&source)
+                    .map_or_else(|_| target.clone(), |relative| current.join(relative));
+                symlink_entry(&target, &destination)?;
+            } else if file_type.is_dir() {
                 if symlink_dir(&entry.path(), &destination).is_err() {
                     copy_dir_recursive(&entry.path(), &destination)?;
                 }
             } else {
                 fs::copy(entry.path(), &destination)?;
             }
+        }
+    }
+    Ok(())
+}
+
+/// Creates a symlink at `dst` to `target`, which may be relative or dangling.
+fn symlink_entry(target: &Path, dst: &Path) -> Result<()> {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, dst)?;
+    #[cfg(windows)]
+    {
+        let resolved = dst.parent().map_or_else(|| target.to_path_buf(), |dir| dir.join(target));
+        if resolved.is_dir() {
+            std::os::windows::fs::symlink_dir(target, dst)?;
+        } else {
+            std::os::windows::fs::symlink_file(target, dst)?;
         }
     }
     Ok(())
