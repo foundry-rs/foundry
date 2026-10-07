@@ -1864,7 +1864,7 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 1),
-        alloy_primitives::B256::ZERO,
+        B256::ZERO,
     )
     .await
     .unwrap();
