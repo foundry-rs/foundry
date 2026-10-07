@@ -1225,9 +1225,11 @@ impl Config {
     }
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
+    ///
+    /// Only a pinned solc version is used; a local compiler path is never executed.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc_version()
-            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        if let Some(SolcReq::Version(version)) = &self.solc
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(version)
         {
             return evm_version;
         }
@@ -2789,12 +2791,10 @@ impl Config {
             return figment;
         }
 
-        // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
-            && let Some(version) = solc
-                .try_version()
-                .ok()
-                .and_then(|version| self.evm_version.normalize_version_solc(&version))
+        // Normalize `evm_version` based on the provided solc version. Local compiler paths are
+        // never executed while loading config.
+        if let Ok(SolcReq::Version(version)) = figment.extract_inner::<SolcReq>("solc")
+            && let Some(version) = self.evm_version.normalize_version_solc(&version)
         {
             let profile = figment.profile().clone();
             figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
