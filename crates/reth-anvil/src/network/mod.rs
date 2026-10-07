@@ -30,6 +30,7 @@ use reth_ethereum::{
             rpc::{EngineValidatorAddOn, RethRpcAddOns},
         },
     },
+    pool::TransactionPoolExt,
     primitives::{SignerRecoverable, header::HeaderMut},
     provider::{db::DatabaseEnv, providers::NodeTypesForProvider},
 };
@@ -113,6 +114,7 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
             Components: NodeComponents<
                 AnvilAdapter<Self::Node>,
                 Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>,
+                Pool: TransactionPoolExt,
             >,
         >;
     /// The RPC add-ons.

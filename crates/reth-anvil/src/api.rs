@@ -3,7 +3,8 @@ use crate::{
     fork::ForkInfo,
     impersonation::ImpersonationState,
     logging::LoggingState,
-    mining::MiningController,
+    miner::HookFuture,
+    mining::{MiningController, wait_for_pool},
     node::Relauncher,
     snapshot::{Snapshot, SnapshotManager},
     state::{AnvilState, SharedAnvilState},
@@ -15,6 +16,7 @@ use alloy_consensus::{
     Blob, BlockHeader, Transaction,
     transaction::{PooledTransaction, TxHashRef},
 };
+use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
 use alloy_json_rpc::RpcObject;
 use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
@@ -23,7 +25,8 @@ use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_eth::{
-    BlockOverrides, Bundle, EthCallResponse, StateContext, TransactionRequest,
+    BlockOverrides, Bundle, EthCallResponse, FeeHistory, Filter, FilterId, StateContext,
+    TransactionRequest,
     erc4337::TransactionConditional,
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
@@ -40,7 +43,7 @@ use jsonrpsee::{
 use parking_lot::{Mutex, RwLock};
 use reth_ethereum::{
     chainspec::{EthChainSpec, EthereumHardforks, Hardforks, MIN_TRANSACTION_GAS},
-    pool::TransactionPool,
+    pool::{TransactionPool, TransactionPoolExt},
     primitives::{Bytecode, SealedHeader},
     rpc::eth::{
         EthApiError, RpcInvalidTransactionError, error::RpcPoolError,
@@ -48,11 +51,15 @@ use reth_ethereum::{
     },
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
-use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTxReq, RpcTypes};
+use reth_execution_types::ChangedAccount;
+use reth_rpc_eth_api::{
+    EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTransaction, RpcTxReq, RpcTypes,
+};
 use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
 use revm::{context::BlockEnv, primitives::eip7825::TX_GAS_LIMIT_CAP};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -287,7 +294,7 @@ pub trait EvmApi {
 
 /// The `eth_*` methods anvil adds on top of the standard namespace, or replaces.
 #[rpc(server, namespace = "eth")]
-pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
+pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject, Tx: RpcObject> {
     /// Signs and sends a transaction from a dev account. A request without `to` deploys a
     /// contract.
     ///
@@ -376,6 +383,68 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
     #[method(name = "baseFee")]
     async fn eth_base_fee(&self) -> RpcResult<Option<U256>>;
 
+    /// Returns the fee history. The entry for the block after the newest one comes from that
+    /// block when it exists, or from the next-block override, where reth computes it from the
+    /// newest block alone; a block without a gas limit has a zero gas-used ratio instead of NaN.
+    #[method(name = "feeHistory")]
+    async fn eth_fee_history(
+        &self,
+        block_count: U64,
+        newest_block: BlockNumberOrTag,
+        reward_percentiles: Option<Vec<f64>>,
+    ) -> RpcResult<FeeHistory>;
+
+    /// Returns the receipt of a transaction. An impersonated transaction has no valid signature,
+    /// so a lookup that recovers the sender from it fails; the lookup then runs again with the
+    /// block in the RPC cache, which carries the senders the block recorded.
+    #[method(name = "getTransactionReceipt")]
+    async fn eth_get_transaction_receipt(&self, hash: B256) -> RpcResult<Option<Receipt>>;
+
+    /// Returns a transaction by hash; see `eth_getTransactionReceipt` for impersonated
+    /// transactions.
+    #[method(name = "getTransactionByHash")]
+    async fn eth_get_transaction_by_hash(&self, hash: B256) -> RpcResult<Option<Tx>>;
+
+    /// Returns the transaction count of an account. At `pending`, the count comes from the pool
+    /// and the latest state, as on anvil, without building reth's pending block, whose cache
+    /// would then serve a block without the transactions that arrive in the next second.
+    #[method(name = "getTransactionCount")]
+    async fn eth_transaction_count(
+        &self,
+        address: Address,
+        block: Option<BlockId>,
+    ) -> RpcResult<U256>;
+
+    /// Installs a log filter. A filter without `fromBlock` reports the blocks after the current
+    /// one, as on anvil; reth's first poll includes the current block.
+    #[method(name = "newFilter")]
+    async fn eth_new_filter(&self, filter: Filter) -> RpcResult<FilterId>;
+
+    /// Installs a block filter that reports the blocks after the current one, as on anvil.
+    #[method(name = "newBlockFilter")]
+    async fn eth_new_block_filter(&self) -> RpcResult<FilterId>;
+
+    /// Returns the uncle count of a block, and fails for an unknown block, as anvil does; reth
+    /// answers `null`.
+    #[method(name = "getUncleCountByBlockHash")]
+    async fn eth_block_uncles_count_by_hash(&self, hash: B256) -> RpcResult<Option<U256>>;
+
+    /// Returns the uncle count of a block, and fails for a block above the head, as anvil does.
+    #[method(name = "getUncleCountByBlockNumber")]
+    async fn eth_block_uncles_count_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> RpcResult<Option<U256>>;
+
+    /// Signs a transaction with a dev account. The chain id and the gas limit are filled in, as
+    /// on anvil; reth requires them.
+    #[method(name = "signTransaction")]
+    async fn eth_sign_transaction(&self, request: TxReq) -> RpcResult<Bytes>;
+
+    /// Signs typed data, like `eth_signTypedData`.
+    #[method(name = "signTypedData_v4")]
+    async fn eth_sign_typed_data_v4(&self, address: Address, data: TypedData) -> RpcResult<Bytes>;
+
     /// Sends a signed transaction and waits for its receipt, for `timeout_ms` at most.
     #[method(name = "sendRawTransactionSync")]
     async fn eth_send_raw_transaction_sync(
@@ -421,16 +490,36 @@ fn fund_default_caller(
     request: &TransactionRequest,
     overrides: Option<StateOverride>,
 ) -> Option<StateOverride> {
-    let has_fees = request.gas_price.is_some()
-        || request.max_fee_per_gas.is_some()
-        || request.max_fee_per_blob_gas.is_some();
-    if request.from.is_some() || !has_fees {
+    if request.from.is_some() {
         return overrides;
     }
     let mut overrides = overrides.unwrap_or_default();
     overrides.entry(Address::ZERO).or_default().balance.get_or_insert(U256::from(u128::MAX));
     Some(overrides)
 }
+
+/// Gives a revert without data the empty data anvil reports, where reth leaves it out.
+fn with_revert_data(error: ErrorObjectOwned) -> ErrorObjectOwned {
+    if error.code() == REVERT_ERROR_CODE && error.data().is_none() {
+        return ErrorObjectOwned::owned(error.code(), error.message().to_string(), Some("0x"));
+    }
+    error
+}
+
+/// The error code of a reverted call, as anvil and reth report it.
+const REVERT_ERROR_CODE: i32 = 3;
+
+/// Reth's error for a transaction whose sender cannot be recovered.
+const INVALID_SIGNATURE_MESSAGE: &str = "invalid transaction signature";
+
+/// The error of a sender that cannot pay for a transaction.
+fn insufficient_funds(cost: U256, balance: U256) -> ErrorObjectOwned {
+    EthApiError::InvalidTransaction(RpcInvalidTransactionError::InsufficientFunds { cost, balance })
+        .into()
+}
+
+/// How long a snapshot revert waits for the pool to take the reverted transactions back.
+const POOL_RESTORE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long `eth_sendTransactionSync` waits for the receipt.
 const TRANSACTION_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -474,6 +563,30 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     /// One lock per sender for requests without a nonce, so concurrent requests get distinct
     /// nonces.
     nonce_locks: Arc<Mutex<HashMap<Address, Arc<AsyncMutex<()>>>>>,
+    /// Installs a log filter that reports the blocks after the current one; see
+    /// `eth_newFilter`.
+    new_filter: NewFilterHook,
+}
+
+/// Installs a log filter, or a block filter for `None`, and returns its id.
+#[derive(Clone)]
+pub struct NewFilterHook(
+    Arc<dyn Fn(Option<Filter>) -> HookFuture<RpcResult<FilterId>> + Send + Sync>,
+);
+
+impl fmt::Debug for NewFilterHook {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NewFilterHook")
+    }
+}
+
+impl NewFilterHook {
+    /// Wraps the given installer.
+    pub fn new(
+        install: impl Fn(Option<Filter>) -> HookFuture<RpcResult<FilterId>> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(install))
+    }
 }
 
 impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec> {
@@ -498,6 +611,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
         pool: Pool,
         provider: Provider,
         eth: Eth,
+        new_filter: NewFilterHook,
     ) -> Self {
         Self {
             identity,
@@ -519,6 +633,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
             provider,
             eth,
             nonce_locks: Default::default(),
+            new_filter,
         }
     }
 }
@@ -542,6 +657,7 @@ impl<Pool, Provider: BlockNumReader + HeaderProvider, Eth, Spec>
 
 impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
 where
+    Pool: TransactionPool,
     Provider:
         BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + AccountDump,
     Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default>>,
@@ -580,16 +696,75 @@ where
     /// Rewinds the chain to the given canonical header and drops the transactions of the removed
     /// blocks, so the pool does not mine them again.
     async fn rewind_to(&self, header: &SealedHeader<HeaderOf<Provider>>) -> RpcResult<()> {
+        self.rewind_to_keeping(header, &HashSet::new()).await?;
+        Ok(())
+    }
+
+    /// Rewinds the chain to `header`. The transactions of the removed blocks are dropped, so the
+    /// pool does not take them back, except the ones in `keep`, whose hashes are returned.
+    async fn rewind_to_keeping(
+        &self,
+        header: &SealedHeader<HeaderOf<Provider>>,
+        keep: &HashSet<B256>,
+    ) -> RpcResult<Vec<B256>> {
         let best = self.best_block_number()?;
+        let mut kept = Vec::new();
         if header.number() < best {
             let removed = self
                 .provider
                 .transactions_by_block_range(header.number() + 1..=best)
                 .map_err(|error| internal_error(format!("failed to read transactions: {error}")))?;
-            self.impersonation.drop_txs(removed.into_iter().flatten().map(|tx| *tx.tx_hash()));
+            let (keep_hashes, drop_hashes): (Vec<_>, Vec<_>) = removed
+                .into_iter()
+                .flatten()
+                .map(|tx| *tx.tx_hash())
+                .partition(|hash| keep.contains(hash));
+            kept = keep_hashes;
+            self.impersonation.drop_txs(drop_hashes);
         }
         self.mining.rewind(header.clone()).await.map_err(internal_error)?;
         self.state.write().rewind_to(header.number());
+        Ok(kept)
+    }
+
+    /// Brings the pool back to the transactions in `keep` after a rewind to `head`: waits for
+    /// the pool to take the removed blocks' transactions in `restored` back, and removes the
+    /// transactions that are not in `keep`.
+    async fn restore_pool(&self, head: B256, keep: &HashSet<B256>, restored: &[B256]) {
+        wait_for_pool(&self.pool, head).await;
+        let deadline = Instant::now() + POOL_RESTORE_TIMEOUT;
+        while restored.iter().any(|hash| !self.pool.contains(hash)) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let extra: Vec<B256> = self
+            .pool
+            .all_transaction_hashes()
+            .into_iter()
+            .filter(|hash| !keep.contains(hash))
+            .collect();
+        if !extra.is_empty() {
+            self.pool.remove_transactions(extra.clone());
+            self.impersonation.forget_tx_senders(extra);
+        }
+    }
+
+    /// Tells the pool the nonce and balance of an account after a state write, so it promotes or
+    /// parks the account's transactions, as anvil's pool sees the write at once.
+    fn sync_pool_account(&self, address: Address) -> RpcResult<()>
+    where
+        Pool: TransactionPoolExt,
+    {
+        let account = self
+            .provider
+            .latest()
+            .and_then(|state| state.basic_account(&address))
+            .map_err(|error| internal_error(format!("failed to read account: {error}")))?
+            .unwrap_or_default();
+        self.pool.update_accounts(vec![ChangedAccount {
+            address,
+            nonce: account.nonce,
+            balance: account.balance,
+        }]);
         Ok(())
     }
 
@@ -706,7 +881,7 @@ impl<Pool, Provider, Eth, Spec>
     AnvilApiServer<RpcBlock<Eth::NetworkTypes>, RpcTxReq<Eth::NetworkTypes>>
     for AnvilRpc<Pool, Provider, Eth, Spec>
 where
-    Pool: TransactionPool + Send + Sync + 'static,
+    Pool: TransactionPool + TransactionPoolExt + Send + Sync + 'static,
     Provider: BlockNumReader
         + HeaderProvider
         + TransactionsProvider
@@ -802,6 +977,7 @@ where
             state: self.state.read().clone(),
             time: self.time.snapshot(),
             block_env: self.block_env.snapshot(),
+            pool: self.pool.all_transaction_hashes(),
         };
         Ok(self.snapshots.insert(snapshot))
     }
@@ -810,10 +986,17 @@ where
         let Some(snapshot) = self.snapshots.take(id) else {
             return Ok(false);
         };
-        self.rewind_to(&snapshot.header).await?;
+        // The pool goes back to the snapshot too, as on anvil: the transactions mined since
+        // return to it, the ones sent since go.
+        let keep: HashSet<B256> = snapshot.pool.iter().copied().collect();
+        let restored = self.rewind_to_keeping(&snapshot.header, &keep).await?;
         *self.state.write() = snapshot.state;
         self.time.restore(snapshot.time);
         self.block_env.restore(snapshot.block_env);
+        self.restore_pool(snapshot.header.hash(), &keep, &restored).await;
+        if self.mining.is_automine() {
+            self.mining.trigger_if_pending();
+        }
         Ok(true)
     }
 
@@ -940,6 +1123,10 @@ where
         self.time.set_time(self.chain_spec.genesis().timestamp);
         self.time.remove_block_timestamp_interval();
         self.block_env.restore(Default::default());
+        // The first block keeps the genesis base fee, as at launch.
+        if let Some(base_fee) = genesis.base_fee_per_gas() {
+            self.block_env.set_next_base_fee(base_fee);
+        }
         *self.instance_id.write() = B256::random();
         Ok(())
     }
@@ -1032,10 +1219,22 @@ where
     }
 
     async fn anvil_drop_transaction(&self, tx_hash: B256) -> RpcResult<Option<B256>> {
-        Ok(self.pool.remove_transaction(tx_hash).map(|_| {
-            self.impersonation.forget_tx_sender(&tx_hash);
-            tx_hash
-        }))
+        let Some(tx) = self.pool.get(&tx_hash) else {
+            return Ok(None);
+        };
+        // The sender's later transactions go with it, as on anvil; reth only parks them.
+        let (sender, nonce) = (tx.sender(), tx.nonce());
+        let mut hashes = vec![tx_hash];
+        hashes.extend(
+            self.pool
+                .get_transactions_by_sender(sender)
+                .into_iter()
+                .filter(|tx| tx.nonce() > nonce)
+                .map(|tx| *tx.hash()),
+        );
+        self.pool.remove_transactions(hashes.clone());
+        self.impersonation.forget_tx_senders(hashes);
+        Ok(Some(tx_hash))
     }
 
     async fn anvil_drop_all_transactions(&self) -> RpcResult<()> {
@@ -1168,7 +1367,7 @@ where
 
     async fn anvil_set_balance(&self, address: Address, balance: U256) -> RpcResult<()> {
         self.state.write().set_balance(address, balance);
-        Ok(())
+        self.sync_pool_account(address)
     }
 
     async fn anvil_add_balance(&self, address: Address, balance: U256) -> RpcResult<()> {
@@ -1180,7 +1379,7 @@ where
     async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> RpcResult<()> {
         let nonce = nonce.try_into().map_err(|_| invalid_params("nonce exceeds u64::MAX"))?;
         self.state.write().set_nonce(address, nonce);
-        Ok(())
+        self.sync_pool_account(address)
     }
 
     async fn anvil_set_code(&self, address: Address, code: Bytes) -> RpcResult<()> {
@@ -1265,7 +1464,7 @@ where
 #[async_trait]
 impl<Pool, Provider, Eth, Spec> EvmApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
 where
-    Pool: TransactionPool + Send + Sync + 'static,
+    Pool: TransactionPool + TransactionPoolExt + Send + Sync + 'static,
     Provider: BlockNumReader
         + HeaderProvider
         + TransactionsProvider
@@ -1286,9 +1485,9 @@ where
 impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool,
-    Provider: BlockNumReader + HeaderProvider,
+    Provider: BlockNumReader + HeaderProvider + StateProviderFactory,
     Eth: FullEthApiServer,
-    Spec: EthereumHardforks,
+    Spec: EthChainSpec + EthereumHardforks,
 {
     /// Fills a missing `from` with the first dev account, as anvil does, and marks a missing
     /// `to` as a contract creation.
@@ -1319,16 +1518,9 @@ where
             && let Some(value) = request.as_ref().value
             && !value.is_zero()
         {
-            let balance = match state_overrides.as_ref().and_then(|overrides| overrides.get(&from))
-            {
-                Some(AccountOverride { balance: Some(balance), .. }) => *balance,
-                _ => EthApiServer::balance(&self.eth, from, block).await?,
-            };
+            let balance = self.balance_of(from, block, state_overrides.as_ref())?;
             if value > balance {
-                return Err(EthApiError::InvalidTransaction(
-                    RpcInvalidTransactionError::InsufficientFunds { cost: value, balance },
-                )
-                .into());
+                return Err(insufficient_funds(value, balance));
             }
         }
         let state_overrides = fund_default_caller(request.as_ref(), state_overrides);
@@ -1422,6 +1614,9 @@ where
         let request = self.with_sender(request)?;
         let _guard = self.nonce_lock(request.as_ref().from.unwrap_or_default()).lock_owned().await;
         let request = self.prepare_send(request).await?;
+        if let Some(max_fee) = request.as_ref().max_fee_per_gas.or(request.as_ref().gas_price) {
+            self.ensure_fee_cap(max_fee)?;
+        }
         self.ensure_request_replacement_priced(&request)?;
         EthApiServer::send_transaction(&self.eth, request).await
     }
@@ -1436,6 +1631,7 @@ where
             None => None,
         };
         if let Some(recovered) = &recovered {
+            self.ensure_fee_cap(recovered.max_fee_per_gas())?;
             self.ensure_replacement_priced(
                 recovered.signer(),
                 recovered.nonce(),
@@ -1445,9 +1641,107 @@ where
         EthApiServer::send_raw_transaction(&self.eth, tx).await
     }
 
+    /// Returns whether a lookup by transaction hash that failed with `error` should run again:
+    /// the lookup failed to recover the sender from the signature, and the transaction's block
+    /// is now in the RPC cache. An impersonated transaction has no valid signature, and the
+    /// cache carries the senders the block recorded.
+    async fn cache_block_of(&self, hash: B256, error: &ErrorObjectOwned) -> RpcResult<bool>
+    where
+        Provider: TransactionsProvider,
+    {
+        if error.message() != INVALID_SIGNATURE_MESSAGE {
+            return Ok(false);
+        }
+        let Some((_, meta)) = self
+            .provider
+            .transaction_by_hash_with_meta(hash)
+            .map_err(|error| internal_error(format!("failed to read transaction: {error}")))?
+        else {
+            return Ok(false);
+        };
+        self.eth
+            .cache()
+            .get_recovered_block(meta.block_hash)
+            .await
+            .map_err(|error| internal_error(format!("failed to read block: {error}")))?;
+        Ok(true)
+    }
+
     /// Returns the nonce lock of a sender.
     fn nonce_lock(&self, sender: Address) -> Arc<AsyncMutex<()>> {
         self.nonce_locks.lock().entry(sender).or_default().clone()
+    }
+
+    /// Returns the balance of an account in a block, with the state override applied.
+    fn balance_of(
+        &self,
+        address: Address,
+        block: Option<BlockId>,
+        state_overrides: Option<&StateOverride>,
+    ) -> RpcResult<U256> {
+        if let Some(AccountOverride { balance: Some(balance), .. }) =
+            state_overrides.and_then(|overrides| overrides.get(&address))
+        {
+            return Ok(*balance);
+        }
+        let state = self
+            .provider
+            .state_by_block_id(block.unwrap_or_default())
+            .map_err(|error| internal_error(format!("failed to read state: {error}")))?;
+        let balance = state
+            .account_balance(&address)
+            .map_err(|error| internal_error(format!("failed to read account: {error}")))?;
+        Ok(balance.unwrap_or_default())
+    }
+
+    /// Returns the base fee of the next block: the override, or the fee the latest block gives
+    /// it. `None` before London.
+    fn next_base_fee(&self) -> RpcResult<Option<u64>> {
+        if let Some(fee) = self.block_env.building_base_fee().or(self.block_env.next_base_fee()) {
+            return Ok(Some(fee));
+        }
+        let header = self.sealed_header(self.best_block_number()?)?;
+        let params =
+            self.chain_spec.base_fee_params_at_timestamp(self.time.current_call_timestamp());
+        Ok(header.next_block_base_fee(params))
+    }
+
+    /// Rejects a transaction whose fee cap is below the next block's base fee, as anvil does;
+    /// reth parks it in the pool until the base fee drops.
+    fn ensure_fee_cap(&self, max_fee: u128) -> RpcResult<()> {
+        if let Some(base_fee) = self.next_base_fee()?
+            && max_fee < u128::from(base_fee)
+        {
+            return Err(
+                EthApiError::InvalidTransaction(RpcInvalidTransactionError::FeeCapTooLow).into()
+            );
+        }
+        Ok(())
+    }
+
+    /// Fails a priced call whose sender cannot pay for its gas and value, as anvil does; reth
+    /// runs calls without the balance check. A call without a gas limit pays for at least a
+    /// transfer.
+    fn ensure_call_funds(
+        &self,
+        request: &RpcTxReq<Eth::NetworkTypes>,
+        block: Option<BlockId>,
+        state_overrides: Option<&StateOverride>,
+    ) -> RpcResult<()> {
+        let tx = request.as_ref();
+        let (Some(from), Some(price)) = (tx.from, tx.gas_price.or(tx.max_fee_per_gas)) else {
+            return Ok(());
+        };
+        if price == 0 {
+            return Ok(());
+        }
+        let balance = self.balance_of(from, block, state_overrides)?;
+        let gas = tx.gas.unwrap_or(MIN_TRANSACTION_GAS);
+        let cost = U256::from(price) * U256::from(gas) + tx.value.unwrap_or_default();
+        if balance < cost {
+            return Err(insufficient_funds(cost, balance));
+        }
+        Ok(())
     }
 
     /// Rejects a transaction whose fee does not exceed the pooled transaction with the same
@@ -1539,13 +1833,22 @@ where
 
 #[async_trait]
 impl<Pool, Provider, Eth, Spec>
-    EthExtApiServer<RpcTxReq<Eth::NetworkTypes>, RpcReceipt<Eth::NetworkTypes>>
-    for AnvilRpc<Pool, Provider, Eth, Spec>
+    EthExtApiServer<
+        RpcTxReq<Eth::NetworkTypes>,
+        RpcReceipt<Eth::NetworkTypes>,
+        RpcTransaction<Eth::NetworkTypes>,
+    > for AnvilRpc<Pool, Provider, Eth, Spec>
 where
     Pool: TransactionPool + 'static,
-    Provider: BlockNumReader + HeaderProvider + Send + Sync + 'static,
+    Provider: BlockNumReader
+        + HeaderProvider
+        + StateProviderFactory
+        + TransactionsProvider
+        + Send
+        + Sync
+        + 'static,
     Eth: FullEthApiServer,
-    Spec: EthereumHardforks + Send + Sync + 'static,
+    Spec: EthChainSpec + EthereumHardforks + Send + Sync + 'static,
 {
     async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
         self.send(request).await
@@ -1621,7 +1924,9 @@ where
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
-        self.estimate_gas_exact(request, block, state_overrides, block_overrides).await
+        self.estimate_gas_exact(request, block, state_overrides, block_overrides)
+            .await
+            .map_err(with_revert_data)
     }
 
     async fn eth_call(
@@ -1631,8 +1936,11 @@ where
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<Bytes> {
+        self.ensure_call_funds(&request, block, state_overrides.as_ref())?;
         let request = self.with_call_fees(request)?;
-        EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides).await
+        EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides)
+            .await
+            .map_err(with_revert_data)
     }
 
     async fn eth_call_many(
@@ -1677,11 +1985,153 @@ where
     }
 
     async fn eth_base_fee(&self) -> RpcResult<Option<U256>> {
-        let fee = self.block_env.building_base_fee().or(self.block_env.next_base_fee());
-        match fee {
-            Some(fee) => Ok(Some(U256::from(fee))),
-            None => EthApiServer::base_fee(&self.eth).await,
+        Ok(self.next_base_fee()?.map(U256::from))
+    }
+
+    async fn eth_transaction_count(
+        &self,
+        address: Address,
+        block: Option<BlockId>,
+    ) -> RpcResult<U256> {
+        if !block.is_some_and(|block| block.is_pending()) {
+            return EthApiServer::transaction_count(&self.eth, address, block).await;
         }
+        let latest =
+            EthApiServer::transaction_count(&self.eth, address, Some(BlockId::latest())).await?;
+        let pooled = self
+            .pool
+            .get_highest_transaction_by_sender(address)
+            .map(|tx| U256::from(tx.nonce() + 1))
+            .unwrap_or_default();
+        Ok(latest.max(pooled))
+    }
+
+    async fn eth_new_filter(&self, filter: Filter) -> RpcResult<FilterId> {
+        (self.new_filter.0)(Some(filter)).await
+    }
+
+    async fn eth_new_block_filter(&self) -> RpcResult<FilterId> {
+        (self.new_filter.0)(None).await
+    }
+
+    async fn eth_block_uncles_count_by_hash(&self, hash: B256) -> RpcResult<Option<U256>> {
+        let known = self
+            .provider
+            .block_number(hash)
+            .map_err(|error| internal_error(format!("failed to read block: {error}")))?;
+        if known.is_none() {
+            return Err(EthApiError::HeaderNotFound(hash.into()).into());
+        }
+        EthApiServer::block_uncles_count_by_hash(&self.eth, hash).await
+    }
+
+    async fn eth_block_uncles_count_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> RpcResult<Option<U256>> {
+        if let BlockNumberOrTag::Number(number) = number
+            && number > self.best_block_number()?
+        {
+            return Err(EthApiError::HeaderNotFound(number.into()).into());
+        }
+        EthApiServer::block_uncles_count_by_number(&self.eth, number).await
+    }
+
+    async fn eth_sign_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<Bytes> {
+        let mut request = self.with_sender(request)?;
+        if request.as_ref().chain_id.is_none() {
+            request.as_mut().chain_id = EthApiServer::chain_id(&self.eth).await?.map(|id| id.to());
+        }
+        if request.as_ref().gas.is_none() {
+            // The estimate runs without the fee fields, which the signed transaction keeps as
+            // given, so a tip above the fee cap does not fail it.
+            let mut probe = request.clone();
+            let fees = probe.as_mut();
+            fees.gas_price = None;
+            fees.max_fee_per_gas = None;
+            fees.max_priority_fee_per_gas = None;
+            let gas = match self.estimate_gas_exact(probe, None, None, None).await {
+                Ok(gas) => gas.saturating_to(),
+                Err(_) => self.fallback_gas_limit()?,
+            };
+            request.as_mut().gas = Some(gas);
+        }
+        EthApiServer::sign_transaction(&self.eth, request).await
+    }
+
+    async fn eth_sign_typed_data_v4(&self, address: Address, data: TypedData) -> RpcResult<Bytes> {
+        EthApiServer::sign_typed_data(&self.eth, address, data).await
+    }
+
+    async fn eth_get_transaction_receipt(
+        &self,
+        hash: B256,
+    ) -> RpcResult<Option<RpcReceipt<Eth::NetworkTypes>>> {
+        match EthApiServer::transaction_receipt(&self.eth, hash).await {
+            Err(error) if self.cache_block_of(hash, &error).await? => {
+                EthApiServer::transaction_receipt(&self.eth, hash).await
+            }
+            result => result,
+        }
+    }
+
+    async fn eth_get_transaction_by_hash(
+        &self,
+        hash: B256,
+    ) -> RpcResult<Option<RpcTransaction<Eth::NetworkTypes>>> {
+        match EthApiServer::transaction_by_hash(&self.eth, hash).await {
+            Err(error) if self.cache_block_of(hash, &error).await? => {
+                EthApiServer::transaction_by_hash(&self.eth, hash).await
+            }
+            result => result,
+        }
+    }
+
+    async fn eth_fee_history(
+        &self,
+        block_count: U64,
+        newest_block: BlockNumberOrTag,
+        reward_percentiles: Option<Vec<f64>>,
+    ) -> RpcResult<FeeHistory> {
+        let mut history =
+            EthApiServer::fee_history(&self.eth, block_count, newest_block, reward_percentiles)
+                .await?;
+        let blocks = history.base_fee_per_gas.len().saturating_sub(1) as u64;
+        if blocks == 0 {
+            return Ok(history);
+        }
+        let newest = history.oldest_block + blocks - 1;
+        let child = self
+            .provider
+            .sealed_header(newest + 1)
+            .map_err(|error| internal_error(format!("failed to read header: {error}")))?;
+        let (next_base_fee, next_blob_fee) = match child {
+            Some(child) => {
+                let blob_params = self.chain_spec.blob_params_at_timestamp(child.timestamp());
+                (
+                    child.base_fee_per_gas().map(u128::from),
+                    blob_params.and_then(|params| child.blob_fee(params)),
+                )
+            }
+            None => (self.next_base_fee()?.map(u128::from), None),
+        };
+        if let Some(fee) = next_base_fee
+            && let Some(last) = history.base_fee_per_gas.last_mut()
+        {
+            *last = fee;
+        }
+        if let Some(fee) = next_blob_fee
+            && let Some(last) = history.base_fee_per_blob_gas.last_mut()
+        {
+            *last = fee;
+        }
+        for ratio in history.gas_used_ratio.iter_mut().chain(history.blob_gas_used_ratio.iter_mut())
+        {
+            if ratio.is_nan() {
+                *ratio = 0.0;
+            }
+        }
+        Ok(history)
     }
 
     async fn eth_send_raw_transaction_sync(

@@ -1,5 +1,6 @@
 use crate::{server::SharedModule, state_dump::SerializableState, types::ReorgOptions};
 use alloy_consensus::TxEnvelope;
+use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7910::EthConfig};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{
@@ -9,8 +10,9 @@ use alloy_rpc_types::{
     txpool::TxpoolStatus,
 };
 use alloy_rpc_types_eth::{
-    Account, Block, FeeHistory, FillTransaction, Index, Transaction, TransactionReceipt,
-    TransactionRequest, state::EvmOverrides,
+    AccessListResult, Account, Block, EIP1186AccountProofResponse, FeeHistory, FillTransaction,
+    Index, Transaction, TransactionReceipt, TransactionRequest,
+    state::{EvmOverrides, StateOverride},
 };
 use alloy_serde::WithOtherFields;
 use eyre::Result;
@@ -256,14 +258,18 @@ impl EthApi {
 
     /// Returns the base fee of the next block.
     pub async fn base_fee(&self) -> Result<Option<U256>> {
-        let block = self.block_by_number(BlockNumberOrTag::Pending).await?;
-        Ok(block.and_then(|block| block.header.base_fee_per_gas).map(U256::from))
+        self.request("eth_baseFee", ArrayParams::new()).await
     }
 
     /// Returns the gas limit of the latest block.
     pub async fn gas_limit(&self) -> Result<U256> {
         let block = self.block_by_number(BlockNumberOrTag::Latest).await?;
         Ok(U256::from(block.map(|block| block.header.gas_limit).unwrap_or_default()))
+    }
+
+    /// Returns the receipts of a block.
+    pub async fn block_receipts(&self, block: BlockId) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.request("eth_getBlockReceipts", params![block]).await
     }
 
     /// Returns the block with the given number, with transaction hashes.
@@ -400,6 +406,58 @@ impl EthApi {
         trace_types: HashSet<TraceType>,
     ) -> Result<Option<TraceResults>> {
         self.request("trace_replayTransaction", params![hash, trace_types]).await
+    }
+
+    /// Executes a call and returns its traces.
+    pub async fn trace_call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        trace_types: HashSet<TraceType>,
+        block: Option<BlockId>,
+    ) -> Result<TraceResults> {
+        self.request("trace_call", params![request, trace_types, block]).await
+    }
+
+    /// Executes calls on top of each other and returns their traces.
+    pub async fn trace_call_many(
+        &self,
+        calls: Vec<(WithOtherFields<TransactionRequest>, HashSet<TraceType>)>,
+        block: Option<BlockId>,
+    ) -> Result<Vec<TraceResults>> {
+        self.request("trace_callMany", params![calls, block]).await
+    }
+
+    /// Signs a transaction with a dev account and returns the encoded transaction.
+    pub async fn sign_transaction(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<String> {
+        self.request("eth_signTransaction", params![request]).await
+    }
+
+    /// Signs typed data with a dev account.
+    pub async fn sign_typed_data_v4(&self, address: Address, data: &TypedData) -> Result<String> {
+        self.request("eth_signTypedData_v4", params![address, data]).await
+    }
+
+    /// Returns the Merkle proof of an account and its storage slots.
+    pub async fn get_proof(
+        &self,
+        address: Address,
+        keys: Vec<B256>,
+        block: Option<BlockId>,
+    ) -> Result<EIP1186AccountProofResponse> {
+        self.request("eth_getProof", params![address, keys, block]).await
+    }
+
+    /// Creates the access list of a call.
+    pub async fn create_access_list(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        block: Option<BlockId>,
+        state_override: Option<StateOverride>,
+    ) -> Result<AccessListResult> {
+        self.request("eth_createAccessList", params![request, block, state_override]).await
     }
 
     /// Mines a block, with optional timestamp and block count.

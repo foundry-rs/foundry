@@ -11,6 +11,7 @@ use tokio::{
     },
     time::sleep,
 };
+use tracing::warn;
 
 /// The block production mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,8 +133,9 @@ impl<H> MiningController<H> {
 /// sent together, in one JSON-RPC batch or in parallel, land in one block.
 const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
 
-/// How long the instant miner waits for the pool to see a mined block.
-const POOL_SYNC_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the instant miner waits for the pool to see a mined block before it reads the pool
+/// anyway.
+const POOL_SYNC_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Requests a block for every transaction that enters the pool while automine is enabled. Only
 /// new transactions request blocks: a transaction a block left behind is picked up by the
@@ -183,23 +185,32 @@ pub async fn run_interval_mining_task<H>(mining: MiningController<H>) {
     }
 }
 
-/// The number of pending and of queued transactions in the pool.
-pub type PoolCounts = (usize, usize);
+/// The hashes of the pending transactions in the pool, sorted.
+pub type PendingTxs = Vec<B256>;
 
-/// Returns the pool counts once the pool has seen the block `head`, if the pool holds pending
-/// transactions. The pool learns of a block after the miner does, so a check right after a
-/// block waits for it.
+/// Returns the pending transactions once the pool has seen the block `head`, if there are any.
+/// The pool learns of a block after the miner does, so a check right after a block waits for
+/// it; a pool that stays behind is read as it is, so no transaction waits for a block that
+/// never comes.
 pub async fn pool_pending_after<Pool: TransactionPool>(
     pool: Pool,
     head: B256,
-) -> Option<PoolCounts> {
+) -> Option<PendingTxs> {
+    wait_for_pool(&pool, head).await;
+    let mut pending: PendingTxs = pool.pending_transactions().iter().map(|tx| *tx.hash()).collect();
+    pending.sort_unstable();
+    (!pending.is_empty()).then_some(pending)
+}
+
+/// Waits until the pool has seen the block `head`, and returns whether it did in time.
+pub async fn wait_for_pool<Pool: TransactionPool>(pool: &Pool, head: B256) -> bool {
     let deadline = Instant::now() + POOL_SYNC_TIMEOUT;
     while pool.block_info().last_seen_block_hash != head {
         if Instant::now() >= deadline {
-            return None;
+            warn!(target: "reth_anvil::mining", %head, "the pool did not see the block in time");
+            return false;
         }
         sleep(Duration::from_millis(1)).await;
     }
-    let counts = pool.pending_and_queued_txn_count();
-    (counts.0 > 0).then_some(counts)
+    true
 }

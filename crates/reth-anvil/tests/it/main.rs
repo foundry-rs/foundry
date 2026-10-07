@@ -25,10 +25,21 @@ use tokio::time::sleep;
 mod abi;
 mod anvil_api;
 mod api;
+mod block_index;
+mod filter;
 mod fork;
+mod gas;
+mod genesis;
+mod logs;
 #[cfg(feature = "monad")]
 mod monad;
+mod proof;
+mod pubsub;
+mod revert;
+mod sign;
+mod storage_values;
 mod transaction;
+mod txpool;
 pub mod utils;
 
 async fn with_test_client<F, Fut>(test: F) -> Result<()>

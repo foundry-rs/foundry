@@ -16,6 +16,8 @@ pub struct Snapshot<H = Header> {
     pub time: TimeSnapshot,
     /// The block environment overrides at the time of the snapshot.
     pub block_env: BlockEnvSnapshot,
+    /// The hashes of the pool transactions at the time of the snapshot.
+    pub pool: Vec<B256>,
 }
 
 /// Tracks snapshot ids and the state they restore.

@@ -40,6 +40,14 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Rejects a replacement whose fee does not exceed the pooled transaction's before it reaches the pool, because `PriceBumpConfig` with a zero bump replaces at an equal fee, and anvil requires a higher one; reth's default ten percent bump rejects anvil's `gas_price + 1` replacements | `src/api.rs` (`ensure_replacement_priced`), `src/pool.rs` | ~40 | A strict-inequality option on `PriceBumpConfig`, or a bump below one percent |
 | Replaces the pending block environment builder so calls at `pending` see the next block's timestamp, coinbase, and prevrandao as the miner sets them; reth's `BuildPendingEnv` uses the parent timestamp plus twelve seconds | `src/pending.rs` | ~110 | A `PendingEnvBuilder` hook on `EthereumEthApiBuilder` |
 | Chains automine blocks after a block that leaves ready transactions behind, waiting for the pool to see each block first, and groups transactions that arrive within five milliseconds into one block, as anvil's instant miner does; a block without transactions idles automine until the pool changes | `src/mining.rs`, `src/miner.rs` (`follow_up`, `MineIfPending`) | ~90 | A local miner mode that drains the pool |
+| Gives the first block the genesis base fee through a one-shot override, where reth applies the EIP-1559 decrease of an empty parent; replaces `eth_feeHistory` to take the entry after the newest block from that block or from the next-block override, and to report a zero gas-used ratio for a block without a gas limit instead of NaN | `src/node.rs`, `src/api.rs` (`eth_fee_history`) | ~50 | A fee history that reads the child block; an initial base fee option for dev chains |
+| Rejects at `eth_sendTransaction` and `eth_sendRawTransaction` a fee cap below the next block's base fee, as anvil does; reth's pool parks the transaction until the base fee drops. Fails a priced `eth_call` whose sender cannot pay for its gas and value, as anvil does; reth runs calls without the balance check | `src/api.rs` (`ensure_fee_cap`, `ensure_call_funds`) | ~50 | Pool and call options for these checks |
+| Installs the `ArbSys` precompile on Arbitrum chains, through precompile builders that get the block number | `src/evm.rs` (`PrecompileBuilder`), `src/network/ethereum.rs` | ~15 | A block-aware precompile hook on `EvmFactory` |
+| Gives impersonated transactions a signature with the sender in `r`, so the transactions of different impersonated senders get different hashes, as anvil's impersonated hash does | `src/impersonation.rs` | ~5 | A sender-attributed transaction that reth hashes with its sender |
+| Replaces `eth_newFilter` to drain the block the filter is installed on, so the filter reports the blocks after it, as anvil's does; reth's first poll includes the install block. Gives a revert without data the empty `data` anvil reports | `src/api.rs` (`eth_new_filter`, `with_revert_data`), `src/node.rs` | ~30 | Install filters at the next block; `data: "0x"` on empty reverts |
+| Replaces `eth_newBlockFilter` like `eth_newFilter`, `eth_getUncleCountByBlockHash` and `ByBlockNumber` to fail for an unknown block, `eth_signTransaction` to fill the chain id and the gas limit, `eth_signTypedData_v4` as an alias of `eth_signTypedData`, and `eth_getTransactionCount` at `pending` to answer from the pool and the latest state, because reth builds and caches its pending block for the lookup, and the cached block then misses the transactions of the next second | `src/api.rs` (`EthExtApi`) | ~90 | A pending nonce that does not build a block; `eth_signTypedData_v4` |
+| Retries `eth_getTransactionReceipt` and `eth_getTransactionByHash` with the transaction's block in the RPC cache when the lookup failed to recover the sender from the signature: an impersonated transaction has no valid signature, and reth's disk path recovers instead of reading the senders table | `src/api.rs` (`cache_block_of`) | ~30 | Read `TransactionSenders` in the RPC lookups |
+| `anvil_dropTransaction` removes the sender's later transactions, `anvil_setNonce` and `anvil_setBalance` tell the pool the new values, and a snapshot revert brings the pool back to the snapshot: the transactions mined since return, the ones sent since go | `src/api.rs` (`anvil_revert`, `restore_pool`, `sync_pool_account`) | ~110 | Pool hooks for dropping dependents and for a pool snapshot |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -60,6 +68,19 @@ be free if reth had a dev mode:
   `eth_getBlockByNumber("pending")` and in calls at `pending` up to a second late; anvil builds
   the pending block on every request. Calls and estimates without a block run at `latest`, as on
   reth; anvil runs them on the pending block, so an estimate there sees the pool's transactions.
+- `eth_getFilterChanges` does not report the logs a reorg or a snapshot revert removed with
+  `removed: true`; anvil and geth do.
+- A `genesis.json` header carries the forks the node runs and the root of the whole genesis
+  state; anvil's header carries the JSON config's forks and the state root of the alloc alone, so
+  the genesis hash differs.
+- Revm clears the storage of an account without balance, nonce, or code at the end of a block,
+  so `anvil_setStorageAt` on such an account does not stick; anvil keeps the storage.
+- `eth_getProof` proves the state of the latest block; anvil's proofs include the state writes it
+  has not mined yet.
+- `eth_createAccessList` for a call without fee fields runs at a zero base fee on reth; anvil,
+  like geth, runs it at the block's base fee.
+- `anvil_reset` restarts from the configured genesis; anvil's reset carries the next-block base
+  fee override into the new genesis header.
 - Reth's pool validator rejects transaction types by the hardfork of the latest block when the
   pool is built, with reth's messages (`transaction type not supported`,
   `EIP-1559 transactions are disabled`); a gas limit above the block's is
@@ -78,15 +99,16 @@ be free if reth had a dev mode:
 
 ## Anvil's own tests
 
-`tests/it/anvil_api.rs`, `tests/it/api.rs`, and `tests/it/transaction.rs` are anvil's modules of
-the same name with the in-process calls made async and the anvil-internal hooks removed
+`tests/it/{anvil_api,api,transaction,gas,revert,logs,filter,pubsub,sign,txpool,genesis,proof,
+block_index,storage_values}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
 (`api.backend`, `api.execute`, pool types, `eth_callBundle`, the ready-transaction listener, the
-state dump's transaction records). Ignored tests carry the reason on the attribute: the pending
+state dump's transaction records, the fee manager's blob fee, the Optimism variants, the block
+listener count). Ignored tests carry the reason on the attribute: the pending
 call that expects the beacon root system call, the Arbitrum tip rule, the pending block cache
 above, and the estimate that defaults to the pending block. Assertions on wall-clock seconds
 became lower bounds, because blocks take longer to build here than on anvil, error messages
 compare case-insensitively where reth's text differs only in case, and accept reth's text where
-it differs. The other modules (`gas.rs`, `fork.rs`, ...) are next.
+it differs. The other modules (`eip*.rs`, `otterscan.rs`, `traces.rs`, `fork.rs`, ...) are next.
 
 ## Differences that cast's tests show
 

@@ -572,6 +572,7 @@ reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-engine-util = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-execution-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-node-events = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }

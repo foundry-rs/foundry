@@ -13,7 +13,10 @@ use crate::{
 use alloy_evm::eth::spec::EthExecutorSpec;
 use alloy_primitives::Address;
 use eyre::Result;
-use foundry_evm_networks::celo::transfer::{self as celo_transfer, CELO_TRANSFER_ADDRESS};
+use foundry_evm_networks::{
+    arbitrum,
+    celo::transfer::{self as celo_transfer, CELO_TRANSFER_ADDRESS},
+};
 use reth_ethereum::{
     EthPrimitives,
     chainspec::{ChainSpec, EthereumHardforks, Hardforks},
@@ -172,11 +175,15 @@ where
     }
 }
 
-/// The precompiles the configured network adds: Celo's native transfer on Celo.
+/// The precompiles the configured network adds: Celo's native transfer on Celo, and `ArbSys`
+/// on Arbitrum chains.
 fn network_precompiles(config: &NodeConfig) -> Vec<(Address, PrecompileBuilder)> {
     let mut precompiles: Vec<(Address, PrecompileBuilder)> = Vec::new();
     if config.networks.is_celo() {
-        precompiles.push((CELO_TRANSFER_ADDRESS, Arc::new(celo_transfer::precompile)));
+        precompiles.push((CELO_TRANSFER_ADDRESS, Arc::new(|_| celo_transfer::precompile())));
+    }
+    if arbitrum::is_arbitrum_chain(config.get_chain_id()) {
+        precompiles.push((arbitrum::ARB_SYS_ADDRESS, Arc::new(arbitrum::arb_sys_precompile)));
     }
     precompiles
 }

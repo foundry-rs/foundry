@@ -1,6 +1,6 @@
 use crate::{
     api::{
-        AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, PersonalApiServer,
+        AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, NewFilterHook, PersonalApiServer,
         Web3ExtApiServer,
     },
     block_env::BlockEnvOverrides,
@@ -13,7 +13,7 @@ use crate::{
     logging::{LoggingState, log_mined_blocks},
     miner::{AnvilMiner, HookFuture},
     mining::{
-        MiningController, MiningMode, PoolCounts, pool_pending_after, run_automine_task,
+        MiningController, MiningMode, PendingTxs, pool_pending_after, run_automine_task,
         run_interval_mining_task,
     },
     network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
@@ -28,6 +28,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types_eth::FilterBlockOption;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
@@ -59,9 +60,12 @@ use reth_ethereum::{
     storage::BlockNumReader,
     tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
-use reth_rpc_eth_api::helpers::{
-    EthTransactions,
-    config::{EthConfigApiServer, EthConfigHandler},
+use reth_rpc_eth_api::{
+    EthFilterApiServer,
+    helpers::{
+        EthTransactions,
+        config::{EthConfigApiServer, EthConfigHandler},
+    },
 };
 use std::{
     net::{SocketAddr, TcpListener},
@@ -442,6 +446,13 @@ async fn launch_node<Net: AnvilNetwork>(
     }
     block_env.set_max_transactions(Some(config.max_transactions));
     block_env.set_gas_price(config.get_gas_price());
+    // Anvil gives the first block the genesis base fee, not the EIP-1559 decrease of an empty
+    // parent. A fork starts from the fork block's fee.
+    if fork.is_none()
+        && let Some(base_fee) = chain_spec.genesis_header().base_fee_per_gas()
+    {
+        block_env.set_next_base_fee(base_fee);
+    }
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
     let logging = LoggingState::new(!config.silent);
@@ -488,6 +499,36 @@ async fn launch_node<Net: AnvilNetwork>(
             let identity = Net::identity(&config)?;
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
+                // Anvil's filters report the blocks after the one they are installed on; reth's
+                // first poll includes that block, so the install drains it. A log filter with a
+                // `fromBlock` replays the logs from there, as on anvil.
+                let new_filter = {
+                    let filter = ctx.registry.eth_handlers().filter.clone();
+                    NewFilterHook::new(move |log_filter| {
+                        let filter = filter.clone();
+                        Box::pin(async move {
+                            let (id, drain) = match log_filter {
+                                Some(log_filter) => {
+                                    let drain = matches!(
+                                        log_filter.block_option,
+                                        FilterBlockOption::Range { from_block: None, .. }
+                                    );
+                                    (
+                                        EthFilterApiServer::new_filter(&filter, log_filter).await?,
+                                        drain,
+                                    )
+                                }
+                                None => {
+                                    (EthFilterApiServer::new_block_filter(&filter).await?, true)
+                                }
+                            };
+                            if drain {
+                                EthFilterApiServer::filter_changes(&filter, id.clone()).await?;
+                            }
+                            Ok(id)
+                        })
+                    })
+                };
                 {
                     let mut signers = eth_api.signers().write();
                     signers.push(Box::new(DevSigner::new(signer_accounts)));
@@ -512,6 +553,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     ctx.pool().clone(),
                     ctx.provider().clone(),
                     eth_api,
+                    new_filter,
                 );
                 let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
                 let evm_module = EvmApiServer::into_rpc(rpc.clone());
@@ -559,7 +601,7 @@ async fn launch_node<Net: AnvilNetwork>(
     let pending_after = {
         let pool = node.pool.clone();
         move |head| {
-            Box::pin(pool_pending_after(pool.clone(), head)) as HookFuture<Option<PoolCounts>>
+            Box::pin(pool_pending_after(pool.clone(), head)) as HookFuture<Option<PendingTxs>>
         }
     };
     let miner = AnvilMiner::<<Net::Node as NodeTypes>::Payload>::new(

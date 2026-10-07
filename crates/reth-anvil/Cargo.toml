@@ -33,6 +33,7 @@ reth-db-api.workspace = true
 reth-engine-tree.workspace = true
 reth-engine-util.workspace = true
 reth-ethereum = { workspace = true, features = ["exex", "node", "node-api"] }
+reth-execution-types.workspace = true
 reth-node-events.workspace = true
 reth-payload-builder.workspace = true
 reth-prune-types.workspace = true
@@ -102,11 +103,12 @@ optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
 
 [dev-dependencies]
 alloy-chains.workspace = true
-alloy-contract.workspace = true
+alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
 alloy-rlp.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
+alloy-trie.workspace = true
 foundry-test-utils.workspace = true
 futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }

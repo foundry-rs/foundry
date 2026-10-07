@@ -1,4 +1,4 @@
-use crate::mining::{MinerRequest, PoolCounts};
+use crate::mining::{MinerRequest, PendingTxs};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
@@ -54,12 +54,12 @@ pub struct AnvilMiner<T: PayloadTypes> {
     before_insert: Box<dyn Fn() -> Result<()> + Send + Sync>,
     /// Returns whether automine is enabled.
     automine: Box<dyn Fn() -> bool + Send + Sync>,
-    /// Returns the pool counts once the pool has seen the given block, if the pool holds pending
-    /// transactions.
-    pending_after: Box<dyn Fn(B256) -> HookFuture<Option<PoolCounts>> + Send + Sync>,
-    /// The pool counts when the last automine block included no transaction. Automine idles
-    /// until the pool changes, as a transaction that never fits must not keep it busy.
-    idle: Option<PoolCounts>,
+    /// Returns the pending transactions once the pool has seen the given block, if there are
+    /// any.
+    pending_after: Box<dyn Fn(B256) -> HookFuture<Option<PendingTxs>> + Send + Sync>,
+    /// The pending transactions when the last automine block included none of them. Automine
+    /// idles until they change, as a transaction that never fits must not keep it busy.
+    idle: Option<PendingTxs>,
     last_header: SealedHeader<PayloadHeader<T>>,
     requests: UnboundedReceiver<MinerRequest<PayloadHeader<T>>>,
 }
@@ -81,7 +81,7 @@ impl<T: PayloadTypes> AnvilMiner<T> {
         hooks: impl RewindHooks + 'static,
         before_insert: impl Fn() -> Result<()> + Send + Sync + 'static,
         automine: impl Fn() -> bool + Send + Sync + 'static,
-        pending_after: impl Fn(B256) -> HookFuture<Option<PoolCounts>> + Send + Sync + 'static,
+        pending_after: impl Fn(B256) -> HookFuture<Option<PendingTxs>> + Send + Sync + 'static,
         head: SealedHeader<PayloadHeader<T>>,
         requests: UnboundedReceiver<MinerRequest<PayloadHeader<T>>>,
     ) -> Self {
@@ -125,13 +125,13 @@ impl<T: PayloadTypes> AnvilMiner<T> {
                     }
                 }
                 MinerRequest::MineIfPending => {
-                    let Some(counts) = (self.pending_after)(self.last_header.hash()).await else {
+                    let Some(pending) = (self.pending_after)(self.last_header.hash()).await else {
                         continue;
                     };
-                    if self.idle == Some(counts) {
+                    if self.idle.as_ref() == Some(&pending) {
                         continue;
                     }
-                    if self.mine_pending(counts).await {
+                    if self.mine_pending(pending).await {
                         self.follow_up().await;
                     }
                 }
@@ -145,7 +145,7 @@ impl<T: PayloadTypes> AnvilMiner<T> {
 
     /// Mines a block for the pending transactions, and returns whether it included any. A block
     /// without transactions idles automine until the pool changes.
-    async fn mine_pending(&mut self, counts: PoolCounts) -> bool {
+    async fn mine_pending(&mut self, pending: PendingTxs) -> bool {
         let result = self.advance().await;
         (self.finish)(result.is_ok());
         match result {
@@ -154,7 +154,7 @@ impl<T: PayloadTypes> AnvilMiner<T> {
                 true
             }
             Ok(_) => {
-                self.idle = Some(counts);
+                self.idle = Some(pending);
                 false
             }
             Err(error) => {
@@ -169,8 +169,8 @@ impl<T: PayloadTypes> AnvilMiner<T> {
     /// full block left behind. A block without transactions ends the chain.
     async fn follow_up(&mut self) {
         while (self.automine)()
-            && let Some(counts) = (self.pending_after)(self.last_header.hash()).await
-            && self.mine_pending(counts).await
+            && let Some(pending) = (self.pending_after)(self.last_header.hash()).await
+            && self.mine_pending(pending).await
         {}
     }
 

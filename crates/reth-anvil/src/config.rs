@@ -260,6 +260,17 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
+    /// Returns a test config without funded accounts, signers, or the default CREATE2 deployer.
+    #[doc(hidden)]
+    pub fn empty_state() -> Self {
+        Self {
+            genesis_accounts: vec![],
+            signer_accounts: vec![],
+            disable_default_create2_deployer: true,
+            ..Self::test()
+        }
+    }
+
     /// Returns a config for tests: silent, on a free port.
     #[doc(hidden)]
     pub fn test() -> Self {
@@ -1047,8 +1058,7 @@ impl NodeConfig {
             .clone()
             .unwrap_or_default()
             .with_timestamp(timestamp)
-            .with_gas_limit(gas_limit)
-            .with_difficulty(U256::ZERO);
+            .with_gas_limit(gas_limit);
         genesis.config.chain_id = self.get_chain_id();
         let number = init_number.unwrap_or_else(|| self.get_genesis_number());
         if number > 0 {

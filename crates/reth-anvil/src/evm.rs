@@ -141,8 +141,8 @@ impl EvmSettings {
     }
 }
 
-/// Builds a precompile to install at an address.
-pub type PrecompileBuilder = Arc<dyn Fn() -> DynPrecompile + Send + Sync>;
+/// Builds a precompile to install at an address, for the given block number.
+pub type PrecompileBuilder = Arc<dyn Fn(u64) -> DynPrecompile + Send + Sync>;
 
 /// EVM factory that installs extra precompiles, such as Celo's native transfer and the
 /// `console.log` collector, into every EVM it creates, and that answers `BLOCKHASH` for the
@@ -185,10 +185,15 @@ impl<F> AnvilEvmFactory<F> {
         &self.inner
     }
 
-    /// Installs the precompiles and returns the `console.log` buffer, when collecting.
-    fn install(&self, precompiles: &mut PrecompilesMap) -> Option<ConsoleBuffer> {
+    /// Installs the precompiles for the block and returns the `console.log` buffer, when
+    /// collecting.
+    fn install(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        block_number: u64,
+    ) -> Option<ConsoleBuffer> {
         for (address, build) in self.precompiles.iter() {
-            precompiles.apply_precompile(address, |_| Some(build()));
+            precompiles.apply_precompile(address, |_| Some(build(block_number)));
         }
         let console = self.console.then(ConsoleBuffer::default)?;
         precompiles.apply_precompile(&HARDHAT_CONSOLE_ADDRESS, |_| Some(console.precompile()));
@@ -219,8 +224,9 @@ where
         db: DB,
         input: EvmEnv<F::Spec, F::BlockEnv>,
     ) -> Self::Evm<DB, NoOpInspector> {
+        let block_number = input.block_env.number().saturating_to();
         let mut evm = self.inner.create_evm(self.wrap_db(db), input);
-        let console = self.install(evm.precompiles_mut());
+        let console = self.install(evm.precompiles_mut(), block_number);
         AnvilEvm::new(evm, console)
     }
 
@@ -230,8 +236,9 @@ where
         input: EvmEnv<F::Spec, F::BlockEnv>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
+        let block_number = input.block_env.number().saturating_to();
         let mut evm = self.inner.create_evm_with_inspector(self.wrap_db(db), input, inspector);
-        let console = self.install(evm.precompiles_mut());
+        let console = self.install(evm.precompiles_mut(), block_number);
         AnvilEvm::new(evm, console)
     }
 }

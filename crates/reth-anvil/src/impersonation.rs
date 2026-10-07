@@ -1,7 +1,7 @@
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, B256, Bytes, Signature};
+use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use alloy_signer::Result as SignerResult;
 use jsonrpsee::core::async_trait;
 use parking_lot::RwLock;
@@ -131,7 +131,9 @@ impl TxSigner<Signature> for ImpersonatedTxSigner {
         &self,
         _tx: &mut dyn SignableTransaction<Signature>,
     ) -> SignerResult<Signature> {
-        Ok(Signature::new(Default::default(), Default::default(), false))
+        // The sender in `r` gives the transactions of different impersonated senders different
+        // hashes, as anvil's impersonated hash does; a zero `s` never recovers to an address.
+        Ok(Signature::new(U256::from_be_slice(self.address.as_slice()), U256::ZERO, false))
     }
 }
 
