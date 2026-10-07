@@ -536,25 +536,17 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
     // original depth just as the native create inspector would.
     let mut caller = ccx.caller;
-    if let Some(prank) = ccx.state.get_prank(depth).copied()
-        && depth >= prank.depth
-        && caller == prank.prank_caller
+    if let Some(prank) = ccx.state.get_prank(depth)
+        && let Some(changes) = prank.changes_for(depth, caller)
     {
-        let prank_applied = if depth == prank.depth {
-            caller = prank.new_caller;
-            true
-        } else {
-            false
-        };
-        let prank_applied = if let Some(new_origin) = prank.new_origin {
+        if let Some(new_caller) = changes.caller {
+            caller = new_caller;
+        }
+        if let Some(new_origin) = changes.origin {
             ccx.ecx.tx_mut().set_caller(new_origin);
-            true
-        } else {
-            prank_applied
-        };
-
-        if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-            ccx.state.pranks.insert(depth, applied_prank);
+        }
+        if let Some(used) = changes.used {
+            ccx.state.pranks.insert(depth, used);
         }
     }
 
