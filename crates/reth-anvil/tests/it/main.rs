@@ -2284,5 +2284,15 @@ async fn fork_serves_proofs_for_remote_blocks() -> Result<()> {
         Some(funder.to_string().to_lowercase())
     );
     assert!(proof["accountProof"].as_array().is_some_and(|nodes| !nodes.is_empty()));
+
+    // At the fork block the account is remote too, and a local write makes it local.
+    let proof: Value =
+        client.request("eth_getProof", rpc_params![funder, Vec::<U256>::new(), "0x3"]).await?;
+    assert!(proof["accountProof"].as_array().is_some_and(|nodes| !nodes.is_empty()));
+    client.request::<(), _>("anvil_setBalance", rpc_params![funder, U256::from(5)]).await?;
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let proof: Value =
+        client.request("eth_getProof", rpc_params![funder, Vec::<U256>::new(), "latest"]).await?;
+    assert_eq!(proof["balance"].as_str(), Some("0x5"));
     Ok(())
 }

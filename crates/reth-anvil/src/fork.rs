@@ -1056,10 +1056,24 @@ impl<F: ForkNetwork> StateProofProvider for ForkStateProvider<F> {
         address: Address,
         slots: &[B256],
     ) -> ProviderResult<AccountProof> {
-        // Below the fork block, the remote endpoint holds the state and its proofs.
-        match &self.local {
-            Some((local, _)) => local.proof(input, address, slots),
-            None => self.fork.account_proof(address, slots, self.block),
+        // Below the fork block, the remote endpoint holds the state and its proofs. Above it, an
+        // account the local chain has not written still lives in the remote state at the fork
+        // block, and only the remote endpoint can prove it; a locally written account is proven
+        // against the local trie.
+        let Some((local, writes)) = &self.local else {
+            return self.fork.account_proof(address, slots, self.block);
+        };
+        let mut is_local = writes.account_is_local(&address, self.block)?;
+        for slot in slots {
+            if is_local {
+                break;
+            }
+            is_local = writes.slot_is_local(&address, slot, self.block)?;
+        }
+        if is_local {
+            local.proof(input, address, slots)
+        } else {
+            self.fork.account_proof(address, slots, self.fork.block_number())
         }
     }
 
