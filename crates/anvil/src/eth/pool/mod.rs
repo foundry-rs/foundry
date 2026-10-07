@@ -57,6 +57,12 @@ pub struct Pool<T> {
     transaction_listener: Mutex<Vec<Sender<TxHash>>>,
 }
 
+/// An independent snapshot of a transaction pool.
+#[derive(Debug)]
+pub(crate) struct PoolSnapshot<T> {
+    inner: PoolInner<T>,
+}
+
 impl<T> Default for Pool<T> {
     fn default() -> Self {
         Self { inner: RwLock::new(PoolInner::default()), transaction_listener: Default::default() }
@@ -66,6 +72,29 @@ impl<T> Default for Pool<T> {
 // == impl Pool ==
 
 impl<T> Pool<T> {
+    /// Returns an independent snapshot of the pool.
+    pub(crate) fn snapshot(&self) -> PoolSnapshot<T> {
+        let pool = self.inner.read();
+        PoolSnapshot {
+            inner: PoolInner {
+                ready_transactions: pool.ready_transactions.snapshot(),
+                pending_transactions: pool.pending_transactions.snapshot(),
+            },
+        }
+    }
+
+    /// Restores the pool to a previous snapshot.
+    pub(crate) fn restore(&self, snapshot: PoolSnapshot<T>) {
+        let ready = {
+            let mut pool = self.inner.write();
+            *pool = snapshot.inner;
+            pool.ready_transactions().map(|tx| tx.hash()).collect::<Vec<_>>()
+        };
+        for hash in ready {
+            self.notify_listener(hash);
+        }
+    }
+
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator<T> {
         self.inner.read().ready_transactions()
@@ -80,10 +109,7 @@ impl<T> Pool<T> {
     #[cfg(feature = "base")]
     pub fn all_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
         let pool = self.inner.read();
-        pool.pending_transactions
-            .transactions()
-            .chain(pool.ready_transactions.get_transactions())
-            .collect()
+        pool.pending_transactions.transactions().chain(pool.ready_transactions()).collect()
     }
 
     /// Returns the number of tx that are ready and queued for further execution
@@ -217,15 +243,25 @@ impl<T: Transaction> Pool<T> {
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
     ///
     /// This will remove the transactions from the pool.
-    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
-        let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
+    ///
+    /// Returns `true` if ready transactions left behind by the block can be included by mining
+    /// again right away, e.g. because the block hit `max_transactions` or ran out of gas.
+    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> bool {
+        let MinedBlockOutcome { block_number, included, stale, invalid, not_yet_valid } = outcome;
+        // Requiring txs to leave the pool keeps this retry from mining empty blocks for txs that
+        // can never be included. Not-yet-valid txs and their dependents are retried by the delayed
+        // re-notify.
+        let made_progress = !included.is_empty() || !stale.is_empty() || !invalid.is_empty();
+        let retry_ready = made_progress && not_yet_valid.is_empty();
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
 
-        // prune all the markers the mined transactions provide
-        let res = self
-            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+        // Prune mined and stale markers; both are satisfied by the resulting state.
+        let res = self.prune_markers(
+            block_number,
+            included.into_iter().chain(stale).flat_map(|tx| tx.provides.clone()),
+        );
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
 
         // Re-notify the miner about not-yet-valid transactions so they'll be retried.
@@ -242,7 +278,7 @@ impl<T: Transaction> Pool<T> {
             });
         }
 
-        res
+        retry_ready && !self.inner.read().ready_transactions.is_empty()
     }
 
     /// Removes ready transactions for the given iterator of identifying markers.
@@ -281,7 +317,7 @@ impl<T: Typed2718> Pool<T> {
             let pool = self.inner.read();
             pool.pending_transactions
                 .transactions()
-                .chain(pool.ready_transactions.get_transactions())
+                .chain(pool.ready_transactions())
                 .filter_map(|tx| {
                     (tx.pending_transaction.transaction.ty() == tx_type).then_some(tx.hash())
                 })

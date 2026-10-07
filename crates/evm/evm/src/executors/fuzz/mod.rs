@@ -241,8 +241,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
-    /// If `should_fail` is set to `true`, then it will stop only when there's a success
-    /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case.
     #[allow(clippy::too_many_arguments)]
@@ -356,7 +354,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             address,
             call.reverter,
             self.executor_f.inspector().extra_cheatcode_addresses(),
-        ) || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
+        ) || self.executor_f.is_raw_call_mut_success(address, &mut call);
 
         let mut result = FuzzTestResult {
             success,
@@ -496,7 +494,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             address,
             call.reverter,
             state.0.inspector().extra_cheatcode_addresses(),
-        ) || state.0.is_raw_call_mut_success(address, &mut call, false);
+        ) || state.0.is_raw_call_mut_success(address, &mut call);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
@@ -704,6 +702,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             stateless: Some(StatelessReplayTarget { function: func, address }),
             fuzzed_contracts: None,
             dynamic: None,
+            senders: None,
         };
         let mut corpus = WorkerCorpus::new(
             worker_id,
@@ -1029,7 +1028,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         } else {
             let worker_id = worker_id as u32;
             let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-            U256::from_be_bytes(keccak256(seed_data).0)
+            keccak256(seed_data).into()
         }
     }
 

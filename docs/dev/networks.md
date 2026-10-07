@@ -88,6 +88,19 @@ Do not encode protocol behavior only as a chain-ID branch in a tool. Put executi
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.
 
+Fork creation is the boundary between a request and selected remote state. `CreateFork` contains
+only the request; `MultiFork` prepares the client, block, and identity and owns them with the remote
+backend. Scripts, tests, Chisel, and tracing create a pristine `Backend<FEN>` before preflight and
+clone it for execution. Nonce reads, CREATE2 checks, and environments use that backend's selected
+block. They do not carry a separate resolved snapshot alongside it. `EvmOpts` retains the requested
+selector, so preparing `latest` does not rewrite the request.
+
+Changing a script RPC explicitly selects another backend through the same fork manager. Exact
+identity governs remote-cache reuse; each runner retains its own mutable execution state. Mutation
+testing dispatches once for the campaign and shares the pristine typed backend across its baseline
+and workers. Each mutation run scopes its fork registry so cheatcode-created forks are released
+when the run finishes. Endpoint checks still reject resets and execution-profile changes.
+
 ## Adding an execution family
 
 Start by writing down which parts differ from Ethereum: RPC envelopes, transaction validation,
@@ -117,6 +130,23 @@ state. Then implement the integration in layers.
 Large integrations should be split into reviewable layers when possible: hardfork and configuration,
 core execution, individual tool surfaces, then CI and documentation. Each layer should retain working
 non-custom execution paths.
+
+## Compiler targets and execution hardforks
+
+Keep the Solidity compiler target (`evm_version`), execution family (`network`), and protocol
+revision (`hardfork`) distinct. A Tempo revision uses an Osaka instruction-set baseline with
+Tempo's own gas schedule, precompiles, and transaction rules; an Ethereum version name does not
+identify a Tempo revision.
+
+`vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
+not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
+remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
+`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
+
+Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
+to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
+and its blanket implementation for `CfgEnv<SPEC>`. Tempo overrides the factory method to use its
+own gas parameters instead of Ethereum prices derived from its instruction-set baseline.
 
 ## State lifecycle
 

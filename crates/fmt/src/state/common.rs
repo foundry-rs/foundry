@@ -32,17 +32,18 @@ impl<'ast> State<'_, 'ast> {
         match *kind {
             ast::LitKind::Str(kind, ..) => {
                 self.s.ibox(0);
-                for (pos, (span, symbol)) in lit.literals().delimited() {
+                let mut literals = lit.literals().peekable();
+                while let Some((span, symbol)) = literals.next() {
                     if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
-                    if pos.is_last {
-                        self.neverbreak();
-                    } else {
-                        if !self.print_trailing_comment(span.hi(), None) {
+                    if let Some((next_span, _)) = literals.peek() {
+                        if !self.print_trailing_comment(span.hi(), Some(next_span.lo())) {
                             self.space_if_not_bol();
                         }
+                    } else {
+                        self.neverbreak();
                     }
                 }
                 self.end();
@@ -253,7 +254,9 @@ impl<'ast> State<'_, 'ast> {
             state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             print(state, &values[0]);
 
-            if !state.print_trailing_comment(span.hi(), None) && skip_break {
+            // Bound the scan to the closing paren. Unbounded, it reaches past the list and claims a
+            // comment that trails whatever follows it, such as the modifiers of a function type.
+            if !state.print_trailing_comment(span.hi(), Some(pos_hi)) && skip_break {
                 state.neverbreak();
             } else {
                 state.break_offset_if_not_bol(0, -state.ind, false);
@@ -334,7 +337,7 @@ impl<'ast> State<'_, 'ast> {
             if let Some(last_style) = self.print_comments(span.lo(), cmnt_config) {
                 match (cmnt_style.is_mixed(), last_style.is_mixed()) {
                     (true, true) => {
-                        if format.breaks_cmnts {
+                        if format.breaks_with_comments() {
                             self.hardbreak();
                         } else {
                             self.space();
@@ -445,7 +448,7 @@ impl<'ast> State<'_, 'ast> {
             if self
                 .print_comments(get_span(value).lo(), CommentConfig::skip_ws().mixed_prev_space())
                 .is_some_and(|cmnt| cmnt.is_mixed())
-                && format.breaks_cmnts
+                && format.breaks_with_comments()
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
@@ -477,7 +480,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             if !is_last
-                && format.breaks_cmnts
+                && format.breaks_with_comments()
                 && cmnt_before_next.is_some_and(|(cmnt_span, cmnt_style)| {
                     let disabled = self.inline_config.is_disabled(cmnt_span);
                     (cmnt_style.is_mixed() && !disabled) || (cmnt_style.is_isolated() && disabled)
@@ -885,28 +888,28 @@ impl ListFormat {
     }
 
     pub(crate) const fn without_ind(mut self, without: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.no_ind = without;
         }
         self
     }
 
     pub(crate) const fn break_single(mut self, value: bool) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.break_single = value;
         }
         self
     }
 
     pub(crate) const fn break_cmnts(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.breaks_cmnts = true;
         }
         self
     }
 
     pub(crate) const fn with_space(mut self) -> Self {
-        if !matches!(self.kind, ListFormatKind::Inline) {
+        if !self.is_inline() {
             self.with_space = true;
         }
         self

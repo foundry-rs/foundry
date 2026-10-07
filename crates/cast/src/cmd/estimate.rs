@@ -130,8 +130,7 @@ impl EstimateArgs {
             Some(chain) => chain.id(),
             None => provider.get_chain_id().await?,
         };
-        let (sender, is_browser) =
-            read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
+        let (sender, is_browser) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,

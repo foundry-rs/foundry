@@ -1060,7 +1060,7 @@ pub(crate) fn region_contains(
 /// this must run wherever displayed prose is assembled. A keyword that falls inside a Markdown
 /// code span or fenced code block is left untouched (see `code_regions`): the entity would render
 /// literally and corrupt the example, and MDX would not execute it there.
-fn neutralize_esm(text: &str) -> String {
+pub(crate) fn neutralize_esm(text: &str) -> String {
     let regions = code_regions(text, &ParseOptions::mdx());
     let mut region_cursor = 0;
     let mut copied = 0;

@@ -115,7 +115,7 @@ mod tests {
         let return_data = Bytes::from_static(b"result");
         let accessor_response = (U256::from(42), true, return_data.clone()).abi_encode_params();
         let mut revert_data = Vec::with_capacity(2 * U256::BYTES + accessor_response.len());
-        revert_data.extend_from_slice(&U256::from(1).to_be_bytes::<{ U256::BYTES }>());
+        revert_data.extend_from_slice(&U256::ONE.to_be_bytes::<{ U256::BYTES }>());
         revert_data.extend_from_slice(
             &U256::from(accessor_response.len()).to_be_bytes::<{ U256::BYTES }>(),
         );

@@ -223,6 +223,23 @@ impl FeeManager {
         state.blob_excess_gas_and_price = snapshot.blob_excess_gas_and_price;
     }
 
+    /// Atomically publishes the chain-derived fee state for the next block.
+    pub(crate) fn set_next_block_fees(
+        &self,
+        base_fee: u64,
+        blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    ) {
+        trace!(
+            target: "backend::fees",
+            ?base_fee,
+            ?blob_excess_gas_and_price,
+            "updated next block fees"
+        );
+        let mut state = self.state.write();
+        state.base_fee = base_fee;
+        state.blob_excess_gas_and_price = blob_excess_gas_and_price;
+    }
+
     /// Returns the active Tempo hardfork, if running a Tempo chain.
     pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
         self.state.read().rules.tempo_hardfork
@@ -724,7 +741,6 @@ impl FeeDetails {
         let no_fees = gas_price.is_none() && max_fee_per_gas.is_none();
         let gas_price = if no_fees { Some(0) } else { gas_price };
         let max_fee_per_gas = if no_fees { Some(0) } else { max_fee_per_gas };
-        let max_fee_per_blob_gas = if no_fees { None } else { max_fee_per_blob_gas };
 
         Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas }
     }
@@ -744,13 +760,16 @@ impl FeeDetails {
         max_fee_per_blob_gas: Option<u128>,
     ) -> Result<Self, BlockchainError> {
         match (request_gas_price, request_max_fee, request_priority, max_fee_per_blob_gas) {
-            (gas_price, None, None, None) => {
-                // Legacy request, all default to gas price.
+            (Some(_), Some(_), _, _) | (Some(_), _, Some(_), _) => {
+                Err(BlockchainError::ConflictingFeeFields)
+            }
+            (gas_price, None, None, max_fee_per_blob_gas) => {
+                // Legacy request, all default to gas price. A blob fee cap is priced separately.
                 Ok(Self {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
-                    max_fee_per_blob_gas: None,
+                    max_fee_per_blob_gas,
                 })
             }
             (_, max_fee, max_priority, max_fee_per_blob_gas) => {
@@ -765,7 +784,8 @@ impl FeeDetails {
                 Ok(Self {
                     gas_price: max_fee,
                     max_fee_per_gas: max_fee,
-                    max_priority_fee_per_gas: max_priority,
+                    // A fee cap without a tip pays the base fee only.
+                    max_priority_fee_per_gas: max_priority.or(max_fee.map(|_| 0)),
                     max_fee_per_blob_gas,
                 })
             }
@@ -850,15 +870,18 @@ mod tests {
         let fees = fee_manager(SpecId::BERLIN);
         let jovian = [1, 0, 0, 0, 250, 0, 0, 0, 2, 0, 0, 0, 0, 0, 76, 75, 64];
         fees.set_optimism_base_fee_rules(&jovian);
-        let header = alloy_consensus::Header {
-            extra_data: Bytes::copy_from_slice(&jovian),
-            ..Default::default()
-        };
+        let header = alloy_consensus::Header { extra_data: jovian.into(), ..Default::default() };
 
         let parent_fees = fees.get_parent_header_fees(&header);
         assert_eq!(parent_fees.base_fee, 0);
         assert_eq!(parent_fees.extra_data.as_ref(), jovian);
         assert_eq!(parent_fees.optimism_jovian, Some(true));
+    }
+
+    #[test]
+    fn fee_details_default_missing_tip_to_zero() {
+        let fees = FeeDetails::new(None, Some(5), None, None).unwrap();
+        assert_eq!(fees.split(), (Some(5), Some(5), Some(0), None));
     }
 
     #[test]
@@ -903,5 +926,21 @@ mod tests {
     fn next_random(state: &mut u64) -> u64 {
         *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         *state
+    }
+
+    #[test]
+    fn fee_details_reject_gas_price_with_dynamic_fees() {
+        for (max_fee, priority) in [(Some(2), None), (None, Some(1)), (Some(2), Some(1))] {
+            assert!(matches!(
+                FeeDetails::new(Some(2), max_fee, priority, None),
+                Err(BlockchainError::ConflictingFeeFields)
+            ));
+        }
+    }
+
+    #[test]
+    fn fee_details_price_legacy_blob_calls_by_gas_price() {
+        let fees = FeeDetails::new(Some(2), None, None, Some(1)).unwrap();
+        assert_eq!(fees.split(), (Some(2), Some(2), Some(2), Some(1)));
     }
 }

@@ -196,7 +196,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         MiningMode::instant(max_transactions, listener)
     };
 
-    let miner = Miner::new(mode);
+    let miner = Miner::new(mode.with_coalescing_window(config.transaction_coalescing_window));
 
     let dev_signer: Box<dyn EthSigner<foundry_primitives::FoundryNetwork>> =
         Box::new(DevSigner::new(signer_accounts));

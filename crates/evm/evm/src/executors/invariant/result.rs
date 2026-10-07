@@ -21,13 +21,13 @@ use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
+use foundry_evm_traces::CallTraceArena;
 use proptest::test_runner::TestError;
 use revm::interpreter::InstructionResult;
-use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};
 
 /// The outcome of an invariant fuzz test
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InvariantFuzzTestResult {
     /// Errors recorded per invariant.
     pub errors: HashMap<String, InvariantFuzzError>,
@@ -405,7 +405,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             for (invariant, fail_on_revert) in failing_invariants {
                 let mut data = base.clone();
                 data.fail_on_revert = *fail_on_revert;
-                data.calldata = invariant.selector().to_vec().into();
+                data.calldata = invariant.selector().into();
                 data.test_error = TestError::Fail(
                     format!("{}, reason: {}", invariant.name, data.revert_reason).into(),
                     invariant_run.inputs.clone(),

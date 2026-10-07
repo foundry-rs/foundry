@@ -1,10 +1,9 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
-use super::symbolic_helpers::z3_available;
-
-forgetest_init!(symbolic_precompiles_execute_concrete_inputs, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_precompiles_execute_concrete_inputs(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_precompiles_execute_concrete_inputs because z3 is not available"
@@ -105,57 +104,30 @@ contract SymbolicPrecompiles is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrecompiles"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrecompiles",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicPrecompiles.t.sol:SymbolicPrecompiles
+[PASS] checkBlake2fPrecompile(uint256) ([METRICS])
+[PASS] checkBn254Precompiles(uint256) ([METRICS])
+[PASS] checkEcrecoverPrecompile(uint256) ([METRICS])
+[PASS] checkHashPrecompiles(uint256) ([METRICS])
+[PASS] checkIdentityPrecompile(uint256) ([METRICS])
+[PASS] checkKzgPointEvaluationPrecompile(uint256) ([METRICS])
+[PASS] checkModexpPrecompile(uint256) ([METRICS])
+Suite result: ok. 7 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkHashPrecompiles(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkIdentityPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkModexpPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBn254Precompiles(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkBlake2fPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkKzgPointEvaluationPrecompile(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkEcrecoverPrecompile(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_hash_precompiles_accept_symbolic_input, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_hash_precompiles_accept_symbolic_input(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_hash_precompiles_accept_symbolic_input because z3 is not available"
@@ -193,28 +165,93 @@ contract SymbolicPrecompileInput {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrecompileInput"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrecompileInput",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicPrecompileInput.t.sol:SymbolicPrecompileInput
+[PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32) ([METRICS])
+[PASS] checkSymbolicHashDeterminism(bytes) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicHashDeterminism(bytes)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_identity_precompile_accepts_symbolic_input, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_ecrecover_return_data_conformance(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_ecrecover_return_data_conformance because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "EcrecoverReturnData.t.sol",
+        r#"
+contract EcrecoverReturnData {
+    function checkInvalidRecoveryId(bytes32 digest, bytes32 r, bytes32 s) public view {
+        bytes memory input = abi.encode(digest, uint256(29), r, s);
+        bool ok;
+        uint256 size;
+        uint256 output;
+        assembly {
+            let dest := mload(0x40)
+            mstore(dest, 0x1234)
+            ok := staticcall(gas(), 1, add(input, 0x20), mload(input), dest, 32)
+            size := returndatasize()
+            output := mload(dest)
+        }
+        assert(ok);
+        assert(size == 0);
+        assert(output == 0x1234);
+    }
+
+    function checkRecoveryOutput(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
+        (bool ok, bytes memory output) = address(1).staticcall(abi.encode(digest, v, r, s));
+        assert(ok);
+        assert(output.length == 0 || output.length == 32);
+        if (output.length == 32) {
+            assert(uint256(bytes32(output)) >> 160 == 0);
+        }
+    }
+
+    function testFuzzConformance(bytes32 digest, uint8 v, bytes32 r, bytes32 s) public view {
+        checkInvalidRecoveryId(digest, r, s);
+        checkRecoveryOutput(digest, v, r, s);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testFuzzConformance", "--fuzz-runs", "16"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] testFuzzConformance(bytes32,uint8,bytes32,bytes32) (runs: 16, [..])
+...
+"#]]);
+    assert_symbolic(cmd.forge_fuse().args(["test", "--symbolic", "--match-test", "check"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+[PASS] checkInvalidRecoveryId(bytes32,bytes32,bytes32) ([METRICS])
+[PASS] checkRecoveryOutput(bytes32,uint8,bytes32,bytes32) ([METRICS])
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_identity_precompile_accepts_symbolic_input(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_identity_precompile_accepts_symbolic_input because z3 is not available"
@@ -241,22 +278,28 @@ contract SymbolicIdentityPrecompileInput is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSymbolicIdentity"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkSymbolicIdentity",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicIdentityPrecompileInput.t.sol:SymbolicIdentityPrecompileInput
+[PASS] checkSymbolicIdentity(bytes) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicIdentity(bytes)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_advanced_precompiles_accept_symbolic_payloads, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_advanced_precompiles_accept_symbolic_payloads(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_advanced_precompiles_accept_symbolic_payloads because z3 is not available"
@@ -306,29 +349,30 @@ contract SymbolicAdvancedPrecompileInput is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicAdvancedPrecompileInput"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicAdvancedPrecompileInput",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicAdvancedPrecompileInput.t.sol:SymbolicAdvancedPrecompileInput
+[PASS] checkSymbolicBlake2f(bytes1) ([METRICS])
+[PASS] checkSymbolicModexp(bytes1) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicModexp(bytes1)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicBlake2f(bytes1)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
     assert!(!stdout.contains("symbolic precompile length header"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_precompiles_accept_symbolic_input_size, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_precompiles_accept_symbolic_input_size(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_precompiles_accept_symbolic_input_size because z3 is not available"
@@ -395,28 +439,29 @@ contract SymbolicPrecompileInputSize is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicPrecompileInputSize"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicPrecompileInputSize",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/SymbolicPrecompileInputSize.t.sol:SymbolicPrecompileInputSize
+[PASS] checkSymbolicIdentityInputSize(uint256) ([METRICS])
+[PASS] checkSymbolicShaInputSize(uint256) ([METRICS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicIdentityInputSize(uint256)
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicShaInputSize(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic precompile CALL input size"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_kzg_precompile_models_symbolic_witnesses, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_models_symbolic_witnesses(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_models_symbolic_witnesses because z3 is not available"
@@ -557,29 +602,34 @@ contract SymbolicKzgPrecompileInput is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgPrecompileInput"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    let stdout = assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicKzgPrecompileInput",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 7 tests for test/SymbolicKzgPrecompileInput.t.sol:SymbolicKzgPrecompileInput
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgCommitmentMismatchReturnsCounterexample(bytes32,bytes16) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32) ([METRICS])
+[PASS] checkSymbolicKzgKnownVersionMismatchFails(bytes32) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(bytes32,bytes16) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgSuccessWitnessReturnsCounterexample(bytes32,bytes32,bytes32,bytes32,bytes16,bytes32,bytes16) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31) ([METRICS])
+[FAIL: incomplete symbolic execution (Stuck): symbolic depth limit exceeded (10000)] checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256) ([METRICS])
+Suite result: FAILED. 1 passed; 6 failed; 0 skipped; [ELAPSED]
+...
+"#]])
+    .get_output()
+    .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSymbolicKzgKnownVersionMismatchFails(bytes32)
-[FAIL: panic: assertion failed (0x01); counterexample:
-checkSymbolicKzgCommitmentMismatchReturnsCounterexample(bytes32,bytes16)
-checkSymbolicKzgInvalidWitnessReturnsCounterexample(bytes32)
-checkSymbolicKzgProofInvalidWitnessReturnsCounterexample(bytes32,bytes16)
-checkSymbolicKzgSuccessWitnessReturnsCounterexample(bytes32,bytes32,bytes32,bytes32,bytes16,bytes32,bytes16)
-checkSymbolicKzgVersionedHashMismatchReturnsCounterexample(bytes31)
-checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256)
-"#]],
-    );
     assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
-});
+}
 
-forgetest_init!(symbolic_kzg_precompile_explores_invalid_symbolic_length, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_explores_invalid_symbolic_length(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_explores_invalid_symbolic_length because z3 is not available"
@@ -611,22 +661,24 @@ contract SymbolicKzgInvalidLength {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgInvalidLength"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-contract",
+        "SymbolicKzgInvalidLength",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicKzgInvalidLength.t.sol:SymbolicKzgInvalidLength
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkKzgInvalidLengthIsNotDropped(uint8) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL: panic: assertion failed (0x01); counterexample:
-checkKzgInvalidLengthIsNotDropped(uint8)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_kzg_precompile_inactive_before_cancun, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_inactive_before_cancun(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_inactive_before_cancun because z3 is not available"
@@ -659,28 +711,126 @@ contract SymbolicPreCancunKzg {
 "#,
     );
 
-    let stdout = cmd
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--evm-version",
+        "shanghai",
+        "--match-contract",
+        "SymbolicPreCancunKzg",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicPreCancunKzg.t.sol:SymbolicPreCancunKzg
+[PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
+
+#[forgetest_init]
+fn symbolic_precompile_codehash_matches_account_state(prj: _, cmd: _) {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_precompile_codehash_matches_account_state because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "PrecompileAccounts.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract PrecompileAccounts is Test {
+    function setUp() public {
+        vm.deal(address(2), 1);
+        vm.setNonce(address(3), 1);
+    }
+
+    function checkPrecompileAccounts() public {
+        assertPrecompileAccounts();
+    }
+
+    function testPrecompileAccounts() public {
+        assertPrecompileAccounts();
+    }
+
+    function assertPrecompileAccounts() internal {
+        for (uint160 i = 1; i <= 10; ++i) {
+            address target = address(i);
+            assert(target.code.length == 0);
+            assert(target.codehash == (i == 2 || i == 3 ? keccak256("") : bytes32(0)));
+        }
+
+        (bool ok, bytes memory out) = address(4).staticcall(hex"010203");
+        assert(ok);
+        assert(keccak256(out) == keccak256(hex"010203"));
+        assert(address(4).codehash == bytes32(0));
+
+        vm.deal(address(4), 1);
+        assert(address(4).codehash == keccak256(""));
+        vm.setNonce(address(5), 1);
+        assert(address(5).codehash == keccak256(""));
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--json",
+        "--evm-version",
+        "cancun",
+        "--match-test",
+        "testPrecompileAccounts",
+    ])
+    .assert_json_stdout(str![[r#"
+{
+  "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
+    "test_results": {
+      "testPrecompileAccounts()": {
+        "status": "Success",
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]]);
+
+    cmd.forge_fuse()
         .args([
             "test",
             "--symbolic",
+            "--json",
             "--evm-version",
-            "shanghai",
-            "--match-contract",
-            "SymbolicPreCancunKzg",
+            "cancun",
+            "--match-test",
+            "checkPrecompileAccounts",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .assert_json_stdout(str![[r#"
+{
+  "test/PrecompileAccounts.t.sol:PrecompileAccounts": {
+    "test_results": {
+      "checkPrecompileAccounts()": {
+        "status": "Success",
+        "symbolic": {
+          "status": "pass",
+          "...": "{...}"
+        },
+        "...": "{...}"
+      }
+    },
+    "...": "{...}"
+  }
+}
+"#]]);
+}
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256)
-"#]],
-    );
-});
-
-forgetest_init!(symbolic_kzg_precompile_residual_reports_incomplete, |prj, cmd| {
+#[forgetest_init]
+fn symbolic_kzg_precompile_residual_reports_incomplete(prj: _, cmd: _) {
     if !z3_available() {
         let _ = sh_eprintln!(
             "skipping symbolic_kzg_precompile_residual_reports_incomplete because z3 is not available"
@@ -717,4 +867,4 @@ contract SymbolicKzgResidual {
         stdout.contains("symbolic KZG point-evaluation precompile residual not modeled"),
         "{stdout}"
     );
-});
+}

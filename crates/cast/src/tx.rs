@@ -13,7 +13,7 @@ use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
-    utils::{self, apply_gas_estimate_multiplier, parse_function_args},
+    utils::{self, apply_gas_estimate_multiplier, parse_ether_value, parse_function_args},
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason,
@@ -75,12 +75,25 @@ pub struct TxParams {
     #[arg(long, env = "ETH_GAS_LIMIT")]
     pub gas_limit: Option<U256>,
 
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_GAS_PRICE")]
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions, either
+    /// specified in wei, or as a string with a unit type.
+    ///
+    /// Examples: 1ether, 10gwei, 0.01ether
+    #[arg(
+        long,
+        env = "ETH_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE"
+    )]
     pub gas_price: Option<U256>,
 
     /// Max priority fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
+    #[arg(
+        long,
+        env = "ETH_PRIORITY_GAS_PRICE",
+        value_parser = parse_ether_value,
+        value_name = "PRICE"
+    )]
     pub priority_gas_price: Option<U256>,
 
     /// Nonce for the transaction.
@@ -141,10 +154,20 @@ impl SenderKind<'_> {
 
     /// Resolves the sender from the wallet options.
     ///
-    /// Prefers a configured signer (or Tempo wallet account) over `from`, and falls back to the
-    /// zero address when neither is available.
-    pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
+    /// Returns `from` when set, unless a Tempo access key is set or an address-based authorization
+    /// needs a signer. Otherwise returns the configured signer (or Tempo wallet account), falling
+    /// back to the zero address.
+    pub async fn from_wallet_opts(
+        mut opts: WalletOpts,
+        authorizations: &[CliAuthorizationList],
+    ) -> Result<Self> {
         let from = opts.from.take();
+        if let Some(from) = from
+            && opts.tempo_access_key.is_none()
+            && !authorizations.iter().any(|auth| matches!(auth, CliAuthorizationList::Address(_)))
+        {
+            return Ok(from.into());
+        }
         let (signer, tempo_wallet) = opts.maybe_signer().await?;
         Ok(if let Some(signer) = signer {
             signer.into()
@@ -188,17 +211,17 @@ impl From<WalletSigner> for SenderKind<'_> {
 pub(crate) async fn read_only_sender<N: Network>(
     browser: &BrowserWalletOpts,
     wallet: WalletOpts,
-    tempo: &TempoOpts,
+    tx: &TransactionOpts,
     chain_id: u64,
 ) -> Result<(SenderKind<'static>, bool)> {
-    crate::tempo::ensure_session_not_browser(tempo, browser.browser)?;
-    if let Some(session) = tempo.session_signer_for_wallet(&wallet, chain_id)? {
+    crate::tempo::ensure_session_not_browser(&tx.tempo, browser.browser)?;
+    if let Some(session) = tx.tempo.session_signer_for_wallet(&wallet, chain_id)? {
         return Ok((session.access_key.account().into(), false));
     }
 
     Ok(match browser.run::<N>().await? {
         Some(browser) => (browser.address().into(), true),
-        None => (SenderKind::from_wallet_opts(wallet).await?, false),
+        None => (SenderKind::from_wallet_opts(wallet, &tx.auth).await?, false),
     })
 }
 
@@ -725,7 +748,7 @@ where
             self.tx.set_access_list(access_list);
         }
         if fill && self.tx.gas_limit().is_none() {
-            let request = if self.browser && self.chain.is_tempo() {
+            let request = if self.browser {
                 self.tx.browser_wallet_gas_estimation_request()
             } else {
                 self.tx.clone()
@@ -1036,7 +1059,7 @@ mod tests {
         assert_eq!(tx.fee_token, None);
 
         // Fee resolution happens after building and can change the submission type to Tempo AA.
-        resolve_and_set_fee_token(Some(&provider), Some(chain), &mut tx, None).await.unwrap();
+        resolve_and_set_fee_token(Some(&provider), &mut tx, None).await.unwrap();
         tx.prep_for_submission();
         assert_eq!(tx.inner.transaction_type, Some(0x76));
         assert_eq!(tx.fee_token, Some(token));
@@ -1074,5 +1097,25 @@ mod tests {
 
         let estimated_gas = builder(&provider, &["--auth", &auth]).await;
         assert!(estimated_gas.will_disclose_auth_during_build());
+    }
+
+    #[test]
+    fn tx_params_parses_gas_price_units() {
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            tx: TxParams,
+        }
+
+        let cli =
+            Cli::try_parse_from(["test", "--gas-price", "10gwei", "--priority-gas-price", "2gwei"])
+                .unwrap();
+        assert_eq!(cli.tx.gas_price, Some(U256::from(10_000_000_000u64)));
+        assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2_000_000_000u64)));
+
+        let cli = Cli::try_parse_from(["test", "--gas-price", "100", "--priority-gas-price", "2"])
+            .unwrap();
+        assert_eq!(cli.tx.gas_price, Some(U256::from(100)));
+        assert_eq!(cli.tx.priority_gas_price, Some(U256::from(2)));
     }
 }

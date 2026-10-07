@@ -1,6 +1,6 @@
 //! Contains various tests for checking forge commands related to config values
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, address};
 use foundry_cli::utils as forge_utils;
 use foundry_compilers::{
     artifacts::{BytecodeHash, OptimizerDetails, RevertStrings, YulDetails},
@@ -17,7 +17,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
-    util::{OTHER_SOLC_VERSION, OutputExt, TestCommand, pretty_err},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
 use semver::VersionReq;
@@ -29,6 +29,9 @@ use std::{
     str::FromStr,
     thread,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const DEFAULT_CONFIG: &str = r#"[profile.default]
 src = "src"
@@ -86,6 +89,7 @@ sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 initial_balance = "0xffffffffffffffffffffffff"
 block_number = 1
+fork_state_by_number = false
 gas_limit = 1073741824
 block_base_fee_per_gas = 0
 block_coinbase = "0x0000000000000000000000000000000000000000"
@@ -311,7 +315,8 @@ exclude = []
 "#;
 
 // tests all config values that are in use
-forgetest!(can_extract_config_values, |prj, cmd| {
+#[forgetest]
+fn can_extract_config_values(prj: _, cmd: _) {
     // explicitly set all values
     let input = Config {
         profile: Config::DEFAULT_PROFILE,
@@ -424,11 +429,12 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         always_use_create_2_factory: false,
         eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
-        sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
-        tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
+        sender: address!("00a329c0648769A73afAc7F9381D08FB43dBEA72"),
+        tx_origin: address!("00a329c0648769A73afAc7F9F81E08FB43dBEA72"),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
         block_number: U256::from(10),
         fork_block_number: Some(200),
+        fork_state_by_number: true,
         chain: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
         code_size_limit: Some(100000),
@@ -492,6 +498,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         create2_library_salt: Config::DEFAULT_CREATE2_LIBRARY_SALT,
         create2_deployer: Config::DEFAULT_CREATE2_DEPLOYER,
         vyper: Default::default(),
+        external_compilers: vec![],
         skip: vec![],
         dependencies: Default::default(),
         soldeer: Default::default(),
@@ -511,17 +518,19 @@ forgetest!(can_extract_config_values, |prj, cmd| {
     prj.write_config(input.clone());
     let config = cmd.config();
     similar_asserts::assert_eq!(input, config);
-});
+}
 
 // tests config gets printed to std out
-forgetest!(can_show_config, |prj, cmd| {
+#[forgetest]
+fn can_show_config(prj: _, cmd: _) {
     let expected =
         Config::load_with_root(prj.root()).unwrap().to_string_pretty().unwrap().trim().to_string();
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
-});
+}
 
-forgetest!(can_select_profile_with_cli, |prj, cmd| {
+#[forgetest]
+fn can_select_profile_with_cli(prj: _, cmd: _) {
     prj.create_file(
         Config::FILE_NAME,
         r#"
@@ -540,13 +549,14 @@ optimizer_runs = 1
 
     assert_eq!(config.optimizer, Some(true));
     assert_eq!(config.optimizer_runs, Some(1));
-});
+}
 
 // checks that config works
 // - foundry.toml is properly generated
 // - paths are resolved properly
 // - config supports overrides from env, and cli
-forgetest_init!(can_override_config, |prj, cmd| {
+#[forgetest_init]
+fn can_override_config(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -611,9 +621,10 @@ forgetest_init!(can_override_config, |prj, cmd| {
         .trim()
         .to_string();
     assert_eq!(expected, output);
-});
+}
 
-forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
+#[forgetest_init]
+fn can_parse_remappings_correctly(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -677,9 +688,10 @@ Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag
         .trim()
         .to_string();
     assert_eq!(expected, output);
-});
+}
 
-forgetest_init!(can_detect_config_vals, |prj, _cmd| {
+#[forgetest_init]
+fn can_detect_config_vals(prj: _) {
     prj.initialize_default_contracts();
     let url = "http://127.0.0.1:8545";
     let config = prj.config_from_output(["--no-auto-detect", "--rpc-url", url]);
@@ -697,10 +709,11 @@ forgetest_init!(can_detect_config_vals, |prj, _cmd| {
     let config = prj.config_from_output(["--force"]);
     assert!(!config.auto_detect_solc);
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
-});
+}
 
 // checks that `clean` removes dapptools style paths
-forgetest_init!(can_get_evm_opts, |prj, _cmd| {
+#[forgetest_init]
+fn can_get_evm_opts(prj: _) {
     prj.initialize_default_contracts();
     let url = "http://127.0.0.1:8545";
     let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
@@ -716,14 +729,15 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     unsafe {
         std::env::remove_var("FOUNDRY_ETH_RPC_URL");
     }
-});
+}
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/14538>:
 // the bare `ETH_RPC_URL` env var must NOT cause `forge` commands to set
 // `eth_rpc_url` (which would silently fork all `forge test` runs).
 // Only `--rpc-url`, `foundry.toml`, the `FOUNDRY_ETH_RPC_URL` env var, or
 // cheatcodes should configure forking.
-forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
+#[forgetest_init]
+fn eth_rpc_url_env_does_not_set_fork_url(prj: _) {
     prj.initialize_default_contracts();
     let url = "http://127.0.0.1:8545";
 
@@ -742,10 +756,11 @@ forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
         config.eth_rpc_url, None,
         "bare ETH_RPC_URL must not propagate to forge config (regression #14538)"
     );
-});
+}
 
 // checks that we can set various config values
-forgetest_init!(can_set_config_values, |prj, _cmd| {
+#[forgetest_init]
+fn can_set_config_values(prj: _) {
     prj.initialize_default_contracts();
     let config =
         prj.config_from_output(["--via-ir", "--experimental", "--via-ssa-cfg", "--no-metadata"]);
@@ -754,10 +769,11 @@ forgetest_init!(can_set_config_values, |prj, _cmd| {
     assert!(config.via_ssa_cfg);
     assert_eq!(config.cbor_metadata, false);
     assert_eq!(config.bytecode_hash, BytecodeHash::None);
-});
+}
 
 // tests that solc can be explicitly set
-forgetest!(can_set_solc_explicitly, |prj, cmd| {
+#[forgetest]
+fn can_set_solc_explicitly(prj: _, cmd: _) {
     prj.add_source(
         "Foo",
         r"
@@ -776,10 +792,11 @@ contract Greeter {}
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // tests that `--use <solc>` works
-forgetest!(can_use_solc, |prj, cmd| {
+#[forgetest]
+fn can_use_solc(prj: _, cmd: _) {
     prj.add_raw_source(
         "Foo",
         r"
@@ -840,10 +857,11 @@ Compiler run successful!
     cmd.forge_fuse();
     cmd.env("PATH", bin_dir);
     cmd.args(["build", "--force"]).root_arg().assert_success();
-});
+}
 
 // test to ensure yul optimizer can be set as intended
-forgetest!(can_set_yul_optimizer, |prj, cmd| {
+#[forgetest]
+fn can_set_yul_optimizer(prj: _, cmd: _) {
     prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "foo.sol",
@@ -871,10 +889,11 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
     // disable yul optimizer explicitly
     prj.update_config(|config| config.optimizer_details.get_or_insert_default().yul = Some(false));
     cmd.assert_success();
-});
+}
 
 // tests that the lib triple can be parsed
-forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
+#[forgetest_init]
+fn can_parse_dapp_libraries(cmd: _) {
     cmd.env(
         "DAPP_LIBRARIES",
         "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
@@ -884,10 +903,11 @@ forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
         config.libraries,
         vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),]
     );
-});
+}
 
 // test that optimizer runs works
-forgetest!(can_set_optimizer_runs, |prj, cmd| {
+#[forgetest]
+fn can_set_optimizer_runs(prj: _, cmd: _) {
     // explicitly set optimizer runs
     prj.update_config(|config| config.optimizer_runs = Some(1337));
 
@@ -896,10 +916,11 @@ forgetest!(can_set_optimizer_runs, |prj, cmd| {
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
     assert_eq!(config.optimizer_runs, Some(300));
-});
+}
 
 // test that use_literal_content works
-forgetest!(can_set_use_literal_content, |prj, cmd| {
+#[forgetest]
+fn can_set_use_literal_content(prj: _, cmd: _) {
     // explicitly set use_literal_content
     prj.update_config(|config| config.use_literal_content = false);
 
@@ -908,28 +929,31 @@ forgetest!(can_set_use_literal_content, |prj, cmd| {
 
     let config = prj.config_from_output(["--use-literal-content"]);
     assert_eq!(config.use_literal_content, true);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/9665>
-forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
+#[forgetest]
+fn enable_optimizer_when_runs_set(prj: _, cmd: _) {
     // explicitly set optimizer runs
     prj.update_config(|config| config.optimizer_runs = Some(1337));
 
     let config = cmd.config();
     assert!(config.optimizer.unwrap());
-});
+}
 
 // test `optimizer_runs` set to 200 by default if optimizer enabled
-forgetest!(optimizer_runs_default, |prj, cmd| {
+#[forgetest]
+fn optimizer_runs_default(prj: _, cmd: _) {
     // explicitly set optimizer
     prj.update_config(|config| config.optimizer = Some(true));
 
     let config = cmd.config();
     assert_eq!(config.optimizer_runs, Some(200));
-});
+}
 
 // test that gas_price can be set
-forgetest!(can_set_gas_price, |prj, cmd| {
+#[forgetest]
+fn can_set_gas_price(prj: _, cmd: _) {
     // explicitly set gas_price
     prj.update_config(|config| config.gas_price = Some(1337));
 
@@ -938,10 +962,11 @@ forgetest!(can_set_gas_price, |prj, cmd| {
 
     let config = prj.config_from_output(["--gas-price", "300"]);
     assert_eq!(config.gas_price, Some(300));
-});
+}
 
 // test that we can detect remappings from foundry.toml
-forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
+#[forgetest_init]
+fn can_detect_lib_foundry_toml(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let config = cmd.config();
     let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
@@ -1036,11 +1061,12 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj, cmd| {
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
         ]
     );
-});
+}
 
 // test remappings with closer paths are prioritised
 // so that `dep/=lib/a/src` will take precedent over  `dep/=lib/a/lib/b/src`
-forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
+#[forgetest_init]
+fn can_prioritise_closer_lib_remappings(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let config = cmd.config();
 
@@ -1061,7 +1087,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
             "forge-std/=lib/forge-std/src/".parse().unwrap()
         ]
     );
-});
+}
 
 // Test that remappings within root of the project have priority over remappings of sub-projects.
 // E.g. `@utils/libraries` mapping from library shouldn't be added if project already has `@utils`
@@ -1075,7 +1101,8 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
 // - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
 // with project defined `@openzeppelin/contracts` remapping
 // See <https://github.com/foundry-rs/foundry/issues/9271>
-forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
+#[forgetest_init]
+fn can_prioritise_project_remappings(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     let mut config = cmd.config();
     // Add `@utils/` remapping in project config.
@@ -1122,9 +1149,10 @@ Global:
 
 
 "#]]);
-});
+}
 
-forgetest!(narrow_project_remapping_preserves_broad_dependency_fallback, |prj, cmd| {
+#[forgetest]
+fn narrow_project_remapping_preserves_broad_dependency_fallback(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("pkg/sub/=src/local/").unwrap().into()];
     });
@@ -1171,9 +1199,10 @@ pkg/=lib/pkg/src/
     cmd.forge_fuse().args(["build"]).assert_success();
     // Forge lint resolves imports through Solar independently of the solc build.
     cmd.forge_fuse().args(["lint"]).assert_success();
-});
+}
 
-forgetest!(nested_config_remapping_refines_auto_detected_package_root, |prj, cmd| {
+#[forgetest]
+fn nested_config_remapping_refines_auto_detected_package_root(prj: _, cmd: _) {
     let outer = prj.paths().libraries[0].join("outer");
     let outer_other = prj.paths().libraries[0].join("outer-other");
     let inner = outer.join("lib/inner");
@@ -1217,9 +1246,10 @@ outer/=lib/outer/src/
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
-});
+}
 
-forgetest!(duplicate_transitive_remappings_are_scoped_to_their_owners, |prj, cmd| {
+#[forgetest]
+fn duplicate_transitive_remappings_are_scoped_to_their_owners(prj: _, cmd: _) {
     let a = prj.root().join("deps-a/a");
     let b = prj.root().join("deps-b/b");
     pretty_err(&a, fs::create_dir_all(a.join("src")));
@@ -1258,9 +1288,10 @@ shared/=deps-a/a/lib/shared/src/
     cmd.forge_fuse().arg("lint").assert_success();
     prj.update_config(|config| config.libs = vec!["deps-a".into(), "deps-b".into()]);
     cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
-});
+}
 
-forgetest!(scoped_npm_context_preserves_hoisted_sibling_fallback, |prj, cmd| {
+#[forgetest]
+fn scoped_npm_context_preserves_hoisted_sibling_fallback(prj: _, cmd: _) {
     let owner = prj.root().join("node_modules/@bananapus/router-terminal-v6");
     let nested_v3 = owner.join("node_modules/@uniswap/v3-core/src");
     let hoisted_v3 = prj.root().join("node_modules/@uniswap/v3-core/src");
@@ -1292,9 +1323,10 @@ node_modules/@bananapus/router-terminal-v6/:@uniswap/v3-core/=node_modules/@bana
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
-});
+}
 
-forgetest!(contextual_remapping_dedup_uses_context_and_name, |prj, cmd| {
+#[forgetest]
+fn contextual_remapping_dedup_uses_context_and_name(prj: _, cmd: _) {
     let a = prj.root().join("lib/a");
     let z = prj.root().join("lib/z");
     for dependency in [&a, &z] {
@@ -1338,9 +1370,10 @@ z/=lib/z/src/
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
-});
+}
 
-forgetest!(contextual_auto_remapping_uses_configured_dependency_source, |prj, cmd| {
+#[forgetest]
+fn contextual_auto_remapping_uses_configured_dependency_source(prj: _, cmd: _) {
     let a = prj.root().join("lib/a");
     let b = prj.root().join("lib/b");
     let shared_a = a.join("lib/shared");
@@ -1385,9 +1418,10 @@ shared/=lib/b/lib/shared/src/
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
-});
+}
 
-forgetest!(explicit_context_precedes_nested_auto_remapping, |prj, cmd| {
+#[forgetest]
+fn explicit_context_precedes_nested_auto_remapping(prj: _, cmd: _) {
     let a = prj.root().join("lib/a");
     let shared_a = a.join("lib/shared/src");
     let x = a.join("lib/x");
@@ -1445,9 +1479,10 @@ forgetest!(explicit_context_precedes_nested_auto_remapping, |prj, cmd| {
             .args(["lint", "--root", root, "--remappings", &remapping])
             .assert_success();
     }
-});
+}
 
-forgetest!(slashless_context_is_a_lexical_prefix, |prj, cmd| {
+#[forgetest]
+fn slashless_context_is_a_lexical_prefix(prj: _, cmd: _) {
     let abc = prj.root().join("lib/abc");
     let shared = abc.join("lib/shared/src");
     pretty_err(&abc, fs::create_dir_all(abc.join("src")));
@@ -1480,9 +1515,10 @@ forgetest!(slashless_context_is_a_lexical_prefix, |prj, cmd| {
     prj.update_config(|config| config.remappings.clear());
     cmd.forge_fuse().args(["build", "--force", "--remappings", remapping]).assert_success();
     cmd.forge_fuse().args(["lint", "--remappings", remapping]).assert_success();
-});
+}
 
-forgetest!(nested_auto_remapping_preserves_declared_precedence, |prj, cmd| {
+#[forgetest]
+fn nested_auto_remapping_preserves_declared_precedence(prj: _, cmd: _) {
     let a = prj.root().join("lib/a");
     let pinned_a = a.join("src/pinned");
     let shared_a = a.join("lib/shared/src");
@@ -1525,9 +1561,10 @@ x/=lib/a/lib/x/src/
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
-});
+}
 
-forgetest!(nested_contextual_remapping_precedes_auto_detection, |prj, cmd| {
+#[forgetest]
+fn nested_contextual_remapping_precedes_auto_detection(prj: _, cmd: _) {
     let a = prj.root().join("lib/a");
     let b = prj.root().join("lib/b");
     pretty_err(&a, fs::create_dir_all(a.join("src/pinned")));
@@ -1574,9 +1611,10 @@ shared/=lib/a/lib/shared/src/
 "#]]);
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().arg("lint").assert_success();
-});
+}
 
-forgetest!(external_dependency_uses_contextual_remapping, |prj, cmd| {
+#[forgetest]
+fn external_dependency_uses_contextual_remapping(prj: _, cmd: _) {
     let project = prj.root().join("utils");
     let dependency = prj.root().join("node_modules/dependency");
     let library = prj.root().join("node_modules/library/src");
@@ -1659,9 +1697,10 @@ contract Core is DependencyLibrary {}
     );
 
     cmd.current_dir(project).args(["build", "--no-lint"]).assert_success();
-});
+}
 
-forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
+#[forgetest]
+fn cli_preserves_explicit_contextual_remapping_pair(prj: _, cmd: _) {
     let dependency = prj.paths().libraries[0].join("dep");
     pretty_err(&dependency, fs::create_dir_all(dependency.join("src")));
     pretty_err(&dependency, fs::create_dir_all(dependency.join("pkg/contracts")));
@@ -1698,9 +1737,10 @@ forgetest!(cli_preserves_explicit_contextual_remapping_pair, |prj, cmd| {
     cmd.forge_fuse()
         .args(["build", "--force", "--remappings", "pkg/sub/=src/local/"])
         .assert_success();
-});
+}
 
-forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
+#[forgetest]
+fn root_remapping_precedes_nested_refinement(prj: _, cmd: _) {
     let outer = prj.paths().libraries[0].join("outer");
     let inner = outer.join("lib/inner");
     pretty_err(&outer, fs::create_dir_all(outer.join("src")));
@@ -1741,9 +1781,10 @@ forgetest!(root_remapping_precedes_nested_refinement, |prj, cmd| {
     cmd.forge_fuse()
         .args(["build", "--force", "--remappings", "inner/sub/=src/local/"])
         .assert_success();
-});
+}
 
-forgetest!(broad_project_remapping_suppresses_narrow_dependency_override, |prj, cmd| {
+#[forgetest]
+fn broad_project_remapping_suppresses_narrow_dependency_override(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.remappings = vec![Remapping::from_str("pkg/=src/local/").unwrap().into()];
     });
@@ -1792,12 +1833,13 @@ dep1/=lib/dep1/src/
     cmd.forge_fuse().args(["build"]).assert_success();
     // Solar prefers the longest matching prefix, so this fails if the dependency override leaks.
     cmd.forge_fuse().args(["lint"]).assert_success();
-});
+}
 
 // Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
 // identical stdout, even when remappings have contexts. The context prefix is part of the
 // machine-readable value and must survive `--pretty` mode.
-forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
+#[forgetest]
+fn remappings_pretty_keeps_context_on_stdout(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.auto_detect_remappings = false;
         config.remappings = vec![
@@ -1832,10 +1874,11 @@ Context: ctx-b
 
 
 "#]]);
-});
+}
 
 // test to check that foundry.toml libs section updates on install
-forgetest!(can_update_libs_section, |prj, cmd| {
+#[forgetest]
+fn can_update_libs_section(prj: _, cmd: _) {
     cmd.git_init();
 
     // explicitly set gas_price
@@ -1869,11 +1912,12 @@ Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
 
     let config = cmd.forge_fuse().config();
     assert_eq!(config.libs, expected);
-});
+}
 
 // test to check that loading the config emits warnings on the root foundry.toml and
 // is silent for any libs
-forgetest!(config_emit_warnings, |prj, cmd| {
+#[forgetest]
+fn config_emit_warnings(prj: _, cmd: _) {
     cmd.git_init();
 
     cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![""]).stderr_eq(
@@ -1899,9 +1943,10 @@ This notation for profiles has been deprecated and may result in the profile not
 Please use [profile.default] instead or run `forge config --fix`.
 
 "#]]);
-});
+}
 
-forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
+#[forgetest_init]
+fn can_skip_remappings_auto_detection(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // explicitly set remapping and libraries
     prj.update_config(|config| {
@@ -1914,18 +1959,20 @@ forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
     // only loads remappings from foundry.toml
     assert_eq!(config.remappings.len(), 1);
     assert_eq!("remapping/=lib/remapping/", config.remappings[0].to_string());
-});
+}
 
-forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
+#[forgetest_init]
+fn can_parse_default_fs_permissions(cmd: _) {
     let config = cmd.config();
 
     assert_eq!(config.fs_permissions.len(), 1);
     let permissions = config.fs_permissions.joined(Path::new("test"));
     let out_permission = permissions.find_permission(Path::new("test/out")).unwrap();
     assert_eq!(FsAccessPermission::Read, out_permission);
-});
+}
 
-forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
+#[forgetest_init]
+fn can_parse_custom_fs_permissions(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // explicitly set fs permissions
     prj.update_config(|config| {
@@ -1957,10 +2004,11 @@ forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
     let permission =
         config.fs_permissions.find_permission(Path::new("./bogus")).unwrap_or_default();
     assert_eq!(permission, FsAccessPermission::None);
-});
+}
 
 #[cfg(not(target_os = "windows"))]
-forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
+#[forgetest_init]
+fn can_resolve_symlink_fs_permissions(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // write config in packages/files/config.json
     let config_path = prj.root().join("packages").join("files");
@@ -1988,10 +2036,33 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     // read permission to file should be granted through symlink
     let permission = fs_permissions.find_permission(&config_path.join("config.json")).unwrap();
     assert_eq!(permission, FsAccessPermission::Read);
-});
+
+    std::os::unix::fs::symlink("links/config.json", prj.root().join("config-link")).unwrap();
+    prj.add_test(
+        "ReadLink.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReadLinkTest is Test {
+    function testReadLink() public view {
+        assertEq(vm.readLink("config-link"), "links/config.json");
+        assertEq(vm.readLink(string.concat(vm.projectRoot(), "/config-link")), "links/config.json");
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--match-contract", "ReadLinkTest"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ReadLink.t.sol:ReadLinkTest
+[PASS] testReadLink() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
 // tests if evm version is normalized for config output
-forgetest!(normalize_config_evm_version, |_prj, cmd| {
+#[forgetest]
+fn normalize_config_evm_version(cmd: _) {
     let output = cmd
         .args(["config", "--use", "0.8.0", "--json"])
         .assert_success()
@@ -2054,11 +2125,12 @@ forgetest!(normalize_config_evm_version, |_prj, cmd| {
         .stdout_lossy();
     let config: Config = serde_json::from_str(&output).unwrap();
     assert_eq!(config.evm_version, EvmVersion::Amsterdam);
-});
+}
 
 // Tests that root paths are properly resolved even if submodule specifies remappings for them.
 // See <https://github.com/foundry-rs/foundry/issues/3440>
-forgetest_init!(test_submodule_root_path_remappings, |prj, cmd| {
+#[forgetest_init]
+fn test_submodule_root_path_remappings(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_script(
         "BaseScript.sol",
@@ -2089,13 +2161,14 @@ contract MyScript is BaseScript {
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
     cmd.forge_fuse().args(["build"]).assert_success();
-});
+}
 
 // Tests that project remappings use config paths.
 // For `src=src/contracts` config, remapping should be `src/contracts/ = src/contracts/`.
 // For `src=src` config, remapping should be `src/ = src/`.
 // <https://github.com/foundry-rs/foundry/issues/9454>
-forgetest_init!(test_project_remappings, |prj, cmd| {
+#[forgetest_init]
+fn test_project_remappings(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.src = "src/contracts".into();
@@ -2119,9 +2192,10 @@ contract CounterTest {
    "#,
     );
     cmd.forge_fuse().args(["build"]).assert_success();
-});
+}
 
-forgetest_init!(test_default_config, |prj, cmd| {
+#[forgetest_init]
+fn test_default_config(prj: _, cmd: _) {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
 
@@ -2337,6 +2411,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "initial_balance": "0xffffffffffffffffffffffff",
   "block_number": 1,
   "fork_block_number": null,
+  "fork_state_by_number": false,
   "chain_id": null,
   "gas_limit": 1073741824,
   "code_size_limit": null,
@@ -2457,9 +2532,10 @@ forgetest_init!(test_default_config, |prj, cmd| {
 }
 
 "#]]);
-});
+}
 
-forgetest_init!(test_optimizer_config, |prj, cmd| {
+#[forgetest_init]
+fn test_optimizer_config(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Default settings: optimizer disabled, optimizer runs 200.
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
@@ -2531,9 +2607,10 @@ optimizer_runs = 0
 ...
 
 "#]]);
-});
+}
 
-forgetest_init!(test_gas_snapshot_check_config, |prj, cmd| {
+#[forgetest_init]
+fn test_gas_snapshot_check_config(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Default settings: gas_snapshot_check disabled.
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
@@ -2620,6 +2697,23 @@ Error: Snapshots differ from previous run
 ...
 "#]]);
 
+    let snapshot_path = prj.root().join("snapshots/GasSnapshotCheckTest.json");
+    let previous_snapshot = fs::read(&snapshot_path).unwrap();
+    for format in ["--json", "--junit"] {
+        cmd.forge_fuse()
+            .args(["test", format, "--gas-snapshot-check=true"])
+            .assert_failure()
+            .stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+        assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+    }
+
     // Disable gas_snapshot_check, assert that running the test will pass.
     prj.update_config(|config| config.gas_snapshot_check = false);
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
@@ -2703,9 +2797,10 @@ Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest_init!(test_gas_snapshot_emit_config, |prj, cmd| {
+#[forgetest_init]
+fn test_gas_snapshot_emit_config(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     // Default settings: gas_snapshot_emit enabled.
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
@@ -2743,8 +2838,17 @@ contract GasSnapshotEmitTest is DSTest {
     // Assert that snapshots were emitted to disk.
     assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
 
+    let snapshot_path = prj.root().join("snapshots/GasSnapshotEmitTest.json");
+    let expected_snapshot = fs::read(&snapshot_path).unwrap();
+
     // Remove the snapshot file.
     fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    for format in ["--json", "--junit"] {
+        cmd.forge_fuse().args(["test", format, "--gas-snapshot-emit=true"]).assert_success();
+        assert_eq!(fs::read(&snapshot_path).unwrap(), expected_snapshot);
+        fs::remove_file(&snapshot_path).unwrap();
+    }
 
     // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots.
     cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();
@@ -2805,10 +2909,75 @@ contract GasSnapshotEmitTest is DSTest {
 
     // Assert that snapshots were not emitted to disk.
     assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
-});
+}
+
+// Snapshot groups shared by several test contracts must be checked against the file on disk
+// before any suite rewrites it.
+#[forgetest]
+fn test_gas_snapshot_check_shared_group(prj: _, cmd: _) {
+    prj.insert_ds_test();
+
+    let test_contract = |name: &str, value: u32| {
+        format!(
+            r#"
+import "./test.sol";
+
+interface Vm {{
+    function snapshotValue(string calldata group, string calldata name, uint256 value) external;
+}}
+
+contract {name} is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotValue() public {{
+        vm.snapshotValue("Shared", "{name}", {value});
+    }}
+}}
+"#
+        )
+    };
+
+    prj.add_source("AlphaTest.sol", &test_contract("AlphaTest", 1));
+    prj.add_source("BetaTest.sol", &test_contract("BetaTest", 1));
+    cmd.args(["test", "-j1"]).assert_success();
+
+    let snapshot_path = prj.root().join("snapshots/Shared.json");
+    let previous_snapshot = fs::read(&snapshot_path).unwrap();
+
+    // With a single thread `AlphaTest` finishes first, so the changed value is only seen after
+    // another suite already contributed to the same group.
+    prj.add_source("BetaTest.sol", &test_contract("BetaTest", 2));
+    cmd.forge_fuse()
+        .args(["test", "-j1", "--gas-snapshot-check=true"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/AlphaTest.sol:AlphaTest
+[PASS] testSnapshotValue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for src/BetaTest.sol:BetaTest
+[PASS] testSnapshotValue() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+
+[Shared] Failed to match snapshots:
+- [BetaTest] 1 → 2
+
+Error: Snapshots differ from previous run
+
+"#]]);
+    assert_eq!(fs::read(&snapshot_path).unwrap(), previous_snapshot);
+}
 
 // Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
-forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
+#[forgetest_init]
+fn test_additional_compiler_profiles(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_source(
         "v1/Counter.sol",
@@ -2961,10 +3130,11 @@ contract Counter {
     assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("800", runs.unwrap().to_string());
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11227>
-forgetest_init!(test_exclude_lints_config, |prj, cmd| {
+#[forgetest_init]
+fn test_exclude_lints_config(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.lint.exclude_lints = vec![
@@ -2979,10 +3149,11 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
         ]
     });
     cmd.args(["lint"]).assert_success().stdout_eq("");
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/6529>
-forgetest_init!(test_fail_fast_config, |prj, cmd| {
+#[forgetest_init]
+fn test_fail_fast_config(prj: _, cmd: _) {
     // Skip if we don't have at least 2 CPUs to run both tests in parallel.
     if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
         return;
@@ -3008,10 +3179,19 @@ contract AnotherCounterTest is Test {
 }
 "#,
     );
-    cmd.args(["test", "--fail-fast"]).assert_failure();
-});
+    // The fuzz test can be skipped or interrupted after any number of runs.
+    cmd.args(["test", "--fail-fast"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
+...
+[FAIL: EvmError: Revert] test_Failure() ([GAS])
+Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+}
 
-forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
+#[forgetest]
+fn config_deny_warnings_is_deprecated(prj: _, cmd: _) {
     cmd.git_init();
 
     let faulty_toml = DEFAULT_CONFIG.replace(r#"deny = "never""#, "deny_warnings = true");
@@ -3021,9 +3201,10 @@ forgetest!(config_deny_warnings_is_deprecated, |prj, cmd| {
 Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. It will be removed in future versions.
 
 "#]]);
-});
+}
 
-forgetest!(config_labels_is_deprecated, |prj, cmd| {
+#[forgetest]
+fn config_labels_is_deprecated(prj: _, cmd: _) {
     cmd.git_init();
 
     fs::write(
@@ -3038,10 +3219,11 @@ forgetest!(config_labels_is_deprecated, |prj, cmd| {
 Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/5866>
-forgetest!(no_warnings_on_external_sections, |prj, cmd| {
+#[forgetest]
+fn no_warnings_on_external_sections(prj: _, cmd: _) {
     cmd.git_init();
 
     let toml = r"[profile.default]
@@ -3059,10 +3241,11 @@ forgetest!(no_warnings_on_external_sections, |prj, cmd| {
     cmd.forge_fuse().args(["config"]).assert_success().stderr_eq(str![[r#"
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10550>
-forgetest!(config_warnings_on_unknown_keys, |prj, cmd| {
+#[forgetest]
+fn config_warnings_on_unknown_keys(prj: _, cmd: _) {
     cmd.git_init();
 
     let faulty_toml = r"[profile.default]
@@ -3082,9 +3265,10 @@ Warning: Found unknown `bar` config for profile `another` defined in foundry.tom
 Warning: Found unknown `foo` config for profile `default` defined in foundry.toml.
 
 "#]]);
-});
+}
 
-forgetest_init!(test_ignored_file_paths_normalization, |prj, cmd| {
+#[forgetest_init]
+fn test_ignored_file_paths_normalization(prj: _, cmd: _) {
     fn gen_contract(name: &str) -> String {
         let fn_name = name.chars().next().unwrap().to_lowercase().to_string() + &name[1..];
         format!(
@@ -3137,9 +3321,10 @@ Warning (2018): Function state mutability can be restricted to pure
 
 "#,
     );
-});
+}
 
-forgetest_init!(test_failures_file_normalization, |prj, cmd| {
+#[forgetest_init]
+fn test_failures_file_normalization(prj: _, cmd: _) {
     // Update config with custom path containing "./" prefix
     prj.update_config(|config| {
         config.test_failures_file = PathBuf::from("./my-custom-failures");
@@ -3179,4 +3364,67 @@ contract MixedTests is Test {
     assert!(rerun_output.contains("Ran 1 test"));
     assert!(rerun_output.contains("testFail()"));
     assert!(!rerun_output.contains("[PASS] testPass()"));
-});
+}
+
+// Loading config must never execute a local `solc`, whether it was overridden by `--use`, the
+// command doesn't compile, or it comes from a nested dependency config.
+#[cfg(unix)]
+#[forgetest]
+fn config_loading_does_not_run_local_solc(prj: _, cmd: _) {
+    let fake_solc = prj.root().join("fake-solc");
+    let marker = prj.root().join("fake-solc.invoked");
+    fs::write(
+        &fake_solc,
+        r#"#!/bin/sh
+echo "$@" >> "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.13+commit.abaa5c0e"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&fake_solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.add_source("Counter.sol", "contract Counter {}");
+    let assert_not_invoked =
+        || assert!(!marker.exists(), "{}", fs::read_to_string(&marker).unwrap());
+    let write_config = |solc: &str| {
+        let config = format!(
+            "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = [\"lib\"]\nsolc = \"{solc}\"\n"
+        );
+        fs::write(prj.root().join(Config::FILE_NAME), config).unwrap();
+    };
+
+    // `evm_version` is unset, so only the `--use` compiler may determine it.
+    write_config(fake_solc.to_str().unwrap());
+    cmd.args(["build", "--use", SOLC_VERSION]).assert_success();
+    assert_not_invoked();
+    let artifact: Value =
+        serde_json::from_slice(&fs::read(prj.root().join("out/Counter.sol/Counter.json")).unwrap())
+            .unwrap();
+    let default_evm_version = Config::default().evm_version;
+    assert_eq!(artifact["metadata"]["settings"]["evmVersion"], default_evm_version.to_string());
+
+    let output = cmd.forge_fuse().args(["config", "--json"]).assert_success();
+    let config: Config = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(config.evm_version, default_evm_version);
+    assert_not_invoked();
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_not_invoked();
+
+    // A dependency's `solc` is never used to compile the parent project.
+    let dep = prj.root().join("lib/dep");
+    fs::create_dir_all(dep.join("src")).unwrap();
+    fs::write(dep.join("src/Dep.sol"), "contract Dep {}").unwrap();
+    fs::write(
+        dep.join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = \"{}\"\n", fake_solc.display()),
+    )
+    .unwrap();
+    write_config(SOLC_VERSION);
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    assert_not_invoked();
+}

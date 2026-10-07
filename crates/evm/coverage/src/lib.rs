@@ -812,7 +812,7 @@ impl CoverageSummary {
 
     /// Creates a coverage summary from a collection of coverage items.
     pub fn from_items<'a>(items: impl IntoIterator<Item = &'a CoverageItem>) -> Self {
-        let mut summary = Self::default();
+        let mut summary = Self::new();
         summary.add_items(items);
         summary
     }

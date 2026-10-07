@@ -1,11 +1,12 @@
 //! Validates and caches BAL post-state, and prepares transaction forks' parent-block BALs.
 
-use super::ResolvedFork;
+use super::Fork;
 use crate::opts::ForkContext;
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip7928::{
-    BlockAccessList, compute_block_access_list_hash, validate_block_access_list,
+use alloy_eips::{
+    BlockId,
+    eip7928::{BlockAccessList, compute_block_access_list_hash, validate_block_access_list},
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{AnyNetwork, AnyRpcBlock};
@@ -24,7 +25,7 @@ use std::time::Duration;
 /// Fetches and validates a parent BAL without mutating a database or propagating BAL failures.
 pub(super) async fn prepare<P: Provider<AnyNetwork>>(
     provider: &P,
-    resolved: &ResolvedFork,
+    resolved: &Fork,
     block: &AnyRpcBlock,
 ) -> Option<BlockAccessList> {
     if !eligible_source(resolved.context())
@@ -44,14 +45,7 @@ pub(super) async fn prepare<P: Provider<AnyNetwork>>(
         if !immutable_source(provider).await {
             return None;
         }
-        let bal =
-            match provider.raw_request("eth_getBlockAccessList".into(), (resolved.hash(),)).await {
-                Err(error) if is_rpc_method_not_found(&error) => {
-                    provider.get_block_access_list_by_hash(resolved.hash()).await
-                }
-                response => response,
-            }
-            .ok()??;
+        let bal = provider.get_block_access_list(BlockId::hash(resolved.hash())).await.ok()??;
         if let Err(err) =
             validate_bal(&bal, block.transactions.len(), block.header.block_access_list_hash())
         {
@@ -113,30 +107,29 @@ pub fn validate_bal(
 }
 
 /// Inserts a validated BAL's post-state into its selected remote cache, retaining existing values.
-pub(super) fn cache(db: &MemDb, bal: BlockAccessList) {
+///
+/// The BAL must pass [`validate_bal`] before this call, and the cache must belong to its immutable
+/// source block. Account and storage locks are acquired separately; insertion is not atomic across
+/// the two maps.
+pub fn cache_bal(db: &MemDb, bal: BlockAccessList) {
     let mut accounts = db.accounts.write();
     let inserted_accounts = cache_bal_accounts(&mut accounts, &bal);
     drop(accounts);
 
     let mut storage = db.storage.write();
     let inserted_slots = cache_bal_storage(&mut storage, &bal);
+    drop(storage);
     debug!(target: "backend::fork", inserted_accounts, inserted_slots, "prefilled fork cache from BAL");
 }
 
 /// Inserts complete account post-states, retaining existing accounts, and returns the added count.
-///
-/// The BAL must pass [`validate_bal`] before either cache map is modified. Callers own locking and
-/// must ensure that the selected cache belongs to the BAL's immutable source block.
-pub fn cache_bal_accounts(
-    accounts: &mut AddressHashMap<AccountInfo>,
-    bal: &BlockAccessList,
-) -> usize {
+fn cache_bal_accounts(accounts: &mut AddressHashMap<AccountInfo>, bal: &BlockAccessList) -> usize {
     let accounts_before = accounts.len();
     for account in bal {
         if let (Some(balance), Some(nonce), Some(code)) =
             (account.balance_post_state(), account.nonce_post_state(), account.code_changes.last())
         {
-            accounts.entry(account.address).or_insert_with(|| {
+            accounts.entry(account.address()).or_insert_with(|| {
                 let code = Bytecode::new_raw(code.new_code.clone());
                 AccountInfo {
                     balance,
@@ -153,16 +146,12 @@ pub fn cache_bal_accounts(
 
 /// Inserts final slot writes, retaining cached values and leaving read-only slots unknown.
 ///
-/// Returns the number of added slots. The same validation and cache-identity requirements as
-/// [`cache_bal_accounts`] apply.
-pub fn cache_bal_storage(
-    storage: &mut AddressHashMap<U256Map<U256>>,
-    bal: &BlockAccessList,
-) -> usize {
+/// Returns the number of added slots.
+fn cache_bal_storage(storage: &mut AddressHashMap<U256Map<U256>>, bal: &BlockAccessList) -> usize {
     let mut inserted_slots = 0;
     for account in bal {
         if !account.storage_changes.is_empty() {
-            let cached_slots = storage.entry(account.address).or_insert_with(|| {
+            let cached_slots = storage.entry(account.address()).or_insert_with(|| {
                 U256Map::with_capacity_and_hasher(account.storage_changes.len(), Default::default())
             });
             let slots_before = cached_slots.len();

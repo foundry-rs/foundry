@@ -95,7 +95,7 @@ impl LintArgs {
         }
 
         let parse_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {
-            lints.iter().map(|s| SolLint::try_from(s.as_str())).collect()
+            lints.iter().map(|s| s.parse()).collect()
         };
 
         // Override default lint config with user-defined lints

@@ -1,16 +1,20 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
+use foundry_cli::utils::parse_json;
+use foundry_compilers::{
+    artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping},
+    solc::Solc,
+};
 use foundry_config::{
-    BasicConfig, Chain, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
+    BasicConfig, Config, DenyLevel, FuzzConfig, InvariantConfig, SolidityErrorCode,
     parse_with_profile,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{OutputExt, SOLC_VERSION, read_string},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, read_string},
 };
 use std::{
     fs,
@@ -19,8 +23,14 @@ use std::{
     str::FromStr,
 };
 
+#[cfg(unix)]
+use foundry_test_utils::util::TestCommand;
+#[cfg(unix)]
+use std::path::PathBuf;
+
 // tests `--help` is printed to std out
-forgetest!(print_help, |_prj, cmd| {
+#[forgetest]
+fn print_help(cmd: _) {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
 Build, test, fuzz, debug and deploy Solidity contracts
 
@@ -80,17 +90,19 @@ Display options:
 Find more information in the book: https://getfoundry.sh/forge/overview
 
 "#]]);
-});
+}
 
 // checks that `clean` can be invoked even if out and cache don't exist
-forgetest!(can_clean_non_existing, |prj, cmd| {
+#[forgetest]
+fn can_clean_non_existing(prj: _, cmd: _) {
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
-});
+}
 
 // checks that `clean` doesn't output warnings
-forgetest_init!(can_clean_without_warnings, |prj, cmd| {
+#[forgetest_init]
+fn can_clean_without_warnings(prj: _, cmd: _) {
     prj.add_source(
         "Simple.sol",
         r#"
@@ -123,185 +135,152 @@ Please use [profile.default] instead or run `forge config --fix`.
     cmd.forge_fuse().arg("clean").assert_success().stderr_eq(str![[r#"
 
 "#]]);
-});
+}
+
+/// Points `cmd` at an empty temporary `HOME` so the `forge cache` tests never touch the real
+/// `~/.foundry/cache`, and returns it with the cache dir inside it.
+#[cfg(unix)]
+fn isolated_foundry_cache(cmd: &mut TestCommand) -> (tempfile::TempDir, PathBuf) {
+    let home = tempfile::tempdir().unwrap();
+    cmd.env("HOME", home.path());
+    cmd.env("XDG_DATA_HOME", home.path().join("data"));
+    let cache = home.path().join(".foundry").join("cache");
+    (home, cache)
+}
+
+/// Creates the given dirs, each with a two byte cache file.
+#[cfg(unix)]
+fn seed_cache_dirs(dirs: &[&Path]) {
+    for dir in dirs {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("storage.json"), "{}").unwrap();
+    }
+}
 
 // checks that `cache ls` can be invoked and displays the foundry cache
-forgetest!(
-    #[ignore]
-    can_cache_ls,
-    |_prj, cmd| {
-        let chain = Chain::mainnet();
-        let block1 = 100;
-        let block2 = 101;
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_ls(cmd: _) {
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let chain = cache.join("rpc").join("mainnet");
+    seed_cache_dirs(&[&chain.join("100"), &chain.join("101")]);
+    fs::create_dir_all(cache.join("etherscan").join("mainnet")).unwrap();
 
-        let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-        let block1_file = Config::foundry_block_cache_file(chain, block1).unwrap();
-        let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-        let block2_file = Config::foundry_block_cache_file(chain, block2).unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-        fs::create_dir_all(block1_cache_dir).unwrap();
-        fs::write(block1_file, "{}").unwrap();
-        fs::create_dir_all(block2_cache_dir).unwrap();
-        fs::write(block2_file, "{}").unwrap();
-        fs::create_dir_all(etherscan_cache_dir).unwrap();
+    cmd.args(["cache", "ls"]).assert_success().stdout_eq("").stderr_eq(
+        str![[r#"
+- mainnet (4.0 B)
+	- Block Explorer (0.0 B)
 
-        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stderr_lossy();
-        let output_lines = output.split('\n').collect::<Vec<_>>();
-        println!("{output}");
+	- Block 100 (2.0 B)
+	- Block 101 (2.0 B)
 
-        assert_eq!(output_lines.len(), 6);
-        assert!(output_lines[0].starts_with("-️ mainnet ("));
-        assert!(output_lines[1].starts_with("\t-️ Block Explorer ("));
-        assert_eq!(output_lines[2], "");
-        assert!(output_lines[3].starts_with("\t-️ Block 100 ("));
-        assert!(output_lines[4].starts_with("\t-️ Block 101 ("));
-        assert_eq!(output_lines[5], "");
-
-        Config::clean_foundry_cache().unwrap();
-    }
-);
+"#]]
+        .unordered(),
+    );
+}
 
 // checks that `cache clean` can be invoked and cleans the foundry cache
-// this test is not isolated and modifies ~ so it is ignored
-forgetest!(
-    #[ignore]
-    can_cache_clean,
-    |_prj, cmd| {
-        let cache_dir = Config::foundry_cache_dir().unwrap();
-        let path = cache_dir.as_path();
-        fs::create_dir_all(path).unwrap();
-        cmd.args(["cache", "clean"]);
-        cmd.assert_empty_stdout();
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_clean(cmd: _) {
+    let (home, cache) = isolated_foundry_cache(&mut cmd);
+    seed_cache_dirs(&[&cache.join("rpc").join("mainnet").join("100")]);
+    fs::create_dir_all(cache.join("etherscan").join("mainnet")).unwrap();
 
-        assert!(!path.exists());
-    }
-);
+    cmd.args(["cache", "clean"]).assert_empty_stdout();
 
-// checks that `cache clean --etherscan` can be invoked and only cleans the foundry etherscan cache
-// this test is not isolated and modifies ~ so it is ignored
-forgetest!(
-    #[ignore]
-    can_cache_clean_etherscan,
-    |_prj, cmd| {
-        let cache_dir = Config::foundry_cache_dir().unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
-        let path = cache_dir.as_path();
-        let etherscan_path = etherscan_cache_dir.as_path();
-        fs::create_dir_all(etherscan_path).unwrap();
-        cmd.args(["cache", "clean", "--etherscan"]);
-        cmd.assert_empty_stdout();
+    assert!(!cache.exists());
+    assert!(home.path().join(".foundry").exists());
+}
 
-        assert!(path.exists());
-        assert!(!etherscan_path.exists());
+// checks that `cache clean --etherscan` only cleans the foundry etherscan cache
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_clean_etherscan(cmd: _) {
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let block = cache.join("rpc").join("mainnet").join("100");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[&block, &etherscan.join("mainnet")]);
 
-        Config::clean_foundry_cache().unwrap();
-    }
-);
+    cmd.args(["cache", "clean", "--etherscan"]).assert_empty_stdout();
 
-// checks that `cache clean all --etherscan` can be invoked and only cleans the foundry etherscan
-// cache. This test is not isolated and modifies ~ so it is ignored
-forgetest!(
-    #[ignore]
-    can_cache_clean_all_etherscan,
-    |_prj, cmd| {
-        let rpc_cache_dir = Config::foundry_rpc_cache_dir().unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_cache_dir().unwrap();
-        let rpc_path = rpc_cache_dir.as_path();
-        let etherscan_path = etherscan_cache_dir.as_path();
-        fs::create_dir_all(rpc_path).unwrap();
-        fs::create_dir_all(etherscan_path).unwrap();
-        cmd.args(["cache", "clean", "all", "--etherscan"]);
-        cmd.assert_empty_stdout();
+    assert!(block.exists());
+    assert!(!etherscan.exists());
+}
 
-        assert!(rpc_path.exists());
-        assert!(!etherscan_path.exists());
+// checks that `cache clean all --etherscan` only cleans the foundry etherscan cache
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_clean_all_etherscan(cmd: _) {
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let block = cache.join("rpc").join("mainnet").join("100");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[&block, &etherscan.join("mainnet")]);
 
-        Config::clean_foundry_cache().unwrap();
-    }
-);
+    cmd.args(["cache", "clean", "all", "--etherscan"]).assert_empty_stdout();
 
-// checks that `cache clean <chain>` can be invoked and cleans the chain cache
-// this test is not isolated and modifies ~ so it is ignored
-forgetest!(
-    #[ignore]
-    can_cache_clean_chain,
-    |_prj, cmd| {
-        let chain = Chain::mainnet();
-        let cache_dir = Config::foundry_chain_cache_dir(chain).unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-        let path = cache_dir.as_path();
-        let etherscan_path = etherscan_cache_dir.as_path();
-        fs::create_dir_all(path).unwrap();
-        fs::create_dir_all(etherscan_path).unwrap();
-        cmd.args(["cache", "clean", "mainnet"]);
-        cmd.assert_empty_stdout();
+    assert!(block.exists());
+    assert!(!etherscan.exists());
+}
 
-        assert!(!path.exists());
-        assert!(!etherscan_path.exists());
+// checks that `cache clean <chain>` cleans the rpc and etherscan caches of that chain only
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_clean_chain(cmd: _) {
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let rpc = cache.join("rpc");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[
+        &rpc.join("mainnet").join("100"),
+        &rpc.join("sepolia").join("100"),
+        &etherscan.join("mainnet"),
+        &etherscan.join("sepolia"),
+    ]);
 
-        Config::clean_foundry_cache().unwrap();
-    }
-);
+    cmd.args(["cache", "clean", "mainnet"]).assert_empty_stdout();
 
-// checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
-// caches this test is not isolated and modifies ~ so it is ignored
-forgetest!(
-    #[ignore]
-    can_cache_clean_blocks,
-    |_prj, cmd| {
-        let chain = Chain::mainnet();
-        let block1 = 100;
-        let block2 = 101;
-        let block3 = 102;
-        let block1_cache_dir = Config::foundry_block_cache_dir(chain, block1).unwrap();
-        let block2_cache_dir = Config::foundry_block_cache_dir(chain, block2).unwrap();
-        let block3_cache_dir = Config::foundry_block_cache_dir(chain, block3).unwrap();
-        let etherscan_cache_dir = Config::foundry_etherscan_chain_cache_dir(chain).unwrap();
-        let block1_path = block1_cache_dir.as_path();
-        let block2_path = block2_cache_dir.as_path();
-        let block3_path = block3_cache_dir.as_path();
-        let etherscan_path = etherscan_cache_dir.as_path();
-        fs::create_dir_all(block1_path).unwrap();
-        fs::create_dir_all(block2_path).unwrap();
-        fs::create_dir_all(block3_path).unwrap();
-        fs::create_dir_all(etherscan_path).unwrap();
-        cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]);
-        cmd.assert_empty_stdout();
+    assert!(!rpc.join("mainnet").exists());
+    assert!(!etherscan.join("mainnet").exists());
+    assert!(rpc.join("sepolia").join("100").exists());
+    assert!(etherscan.join("sepolia").exists());
+}
 
-        assert!(!block1_path.exists());
-        assert!(!block2_path.exists());
-        assert!(block3_path.exists());
-        assert!(etherscan_path.exists());
+// checks that `cache clean <chain> --blocks 100,101` only cleans those block caches
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_clean_blocks(cmd: _) {
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let chain = cache.join("rpc").join("mainnet");
+    let etherscan = cache.join("etherscan").join("mainnet");
+    seed_cache_dirs(&[&chain.join("100"), &chain.join("101"), &chain.join("102"), &etherscan]);
 
-        Config::clean_foundry_cache().unwrap();
-    }
-);
+    cmd.args(["cache", "clean", "mainnet", "--blocks", "100,101"]).assert_empty_stdout();
 
-// checks that `cache clean <chain> --etherscan` can be invoked and cleans the etherscan chain cache
-// this test is not isolated and modifies ~ so it is ignored
-forgetest!(
-    #[ignore]
-    can_cache_clean_chain_etherscan,
-    |_prj, cmd| {
-        let cache_dir = Config::foundry_chain_cache_dir(Chain::mainnet()).unwrap();
-        let etherscan_cache_dir =
-            Config::foundry_etherscan_chain_cache_dir(Chain::mainnet()).unwrap();
-        let path = cache_dir.as_path();
-        let etherscan_path = etherscan_cache_dir.as_path();
-        fs::create_dir_all(path).unwrap();
-        fs::create_dir_all(etherscan_path).unwrap();
-        cmd.args(["cache", "clean", "mainnet", "--etherscan"]);
-        cmd.assert_empty_stdout();
+    assert!(!chain.join("100").exists());
+    assert!(!chain.join("101").exists());
+    assert!(chain.join("102").exists());
+    assert!(etherscan.exists());
+}
 
-        assert!(path.exists());
-        assert!(!etherscan_path.exists());
+// checks that `cache clean <chain> --etherscan` only cleans the etherscan cache of that chain
+#[cfg(unix)]
+#[forgetest]
+fn can_cache_clean_chain_etherscan(cmd: _) {
+    let (_home, cache) = isolated_foundry_cache(&mut cmd);
+    let block = cache.join("rpc").join("mainnet").join("100");
+    let etherscan = cache.join("etherscan");
+    seed_cache_dirs(&[&block, &etherscan.join("mainnet"), &etherscan.join("sepolia")]);
 
-        Config::clean_foundry_cache().unwrap();
-    }
-);
+    cmd.args(["cache", "clean", "mainnet", "--etherscan"]).assert_empty_stdout();
+
+    assert!(block.exists());
+    assert!(!etherscan.join("mainnet").exists());
+    assert!(etherscan.join("sepolia").exists());
+}
 
 // checks that init works
-forgetest!(can_init_repo_with_config, |prj, cmd| {
+#[forgetest]
+fn can_init_repo_with_config(prj: _, cmd: _) {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
@@ -319,10 +298,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-});
+}
 
 // Checks that a forge project fails to initialise if dir is already git repo and dirty
-forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
+#[forgetest]
+fn can_detect_dirty_git_status_on_init(prj: _, cmd: _) {
     prj.wipe();
 
     // initialize new git repo
@@ -347,10 +327,11 @@ ignore them in the `.gitignore` file.
 
     // ensure nothing was emitted, dir is empty
     assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
-});
+}
 
 // Checks that a forge project can be initialized without creating a git repository
-forgetest!(can_init_no_git, |prj, cmd| {
+#[forgetest]
+fn can_init_no_git(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![""]).stderr_eq(
@@ -368,10 +349,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(!prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
     assert!(!prj.root().join("lib/forge-std/.git").exists());
-});
+}
 
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
-forgetest!(can_init_with_no_commit, |prj, cmd| {
+#[forgetest]
+fn can_init_with_no_commit(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.arg("init")
@@ -388,26 +370,29 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
 "#]]);
     prj.assert_config_exists();
-});
+}
 
 // Checks that quiet mode does not print anything
-forgetest!(can_init_quiet, |prj, cmd| {
+#[forgetest]
+fn can_init_quiet(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.arg("init").arg(prj.root()).arg("-q").assert_empty_stdout();
-});
+}
 
 // `forge init foobar` works with dir argument
-forgetest!(can_init_with_dir, |prj, cmd| {
+#[forgetest]
+fn can_init_with_dir(prj: _, cmd: _) {
     prj.create_file("README.md", "non-empty dir");
     cmd.args(["init", "foobar"]);
 
     cmd.assert_success();
     assert!(prj.root().join("foobar").exists());
-});
+}
 
 // `forge init foobar --template [template]` works with dir argument
-forgetest!(can_init_with_dir_and_template, |prj, cmd| {
+#[forgetest]
+fn can_init_with_dir_and_template(prj: _, cmd: _) {
     cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"])
         .assert_success()
         .stdout_eq(str![""])
@@ -425,10 +410,11 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
     assert!(prj.root().join("foobar/.git/modules").exists());
     assert!(prj.root().join("foobar/src").exists());
     assert!(prj.root().join("foobar/test").exists());
-});
+}
 
 // `forge init foobar --template [template] --branch [branch]` works with dir argument
-forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
+#[forgetest]
+fn can_init_with_dir_and_template_and_branch(prj: _, cmd: _) {
     cmd.args([
         "init",
         "foobar",
@@ -452,10 +438,11 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
     assert!(prj.root().join("foobar/.git/modules").exists());
     assert!(prj.root().join("foobar/src").exists());
     assert!(prj.root().join("foobar/scripts").exists());
-});
+}
 
 // `forge init --force` works on non-empty dirs
-forgetest!(can_init_non_empty, |prj, cmd| {
+#[forgetest]
+fn can_init_non_empty(prj: _, cmd: _) {
     prj.create_file("README.md", "non-empty dir");
     cmd.arg("init").arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 Error: Cannot run `init` on a non-empty directory.
@@ -475,10 +462,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
     assert!(prj.root().join(".git").exists());
     assert!(prj.root().join("lib/forge-std").exists());
-});
+}
 
 // `forge init --force` works on already initialized git repository
-forgetest!(can_init_in_empty_repo, |prj, cmd| {
+#[forgetest]
+fn can_init_in_empty_repo(prj: _, cmd: _) {
     let root = prj.root();
 
     // initialize new git repo
@@ -509,10 +497,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 "#]]);
 
     assert!(root.join("lib/forge-std").exists());
-});
+}
 
 // `forge init --force` works on already initialized git repository
-forgetest!(can_init_in_non_empty_repo, |prj, cmd| {
+#[forgetest]
+fn can_init_in_non_empty_repo(prj: _, cmd: _) {
     let root = prj.root();
 
     // initialize new git repo
@@ -551,10 +540,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     let gitignore = root.join(".gitignore");
     let gitignore = fs::read_to_string(gitignore).unwrap();
     assert_eq!(gitignore, "not foundry .gitignore");
-});
+}
 
 // `forge init --use-parent-git` works on already initialized git repository
-forgetest!(can_init_using_parent_repo, |prj, cmd| {
+#[forgetest]
+fn can_init_using_parent_repo(prj: _, cmd: _) {
     let root = prj.root();
 
     // initialize new git repo
@@ -603,10 +593,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 	url = https://github.com/foundry-rs/forge-std
 "
     ));
-});
+}
 
 // Checks that remappings.txt and .vscode/settings.json is generated
-forgetest!(can_init_vscode, |prj, cmd| {
+#[forgetest]
+fn can_init_vscode(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![""]).stderr_eq(
@@ -635,10 +626,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
     assert_eq!(content, "forge-std/=lib/forge-std/src/",);
-});
+}
 
 // checks that forge can init with template
-forgetest!(can_init_template, |prj, cmd| {
+#[forgetest]
+fn can_init_template(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args(["init", "--template", "foundry-rs/forge-template"])
@@ -659,10 +651,11 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
     assert!(prj.root().join(".git/modules").exists());
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("test").exists());
-});
+}
 
 // checks that forge can init with template and branch
-forgetest!(can_init_template_with_branch, |prj, cmd| {
+#[forgetest]
+fn can_init_template_with_branch(prj: _, cmd: _) {
     prj.wipe();
     cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"])
         .arg(prj.root())
@@ -682,10 +675,11 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
     assert!(prj.root().join(".git/modules").exists());
     assert!(prj.root().join("src").exists());
     assert!(prj.root().join("scripts").exists());
-});
+}
 
 // checks that init fails when the provided template doesn't exist
-forgetest!(fail_init_nonexistent_template, |prj, cmd| {
+#[forgetest]
+fn fail_init_nonexistent_template(prj: _, cmd: _) {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 Initializing [..] from https://github.com/a...
@@ -693,10 +687,11 @@ Initializing [..] from https://github.com/a...
 Error: git fetch exited with code 128
 
 "#]]);
-});
+}
 
 // checks that `forge init --template [template] works by default i.e without committing
-forgetest!(can_init_template_with_no_commit, |prj, cmd| {
+#[forgetest]
+fn can_init_template_with_no_commit(prj: _, cmd: _) {
     prj.wipe();
     cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
@@ -720,10 +715,11 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
         !commit_message.starts_with("chore: init from foundry-rs/forge-template"),
         "Commit message should not start with 'chore: init from foundry-rs/forge-template'"
     );
-});
+}
 
 // checks that clone works
-forgetest!(flaky_can_clone, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone(prj: _, cmd: _) {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -756,10 +752,11 @@ Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d735
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-});
+}
 
 // Checks that clone follows the SparkLend USDS proxy to its AToken implementation.
-forgetest!(flaky_can_clone_proxy_implementation, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone_proxy_implementation(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args([
@@ -777,10 +774,11 @@ forgetest!(flaky_can_clone_proxy_implementation, |prj, cmd| {
     assert_eq!(metadata["targetContract"], "AToken");
     assert_eq!(metadata["address"], "0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6");
     assert!(prj.root().join(metadata["path"].as_str().unwrap()).exists());
-});
+}
 
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
-forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone_with_no_commit(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args([
@@ -792,10 +790,11 @@ forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
     ])
     .arg(prj.root())
     .assert_success();
-});
+}
 
 // Checks that quiet mode does not print anything for clone
-forgetest!(flaky_can_clone_quiet, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone_quiet(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args([
@@ -807,10 +806,11 @@ forgetest!(flaky_can_clone_quiet, |prj, cmd| {
     ])
     .arg(prj.root())
     .assert_empty_stdout();
-});
+}
 
 // checks that clone works with sourcify
-forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone_sourcify(prj: _, cmd: _) {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -838,10 +838,11 @@ Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEe
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-});
+}
 
 // checks that clone works with --no-remappings-txt
-forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone_no_remappings_txt(prj: _, cmd: _) {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -875,10 +876,12 @@ Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DA
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-});
+}
 
 // checks that clone works with --keep-directory-structure
-forgetest!(flaky_can_clone_keep_directory_structure, |prj, cmd| {
+#[forgetest]
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the test log")]
+fn flaky_can_clone_keep_directory_structure(prj: _, cmd: _) {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -914,10 +917,11 @@ forgetest!(flaky_can_clone_keep_directory_structure, |prj, cmd| {
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-});
+}
 
 // checks that `forge init` works.
-forgetest!(can_init_project, |prj, cmd| {
+#[forgetest]
+fn can_init_project(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
@@ -943,10 +947,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
     assert!(prj.root().join(".github").join("workflows").exists());
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
-});
+}
 
 // checks that `forge init --vyper` works.
-forgetest!(can_init_vyper_project, |prj, cmd| {
+#[forgetest]
+fn can_init_vyper_project(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
@@ -975,10 +980,11 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 
     assert!(prj.root().join(".github").join("workflows").exists());
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
-});
+}
 
 // checks that `forge init --network tempo` works.
-forgetest!(can_init_tempo_project, |prj, cmd| {
+#[forgetest]
+fn can_init_tempo_project(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args(["init", "--network", "tempo"])
@@ -1030,10 +1036,11 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
 
     assert!(prj.root().join("README.md").exists());
-});
+}
 
 // checks that `forge init --network tempo` correctly setup network key in config
-forgetest!(can_execute_test_and_script_with_default_tempo_config, |prj, cmd| {
+#[forgetest]
+fn can_execute_test_and_script_with_default_tempo_config(prj: _, cmd: _) {
     prj.wipe();
 
     // Initialize a Tempo project.
@@ -1051,10 +1058,11 @@ forgetest!(can_execute_test_and_script_with_default_tempo_config, |prj, cmd| {
         .arg("--root")
         .arg(prj.root())
         .assert_success();
-});
+}
 
 // checks that `forge test --tempo` and `forge test -n tempo` are equivalent
-forgetest!(network_flag_tempo_equivalent_to_legacy_tempo, |prj, cmd| {
+#[forgetest]
+fn network_flag_tempo_equivalent_to_legacy_tempo(prj: _, cmd: _) {
     prj.wipe();
     cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
 
@@ -1070,11 +1078,12 @@ forgetest!(network_flag_tempo_equivalent_to_legacy_tempo, |prj, cmd| {
 
     // --tempo (legacy flag)
     cmd.forge_fuse().args(["test", "--tempo"]).arg("--root").arg(prj.root()).assert_success();
-});
+}
 
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
-forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
+#[forgetest]
+fn flaky_can_clone_with_node_modules(prj: _, cmd: _) {
     prj.wipe();
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
@@ -1104,28 +1113,31 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 
 "#]]);
-});
+}
 
 // checks that `clean` removes dapptools style paths
-forgetest!(can_clean, |prj, cmd| {
+#[forgetest]
+fn can_clean(prj: _, cmd: _) {
     prj.assert_create_dirs_exists();
     prj.assert_style_paths_exist(PathStyle::Dapptools);
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
-});
+}
 
 // checks that `clean` removes hardhat style paths
-forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj, cmd| {
+#[forgetest(PathStyle::HardHat)]
+fn can_clean_hardhat(prj: _, cmd: _) {
     prj.assert_create_dirs_exists();
     prj.assert_style_paths_exist(PathStyle::HardHat);
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
-});
+}
 
 // checks that `clean` also works with the "out" value set in Config
-forgetest_init!(can_clean_config, |prj, cmd| {
+#[forgetest_init]
+fn can_clean_config(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| config.out = "custom-out".into());
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
@@ -1141,10 +1153,11 @@ Compiler run successful!
 
     cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!artifact.exists());
-});
+}
 
 // checks that `clean` removes fuzz and invariant cache dirs
-forgetest_init!(can_clean_test_cache, |prj, cmd| {
+#[forgetest_init]
+fn can_clean_test_cache(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.fuzz = FuzzConfig::new("cache/fuzz".into());
@@ -1169,10 +1182,11 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
     assert!(!frontier_cache_dir.exists());
-});
+}
 
 // checks that extra output works
-forgetest_init!(can_emit_extra_output, |prj, cmd| {
+#[forgetest_init]
+fn can_emit_extra_output(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -1202,10 +1216,11 @@ Compiler run successful!
     let metadata_path =
         prj.paths().artifacts.join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.metadata.json"));
     let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
-});
+}
 
 // checks that extra output works
-forgetest_init!(can_emit_multiple_extra_output, |prj, cmd| {
+#[forgetest_init]
+fn can_emit_multiple_extra_output(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args([
         "build",
@@ -1267,9 +1282,10 @@ Compiler run successful!
         .artifacts
         .join(format!("{TEMPLATE_CONTRACT_ARTIFACT_BASE}.legacyAssembly.json"));
     std::fs::read_to_string(legacy_assembly).unwrap();
-});
+}
 
-forgetest!(can_print_warnings, |prj, cmd| {
+#[forgetest]
+fn can_print_warnings(prj: _, cmd: _) {
     prj.add_source(
         "Foo",
         r"
@@ -1305,10 +1321,11 @@ Warning (2018): Function state mutability can be restricted to pure
 
 
 "#]]);
-});
+}
 
 // Tests that direct import paths are handled correctly
-forgetest!(can_handle_direct_imports_into_src, |prj, cmd| {
+#[forgetest]
+fn can_handle_direct_imports_into_src(prj: _, cmd: _) {
     prj.add_source(
         "Foo",
         r#"
@@ -1346,10 +1363,11 @@ library FooLib {
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // tests that the `inspect` command works correctly
-forgetest!(can_execute_inspect_command, |prj, cmd| {
+#[forgetest]
+fn can_execute_inspect_command(prj: _, cmd: _) {
     let contract_name = "Foo";
     let path = prj.add_source(
         contract_name,
@@ -1384,10 +1402,11 @@ contract Foo {
 "0x60806040[..]"
 
 "#]]);
-});
+}
 
 // tests that `forge inspect <contract> transientStorageLayout` works
-forgetest!(can_inspect_transient_storage_layout, |prj, cmd| {
+#[forgetest]
+fn can_inspect_transient_storage_layout(prj: _, cmd: _) {
     prj.add_source(
         "Transient.sol",
         r#"
@@ -1455,9 +1474,10 @@ contract Transient {
 "#]]
             .is_json(),
         );
-});
+}
 
-forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
+#[forgetest]
+fn can_inspect_linearization_markdown(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
     prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
     prj.add_source("C.sol", r#"import {B} from "./B.sol"; contract C is B {}"#);
@@ -1474,9 +1494,10 @@ forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
 
 "#]],
     );
-});
+}
 
-forgetest!(can_inspect_linearization_json, |prj, cmd| {
+#[forgetest]
+fn can_inspect_linearization_json(prj: _, cmd: _) {
     prj.add_source("A.sol", "contract A {}");
     prj.add_source("B.sol", r#"import {A} from "./A.sol"; contract B is A {}"#);
     prj.add_source("C.sol", r#"import {B} from "./B.sol"; contract C is B {}"#);
@@ -1503,9 +1524,10 @@ forgetest!(can_inspect_linearization_json, |prj, cmd| {
 
 "#]],
     );
-});
+}
 
-forgetest!(can_inspect_linearization_path_qualified_contract, |prj, cmd| {
+#[forgetest]
+fn can_inspect_linearization_path_qualified_contract(prj: _, cmd: _) {
     prj.add_source("one/Base.sol", "contract Base {}");
     prj.add_source(
         "one/Target.sol",
@@ -1536,9 +1558,10 @@ forgetest!(can_inspect_linearization_path_qualified_contract, |prj, cmd| {
 ]
 
 "#]]);
-});
+}
 
-forgetest!(cannot_inspect_linearization_non_solidity_target, |prj, cmd| {
+#[forgetest]
+fn cannot_inspect_linearization_non_solidity_target(prj: _, cmd: _) {
     prj.create_file("src/NotSol.vy", "x: uint256");
 
     cmd.forge_fuse()
@@ -1548,10 +1571,11 @@ forgetest!(cannot_inspect_linearization_non_solidity_target, |prj, cmd| {
 Error: linearization inspection is only supported for Solidity contracts (.sol targets)
 
 "#]]);
-});
+}
 
 // test that `forge snapshot` commands work
-forgetest!(can_check_snapshot, |prj, cmd| {
+#[forgetest]
+fn can_check_snapshot(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -1589,9 +1613,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
-});
+}
 
-forgetest!(snapshot_expands_invariant_campaign_predicates, |prj, cmd| {
+#[forgetest]
+fn snapshot_expands_invariant_campaign_predicates(prj: _, cmd: _) {
     prj.add_test(
         "InvariantSnapshot.t.sol",
         r#"
@@ -1634,10 +1659,11 @@ contract InvariantSnapshotTest {
     );
     assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_non_negative()"));
     assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_not_max()"));
-});
+}
 
 // tests that `forge snapshot --diff` keeps per-test diff rows on stdout but moves summary to stderr
-forgetest!(snapshot_diff_summary_on_stderr, |prj, cmd| {
+#[forgetest]
+fn snapshot_diff_summary_on_stderr(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -1672,10 +1698,11 @@ contract ATest is DSTest {
         !stdout.contains("Total tests:") && !stdout.contains("Overall gas change:"),
         "summary leaked to stdout: {stdout}"
     );
-});
+}
 
 // tests that `forge snapshot --check` reports mismatches on stderr
-forgetest!(snapshot_check_writes_diff_to_stderr, |prj, cmd| {
+#[forgetest]
+fn snapshot_check_writes_diff_to_stderr(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -1705,9 +1732,10 @@ contract ATest is DSTest {
         !stdout.contains("No matching snapshot entry"),
         "diff prose leaked to stdout: {stdout}"
     );
-});
+}
 
-forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
+#[forgetest]
+fn snapshot_reports_when_snap_file_is_not_written(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -1728,10 +1756,11 @@ contract FailingSnapshotTest is DSTest {
         "Error: gas snapshot file \"failed.snap\" was not written because the test run failed"
     ));
     assert!(!prj.root().join("failed.snap").exists());
-});
+}
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
-forgetest!(can_compile_without_warnings_ignored_file_paths, |prj, cmd| {
+#[forgetest]
+fn can_compile_without_warnings_ignored_file_paths(prj: _, cmd: _) {
     // Ignoring path and setting empty error_codes as default would set some error codes
     prj.update_config(|config| {
         config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
@@ -1768,10 +1797,11 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 
 
 "#]]);
-});
+}
 
 // test that `forge build` does not print `(with warnings)` if there aren't any
-forgetest!(can_compile_without_warnings, |prj, cmd| {
+#[forgetest]
+fn can_compile_without_warnings(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.ignored_error_codes = vec![SolidityErrorCode::SpdxLicenseNotProvided];
     });
@@ -1807,11 +1837,12 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 
 
 "#]]);
-});
+}
 
 // test that `forge build` compiles when severity set to error, fails when set to warning, and
 // handles ignored error codes as an exception
-forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
+#[forgetest]
+fn can_fail_compile_with_warnings(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.ignored_error_codes = vec![];
         config.deny = DenyLevel::Never;
@@ -1868,10 +1899,11 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // test that `forge build` ignores error codes only from matching path prefixes
-forgetest!(can_compile_without_warnings_ignored_error_codes_from, |prj, cmd| {
+#[forgetest]
+fn can_compile_without_warnings_ignored_error_codes_from(prj: _, cmd: _) {
     let contract = r"
 pragma solidity *;
 contract A {}
@@ -1913,10 +1945,11 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 
 
 "#]]);
-});
+}
 
 // test that a failing `forge build` does not impact followup builds
-forgetest!(can_build_after_failure, |prj, cmd| {
+#[forgetest]
+fn can_build_after_failure(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     // Disable linting during build to avoid linting output interfering with test assertions
@@ -2037,7 +2070,7 @@ Error (2314): Expected ';' but got identifier
     // ensure unchanged cache file
     let cache_after = fs::read_to_string(prj.cache()).unwrap();
     assert_eq!(cache, cache_after);
-});
+}
 
 const GAS_REPORT_CONTRACTS: &str = r#"
 //SPDX-license-identifier: MIT
@@ -2124,7 +2157,8 @@ contract ContractThreeTest is DSTest {
 }
 "#;
 
-forgetest!(gas_report_all_contracts, |prj, cmd| {
+#[forgetest]
+fn gas_report_all_contracts(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS);
 
@@ -2555,9 +2589,10 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 "#]]
         .is_json(),
     );
-});
+}
 
-forgetest!(gas_report_some_contracts, |prj, cmd| {
+#[forgetest]
+fn gas_report_some_contracts(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS);
 
@@ -2701,9 +2736,10 @@ Ran 3 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 "#]]
         .is_json(),
     );
-});
+}
 
-forgetest!(gas_report_ignore_some_contracts, |prj, cmd| {
+#[forgetest]
+fn gas_report_ignore_some_contracts(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source("Contracts.sol", GAS_REPORT_CONTRACTS);
 
@@ -3001,9 +3037,10 @@ Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 Warning: ContractThree is listed in both 'gas_reports' and 'gas_reports_ignore'.
 ...
 "#]]);
-});
+}
 
-forgetest!(gas_report_flatten_multiple_selectors, |prj, cmd| {
+#[forgetest]
+fn gas_report_flatten_multiple_selectors(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "Counter.sol",
@@ -3116,10 +3153,11 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
         .is_json(),
     );
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/9115>
-forgetest_init!(gas_report_with_fallback, |prj, cmd| {
+#[forgetest_init]
+fn gas_report_with_fallback(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "DelegateProxyTest.sol",
@@ -3196,7 +3234,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-|                                              153519 |             494 |      |        |      |         |
+|                                              153531 |             494 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -3242,7 +3280,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 153519,
+      "gas": 153531,
       "size": 494
     },
     "functions": {
@@ -3259,10 +3297,11 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/9858>
-forgetest_init!(flaky_gas_report_fallback_with_calldata, |prj, cmd| {
+#[forgetest_init]
+fn flaky_gas_report_fallback_with_calldata(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "FallbackWithCalldataTest.sol",
@@ -3358,10 +3397,11 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/9300>
-forgetest_init!(gas_report_size_for_nested_create, |prj, cmd| {
+#[forgetest_init]
+fn gas_report_size_for_nested_create(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "NestedDeployTest.sol",
@@ -3431,7 +3471,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                    328961 |            1163 |     |        |     |         |
+|                                    328949 |            1163 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -3486,7 +3526,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328961,
+      "gas": 328949,
       "size": 1163
     },
     "functions": {
@@ -3503,9 +3543,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
-});
+}
 
-forgetest_init!(can_use_absolute_imports, |prj, cmd| {
+#[forgetest_init]
+fn can_use_absolute_imports(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         let remapping = prj.paths().libraries[0].join("myDependency");
@@ -3548,10 +3589,11 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/3440>
-forgetest_init!(can_use_absolute_imports_from_test_and_script, |prj, cmd| {
+#[forgetest_init]
+fn can_use_absolute_imports_from_test_and_script(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_script(
         "IMyScript.sol",
@@ -3591,10 +3633,11 @@ contract MyTest is IMyTest {}
 Compiler run successful!
 
 "#]]);
-});
+}
 
 // checks `forge inspect <contract> irOptimized works
-forgetest_init!(can_inspect_ir_optimized, |prj, cmd| {
+#[forgetest_init]
+fn can_inspect_ir_optimized(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args(["inspect", TEMPLATE_CONTRACT, "irOptimized"]);
     cmd.assert_success().stdout_eq(str![[r#"
@@ -3617,10 +3660,11 @@ object "Counter_21" {
             if callvalue()
 ...
 "#]]);
-});
+}
 
 // checks `forge inspect <contract> irOptimized works
-forgetest_init!(can_inspect_ir, |prj, cmd| {
+#[forgetest_init]
+fn can_inspect_ir(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args(["inspect", TEMPLATE_CONTRACT, "ir"]);
     cmd.assert_success().stdout_eq(str![[r#"
@@ -3654,12 +3698,12 @@ object "Counter_21" {
     let json_out = json_out.trim();
     assert!(json_out.starts_with('"'), "expected quoted JSON string, got {json_out:?}");
     assert!(json_out.ends_with('"'), "expected quoted JSON string, got {json_out:?}");
-    let _: String =
-        serde_json::from_str(json_out).expect("ir --json stdout should be a valid JSON string");
-});
+    let _: String = parse_json(json_out).expect("ir --json stdout should be a valid JSON string");
+}
 
 // checks forge bind works correctly on the default project
-forgetest_init!(can_bind, |prj, cmd| {
+#[forgetest_init]
+fn can_bind(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -3676,10 +3720,11 @@ Generating bindings for [..] contracts
 Bindings have been generated to [..]
 
 "#]]);
-});
+}
 
 // checks that extra output works
-forgetest_init!(can_build_skip_contracts, |prj, cmd| {
+#[forgetest_init]
+fn can_build_skip_contracts(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -3698,9 +3743,10 @@ Compiler run successful!
 No files changed, compilation skipped
 
 "#]]);
-});
+}
 
-forgetest_init!(can_build_skip_glob, |prj, cmd| {
+#[forgetest_init]
+fn can_build_skip_glob(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "Foo",
@@ -3730,9 +3776,10 @@ Compiler run successful!
 Compiler run successful!
 
 "#]]);
-});
+}
 
-forgetest!(can_build_specific_paths, |prj, cmd| {
+#[forgetest]
+fn can_build_specific_paths(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r"
@@ -3801,10 +3848,11 @@ Compiler run successful!
 Error: No source files found in specified build paths.
 
 "#]]);
-});
+}
 
 // checks that build --sizes includes all contracts even if unchanged
-forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
+#[forgetest_init]
+fn can_build_sizes_repeatedly(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear_cache();
 
@@ -3841,10 +3889,11 @@ forgetest_init!(can_build_sizes_repeatedly, |prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // checks that build --names includes all contracts even if unchanged
-forgetest_init!(can_build_names_repeatedly, |prj, cmd| {
+#[forgetest_init]
+fn can_build_names_repeatedly(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear_cache();
 
@@ -3862,9 +3911,10 @@ Compiler run successful!
         .args(["build", "--names", "--json"])
         .assert_success()
         .stdout_eq(str![[r#""{...}""#]].is_json());
-});
+}
 
-forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
+#[forgetest_init]
+fn can_inspect_counter_pretty(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args(["inspect", "src/Counter.sol:Counter", "abi"]).assert_success().stdout_eq(str![[r#"
 
@@ -3880,7 +3930,7 @@ forgetest_init!(can_inspect_counter_pretty, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
 const CUSTOM_COUNTER: &str = r#"
     contract Counter {
@@ -3942,7 +3992,8 @@ const ANOTHER_COUNTER: &str = r#"
         constructor(uint256 _number) Counter(_number) {}
     }
 "#;
-forgetest!(inspect_custom_counter_abi, |prj, cmd| {
+#[forgetest]
+fn inspect_custom_counter_abi(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
@@ -3981,9 +4032,10 @@ forgetest!(inspect_custom_counter_abi, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
-forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
+#[forgetest]
+fn inspect_abi_does_not_write_artifacts(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     let artifact_path = prj.paths().artifacts.join("Counter.sol/Counter.json");
@@ -4004,9 +4056,126 @@ forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
     cmd.forge_fuse().args(["inspect", "Counter", "abi", "--json"]).assert_success();
     let inspected = std::fs::read(&artifact_path).unwrap();
     assert_eq!(built, inspected);
-});
+}
 
-forgetest!(inspect_custom_counter_events, |prj, cmd| {
+#[forgetest]
+fn inspect_output_cache_preserves_fields_and_artifacts(prj: _, cmd: _) {
+    prj.add_source(
+        "Dependency.sol",
+        "library Dependency { function value() internal pure returns (uint256) { return 1; } }",
+    );
+    prj.add_source(
+        "Counter.sol",
+        r#"
+import {Dependency} from "./Dependency.sol";
+contract Counter {
+    function value() external pure returns (uint256) { return Dependency.value(); }
+}
+"#,
+    );
+    cmd.args(["build", "--no-lint"]).assert_success();
+    let built = [
+        prj.paths().artifacts.join("Counter.sol/Counter.json"),
+        prj.paths().artifacts.join("Dependency.sol/Dependency.json"),
+        prj.cache().clone(),
+    ]
+    .map(|path| {
+        let contents = fs::read(&path).unwrap();
+        (path, contents)
+    });
+    let abi_cache = prj.cache().with_extension("json.abi");
+    let fields = ["ir", "irOptimized", "assembly"];
+    let uncached = fields.map(|field| {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", field, "--json", "--no-cache"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy()
+    });
+    assert!(!abi_cache.exists());
+
+    for (field, expected) in fields.iter().zip(&uncached) {
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    assert!(abi_cache.is_dir());
+    // Switching fields must preserve output correctness even when a selection is recompiled.
+    for (field, expected) in fields.iter().zip(&uncached).rev() {
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    for (path, contents) in &built {
+        assert_eq!(fs::read(path).unwrap(), *contents);
+    }
+
+    prj.add_source(
+        "Dependency.sol",
+        "library Dependency { function value() internal pure returns (uint256) { return 2; } }",
+    );
+    for (field, previous) in fields.iter().zip(&uncached) {
+        let expected = cmd
+            .forge_fuse()
+            .args(["inspect", "Counter", field, "--json", "--no-cache"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert_ne!(&expected, previous);
+        cmd.forge_fuse().args(["inspect", "Counter", field, "--json"]).assert_json_stdout(expected);
+    }
+    for (path, contents) in &built {
+        assert_eq!(fs::read(path).unwrap(), *contents);
+    }
+
+    let marker = abi_cache.join("force-marker");
+    fs::write(&marker, "").unwrap();
+    cmd.forge_fuse().args(["inspect", "Counter", "ir", "--force"]).assert_success();
+    assert!(!marker.exists());
+    assert!(!abi_cache.exists());
+    assert!(!prj.paths().artifacts.exists());
+    assert!(!prj.cache().exists());
+    cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
+    assert!(abi_cache.is_dir());
+    cmd.forge_fuse().arg("clean").assert_success();
+    assert!(!abi_cache.exists());
+}
+
+#[forgetest]
+fn inspect_output_cache_rejects_missing_ewasm(prj: _, cmd: _) {
+    prj.add_source("Counter.sol", "contract Counter {}");
+
+    for _ in 0..2 {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "ewasm"])
+            .assert_failure()
+            .stdout_eq("")
+            .stderr_eq(
+                "Error: EWASM output missing from artifact; this could be a spurious caching issue, \
+                 consider running `forge clean`\n",
+            );
+    }
+}
+
+#[forgetest]
+fn inspect_output_cache_respects_warning_denial(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        "contract Counter { function value() external returns (uint256) { return 1; } }",
+    );
+    cmd.args(["inspect", "Counter", "ir"]).assert_success();
+    cmd.forge_fuse().args(["inspect", "Counter", "ir"]).assert_success();
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "ir", "--deny", "warnings", "--no-cache"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "ir", "--deny", "warnings"])
+        .assert_failure()
+        .stderr_eq(expected.into_data().raw());
+}
+
+#[forgetest]
+fn inspect_custom_counter_events(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
@@ -4021,9 +4190,10 @@ forgetest!(inspect_custom_counter_events, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
-forgetest!(inspect_custom_counter_errors, |prj, cmd| {
+#[forgetest]
+fn inspect_custom_counter_errors(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "errors"]).assert_success().stdout_eq(str![[r#"
@@ -4038,9 +4208,10 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
-forgetest!(inspect_anonymous_event_has_no_selector, |prj, cmd| {
+#[forgetest]
+fn inspect_anonymous_event_has_no_selector(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -4096,9 +4267,10 @@ contract Counter {
 
 "#]],
     );
-});
+}
 
-forgetest!(inspect_path_only_identifier, |prj, cmd| {
+#[forgetest]
+fn inspect_path_only_identifier(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "src/Counter.sol", "errors"]).assert_success().stdout_eq(str![[r#"
@@ -4113,9 +4285,10 @@ forgetest!(inspect_path_only_identifier, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
-forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
+#[forgetest]
+fn test_inspect_contract_with_same_name(prj: _, cmd: _) {
     let source = format!("{CUSTOM_COUNTER}\n{ANOTHER_COUNTER}");
     prj.add_source("Counter.sol", &source);
 
@@ -4133,10 +4306,11 @@ forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/10531>
-forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
+#[forgetest]
+fn inspect_multiple_contracts_with_different_paths(prj: _, cmd: _) {
     prj.add_source(
         "Source.sol",
         r#"
@@ -4167,10 +4341,11 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11146>
-forgetest!(inspect_contracts_by_exact_input_path, |prj, cmd| {
+#[forgetest]
+fn inspect_contracts_by_exact_input_path(prj: _, cmd: _) {
     prj.add_test(
         "InspectTarget.t.sol",
         r#"
@@ -4208,9 +4383,10 @@ contract Dependency {
         let abi: serde_json::Value = serde_json::from_str(&stdout).unwrap();
         assert!(abi.as_array().unwrap().iter().any(|item| item["name"] == function));
     }
-});
+}
 
-forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
+#[forgetest]
+fn inspect_custom_counter_method_identifiers(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
     cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
@@ -4235,7 +4411,7 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
 const CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS: &str = r#"
 contract Counter {
@@ -4258,7 +4434,8 @@ contract Counter {
 }
 "#;
 
-forgetest!(inspect_custom_counter_very_huge_method_identifiers_unwrapped, |prj, cmd| {
+#[forgetest]
+fn inspect_custom_counter_very_huge_method_identifiers_unwrapped(prj: _, cmd: _) {
     prj.add_source("Counter.sol", CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS);
 
     cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
@@ -4280,9 +4457,10 @@ forgetest!(inspect_custom_counter_very_huge_method_identifiers_unwrapped, |prj, 
 
 
 "#]]);
-});
+}
 
-forgetest_init!(can_inspect_standard_json, |prj, cmd| {
+#[forgetest_init]
+fn can_inspect_standard_json(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args(["inspect", "src/Counter.sol:Counter", "standard-json"]).assert_success().stdout_eq(str![[r#"
 {
@@ -4330,9 +4508,31 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 }
 
 "#]]);
-});
 
-forgetest!(can_inspect_artifact_json, |prj, cmd| {
+    prj.update_config(|config| config.solc = Some(OTHER_SOLC_VERSION.into()));
+    let expected = cmd
+        .forge_fuse()
+        .args(["inspect", "Counter", "standard-json", "--use", OTHER_SOLC_VERSION])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let solc =
+        Solc::find_svm_installed_version(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap().unwrap();
+    for compiler in [format!("solc:{OTHER_SOLC_VERSION}"), solc.solc.display().to_string()] {
+        cmd.forge_fuse()
+            .args(["inspect", "Counter", "standard-json", "--use", &compiler])
+            .assert_success()
+            .stdout_eq(expected.clone());
+    }
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "standard-json"])
+        .assert_success()
+        .stdout_eq(expected);
+}
+
+#[forgetest]
+fn can_inspect_artifact_json(prj: _, cmd: _) {
     prj.add_source(
         "Counter.sol",
         r#"
@@ -4365,9 +4565,10 @@ contract Counter {
         .as_str()
         .expect("artifact should include deployed bytecode");
     assert!(deployed_bytecode.starts_with("0x"));
-});
+}
 
-forgetest!(can_inspect_artifact_json_with_custom_out_and_duplicate_contract_names, |prj, cmd| {
+#[forgetest]
+fn can_inspect_artifact_json_with_custom_out_and_duplicate_contract_names(prj: _, cmd: _) {
     prj.update_config(|config| config.out = "custom-out".into());
 
     prj.add_source(
@@ -4405,9 +4606,10 @@ contract Source {
             && item.get("name").and_then(|value| value.as_str()) == Some("foo")
     }));
     assert!(prj.root().join("custom-out/Source.sol/Source.json").exists());
-});
+}
 
-forgetest_init!(can_inspect_libraries, |prj, cmd| {
+#[forgetest_init]
+fn can_inspect_libraries(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_source(
         "Source.sol",
@@ -4456,10 +4658,11 @@ Dynamically linked libraries:
 
 "#]],
     );
-});
+}
 
 // checks that `clean` also works with the "out" value set in Config
-forgetest_init!(gas_report_include_tests, |prj, cmd| {
+#[forgetest_init]
+fn gas_report_include_tests(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
         config.gas_reports_include_tests = true;
@@ -4621,9 +4824,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]
             .is_json(),
         );
-});
+}
 
-forgetest_async!(gas_report_fuzz_invariant, |prj, cmd| {
+#[forgetest]
+async fn gas_report_fuzz_invariant(prj: _, cmd: _) {
     // speed up test by running with depth of 15
     prj.update_config(|config| config.invariant.depth = 15);
 
@@ -4660,10 +4864,11 @@ contract FooBarTest is DSTest {
     );
 
     cmd.args(["test", "--gas-report"]).assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/5847>
-forgetest_init!(can_bind_enum_modules, |prj, cmd| {
+#[forgetest_init]
+fn can_bind_enum_modules(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -4698,10 +4903,11 @@ Generating bindings for 1 contracts
 Bindings have been generated to [..]
 
 "#]]);
-});
+}
 
 // forge bind e2e
-forgetest_init!(can_bind_e2e, |prj, cmd| {
+#[forgetest_init]
+fn can_bind_e2e(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args(["bind"])
         .assert_success()
@@ -4730,11 +4936,12 @@ Bindings have been generated to [..]
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-});
+}
 
 // `forge flatten -o <path>` writes the file and emits its status string to stderr,
 // keeping stdout empty so agents can pipe the command without diagnostics.
-forgetest!(flatten_output_writes_status_to_stderr, |prj, cmd| {
+#[forgetest]
+fn flatten_output_writes_status_to_stderr(prj: _, cmd: _) {
     prj.add_source(
         "Counter",
         r#"contract Counter { uint256 public n; function inc() external { n += 1; } }"#,
@@ -4751,12 +4958,13 @@ Flattened file written at [..]flat.sol
 "#]]);
 
     assert!(out.exists(), "flattened file should have been written");
-});
+}
 
 // `forge init` writes its status prose to stderr and keeps stdout empty so agents
 // can pipe the command without diagnostics. Uses `--offline` + `--no-git` to skip
 // network and git side-effects that would otherwise add prose to stdout.
-forgetest!(init_status_on_stderr, |prj, cmd| {
+#[forgetest]
+fn init_status_on_stderr(prj: _, cmd: _) {
     prj.wipe();
 
     cmd.args(["init", "--offline", "--no-git"])
@@ -4770,4 +4978,4 @@ Initializing [..]...
 "#]]);
 
     assert!(prj.root().join("foundry.toml").exists());
-});
+}

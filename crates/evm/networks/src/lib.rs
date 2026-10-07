@@ -12,9 +12,7 @@
 //!
 //! [custom EVM integration guide]: https://github.com/foundry-rs/foundry/blob/master/docs/dev/networks.md
 
-use crate::celo::transfer::{
-    CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
-};
+use crate::celo::transfer::{CELO_TRANSFER_ADDRESS, PRECOMPILE_ID_CELO_TRANSFER};
 use alloy_chains::{
     Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
@@ -63,7 +61,8 @@ pub mod celo;
 #[cfg(feature = "optimism")]
 mod optimism;
 
-const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
+/// Labels of all well-known Tempo precompiles, keyed by address.
+pub const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("Nonce", NONCE_PRECOMPILE_ADDRESS),
     ("StablecoinDex", STABLECOIN_DEX_ADDRESS),
     ("TIP20Factory", TIP20_FACTORY_ADDRESS),
@@ -101,16 +100,6 @@ const BASE_PRECOMPILES: &[(&str, Address)] = &[
     ("NonceManager", NonceManagerStorage::ADDRESS),
 ];
 
-/// All fixed Base precompile addresses.
-#[cfg(feature = "base")]
-pub const BASE_PRECOMPILE_ADDRESSES: &[Address] = &[
-    B20FactoryStorage::ADDRESS,
-    ActivationRegistryStorage::ADDRESS,
-    PolicyRegistryStorage::ADDRESS,
-    TxContextStorage::ADDRESS,
-    NonceManagerStorage::ADDRESS,
-];
-
 /// Fixed Base precompiles that expose at least one function returning no data.
 ///
 /// Solidity guards high-level calls to such functions with an `extcodesize` check, which a
@@ -137,22 +126,15 @@ const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
 const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
 
 /// All well-known Tempo precompile addresses.
-pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
-    NONCE_PRECOMPILE_ADDRESS,
-    STABLECOIN_DEX_ADDRESS,
-    TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS,
-    VALIDATOR_CONFIG_V2_ADDRESS,
-    ACCOUNT_KEYCHAIN_ADDRESS,
-    SIGNATURE_VERIFIER_ADDRESS,
-    ADDRESS_REGISTRY_ADDRESS,
-    TIP20_CHANNEL_RESERVE_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS,
-    STORAGE_CREDITS_ADDRESS,
-    CURRENT_COMMITTEE_ADDRESS,
-];
+pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &{
+    let mut addresses = [Address::ZERO; TEMPO_PRECOMPILES.len()];
+    let mut i = 0;
+    while i < addresses.len() {
+        addresses[i] = TEMPO_PRECOMPILES[i].1;
+        i += 1;
+    }
+    addresses
+};
 
 #[derive(
     Clone,
@@ -266,39 +248,6 @@ impl NetworkVariant {
             network => {
                 Err(format!("unsupported network family `{network}` reported by fork endpoint"))
             }
-        }
-    }
-
-    /// Resolves an RPC endpoint's network family.
-    ///
-    /// The outer `node_info_network` option distinguishes an unavailable `anvil_nodeInfo` method
-    /// from a successful legacy response that omitted the network. An explicit name is
-    /// authoritative even when the endpoint exposes a well-known execution chain ID. A legacy
-    /// omission falls back to the known chain ID, or Ethereum for a custom chain.
-    pub fn from_rpc_identity(
-        chain_id: ChainId,
-        node_info_network: Option<Option<&str>>,
-    ) -> Result<Option<Self>, String> {
-        Self::from_rpc_identity_with_fallback(chain_id, node_info_network, None)
-    }
-
-    /// Resolves an RPC endpoint's network family with a caller-selected unknown-chain fallback.
-    ///
-    /// Explicit endpoint metadata is authoritative. Legacy `anvil_nodeInfo` responses that omit
-    /// the family first use a known chain ID, then the supplied fallback, and finally Ethereum to
-    /// preserve historical behavior. Endpoints without `anvil_nodeInfo` use only a known chain ID
-    /// or the supplied fallback.
-    pub fn from_rpc_identity_with_fallback(
-        chain_id: ChainId,
-        node_info_network: Option<Option<&str>>,
-        unknown_fallback: Option<Self>,
-    ) -> Result<Option<Self>, String> {
-        match node_info_network {
-            Some(Some(network)) => Self::from_node_info_name(network).map(Some),
-            Some(None) => Ok(Self::from_known_chain_id(chain_id)?
-                .or(unknown_fallback)
-                .or(Some(Self::Ethereum))),
-            None => Ok(Self::from_known_chain_id(chain_id)?.or(unknown_fallback)),
         }
     }
 
@@ -656,14 +605,24 @@ impl NetworkConfigs {
     /// without rebuilding the instantiated EVM.
     ///
     /// Monad uses a distinct EVM factory and instruction provider, so forks cannot cross the
-    /// Monad boundary. Base execution requires a Base source, while existing Ethereum, Optimism,
-    /// and Tempo execution can continue using Base as a state source without switching engines.
+    /// Monad boundary. Base execution requires a Base source. Optimism execution requires an OP
+    /// Stack source for its fee accounting. Ethereum and Tempo can use OP Stack state sources
+    /// without switching engines.
     pub const fn supports_fork_source(&self, source: &Self) -> bool {
-        #[cfg(feature = "base")]
-        if self.is_base() && !source.is_base() {
-            return false;
+        match self.execution_network() {
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => source.is_base(),
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => match source.execution_network() {
+                NetworkVariant::Optimism => true,
+                #[cfg(feature = "base")]
+                NetworkVariant::Base => true,
+                _ => false,
+            },
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => source.is_monad(),
+            _ => !source.is_monad(),
         }
-        self.is_monad() == source.is_monad()
     }
 
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
@@ -908,62 +867,6 @@ impl NetworkConfigs {
         }
     }
 
-    /// Returns precompile labels for configured networks at the given hardfork, to be used in
-    /// traces.
-    pub fn precompiles_label(self, hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
-        let mut labels = AddressHashMap::default();
-        if self.is_celo() {
-            labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
-        }
-        if self.is_tempo() {
-            let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
-            labels.extend(
-                TEMPO_PRECOMPILES
-                    .iter()
-                    .copied()
-                    .filter(|(_, address)| {
-                        tempo_hardfork.is_none_or(|hardfork| {
-                            is_tempo_precompile_active_at(*address, hardfork)
-                        })
-                    })
-                    .map(|(label, address)| (address, label.to_string())),
-            );
-        }
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let monad_hardfork = hardfork.and_then(MonadHardfork::from_foundry_hardfork);
-            labels.extend(
-                MONAD_PRECOMPILE_LABELS
-                    .iter()
-                    .copied()
-                    .filter(|(_, address)| {
-                        monad_hardfork.is_none_or(|hardfork| {
-                            is_monad_precompile_active_at(*address, hardfork)
-                        })
-                    })
-                    .map(|(label, address)| (address, label.to_string())),
-            );
-        }
-        #[cfg(feature = "base")]
-        if self.is_base() {
-            let base_upgrade = hardfork.and_then(|hardfork| match hardfork {
-                FoundryHardfork::Base(upgrade) => Some(upgrade),
-                _ => None,
-            });
-            labels.extend(
-                BASE_PRECOMPILES
-                    .iter()
-                    .copied()
-                    .filter(|(_, address)| {
-                        base_upgrade
-                            .is_none_or(|upgrade| is_base_precompile_active_at(*address, upgrade))
-                    })
-                    .map(|(label, address)| (address, label.to_string())),
-            );
-        }
-        labels
-    }
-
     /// Returns precompiles for configured networks at the given hardfork.
     pub fn precompiles(self, hardfork: Option<FoundryHardfork>) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
@@ -1031,7 +934,7 @@ pub fn apply_bsc_p256_precompile(
     precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
         p256verify.map(|p256verify| {
             DynPrecompile::new(p256verify.id().clone(), move |input| {
-                p256verify.execute(input.data, input.gas, input.reservoir)
+                p256verify.execute(input.data, input.gas(), input.reservoir)
             })
         })
     });
@@ -1236,14 +1139,12 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn fork_sources_only_isolate_monad() {
-        let mut non_monad = vec![
+        let non_monad = vec![
             NetworkConfigs::default(),
             NetworkConfigs::with_ethereum(),
             NetworkConfigs::with_celo(),
             NetworkConfigs::with_tempo(),
         ];
-        #[cfg(feature = "optimism")]
-        non_monad.push(NetworkConfigs::with_optimism());
 
         for execution in &non_monad {
             for source in &non_monad {
@@ -1253,6 +1154,24 @@ mod tests {
             assert!(!NetworkConfigs::with_monad().supports_fork_source(execution));
         }
         assert!(NetworkConfigs::with_monad().supports_fork_source(&NetworkConfigs::with_monad()));
+    }
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn optimism_fork_sources_require_op_stack_state() {
+        let optimism = NetworkConfigs::with_optimism();
+        for source in [
+            NetworkConfigs::default(),
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_celo(),
+            NetworkConfigs::with_tempo(),
+        ] {
+            assert!(!optimism.supports_fork_source(&source));
+            assert!(source.supports_fork_source(&optimism));
+        }
+        assert!(optimism.supports_fork_source(&optimism));
+        #[cfg(feature = "monad")]
+        assert!(!optimism.supports_fork_source(&NetworkConfigs::with_monad()));
     }
 
     #[test]
@@ -1376,27 +1295,42 @@ mod tests {
     #[test]
     fn rpc_metadata_overrides_known_execution_chain_identity() {
         assert_eq!(
-            NetworkVariant::from_rpc_identity(NamedChain::Mainnet as u64, Some(Some("tempo")))
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Mainnet as u64,
+                Some(Some("tempo")),
+                None,
+            )
+            .unwrap(),
+            Some(NetworkConfigs::with_tempo())
+        );
+        assert_eq!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Tempo as u64,
+                Some(None),
+                None,
+            )
+            .unwrap(),
+            Some(NetworkConfigs::with_tempo())
+        );
+        assert_eq!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(98_765_432, None, None)
                 .unwrap(),
-            Some(NetworkVariant::Tempo)
+            None
         );
         assert_eq!(
-            NetworkVariant::from_rpc_identity(NamedChain::Tempo as u64, Some(None)).unwrap(),
-            Some(NetworkVariant::Tempo)
-        );
-        assert_eq!(NetworkVariant::from_rpc_identity(98_765_432, None).unwrap(), None);
-        assert_eq!(
-            NetworkVariant::from_rpc_identity(98_765_432, Some(None)).unwrap(),
-            Some(NetworkVariant::Ethereum)
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(98_765_432, Some(None), None)
+                .unwrap(),
+            Some(NetworkConfigs::default())
         );
         #[cfg(feature = "optimism")]
         assert_eq!(
-            NetworkVariant::from_rpc_identity(NamedChain::Optimism as u64, Some(None)).unwrap(),
-            Some(NetworkVariant::Optimism)
-        );
-        assert_eq!(
-            NetworkVariant::from_rpc_identity(NamedChain::Celo as u64, Some(None)).unwrap(),
-            Some(NetworkVariant::Ethereum)
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Optimism as u64,
+                Some(None),
+                None,
+            )
+            .unwrap(),
+            Some(NetworkConfigs::from(NetworkVariant::Optimism))
         );
     }
 
@@ -1531,42 +1465,6 @@ mod tests {
                 "network family `monad` is not enabled in this build"
             );
         }
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn rpc_identity_fallback_preserves_explicit_custom_networks() {
-        let custom_chain_id = 98_765_432;
-        for node_info in [None, Some(None)] {
-            assert_eq!(
-                NetworkVariant::from_rpc_identity_with_fallback(
-                    custom_chain_id,
-                    node_info,
-                    Some(NetworkVariant::Monad),
-                )
-                .unwrap(),
-                Some(NetworkVariant::Monad)
-            );
-        }
-
-        assert_eq!(
-            NetworkVariant::from_rpc_identity_with_fallback(
-                NamedChain::Mainnet as u64,
-                Some(None),
-                Some(NetworkVariant::Monad),
-            )
-            .unwrap(),
-            Some(NetworkVariant::Ethereum)
-        );
-        assert_eq!(
-            NetworkVariant::from_rpc_identity_with_fallback(
-                custom_chain_id,
-                Some(Some("tempo")),
-                Some(NetworkVariant::Monad),
-            )
-            .unwrap(),
-            Some(NetworkVariant::Tempo)
-        );
     }
 
     #[test]
@@ -1707,9 +1605,9 @@ mod tests {
     fn base_precompile_labels_follow_upgrade_boundaries() {
         let config = NetworkConfigs::with_base();
 
-        assert!(config.precompiles_label(Some(BaseUpgrade::Azul.into())).is_empty());
+        assert!(resolved_precompile_labels(Some(BaseUpgrade::Azul.into())).is_empty());
 
-        let beryl = config.precompiles_label(Some(BaseUpgrade::Beryl.into()));
+        let beryl = resolved_precompile_labels(Some(BaseUpgrade::Beryl.into()));
         assert_eq!(beryl.get(&B20FactoryStorage::ADDRESS), Some(&"B20Factory".to_string()));
         assert_eq!(
             beryl.get(&ActivationRegistryStorage::ADDRESS),
@@ -1719,16 +1617,8 @@ mod tests {
         assert!(!beryl.contains_key(&TxContextStorage::ADDRESS));
         assert!(!beryl.contains_key(&NonceManagerStorage::ADDRESS));
 
-        let cobalt = config.precompiles_label(Some(BaseUpgrade::Cobalt.into()));
+        let cobalt = resolved_precompile_labels(Some(BaseUpgrade::Cobalt.into()));
         assert_eq!(cobalt.len(), BASE_PRECOMPILES.len());
-        assert_eq!(config.precompiles_label(None).len(), BASE_PRECOMPILES.len());
-
-        for upgrade in [BaseUpgrade::Azul, BaseUpgrade::Beryl, BaseUpgrade::Cobalt] {
-            assert_eq!(
-                resolved_precompile_labels(Some(upgrade.into())),
-                config.precompiles_label(Some(upgrade.into()))
-            );
-        }
 
         // The name-keyed precompile map must honor the same upgrade boundaries.
         assert!(config.precompiles(Some(BaseUpgrade::Azul.into())).is_empty());
@@ -1739,13 +1629,6 @@ mod tests {
             config.precompiles(Some(BaseUpgrade::Cobalt.into())).get("NonceManager"),
             Some(&NonceManagerStorage::ADDRESS)
         );
-
-        // A non-Base profile must not pick up Base labels even when an upgrade is supplied.
-        assert!(
-            NetworkConfigs::default()
-                .precompiles_label(Some(BaseUpgrade::Cobalt.into()))
-                .is_empty()
-        );
     }
 
     #[test]
@@ -1755,7 +1638,6 @@ mod tests {
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
         assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
-        assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
     }
 
     fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
@@ -1829,17 +1711,16 @@ mod tests {
             Some(&SIGNATURE_VERIFIER_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(Some(TempoHardfork::T5.into()))
+            resolved_precompile_labels(Some(TempoHardfork::T5.into()))
                 .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
         );
-        assert!(cfg.precompiles_label(None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(
-            !cfg.precompiles_label(Some(TempoHardfork::T5.into()))
+            !resolved_precompile_labels(Some(TempoHardfork::T5.into()))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
         assert!(
-            cfg.precompiles_label(Some(TempoHardfork::T6.into()))
+            resolved_precompile_labels(Some(TempoHardfork::T6.into()))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
     }
@@ -1862,16 +1743,12 @@ mod tests {
             Some(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(Some(MonadHardfork::MonadNine.into()))
+            resolved_precompile_labels(Some(MonadHardfork::MonadNine.into()))
                 .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
         );
         assert!(
-            cfg.precompiles_label(None)
-                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
-        );
-        assert!(
-            !cfg.precompiles_label(Some(MonadHardfork::MonadEight.into()))
+            !resolved_precompile_labels(Some(MonadHardfork::MonadEight.into()))
                 .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
     }

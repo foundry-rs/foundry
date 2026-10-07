@@ -272,7 +272,17 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, false)
+        self.find_by_deployed_code_exact_preferred(code, |_| true)
+    }
+
+    /// Same as [`Self::find_by_deployed_code_exact`], preferring artifacts matching `preferred`
+    /// only among equally strong matches. Metadata-exact matches always take precedence.
+    pub fn find_by_deployed_code_exact_preferred(
+        &self,
+        code: &[u8],
+        preferred: impl Fn(&ArtifactId) -> bool,
+    ) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, false, preferred).0
     }
 
     /// Finds the only contract whose deployed bytecode exactly matches the given code.
@@ -280,27 +290,45 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, true)
+        self.find_by_deployed_code_exact_inner(code, true, |_| false).0
+    }
+
+    /// Finds a deployed-code match, preferring exact metadata matches and rejecting ambiguous
+    /// partial metadata matches. A single partial match is accepted.
+    pub fn find_by_deployed_code_exact_unambiguous(
+        &self,
+        code: &[u8],
+    ) -> Result<Option<ArtifactWithContractRef<'_>>> {
+        let (matched, ambiguous_partial) =
+            self.find_by_deployed_code_exact_inner(code, false, |_| true);
+        if ambiguous_partial {
+            eyre::bail!(
+                "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
+            );
+        }
+        Ok(matched)
     }
 
     fn find_by_deployed_code_exact_inner(
         &self,
         code: &[u8],
         unique: bool,
-    ) -> Option<ArtifactWithContractRef<'_>> {
+        preferred: impl Fn(&ArtifactId) -> bool,
+    ) -> (Option<ArtifactWithContractRef<'_>>, bool) {
         // Immediately return None if the code is empty.
         if code.is_empty() {
-            return None;
+            return (None, false);
         }
 
         let mut partial_match = None;
-        let mut unique_match = None;
-        let matched = self.iter().find(|(id, contract)| {
+        let mut exact_match = None;
+        let mut ambiguous_partial = false;
+        'contracts: for (id, contract) in self.iter() {
             let Some(deployed_bytecode) = &contract.deployed_bytecode else {
-                return false;
+                continue;
             };
             let Some(deployed_code) = &deployed_bytecode.object else {
-                return false;
+                continue;
             };
 
             let len = match deployed_code {
@@ -308,8 +336,18 @@ impl ContractsByArtifact {
                 BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
             };
 
-            if len != code.len() {
-                return false;
+            // Vyper artifacts contain the complete runtime, but omit the immutable data
+            // appended on deployment. Compare that runtime in full, without treating any of
+            // its bytes (or the immutable suffix) as Solidity metadata.
+            let is_vyper = id.source.extension().is_some_and(|extension| extension == "vy");
+            let code = if is_vyper {
+                let Some(runtime) = code.get(..len) else { continue };
+                runtime
+            } else {
+                code
+            };
+            if len == 0 || len != code.len() {
+                continue;
             }
 
             // Collect ignored offsets by chaining link and immutable references.
@@ -325,26 +363,27 @@ impl ContractsByArtifact {
             // ignore it as it includes library address determined at runtime.
             // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
             // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
-            let has_call_protection = match deployed_code {
-                BytecodeObject::Bytecode(bytes) => {
-                    bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
-                }
-                BytecodeObject::Unlinked(bytes) => {
-                    if let Ok(bytes) =
-                        Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
-                    {
+            let has_call_protection = !is_vyper
+                && match deployed_code {
+                    BytecodeObject::Bytecode(bytes) => {
                         bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
-                    } else {
-                        false
                     }
-                }
-            };
+                    BytecodeObject::Unlinked(bytes) => {
+                        if let Ok(bytes) =
+                            Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
+                        {
+                            bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                        } else {
+                            false
+                        }
+                    }
+                };
 
             if has_call_protection {
                 ignored.push(Offsets { start: 1, length: 20 });
             }
 
-            let metadata_start = find_metadata_start(code);
+            let metadata_start = if is_vyper { None } else { find_metadata_start(code) };
 
             if let Some(metadata) = metadata_start {
                 ignored.push(Offsets {
@@ -372,7 +411,7 @@ impl ContractsByArtifact {
                 };
 
                 if !matched {
-                    return false;
+                    continue 'contracts;
                 }
 
                 left = right + offset.length as usize;
@@ -394,46 +433,35 @@ impl ContractsByArtifact {
             };
 
             if !is_partial {
-                return false;
+                continue;
             }
 
-            let Some(metadata) = metadata_start else {
-                if unique && unique_match.is_none() {
-                    unique_match = Some((*id, *contract));
-                    return false;
-                }
-                return true;
-            };
-
-            let exact_match = match deployed_code {
+            let matches_metadata = metadata_start.is_none_or(|metadata| match deployed_code {
                 BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
-                BytecodeObject::Unlinked(bytes) => {
-                    if let Ok(bytes) = Bytes::from_str(&bytes[metadata * 2..]) {
-                        bytes == code[metadata..]
-                    } else {
-                        false
-                    }
-                }
-            };
+                BytecodeObject::Unlinked(bytes) => Bytes::from_str(&bytes[metadata * 2..])
+                    .is_ok_and(|bytes| bytes == code[metadata..]),
+            });
 
-            if exact_match {
-                if unique && unique_match.is_none() {
-                    unique_match = Some((*id, *contract));
-                    false
-                } else {
-                    true
+            if matches_metadata {
+                if unique && exact_match.is_some() {
+                    return (None, false);
+                }
+                if exact_match.is_none() || preferred(id) {
+                    exact_match = Some((id, contract));
+                }
+                if !unique && preferred(id) {
+                    return (exact_match, false);
                 }
             } else {
-                partial_match = Some((*id, *contract));
-                false
+                ambiguous_partial |= partial_match.is_some();
+                if preferred(id) || partial_match.is_none_or(|(id, _)| !preferred(id)) {
+                    partial_match = Some((id, contract));
+                }
             }
-        });
-
-        if unique {
-            matched.is_none().then_some(unique_match).flatten()
-        } else {
-            matched.or(partial_match)
         }
+
+        let ambiguous_partial = exact_match.is_none() && ambiguous_partial;
+        (if unique { exact_match } else { exact_match.or(partial_match) }, ambiguous_partial)
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
@@ -766,7 +794,7 @@ mod tests {
             .abi
             .constructor()
             .unwrap()
-            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .abi_encode_input(&[DynSolValue::Uint(U256::ONE, 256)])
             .unwrap();
         let creation = [bytecode.as_ref(), &arguments].concat();
 
@@ -820,6 +848,60 @@ mod tests {
 
         assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
         assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_unambiguous_preserves_single_partial() {
+        let artifact_code = Bytes::from_static(&[0x60, 0x00, 0xa0, 0x00, 0x01]);
+        let deployed_code = Bytes::from_static(&[0x60, 0x00, 0xf6, 0x00, 0x01]);
+        let contracts = ContractsByArtifact::new([deployed_artifact("A", artifact_code)]);
+
+        assert_eq!(
+            contracts
+                .find_by_deployed_code_exact_unambiguous(&deployed_code)
+                .unwrap()
+                .unwrap()
+                .0
+                .name,
+            "A"
+        );
+        assert!(contracts.find_by_deployed_code_exact_unambiguous(&[0x00]).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_unambiguous_prefers_exact_over_ambiguous_partial() {
+        let partial_code = Bytes::from_static(&[0x60, 0x00, 0xa0, 0x00, 0x01]);
+        let deployed_code = Bytes::from_static(&[0x60, 0x00, 0xf6, 0x00, 0x01]);
+        for exact_name in ["A", "Z"] {
+            let contracts = ContractsByArtifact::new([
+                deployed_artifact("B", partial_code.clone()),
+                deployed_artifact("C", partial_code.clone()),
+            ]);
+            assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
+            assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+            assert_eq!(
+                contracts
+                    .find_by_deployed_code_exact_unambiguous(&deployed_code)
+                    .unwrap_err()
+                    .to_string(),
+                "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
+            );
+
+            let contracts = ContractsByArtifact::new([
+                deployed_artifact(exact_name, deployed_code.clone()),
+                deployed_artifact("B", partial_code.clone()),
+                deployed_artifact("C", partial_code.clone()),
+            ]);
+            assert_eq!(
+                contracts
+                    .find_by_deployed_code_exact_unambiguous(&deployed_code)
+                    .unwrap()
+                    .unwrap()
+                    .0
+                    .name,
+                exact_name
+            );
+        }
     }
 
     /// Tests an immutable reference within a library call-protection prefix.

@@ -14,7 +14,6 @@ use tokio::task::JoinHandle;
 
 const COUNTER: Address = address!("000000000000000000000000000000000000ba10");
 const BAL_METHOD: &str = "eth_getBlockAccessList";
-const LEGACY_BAL_METHOD: &str = "eth_getBlockAccessListByBlockHash";
 
 async fn rpc(endpoint: &str, method: &str, params: Value) -> Value {
     let response = reqwest::Client::new()
@@ -50,8 +49,8 @@ impl Fixture {
         .await;
         // Every transaction reads slot one and increments slot zero.
         api.anvil_set_code(COUNTER, bytes!("6001545060005460010160005500")).await.unwrap();
-        api.anvil_set_storage_at(COUNTER, U256::ZERO, B256::from(U256::from(6))).await.unwrap();
-        api.anvil_set_storage_at(COUNTER, U256::from(1), B256::from(U256::from(19))).await.unwrap();
+        api.anvil_set_storage_at(COUNTER, U256::ZERO, B256::with_last_byte(6)).await.unwrap();
+        api.anvil_set_storage_at(COUNTER, U256::ONE, B256::with_last_byte(19)).await.unwrap();
         let endpoint = handle.http_endpoint();
         let sender = handle.dev_wallets().next().unwrap().address();
         let send = |nonce| {
@@ -64,7 +63,7 @@ impl Fixture {
         assert!(parent["blockAccessListHash"].is_string(), "missing native BAL commitment");
         assert_eq!(
             rpc(&endpoint, "eth_getStorageAt", json!([COUNTER, "0x0", "latest"])).await,
-            json!(B256::from(U256::from(7))),
+            json!(B256::with_last_byte(7)),
         );
         let mut transactions = [B256::ZERO; 3];
         for (index, hash) in transactions.iter_mut().enumerate() {
@@ -86,7 +85,6 @@ impl Fixture {
 #[derive(Clone, Copy, Debug)]
 enum Response {
     Native,
-    Legacy,
     Unsupported,
     InvalidCode,
     Timeout,
@@ -119,10 +117,8 @@ impl Proxy {
                 async move {
                     let after_bal = {
                         let mut requests = recorded.lock();
-                        let after_bal = requests.iter().any(|request| {
-                            request["method"] == BAL_METHOD
-                                || request["method"] == LEGACY_BAL_METHOD
-                        });
+                        let after_bal =
+                            requests.iter().any(|request| request["method"] == BAL_METHOD);
                         requests.push(request.clone());
                         after_bal
                     };
@@ -137,11 +133,8 @@ impl Proxy {
                                 "error": {"code": -32601, "message": "method not found"}}));
                         }
                     }
-                    let bal_method = method == BAL_METHOD || method == LEGACY_BAL_METHOD;
-                    if bal_method
-                        && (matches!(mode, Response::Unsupported)
-                            || (matches!(mode, Response::Legacy) && method == BAL_METHOD))
-                    {
+                    let bal_method = method == BAL_METHOD;
+                    if bal_method && matches!(mode, Response::Unsupported) {
                         return Json(json!({"jsonrpc": "2.0", "id": request["id"],
                             "error": {"code": -32601, "message": "method not found"}}));
                     }
@@ -232,12 +225,8 @@ impl Proxy {
 
     fn assert_parent_bal(&self, fixture: &Fixture) {
         let requests = self.requests.lock();
-        let calls = requests
-            .iter()
-            .filter(|request| {
-                request["method"] == BAL_METHOD || request["method"] == LEGACY_BAL_METHOD
-            })
-            .collect::<Vec<_>>();
+        let calls =
+            requests.iter().filter(|request| request["method"] == BAL_METHOD).collect::<Vec<_>>();
         assert!(!calls.is_empty(), "parent BAL was never requested");
         for request in calls {
             assert_eq!(request["params"], json!([fixture.parent["hash"]]));
@@ -412,7 +401,8 @@ fn assert_test(cmd: &mut TestCommand, name: &str) -> u64 {
         .unwrap()
 }
 
-forgetest_async!(fork_bal_parent_cache_preserves_prefix_boundaries, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_parent_cache_preserves_prefix_boundaries(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
@@ -439,20 +429,20 @@ forgetest_async!(fork_bal_parent_cache_preserves_prefix_boundaries, |prj, cmd| {
             block_reads.push(proxy.count("eth_getBlockByHash"));
             if disabled {
                 assert_eq!(proxy.count(BAL_METHOD), 0);
-                assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
                 proxy.assert_parent_bal(&fixture);
                 assert_eq!(proxy.slot_reads(U256::ZERO), 0, "mode={mode}, index={index}");
             }
-            assert!(proxy.slot_reads(U256::from(1)) > 0, "read-only slots need RPC fallback");
+            assert!(proxy.slot_reads(U256::ONE) > 0, "read-only slots need RPC fallback");
         }
         assert_eq!(block_reads[0], block_reads[1], "BAL fetched an extra block: mode={mode}");
         assert_eq!(gas_used[0], gas_used[1], "BAL changed gas: mode={mode}, index={index}");
     }
-});
+}
 
-forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_keeps_local_writes_snapshots_and_persistent_accounts(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
@@ -476,7 +466,6 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
         probes.push(proxy.count("anvil_nodeInfo"));
         if disabled {
             assert_eq!(proxy.count(BAL_METHOD), 0);
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
         } else {
             proxy.assert_parent_bal(&fixture);
             assert_eq!(proxy.count(BAL_METHOD), 1, "the same parent cache was prewarmed twice");
@@ -487,9 +476,10 @@ forgetest_async!(fork_bal_keeps_local_writes_snapshots_and_persistent_accounts, 
     // Only the first seed adds source probes; ordinary identity checks remain on reuse.
     assert!(probes[1] > 0);
     assert_eq!(probes[0], probes[1] + 2);
-});
+}
 
-forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_config_and_environment_control_runtime_requests(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     prj.add_test("ForkBal.t.sol", TEST);
@@ -506,13 +496,13 @@ forgetest_async!(fork_bal_config_and_environment_control_runtime_requests, |prj,
             assert_eq!(proxy.slot_reads(U256::ZERO), 0);
         } else {
             assert_eq!(proxy.count(BAL_METHOD), 0);
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             assert!(proxy.slot_reads(U256::ZERO) > 0);
         }
     }
-});
+}
 
-forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_unusable_responses_fall_back_to_replay(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     prj.add_test("ForkBal.t.sol", TEST);
     let baseline = Proxy::new(&fixture, Response::Native).await;
@@ -521,7 +511,6 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
     let gas_used = assert_test(&mut cmd, "testForkBal");
     let block_reads = baseline.count("eth_getBlockByHash");
     assert_eq!(baseline.count(BAL_METHOD), 0);
-    assert_eq!(baseline.count(LEGACY_BAL_METHOD), 0);
     assert!(baseline.slot_reads(U256::ZERO) > 0);
     // Core BAL tests cover the remaining validation and source-eligibility combinations.
     for mode in [
@@ -539,17 +528,13 @@ forgetest_async!(fork_bal_unusable_responses_fall_back_to_replay, |prj, cmd| {
             "optional BAL request delayed the fork: {mode:?}"
         );
         proxy.assert_parent_bal(&fixture);
-        assert_eq!(
-            proxy.count(LEGACY_BAL_METHOD),
-            usize::from(matches!(mode, Response::Unsupported)),
-            "only method-not-found may use the legacy BAL method: {mode:?}"
-        );
         assert!(proxy.slot_reads(U256::ZERO) > 0, "invalid BAL was used: {mode:?}");
         assert_eq!(proxy.count("eth_getBlockByHash"), block_reads, "extra block read: {mode:?}");
     }
-});
+}
 
-forgetest_async!(fork_bal_skips_ineligible_ordinary_and_pending_forks, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_skips_ineligible_ordinary_and_pending_forks(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     prj.add_test("ForkBal.t.sol", TEST);
     let proxy = Proxy::new(&fixture, Response::Anvil).await;
@@ -572,22 +557,10 @@ forgetest_async!(fork_bal_skips_ineligible_ordinary_and_pending_forks, |prj, cmd
     command(&mut cmd, &fixture, &proxy, fixture.pending, 10, 1, r"^testForkBal\(\)$");
     assert_test(&mut cmd, "testForkBal");
     assert_eq!(proxy.count(BAL_METHOD), 0);
-});
+}
 
-forgetest_async!(fork_bal_supports_legacy_method, |prj, cmd| {
-    let fixture = Fixture::new().await;
-    let proxy = Proxy::new(&fixture, Response::Legacy).await;
-    prj.add_test("ForkBal.t.sol", TEST);
-    command(&mut cmd, &fixture, &proxy, fixture.transactions[2], 9, 1, r"^testForkBal\(\)$");
-    assert_test(&mut cmd, "testForkBal");
-    proxy.assert_parent_bal(&fixture);
-    assert_eq!(proxy.count(BAL_METHOD), 1);
-    assert_eq!(proxy.count(LEGACY_BAL_METHOD), 1);
-    assert_eq!(proxy.slot_reads(U256::ZERO), 0);
-    assert!(proxy.slot_reads(U256::ONE) > 0);
-});
-
-forgetest_async!(fork_bal_preserves_prefix_transaction_validation, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_preserves_prefix_transaction_validation(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::InvalidPrefix).await;
     prj.add_test("ForkBal.t.sol", TEST);
@@ -602,9 +575,10 @@ forgetest_async!(fork_bal_preserves_prefix_transaction_validation, |prj, cmd| {
     );
     assert_test(&mut cmd, "testForkBalRejectsInvalidPrefix");
     proxy.assert_parent_bal(&fixture);
-});
+}
 
-forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_retries_unavailable_parent_seed(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::NullOnce).await;
     prj.add_test("ForkBal.t.sol", TEST);
@@ -620,9 +594,10 @@ forgetest_async!(fork_bal_retries_unavailable_parent_seed, |prj, cmd| {
     assert_test(&mut cmd, "testForkBalRepeated");
     proxy.assert_parent_bal(&fixture);
     assert_eq!(proxy.count(BAL_METHOD), 2, "unavailable BAL must retry, then reuse its success");
-});
+}
 
-forgetest_async!(fork_bal_reuses_parent_seed_only_for_the_same_source, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_reuses_parent_seed_only_for_the_same_source(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let first = Proxy::new(&fixture, Response::Native).await;
     let second = Proxy::new(&fixture, Response::Native).await;
@@ -643,9 +618,10 @@ forgetest_async!(fork_bal_reuses_parent_seed_only_for_the_same_source, |prj, cmd
         assert_eq!(proxy.count(BAL_METHOD), 1, "each source must prepare its own parent seed");
         assert_eq!(proxy.slot_reads(U256::ZERO), 0);
     }
-});
+}
 
-forgetest_async!(fork_bal_inline_config_controls_runtime_requests, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_inline_config_controls_runtime_requests(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     for (config_disabled, contract_override, function_override) in [
@@ -693,7 +669,6 @@ forgetest_async!(fork_bal_inline_config_controls_runtime_requests, |prj, cmd| {
                 usize::from(!disabled),
                 "config={config_disabled}, contract={contract_override:?}, function={function_override:?}, mode={mode}"
             );
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             if disabled {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
@@ -702,9 +677,10 @@ forgetest_async!(fork_bal_inline_config_controls_runtime_requests, |prj, cmd| {
             }
         }
     }
-});
+}
 
-forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
+#[forgetest]
+async fn fork_bal_setup_forks_keep_creation_policy_on_roll(prj: _, cmd: _) {
     let fixture = Fixture::new().await;
     let proxy = Proxy::new(&fixture, Response::Native).await;
     for disabled in [false, true] {
@@ -760,7 +736,6 @@ forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
                 usize::from(!disabled),
                 "disabled={disabled}, mode={mode}"
             );
-            assert_eq!(proxy.count(LEGACY_BAL_METHOD), 0);
             if disabled {
                 assert!(proxy.slot_reads(U256::ZERO) > 0);
             } else {
@@ -769,4 +744,4 @@ forgetest_async!(fork_bal_setup_forks_keep_creation_policy_on_roll, |prj, cmd| {
             }
         }
     }
-});
+}

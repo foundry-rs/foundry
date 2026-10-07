@@ -127,6 +127,50 @@ async fn geth_txpool_separates_queued_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mines_successor_after_nonce_fast_forward() {
+    for (stale_gas_limit, successor_gas_limit) in
+        [(21_000, 21_000), (30_000, 21_000), (30_000, 30_000)]
+    {
+        let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        let provider = handle.http_provider();
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        let sender = accounts[0].address();
+        let recipient = accounts[1].address();
+        let initial_balance = provider.get_balance(recipient).await.unwrap();
+        let mut hashes = Vec::new();
+
+        for nonce in 0..=1 {
+            let tx = TransactionRequest::default()
+                .with_to(recipient)
+                .with_from(sender)
+                .with_value(U256::from(nonce + 1))
+                .with_nonce(nonce)
+                .with_gas_limit(if nonce == 0 { stale_gas_limit } else { successor_gas_limit });
+            let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+            hashes.push(*pending.tx_hash());
+        }
+
+        api.anvil_set_nonce(sender, U256::ONE).await.unwrap();
+        if stale_gas_limit > 21_000 {
+            api.evm_set_block_gas_limit(U256::from(21_000)).unwrap();
+        }
+        api.mine_one().await.unwrap();
+
+        assert!(provider.get_transaction_receipt(hashes[0]).await.unwrap().is_none());
+        if successor_gas_limit > 21_000 {
+            assert!(provider.get_transaction_receipt(hashes[1]).await.unwrap().is_none());
+            let status = provider.txpool_status().await.unwrap();
+            assert_eq!((status.pending, status.queued), (1, 0));
+            api.evm_set_block_gas_limit(U256::from(successor_gas_limit)).unwrap();
+            api.mine_one().await.unwrap();
+        }
+        let receipt = provider.get_transaction_receipt(hashes[1]).await.unwrap().unwrap();
+        assert!(receipt.status());
+        assert_eq!(provider.get_balance(recipient).await.unwrap(), initial_balance + U256::from(2));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_debug_clear_txpool() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -304,7 +348,7 @@ async fn accepts_spend_after_funding_when_pool_checks_disabled() {
 
     // Recipient/spender is a random address with zero balance that we'll impersonate
     let spender = alloy_primitives::Address::random();
-    api.anvil_set_balance(spender, U256::from(0u64)).await.unwrap();
+    api.anvil_set_balance(spender, U256::ZERO).await.unwrap();
     api.anvil_impersonate_account(spender).await.unwrap();
 
     // Ensure tx1 (funding) has higher gas price so it's mined before tx2 within the same block
@@ -369,7 +413,7 @@ async fn queued_tx_replacement_removes_old_tx() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_gas_price(gas_price)
                 .with_nonce(5),
         )
@@ -412,7 +456,7 @@ async fn queued_tx_replacement_removes_old_tx() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_gas_price(gas_price_base)
                 .with_nonce(nonce),
         );
@@ -444,7 +488,7 @@ async fn anvil_drop_transaction_removes_queued_tx() {
         TransactionRequest::default()
             .with_to(recipient)
             .with_from(account)
-            .with_value(U256::from(1))
+            .with_value(U256::ONE)
             .with_gas_price(221435145689u128)
             .with_nonce(5),
     );
@@ -478,7 +522,7 @@ async fn anvil_drop_transaction_removes_nonce_dependents() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_nonce(nonce),
         )
     };
@@ -518,7 +562,7 @@ async fn anvil_drop_transaction_removes_queued_nonce_dependents() {
             TransactionRequest::default()
                 .with_to(recipient)
                 .with_from(account)
-                .with_value(U256::from(1))
+                .with_value(U256::ONE)
                 .with_nonce(nonce),
         )
     };
@@ -536,4 +580,78 @@ async fn anvil_drop_transaction_removes_queued_nonce_dependents() {
     assert_eq!(status.queued, 0);
     assert!(provider.get_transaction_by_hash(dependent_hash).await.unwrap().is_none());
     assert!(provider.get_transaction_by_hash(transitive_hash).await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn evm_revert_restores_transaction_pool() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let recipient = accounts[1].address();
+    let transaction = |nonce| {
+        WithOtherFields::new(
+            TransactionRequest::default()
+                .with_to(recipient)
+                .with_from(sender)
+                .with_value(U256::ONE)
+                .with_nonce(nonce),
+        )
+    };
+
+    let pending_hash = *provider.send_transaction(transaction(0)).await.unwrap().tx_hash();
+    let queued_hash = *provider.send_transaction(transaction(2)).await.unwrap().tx_hash();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    let later_hash = *provider.send_transaction(transaction(1)).await.unwrap().tx_hash();
+    let later_snapshot = api.evm_snapshot().await.unwrap();
+
+    api.mine_one().await.unwrap();
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 0);
+
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    assert!(!api.evm_revert(later_snapshot).await.unwrap());
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 1);
+    assert_eq!(status.queued, 1);
+    assert!(provider.get_transaction_by_hash(pending_hash).await.unwrap().is_some());
+    assert!(provider.get_transaction_by_hash(queued_hash).await.unwrap().is_some());
+    assert!(provider.get_transaction_by_hash(later_hash).await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn evm_revert_wakes_autominer_for_restored_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let hash = *provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(accounts[0].address())
+                .with_to(accounts[1].address())
+                .with_value(U256::ONE),
+        ))
+        .await
+        .unwrap()
+        .tx_hash();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if provider.get_transaction_receipt(hash).await.unwrap().is_some() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
 }

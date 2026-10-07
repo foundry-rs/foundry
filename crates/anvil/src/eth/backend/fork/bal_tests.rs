@@ -125,13 +125,12 @@ fn rpc_error(asserter: &Asserter, code: i64) {
 async fn fork_bal_prefill_validates_before_caching() {
     let hash = B256::repeat_byte(1);
     let address = Address::repeat_byte(1);
-    for (legacy, bad_commitment, wrong_hash, identity_code) in [
-        (false, false, false, -32601),
-        (true, false, false, -32601),
-        (false, true, false, -32601),
-        (false, false, true, -32601),
-        (false, false, false, -32603),
-        (false, false, false, 0),
+    for (bad_commitment, wrong_hash, identity_code) in [
+        (false, false, -32601),
+        (true, false, -32601),
+        (false, true, -32601),
+        (false, false, -32603),
+        (false, false, 0),
     ] {
         let asserter = Asserter::new();
         let config = fork_config(asserter.clone(), hash);
@@ -158,9 +157,6 @@ async fn fork_bal_prefill_validates_before_caching() {
             )
             .into(),
         );
-        if legacy {
-            rpc_error(&asserter, -32601);
-        }
         asserter.push_success(&bal);
         asserter.push_success(&block);
         if !bad_commitment && !wrong_hash {
@@ -198,7 +194,7 @@ async fn fork_bal_unavailable_does_not_fetch_block_or_change_cache() {
         if let Some(code) = error {
             rpc_error(&asserter, code);
         }
-        if error != Some(-32603) {
+        if error.is_none() {
             asserter.push_success(&serde_json::Value::Null);
         }
         // A following response must stay untouched when no BAL is available.
@@ -219,7 +215,7 @@ async fn fork_bal_unavailable_does_not_fetch_block_or_change_cache() {
 fn fork_bal_seed_preserves_storage_boundaries() {
     let hash = B256::repeat_byte(1);
     let address = Address::repeat_byte(1);
-    let slot = U256::from(1);
+    let slot = U256::ONE;
     let system_slot = U256::from(2);
     let account = AccountChanges::new(address)
         .with_storage_change(SlotChanges::new(
@@ -236,7 +232,7 @@ fn fork_bal_seed_preserves_storage_boundaries() {
         ));
     let db = database(hash);
 
-    cache_bal(&db, vec![account]);
+    cache_bal(db.db(), vec![account]);
 
     let storage = db.storage().read();
     assert_eq!(storage[&address][&slot], U256::ZERO);
@@ -250,7 +246,7 @@ fn fork_bal_seed_preserves_storage_boundaries() {
     ));
     let db = database(hash);
     validate_bal(&vec![post_execution.clone()], 0, None).unwrap();
-    cache_bal(&db, vec![post_execution]);
+    cache_bal(db.db(), vec![post_execution]);
     assert_eq!(db.storage().read()[&address][&post_execution_slot], U256::from(42));
 }
 
@@ -263,7 +259,7 @@ fn fork_bal_seed_leaves_partial_accounts_and_reads_unknown() {
         .with_storage_read(U256::from(2));
     let db = database(hash);
 
-    cache_bal(&db, vec![account]);
+    cache_bal(db.db(), vec![account]);
 
     assert!(db.accounts().read().is_empty());
     assert!(db.storage().read().is_empty());
@@ -282,7 +278,7 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     let address = Address::repeat_byte(1);
     let account = complete_account(address, Bytes::new())
         .with_storage_change(SlotChanges::new(
-            U256::from(1),
+            U256::ONE,
             vec![StorageChange::new(index(1), U256::from(11))],
         ))
         .with_storage_change(SlotChanges::new(
@@ -294,16 +290,16 @@ fn fork_bal_seed_preserves_cached_values_and_merges_slots() {
     db.accounts().write().insert(address, cached_account.clone());
     db.storage().write().insert(
         address,
-        [(U256::from(1), U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
+        [(U256::ONE, U256::from(101)), (U256::from(3), U256::from(303))].into_iter().collect(),
     );
 
-    cache_bal(&db, vec![account]);
+    cache_bal(db.db(), vec![account]);
 
     assert_eq!(db.accounts().read()[&address], cached_account);
     assert_eq!(
         db.storage().read()[&address],
         [
-            (U256::from(1), U256::from(101)),
+            (U256::ONE, U256::from(101)),
             (U256::from(2), U256::from(22)),
             (U256::from(3), U256::from(303)),
         ]
@@ -321,13 +317,13 @@ fn fork_bal_seed_keeps_final_account_code() {
         let account = complete_account(address, bytes!("6001"))
             .with_code_change(CodeChange::new(index(2), code.clone()));
 
-        cache_bal(&db, vec![account]);
+        cache_bal(db.db(), vec![account]);
 
         let accounts = db.accounts().read();
         let account = &accounts[&address];
         assert_eq!(account.balance, U256::from(42));
         assert_eq!(account.nonce, 3);
-        assert_eq!(account.code_hash, alloy_primitives::keccak256(&code));
+        assert_eq!(account.code_hash(), alloy_primitives::keccak256(&code));
         assert_eq!(account.code.as_ref().unwrap().original_bytes(), code);
         assert_eq!(
             account.code.as_ref().unwrap().is_eip7702(),

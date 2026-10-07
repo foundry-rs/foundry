@@ -383,7 +383,7 @@ fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
         seed
     } else {
         let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        U256::from_be_bytes(keccak256(seed_data).0)
+        keccak256(seed_data).into()
     }
 }
 
@@ -841,25 +841,6 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
-    /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(
-        executor: Executor<FEN>,
-        runner: TestRunner,
-        config: InvariantConfig,
-        setup_contracts: &'a ContractsByAddress,
-        project_contracts: &'a ContractsByArtifact,
-    ) -> Self {
-        Self::new_with_fuzz_seed(
-            executor,
-            runner,
-            None,
-            config,
-            setup_contracts,
-            project_contracts,
-            1,
-        )
-    }
-
     /// Instantiates an invariant executor with the configured fuzz seed for deterministic worker
     /// runner derivation.
     pub fn new_with_fuzz_seed(
@@ -885,6 +866,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
     pub fn config(&self) -> InvariantConfig {
         self.config.clone()
+    }
+
+    /// Retains corpus replay and result aggregation without starting fresh invariant runs.
+    pub const fn skip_fresh_runs(&mut self) {
+        self.config.runs = 0;
+        self.config.timeout = None;
     }
 
     /// Refs for tracking contracts deployed mid-sequence during corpus replay.
@@ -932,7 +919,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             invariant_worker_collects_evm_cmp_log(&self.config, 0, actual_worker_count),
         );
         let dynamic = self.dynamic_target_ctx();
-        let corpus_seed = WorkerCorpusSeed::load_from_disk(
+        let mut corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
             None,
             Some(&corpus_replay_executor),
@@ -940,8 +927,26 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 stateless: None,
                 fuzzed_contracts: Some(&replay_targets),
                 dynamic: Some(&dynamic),
+                senders: Some(&campaign_seed.sender_filters),
             },
         )?;
+        if invariant_contract.is_optimization()
+            && let Some(best_value) = corpus_seed.optimization_best_value
+        {
+            let sequence = (0..corpus_seed.optimization_best_sequence.len()).collect::<Vec<_>>();
+            let replayed = check_sequence_value(
+                self.executor.clone(),
+                &corpus_seed.optimization_best_sequence,
+                &sequence,
+                invariant_contract.address,
+                invariant_contract.anchor_calldata(),
+            );
+            if !matches!(replayed, Ok(Some(value)) if value == best_value) {
+                // Keep the sequence in the mutation corpus, but do not report its stale value.
+                corpus_seed.optimization_best_value = None;
+                corpus_seed.optimization_best_sequence.clear();
+            }
+        }
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -1510,6 +1515,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
+                    &campaign_seed.sender_filters,
                     CorpusInsertionMode::Live,
                 );
             }
@@ -1847,9 +1853,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
 
-        if let Err(err) =
-            worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
-        {
+        if let Err(err) = worker.seed_from_test_traces(
+            invariant_contract,
+            &targeted_contracts,
+            &campaign_seed.sender_filters,
+            executor,
+        ) {
             debug!(target: "corpus", %err, "failed to seed corpus from test traces");
         }
 
@@ -2383,6 +2392,7 @@ pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::executors::ExecutorBuilder;
     use foundry_cheatcodes::CheatsConfig;
@@ -2397,11 +2407,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::Config,
     };
-    use revm::{
-        bytecode::Bytecode,
-        context::Block,
-        database::{CacheDB, EmptyDB},
-    };
+    use revm::{bytecode::Bytecode, context::Block, database::InMemoryDB};
     use serde_json::json;
     use std::{sync::mpsc, thread};
 
@@ -2553,8 +2559,8 @@ mod tests {
 
     #[test]
     fn invariant_focus_seed_uses_parent_rng_when_unconfigured() {
-        let mut parent = seeded_test_runner(U256::from(1));
-        let mut matching_parent = seeded_test_runner(U256::from(1));
+        let mut parent = seeded_test_runner(U256::ONE);
+        let mut matching_parent = seeded_test_runner(U256::ONE);
         let mut different_parent = seeded_test_runner(U256::from(2));
 
         let focus_seed = invariant_focus_seed(&mut parent, None, 2).unwrap();
@@ -2890,12 +2896,8 @@ mod tests {
         let config =
             InvariantConfig { runs: 1, depth: 1, show_metrics: false, ..Default::default() };
         let campaign_state = InvariantCampaignState::new(EarlyExit::new(false), None);
-        let fuzz_state = EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        );
+        let fuzz_state =
+            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None);
         let setup_contracts = ContractsByAddress::default();
         let project_contracts = ContractsByArtifact::default();
         let (result_tx, result_rx) = mpsc::channel();
@@ -2965,7 +2967,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_narrows_to_one_effective_selector() {
-        let target = Address::from([0x11; 20]);
+        let target = Address::repeat_byte(0x11);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let second_selector = second.selector();
@@ -2985,7 +2987,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_seed_rotates_effective_selector() {
-        let target = Address::from([0x55; 20]);
+        let target = Address::repeat_byte(0x55);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let third = function("third(uint256)");
@@ -3006,7 +3008,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_freezes_dynamic_target_updates() {
-        let target = Address::from([0x44; 20]);
+        let target = Address::repeat_byte(0x44);
         let first = function("first(uint256)");
         let second = function("second(uint256)");
         let mut contract = targeted_contract("Target", vec![first.clone(), second.clone()]);
@@ -3039,7 +3041,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_does_not_widen_target_selectors() {
-        let target = Address::from([0x22; 20]);
+        let target = Address::repeat_byte(0x22);
         let allowed = function("allowed(uint256)");
         let hidden = function("hidden(uint256)");
         let mut contract = targeted_contract("Target", vec![allowed.clone(), hidden]);
@@ -3053,7 +3055,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_skips_excluded_selectors() {
-        let target = Address::from([0x33; 20]);
+        let target = Address::repeat_byte(0x33);
         let first = function("aaa(uint256)");
         let second = function("bbb(uint256)");
         let excluded = function("ccc(uint256)");
@@ -3073,7 +3075,7 @@ mod tests {
 
     #[test]
     fn invariant_focus_skips_excluded_targeted_selectors() {
-        let target = Address::from([0x66; 20]);
+        let target = Address::repeat_byte(0x66);
         let first = function("aaa(uint256)");
         let second = function("bbb(uint256)");
         let excluded = function("ccc(uint256)");

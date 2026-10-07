@@ -2,7 +2,7 @@ use super::{
     data::{ContractData, PreprocessorData, deploy_helper_path},
     span_to_range,
 };
-use crate::fs::normalize_path;
+use crate::fs::{canonicalize_path, normalize_path};
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
     artifacts::{SolcLanguage, remappings::Remapping},
@@ -633,8 +633,8 @@ fn is_path_in_dir(path: &Path, dir: &Path, root_dir: &Path) -> bool {
     let path = normalize_path(&root_dir.join(path));
     let dir = normalize_path(&root_dir.join(dir));
     path.starts_with(&dir)
-        || dunce::canonicalize(path)
-            .is_ok_and(|path| dunce::canonicalize(dir).is_ok_and(|dir| path.starts_with(dir)))
+        || canonicalize_path(path)
+            .is_ok_and(|path| canonicalize_path(dir).is_ok_and(|dir| path.starts_with(dir)))
 }
 
 /// Returns whether a generated import would be redirected by `remapping`.
@@ -702,14 +702,15 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
                     }
                 }
             }
-            ExprKind::Call(call_expr, call_args, named_args) => {
+            ExprKind::Call(callee, call_args) => {
+                let (call_expr, named_args) = callee.split_call_options();
                 if let Some(dependency) = handle_call_expr(
                     self.gcx,
                     self.constructor_context,
                     expr,
                     call_expr,
                     call_args,
-                    named_args,
+                    &named_args,
                 ) {
                     self.collect_dependency(dependency);
                     // Call options are copied into the replacement expression. Keep their
@@ -767,7 +768,8 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
 
     fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(stmt_try) = stmt.kind
-            && let ExprKind::Call(call_expr, ..) = &stmt_try.expr.kind
+            && let ExprKind::Call(callee, ..) = &stmt_try.expr.kind
+            && let (call_expr, _) = callee.split_call_options()
             && matches!(call_expr.kind, ExprKind::New(_))
         {
             // Keep try deployments native: a static-context violation halts the current frame,
@@ -1227,7 +1229,8 @@ impl<'gcx> Visit<'gcx> for ReturnDataObserver<'gcx> {
                     }
                 }
             }
-            ExprKind::Call(callee, _, _) => {
+            ExprKind::Call(callee, _) => {
+                let (callee, _) = callee.split_call_options();
                 if let Some(id) = self.gcx.resolved_function(callee) {
                     self.visit_nested_function(id)?;
                 }

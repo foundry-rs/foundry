@@ -29,15 +29,15 @@ jobs:
       contents: read
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@117919c943b804057be733b0c4034c5542e58959
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
       - uses: rui314/setup-mold@10ca16bf91dc22e05ebdc935cad9c75ea248f621 # v1
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: nextest
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -46,6 +46,9 @@ jobs:
       - name: Install Vyper
         # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.3
+      - name: Install Z3
+        # Same pin as test.yml, for the symbolic suites below.
+        run: pip install z3-solver==5.1.0.0 && z3 --version
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Test flaky tests
@@ -59,6 +62,17 @@ jobs:
           HYPERLIQUID_RPC: ${{ secrets.HYPERLIQUID_RPC }}
           ROBINHOOD_RPC: ${{ secrets.ROBINHOOD_RPC }}
         run: cargo nextest run --locked --profile flaky --no-fail-fast
+      # Broader and slower symbolic coverage that PR CI skips; the tests return early unless these
+      # variables are set.
+      - name: Test symbolic conformance and limits
+        if: ${{ !cancelled() }}
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+          SYMBOLIC_CONFORMANCE: 1
+          SYMBOLIC_LIMITS: 1
+        run: >-
+          cargo nextest run --locked -p forge --test cli --no-fail-fast
+          -E 'test(/symbolic_conformance::|symbolic_limits::/)'
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.
   issue:

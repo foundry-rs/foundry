@@ -47,7 +47,6 @@ pub(crate) fn tempo_provider(
 pub(crate) async fn apply_fee_payment<N, P>(
     sponsor: Option<&TempoSponsor>,
     provider: Option<&P>,
-    chain: Chain,
     tx: &mut N::TransactionRequest,
     payer: Address,
 ) -> Result<()>
@@ -65,9 +64,9 @@ where
     }
 
     if sponsor.is_some() {
-        maybe_attach_sponsor(sponsor, provider, chain, tx, payer).await
+        maybe_attach_sponsor(sponsor, provider, tx, payer).await
     } else {
-        resolve_and_print_fee_token(provider, Some(chain), tx, Some(payer)).await
+        resolve_and_print_fee_token(provider, tx, Some(payer)).await
     }
 }
 
@@ -76,7 +75,6 @@ where
 pub(crate) async fn maybe_attach_sponsor<N, P>(
     sponsor: Option<&TempoSponsor>,
     provider: Option<&P>,
-    chain: Chain,
     tx: &mut N::TransactionRequest,
     payer: Address,
 ) -> Result<()>
@@ -87,7 +85,7 @@ where
 {
     if let Some(sponsor) = sponsor {
         let provider = provider.map(|p| p as &dyn Provider<N>);
-        sponsor.resolve_and_set_fee_token(provider, Some(chain), tx).await?;
+        sponsor.resolve_and_set_fee_token(provider, tx).await?;
         sponsor.attach_and_print::<N>(tx, payer).await?;
     }
     Ok(())
@@ -96,7 +94,6 @@ where
 /// Resolves and sets the fee token paid by `fee_payer`, printing it when it was resolved.
 pub(crate) async fn resolve_and_print_fee_token<N, P>(
     provider: Option<&P>,
-    chain: Option<Chain>,
     tx: &mut N::TransactionRequest,
     fee_payer: Option<Address>,
 ) -> Result<()>
@@ -106,7 +103,7 @@ where
     P: Provider<N>,
 {
     let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
-    let fee_token = resolve_and_set_fee_token(dyn_provider, chain, tx, fee_payer).await?;
+    let fee_token = resolve_and_set_fee_token(dyn_provider, tx, fee_payer).await?;
     maybe_print_fee_token(provider, fee_token).await
 }
 
@@ -114,7 +111,6 @@ where
 /// when one is configured. Used by `--tempo.print-sponsor-hash`.
 pub(crate) async fn sponsor_hash<N, P>(
     provider: Option<&P>,
-    chain: Chain,
     tx: &mut N::TransactionRequest,
     from: Address,
     fee_payer: Option<Address>,
@@ -126,7 +122,7 @@ where
 {
     if fee_payer.is_some() {
         let provider = provider.map(|p| p as &dyn Provider<N>);
-        resolve_and_set_fee_token(provider, Some(chain), tx, fee_payer).await?;
+        resolve_and_set_fee_token(provider, tx, fee_payer).await?;
     }
     tx.compute_sponsor_hash(from)
         .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))
@@ -162,10 +158,18 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccountsWallet>)> {
-    match tempo.session_signer_for_wallet(wallet, chain_id)? {
-        Some(session) => Ok((None, Some(session.access_key))),
-        None => wallet.maybe_signer_for_chain(chain_id).await,
+    let (signer, access_key) = match tempo.session_signer_for_wallet(wallet, chain_id)? {
+        Some(session) => (None, Some(session.access_key)),
+        None => wallet.maybe_signer_for_chain(chain_id).await?,
+    };
+    if let (Some(from), Some(access_key)) = (wallet.from, &access_key) {
+        eyre::ensure!(
+            access_key.account() == from,
+            "sender {from} does not match Tempo account {}",
+            access_key.account()
+        );
     }
+    Ok((signer, access_key))
 }
 
 pub(crate) fn ensure_session_not_browser(tempo: &TempoOpts, browser: bool) -> Result<()> {
@@ -198,14 +202,20 @@ pub(crate) async fn is_tempo_hardfork_active<P: Provider<TempoNetwork>>(
     provider: &P,
     hardfork: TempoHardfork,
 ) -> Result<bool> {
-    match provider.is_hardfork_active(hardfork).await {
-        Ok(active) => Ok(active),
-        Err(err) if is_rpc_method_not_found(&err) => {
-            match anvil_tempo_hardfork_active(provider, hardfork).await {
-                Ok(Some(active)) => Ok(active),
-                _ => Err(err.into()),
-            }
-        }
+    Ok(active_tempo_hardfork(provider).await? >= hardfork)
+}
+
+/// Returns the Tempo hardfork active on the RPC, falling back to `anvil_nodeInfo` for nodes that
+/// do not serve the fork schedule.
+pub(crate) async fn active_tempo_hardfork<P: Provider<TempoNetwork>>(
+    provider: &P,
+) -> Result<TempoHardfork> {
+    match provider.get_active_hardfork().await {
+        Ok(hardfork) => Ok(hardfork),
+        Err(err) if is_rpc_method_not_found(&err) => match anvil_tempo_hardfork(provider).await {
+            Ok(Some(hardfork)) => Ok(hardfork),
+            _ => Err(err.into()),
+        },
         Err(err) => Err(err.into()),
     }
 }
@@ -227,21 +237,18 @@ pub(crate) async fn ensure_tempo_precompile_active<P: Provider<TempoNetwork>>(
     Ok(())
 }
 
-async fn anvil_tempo_hardfork_active<P: Provider<TempoNetwork>>(
+async fn anvil_tempo_hardfork<P: Provider<TempoNetwork>>(
     provider: &P,
-    hardfork: TempoHardfork,
-) -> Result<Option<bool>, TransportError> {
+) -> Result<Option<TempoHardfork>, TransportError> {
     let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await?;
-    Ok(active_from_anvil_node_info(&info, hardfork))
+    Ok(hardfork_from_anvil_node_info(&info))
 }
 
-fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) -> Option<bool> {
-    (info.network.as_deref() == Some("tempo")).then(|| {
-        info.hard_fork
-            .as_deref()
-            .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
-            .is_some_and(|active_hardfork| active_hardfork >= hardfork)
-    })
+fn hardfork_from_anvil_node_info(info: &AnvilNodeInfo) -> Option<TempoHardfork> {
+    if info.network.as_deref() != Some("tempo") {
+        return None;
+    }
+    info.hard_fork.as_deref()?.parse().ok()
 }
 
 /// Connector for reusing an already-configured RPC transport.
@@ -356,33 +363,61 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::ErrorPayload;
     use alloy_provider::{ProviderBuilder as AlloyProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
 
     #[tokio::test]
-    async fn tempo_fork_schedule_detects_t13_as_t3_active() {
+    async fn tempo_fork_schedule_detects_t3_activation() {
+        for (active, expected) in [("T2", false), ("T3", true), ("T13", true), ("T14", true)] {
+            let asserter = Asserter::new();
+            asserter.push_success(&serde_json::json!({ "active": active, "schedule": [] }));
+            let provider = AlloyProviderBuilder::new()
+                .network::<TempoNetwork>()
+                .connect_mocked_client(asserter);
+            assert_eq!(
+                is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tempo_fork_schedule_rejects_unknown_hardfork() {
         let asserter = Asserter::new();
-        asserter.push_success(&serde_json::json!({ "active": "T13" }));
+        asserter.push_success(&serde_json::json!({ "active": "FutureFork", "schedule": [] }));
         let provider =
             AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
-        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap());
+        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.is_err());
     }
 
     #[test]
-    fn active_from_anvil_node_info_requires_tempo_network() {
+    fn hardfork_from_anvil_node_info_requires_tempo_network() {
         let info = |network: &str, hard_fork: &str| AnvilNodeInfo {
             network: Some(network.to_string()),
             hard_fork: Some(hard_fork.to_string()),
         };
-        let tempo_t3 = info("tempo", "T3");
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T2), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
-        assert_eq!(
-            active_from_anvil_node_info(&info("tempo", "T11"), TempoHardfork::T11),
-            Some(true)
-        );
-        assert_eq!(active_from_anvil_node_info(&info("ethereum", "T3"), TempoHardfork::T3), None);
+        assert_eq!(hardfork_from_anvil_node_info(&info("tempo", "T3")), Some(TempoHardfork::T3));
+        assert_eq!(hardfork_from_anvil_node_info(&info("tempo", "T11")), Some(TempoHardfork::T11));
+        assert_eq!(hardfork_from_anvil_node_info(&info("tempo", "FutureFork")), None);
+        assert_eq!(hardfork_from_anvil_node_info(&info("ethereum", "T3")), None);
+    }
+
+    #[tokio::test]
+    async fn anvil_node_info_fallback_detects_hardfork_activation() {
+        let asserter = Asserter::new();
+        for _ in 0..2 {
+            asserter.push_failure(ErrorPayload {
+                code: -32601,
+                message: "Method not found".into(),
+                data: None,
+            });
+            asserter.push_success(&serde_json::json!({ "network": "tempo", "hardFork": "T3" }));
+        }
+        let provider =
+            AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
+        assert!(is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap());
+        assert!(!is_tempo_hardfork_active(&provider, TempoHardfork::T4).await.unwrap());
     }
 
     #[tokio::test]
@@ -391,19 +426,15 @@ mod tests {
         let provider =
             AlloyProviderBuilder::new().network::<TempoNetwork>().connect_mocked_client(asserter);
         let payer = Address::repeat_byte(0x11);
-        let chain = Chain::from_id(4217);
         let mut tx = <TempoNetwork as Network>::TransactionRequest::default();
         tx.set_gas_price(1);
 
-        apply_fee_payment(None, Some(&provider), chain, &mut tx, payer).await.unwrap();
+        apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap();
         assert!(tx.fee_token().is_none());
 
         tx.set_fee_token(Address::repeat_byte(0x22));
         assert_eq!(
-            apply_fee_payment(None, Some(&provider), chain, &mut tx, payer)
-                .await
-                .unwrap_err()
-                .to_string(),
+            apply_fee_payment(None, Some(&provider), &mut tx, payer).await.unwrap_err().to_string(),
             "Tempo transaction options cannot be combined with a legacy transaction"
         );
     }

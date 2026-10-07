@@ -1,4 +1,5 @@
 use eyre::Result;
+use foundry_common::fs::canonicalize_path;
 use foundry_compilers::{
     CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{Source, Sources},
@@ -17,26 +18,6 @@ use std::{
 use path_slash::PathExt as _;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt as _;
-
-/// Configures a [`ParsingContext`] from [`Config`].
-///
-/// - Configures include paths, remappings
-/// - Source files are added if `add_source_file` is set
-/// - If no `project` is provided, it will spin up a new ephemeral project.
-/// - If no `target_paths` are provided, all project files are processed.
-/// - Only processes the subset of sources with the most up-to-date Solidity version.
-pub fn configure_pcx(
-    pcx: &mut ParsingContext<'_>,
-    config: &Config,
-    project: Option<&Project>,
-    target_paths: Option<&[PathBuf]>,
-) -> Result<()> {
-    let status = configure_pcx_with_sources(pcx, config, project, target_paths, false)?;
-    if !status.has_compatible_sources && !status.has_unsupported_sources {
-        eyre::bail!("no Solidity sources");
-    }
-    Ok(())
-}
 
 /// Describes the Solidity sources encountered while configuring Solar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,7 +80,7 @@ fn configure_pcx_with_sources(
         Some(targets) => {
             let mut sources = Sources::new();
             for t in targets {
-                let path = dunce::canonicalize(t)?;
+                let path = canonicalize_path(t)?;
                 let source = Source::read(&path)?;
                 sources.insert(path, source);
             }
@@ -199,7 +180,7 @@ pub fn get_solar_sources_from_compile_output(
     {
         let mut source_paths = HashSet::new();
         for path in targets.iter().filter_map(|path| {
-            is_solidity_file(path).then(|| dunce::canonicalize(path).ok()).flatten()
+            is_solidity_file(path).then(|| canonicalize_path(path).ok()).flatten()
         }) {
             if source_paths.insert(path.clone()) {
                 // `imports` already includes transitive dependencies.
@@ -230,7 +211,7 @@ pub fn get_solar_sources_from_compile_output(
     let (version, sources) = {
         let (mut max_version, mut sources) = (MIN_SOLIDITY_VERSION, Sources::new());
         for (id, _) in output.artifact_ids() {
-            if let Ok(path) = dunce::canonicalize(&id.source)
+            if let Ok(path) = canonicalize_path(&id.source)
                 && source_paths.remove(&path)
             {
                 if id.version < MIN_SOLIDITY_VERSION {
