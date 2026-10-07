@@ -416,6 +416,9 @@ pub trait Db:
     /// Returns `true` if the state snapshot was reverted.
     fn revert_state(&mut self, state_snapshot: U256, action: RevertStateSnapshotAction) -> bool;
 
+    /// Deletes a state snapshot without reverting it.
+    fn delete_state_snapshot(&mut self, state_snapshot: U256) -> bool;
+
     /// Returns the state root if possible to compute
     fn maybe_state_root(&self) -> Option<B256> {
         None
@@ -468,6 +471,10 @@ where
         false
     }
 
+    fn delete_state_snapshot(&mut self, _state_snapshot: U256) -> bool {
+        false
+    }
+
     fn maybe_state_root(&self) -> Option<B256> {
         self.maybe_full_db().map(|accounts| crate::mem::state::state_root(&accounts))
     }
@@ -489,7 +496,7 @@ impl<T: MaybeFullDatabase> MaybeFullDatabase for CacheDB<T> {
                 accounts.remove(address);
                 continue;
             }
-            if overlay.account_state == AccountState::StorageCleared {
+            if overlay.account_state.is_storage_cleared() {
                 accounts.insert(*address, overlay.clone());
                 continue;
             }

@@ -1842,7 +1842,7 @@ async fn safe_simulation_call_target_checks_origin_and_sender(cmd: _) {
         "733c44cdddb6a900fa2b585dd299e03d12fa4293bc321415604157730000000000000000000000000000000000000000331415604157325f523360205260405ff35b5f5ffd"
     );
     target_code[28..48].copy_from_slice(safe.as_slice());
-    api.anvil_set_code(target, Bytes::from(target_code)).await.unwrap();
+    api.anvil_set_code(target, target_code.into()).await.unwrap();
 
     let safe_contract = TestSafe::new(safe, &provider);
     let safe_tx_hash = safe_contract

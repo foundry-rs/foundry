@@ -675,6 +675,52 @@ impl RevertParameters for ExpectedRevert {
     }
 }
 
+impl ExpectedRevert {
+    /// Returns whether a call ending at `depth`, at or above the expectation's depth, consumes
+    /// this expectation.
+    ///
+    /// With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but it must not
+    /// be consumed by external calls that succeed (e.g. calls to non-contract addresses that
+    /// return `Stop` before Solidity's own revert).
+    pub(crate) const fn needs_processing(
+        &self,
+        cheatcode_call: bool,
+        call_failed: bool,
+        depth: usize,
+        internal_expect_revert: bool,
+    ) -> bool {
+        let went_deeper = self.max_depth > self.depth;
+        match self.kind {
+            ExpectedRevertKind::Default => {
+                // Cheatcode reverts propagate up; let the outer frame catch them.
+                if cheatcode_call {
+                    return false;
+                }
+                // Any failure satisfies the expectation.
+                if call_failed {
+                    return true;
+                }
+                // Traditional expectRevert: succeeded external call went deeper.
+                if !internal_expect_revert && went_deeper {
+                    return true;
+                }
+                // Test function returned: catch dangling expectations.
+                if depth == 0 {
+                    return true;
+                }
+                // Same-depth success with internal mode off is an error; with it on,
+                // keep waiting for the actual revert.
+                !internal_expect_revert
+            }
+            // `pending_processing == true` means we're in the `call_end` hook for
+            // `vm.expectCheatcodeRevert` and shouldn't expect a revert here.
+            ExpectedRevertKind::Cheatcode { pending_processing } => {
+                cheatcode_call && !pending_processing
+            }
+        }
+    }
+}
+
 /// Handles expected calls specified by the `expectCall` cheatcodes.
 ///
 /// It can handle calls in two ways:
@@ -950,6 +996,35 @@ fn expect_safe_memory<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+/// Removes the first create expectation matched by a completed create.
+///
+/// `create_scheme` is only called for expectations with a matching deployer.
+pub(crate) fn observe_create(
+    expected_creates: &mut Vec<ExpectedCreate>,
+    deployer: Address,
+    create_scheme: impl Fn() -> CreateScheme,
+    bytecode: &Bytes,
+) {
+    if let Some((index, _)) = expected_creates.iter().find_position(|expected_create| {
+        expected_create.deployer == deployer
+            && expected_create.create_scheme.eq(create_scheme())
+            && expected_create.bytecode == *bytecode
+    }) {
+        expected_creates.swap_remove(index);
+    }
+}
+
+/// Returns the failure message for the first unmet create expectation, if any.
+pub(crate) fn first_unmet_create(expected_creates: &[ExpectedCreate]) -> Option<String> {
+    let expected_create = expected_creates.first()?;
+    Some(format!(
+        "expected {} call by address {} for bytecode {} but not found",
+        expected_create.create_scheme,
+        hex::encode_prefixed(expected_create.deployer),
+        hex::encode_prefixed(&expected_create.bytecode),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1185,5 +1260,39 @@ mod tests {
             "expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 \
              to be called 1 time, but was called 0 times"
         );
+    }
+
+    #[test]
+    fn observe_create_converts_the_scheme_only_for_a_matching_deployer() {
+        let bytecode = bytes!("6080");
+        let mut expected_creates = vec![ExpectedCreate {
+            deployer: Address::ZERO,
+            bytecode: bytecode.clone(),
+            create_scheme: CreateScheme::Create,
+        }];
+
+        observe_create(&mut expected_creates, TARGET, || unreachable!(), &bytecode);
+        assert_eq!(expected_creates.len(), 1);
+
+        observe_create(&mut expected_creates, Address::ZERO, || CreateScheme::Create, &bytecode);
+        assert!(expected_creates.is_empty());
+    }
+
+    #[test]
+    fn internal_expect_revert_waits_for_failure_before_root() {
+        let expected_revert = ExpectedRevert {
+            reason: None,
+            depth: 1,
+            kind: ExpectedRevertKind::Default,
+            partial_match: false,
+            reverter: None,
+            reverted_by: None,
+            max_depth: 1,
+            count: 1,
+            actual_count: 0,
+        };
+
+        assert!(expected_revert.needs_processing(false, true, 1, true));
+        assert!(!expected_revert.needs_processing(false, false, 1, true));
     }
 }

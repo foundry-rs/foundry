@@ -41,7 +41,7 @@ const PRIVATE_KEY_SIGNER_CACHE_LIMIT: usize = 64;
 impl Cheatcode for createWallet_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { walletLabel } = self;
-        create_wallet(&U256::from_be_bytes(keccak256(walletLabel).0), Some(walletLabel), state)
+        create_wallet(&keccak256(walletLabel).into(), Some(walletLabel), state)
     }
 }
 

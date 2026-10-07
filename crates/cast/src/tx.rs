@@ -154,10 +154,20 @@ impl SenderKind<'_> {
 
     /// Resolves the sender from the wallet options.
     ///
-    /// Prefers a configured signer (or Tempo wallet account) over `from`, and falls back to the
-    /// zero address when neither is available.
-    pub async fn from_wallet_opts(mut opts: WalletOpts) -> Result<Self> {
+    /// Returns `from` when set, unless a Tempo access key is set or an address-based authorization
+    /// needs a signer. Otherwise returns the configured signer (or Tempo wallet account), falling
+    /// back to the zero address.
+    pub async fn from_wallet_opts(
+        mut opts: WalletOpts,
+        authorizations: &[CliAuthorizationList],
+    ) -> Result<Self> {
         let from = opts.from.take();
+        if let Some(from) = from
+            && opts.tempo_access_key.is_none()
+            && !authorizations.iter().any(|auth| matches!(auth, CliAuthorizationList::Address(_)))
+        {
+            return Ok(from.into());
+        }
         let (signer, tempo_wallet) = opts.maybe_signer().await?;
         Ok(if let Some(signer) = signer {
             signer.into()
@@ -201,17 +211,17 @@ impl From<WalletSigner> for SenderKind<'_> {
 pub(crate) async fn read_only_sender<N: Network>(
     browser: &BrowserWalletOpts,
     wallet: WalletOpts,
-    tempo: &TempoOpts,
+    tx: &TransactionOpts,
     chain_id: u64,
 ) -> Result<(SenderKind<'static>, bool)> {
-    crate::tempo::ensure_session_not_browser(tempo, browser.browser)?;
-    if let Some(session) = tempo.session_signer_for_wallet(&wallet, chain_id)? {
+    crate::tempo::ensure_session_not_browser(&tx.tempo, browser.browser)?;
+    if let Some(session) = tx.tempo.session_signer_for_wallet(&wallet, chain_id)? {
         return Ok((session.access_key.account().into(), false));
     }
 
     Ok(match browser.run::<N>().await? {
         Some(browser) => (browser.address().into(), true),
-        None => (SenderKind::from_wallet_opts(wallet).await?, false),
+        None => (SenderKind::from_wallet_opts(wallet, &tx.auth).await?, false),
     })
 }
 

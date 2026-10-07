@@ -131,7 +131,7 @@ async fn bsc_haber_p256_is_available_for_calls_and_mining() {
     }
 
     let caller = Address::random();
-    api.anvil_set_code(caller, (&P256_CALLER_CODE).into()).await.unwrap();
+    api.anvil_set_code(caller, P256_CALLER_CODE.into()).await.unwrap();
     let from = handle.dev_accounts().next().unwrap();
     let receipt = provider
         .send_transaction(

@@ -482,6 +482,10 @@ impl Db for StateRootDb {
         reverted
     }
 
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        Db::delete_state_snapshot(&mut self.inner, id)
+    }
+
     fn maybe_state_root(&self) -> Option<B256> {
         Some(self.state_root.lock().root(&self.inner.inner.cache.accounts))
     }
@@ -624,6 +628,10 @@ impl Db for MemDb {
         }
     }
 
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.state_snapshots.remove_at(id).is_some()
+    }
+
     fn maybe_state_root(&self) -> Option<B256> {
         Some(state_root(&self.inner.cache.accounts))
     }
@@ -759,7 +767,7 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: U256::from(100100),
-                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
+                code: contract_code.original_bytes(),
                 nonce: 100,
                 storage: new_storage,
             },
