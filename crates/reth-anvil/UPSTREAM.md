@@ -6,8 +6,9 @@ hook for a piece of that behaviour, this crate carries a copy or a workaround. T
 one, the reth change that would replace it, and what it costs here, so the upstream work has a
 ready list and the crate shrinks as hooks land.
 
-Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is about 10k, with about
-1.6k of that in the items below. The target is to delete `crates/anvil` and end up net negative.
+Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is about 11.6k plus
+2.9k of tests, with about 3.4k of the 11.6k in the items below. The target is to delete
+`crates/anvil` and end up net negative.
 
 ## Workarounds and the hooks that remove them
 

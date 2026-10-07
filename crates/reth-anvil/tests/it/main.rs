@@ -2480,3 +2480,27 @@ async fn console_log_calls_are_decoded_in_mined_transactions() -> Result<()> {
     assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
     Ok(())
 }
+
+#[tokio::test]
+async fn min_gas_price_drives_the_gas_price_before_london() -> Result<()> {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Berlin.into()))
+        .with_gas_price(Some(3_000_000_000));
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+    let gas_price: U256 = client.request("eth_gasPrice", rpc_params![]).await?;
+    assert_eq!(gas_price, U256::from(3_000_000_000u64));
+    client
+        .request::<(), _>("anvil_setMinGasPrice", rpc_params![U256::from(5_000_000_000u64)])
+        .await?;
+    let gas_price: U256 = client.request("eth_gasPrice", rpc_params![]).await?;
+    assert_eq!(gas_price, U256::from(5_000_000_000u64));
+
+    // After London, the base fee rules and the setter is rejected.
+    let (_api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let error = client
+        .request::<(), _>("anvil_setMinGasPrice", rpc_params![U256::from(5_000_000_000u64)])
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("EIP-1559"), "{error}");
+    Ok(())
+}

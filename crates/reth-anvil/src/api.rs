@@ -319,8 +319,8 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
     #[method(name = "networkId")]
     async fn eth_network_id(&self) -> RpcResult<Option<String>>;
 
-    /// Returns the gas price: the base fee plus the suggested tip, or the base fee alone when the
-    /// minimum priority fee is disabled, as anvil does.
+    /// Returns the gas price: the base fee plus the suggested tip, the base fee alone when the
+    /// minimum priority fee is disabled, or the node's gas price before London, as anvil does.
     #[method(name = "gasPrice")]
     async fn eth_gas_price(&self) -> RpcResult<U256>;
 }
@@ -833,13 +833,14 @@ where
         fork.set_rpc_url(url).map_err(|error| internal_error(error.to_string()))
     }
 
-    async fn anvil_set_min_gas_price(&self, _gas_price: U256) -> RpcResult<()> {
+    async fn anvil_set_min_gas_price(&self, gas_price: U256) -> RpcResult<()> {
         if self.chain_spec.is_london_active_at_block(0) {
             return Err(invalid_params(
                 "anvil_setMinGasPrice is not supported when EIP-1559 is active",
             ));
         }
-        Err(internal_error("anvil_setMinGasPrice is not supported yet before EIP-1559"))
+        self.block_env.set_gas_price(gas_price.saturating_to());
+        Ok(())
     }
 
     async fn anvil_set_logging_enabled(&self, enabled: bool) -> RpcResult<()> {
@@ -1239,13 +1240,13 @@ where
     }
 
     async fn eth_gas_price(&self) -> RpcResult<U256> {
-        if !self.min_priority_fee_enforced
-            && let Some(base_fee) =
-                self.sealed_header(self.best_block_number()?)?.base_fee_per_gas()
-        {
-            return Ok(U256::from(base_fee));
+        let base_fee = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas();
+        match base_fee {
+            // Before London, the node's gas price, as `anvil_setMinGasPrice` sets it.
+            None if let Some(gas_price) = self.block_env.gas_price() => Ok(U256::from(gas_price)),
+            Some(base_fee) if !self.min_priority_fee_enforced => Ok(U256::from(base_fee)),
+            _ => EthApiServer::gas_price(&self.eth).await,
         }
-        EthApiServer::gas_price(&self.eth).await
     }
 
     async fn eth_send_unsigned_transaction(

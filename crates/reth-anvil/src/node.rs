@@ -397,6 +397,7 @@ async fn launch_node<Net: AnvilNetwork>(
         block_env.set_gas_limit(gas_limit);
     }
     block_env.set_max_transactions(Some(config.max_transactions));
+    block_env.set_gas_price(config.get_gas_price());
     let anvil_state = AnvilState::shared();
     let snapshots = SnapshotManager::default();
     let logging = LoggingState::new(!config.silent);
