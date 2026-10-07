@@ -636,9 +636,15 @@ Error: generator failed in round 3 (exit status: 3): generator quota exceeded
 fn properties_check_reports_candidate_result(prj: _, cmd: _) {
     // Candidate checks run in a copy of the project; inherited config and negative filters must
     // still apply as in the project, and must not hide generated tests.
-    fs::write(prj.root().join("base.toml"), "[profile.default]\nremappings = [\"fee/=src/\"]\n")
-        .unwrap();
+    fs::write(
+        prj.root().join("base.toml"),
+        "[profile.default]\nremappings = [\"fee/=contracts/\"]\n",
+    )
+    .unwrap();
+    // A source directory other than `src` checks that library remappings, such as forge-std's,
+    // keep resolving in the copy.
     prj.update_config(|config| {
+        config.src = "contracts".into();
         config.test_pattern_inverse = Some(regex::Regex::new(r"^testHidden\w*").unwrap().into());
     });
     let foundry_toml = prj.root().join("foundry.toml");
@@ -660,6 +666,8 @@ library Fee {
 }
 "#,
     );
+    fs::create_dir_all(prj.root().join("contracts")).unwrap();
+    fs::rename(prj.root().join("src/Fee.sol"), prj.root().join("contracts/Fee.sol")).unwrap();
     let candidate = |content: &str| {
         serde_json::json!({
             "schema": "foundry/properties-candidate-v1",
@@ -687,7 +695,7 @@ library Fee {
     fs::write(
         prj.root().join("extra.json"),
         candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testHiddenRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testHiddenRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
         ),
     )
     .unwrap();
@@ -695,14 +703,14 @@ library Fee {
     fs::write(
         prj.root().join("invariants.json"),
         candidate(
-            "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeHandler {\n    uint256 public total;\n    function add(uint256 amount) public {\n        total += Fee.fee(amount % 1e30);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract FeeInvariantTest is Test {\n    FeeHandler internal handler;\n    function setUp() public {\n        handler = new FeeHandler();\n        targetContract(address(handler));\n    }\n    function invariant_totalFitsSupply() public view {\n        assertLe(handler.total(), 1e30);\n    }\n    function invariant_totalStaysZero() public view {\n        assertEq(handler.total(), 0);\n    }\n}\n",
+            "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeHandler {\n    uint256 public total;\n    function add(uint256 amount) public {\n        total += Fee.fee(amount % 1e30);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract FeeInvariantTest is Test {\n    FeeHandler internal handler;\n    function setUp() public {\n        handler = new FeeHandler();\n        targetContract(address(handler));\n    }\n    function invariant_totalFitsSupply() public view {\n        assertLe(handler.total(), 1e30);\n    }\n    function invariant_totalStaysZero() public view {\n        assertEq(handler.total(), 0);\n    }\n}\n",
         ),
     )
     .unwrap();
     fs::write(
         prj.root().join("seeded.json"),
         candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz.seed = \"0x3\"\n    function testFuzzFee(uint256 amount) public pure {\n        require(Fee.fee(amount) <= amount);\n    }\n}\n",
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../contracts/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz.seed = \"0x3\"\n    function testFuzzFee(uint256 amount) public pure {\n        require(Fee.fee(amount) <= amount);\n    }\n}\n",
         ),
     )
     .unwrap();

@@ -852,6 +852,7 @@ fn candidate_workspace(
 ) -> Result<TempDir> {
     let candidate_workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
     workspace::copy_project(config, candidate_workspace.path())?;
+    point_extends_at_project(config, candidate_workspace.path())?;
     // Mutation testing copies this workspace again. Materialize project-local library and
     // dependency symlinks (`copy_project` links `node_modules` and `dependencies` even when
     // they are not in `libs`) so that nested copy cannot escape back to the source project.
@@ -900,6 +901,44 @@ fn candidate_workspace(
         fs::write(path, &file.content)?;
     }
     Ok(candidate_workspace)
+}
+
+/// Makes `extends` in the workspace's `foundry.toml` point at the project's base files.
+///
+/// `extends` resolves next to `foundry.toml`, and `copy_project` copies only that file.
+fn point_extends_at_project(config: &Config, workspace: &Path) -> Result<()> {
+    let path = workspace.join(Config::FILE_NAME);
+    let Ok(source) = fs::read_to_string(&path) else { return Ok(()) };
+    let mut document = source.parse::<toml_edit::DocumentMut>()?;
+    let mut changed = false;
+    let profiles = document.get_mut("profile").and_then(|profiles| profiles.as_table_like_mut());
+    for (_, profile) in profiles.into_iter().flat_map(|profiles| profiles.iter_mut()) {
+        let Some(extends) =
+            profile.as_table_like_mut().and_then(|profile| profile.get_mut("extends"))
+        else {
+            continue;
+        };
+        let base = extends.as_str().or_else(|| {
+            extends
+                .as_table_like()
+                .and_then(|table| table.get("path"))
+                .and_then(|path| path.as_str())
+        });
+        let Some(base) = base.map(|base| config.root.join(base).to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        if extends.is_str() {
+            *extends = toml_edit::value(base);
+        } else if let Some(table) = extends.as_table_like_mut() {
+            table.insert("path", toml_edit::value(base));
+        }
+        changed = true;
+    }
+    if changed {
+        fs::write(&path, document.to_string())?;
+    }
+    Ok(())
 }
 
 /// Returns every test result in Forge's JSON output, with one result per invariant predicate of a
@@ -1366,14 +1405,6 @@ fn forge_command(forge: &Path, config: &Config, workspace: &Path, seed: &U256) -
         .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"))
         // Internal runs must not replace the project's own `--rerun` state.
         .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"));
-    // Read the project's own config file, so `extends` resolves next to it, not in the copy.
-    let config_file = config.root.join(Config::FILE_NAME);
-    if workspace != config.root
-        && std::env::var_os("FOUNDRY_CONFIG").is_none()
-        && config_file.is_file()
-    {
-        command.env("FOUNDRY_CONFIG", config_file);
-    }
     command
 }
 
