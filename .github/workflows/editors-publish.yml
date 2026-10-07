@@ -46,8 +46,8 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
       - name: Publish to the Visual Studio Marketplace
-        run: npx vsce publish --packagePath bundle/solar-lsp.vsix --azure-credential $PRE_RELEASE
+        run: npx vsce publish --packagePath bundle/solar-lsp.vsix --azure-credential ${PRE_RELEASE:+"$PRE_RELEASE"}
       - name: Publish to Open VSX
-        run: npx ovsx publish bundle/solar-lsp.vsix $PRE_RELEASE
+        run: npx ovsx publish bundle/solar-lsp.vsix ${PRE_RELEASE:+"$PRE_RELEASE"}
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
