@@ -1942,7 +1942,7 @@ mod tests {
             }],
         );
         node.calldata = Bytes::from(calldata);
-        node.returndata = Bytes::from(abi_word(U256::from(123)));
+        node.returndata = abi_word(U256::from(123)).into();
         let mut context = context_with_arena(vec![node]);
         let mut tui = TUIContext::new(&mut context);
         tui.current_step = 1;
@@ -1959,7 +1959,7 @@ mod tests {
         calldata.extend_from_slice(&super::function_selector(&scope.function_name, &types));
         let mut node = debug_node(0, 0, vec![trace_step(Vec::new()), trace_step(Vec::new())]);
         node.calldata = Bytes::from(calldata);
-        node.returndata = Bytes::from(abi_word(U256::from(123)));
+        node.returndata = abi_word(U256::from(123)).into();
         let mut context = context_with_arena(vec![node]);
         let mut tui = TUIContext::new(&mut context);
 

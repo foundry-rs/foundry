@@ -925,7 +925,7 @@ async fn test_block_traces_reject_pending() {
     let provider = handle.http_provider();
     api.mine_one().await.unwrap();
 
-    let pending = BlockId::Number(BlockNumberOrTag::Pending);
+    let pending = BlockId::pending();
     let error = provider.trace_block(pending).await.unwrap_err();
     assert_eq!(error.as_error_resp().unwrap().code, -32602);
     let error = provider.trace_replay_block_transactions(pending).await.unwrap_err();
@@ -2377,6 +2377,39 @@ async fn test_trace_address_fork2() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_trace_get_rejects_integer_indices() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let tx = TransactionRequest::default()
+        .to(accounts[1].address())
+        .value(U256::from(1))
+        .from(accounts[0].address());
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let hash = receipt.transaction_hash;
+
+    let error = provider
+        .client()
+        .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, [0]))
+        .await
+        .unwrap_err();
+    assert_eq!(error.as_error_resp().unwrap().code, -32602);
+
+    // Quantity strings are accepted.
+    provider
+        .client()
+        .request::<_, Option<LocalizedTransactionTrace>>("trace_get", (hash, ["0x0"]))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
@@ -3273,7 +3306,7 @@ async fn test_debug_trace_block_without_history() {
                 Err(error) => TraceResult::Error { error: error.to_string(), tx_hash: Some(*hash) },
             };
             assert_eq!(
-                matches!(trace, TraceResult::Error { .. }),
+                trace.is_error(),
                 matches!(
                     options.tracer,
                     Some(GethDebugTracerType::BuiltInTracer(

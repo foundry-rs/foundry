@@ -2706,6 +2706,7 @@ mod tests {
         config.fork_urls.push("https://mirror.example/private-api-key?token=secret".to_string());
 
         let fork = api.backend.get_fork().unwrap();
+        let node_info = api.anvil_node_info().await.unwrap();
         let output = config.as_string(Some(&fork));
         let temp = tempfile::tempdir().unwrap();
         let config_out = temp.path().join("config.json");
@@ -2720,6 +2721,7 @@ mod tests {
         assert!(!output.contains("private-api-key"));
         assert!(!output.contains("secret"));
         assert_eq!(json["endpoint"], redact_url(&fork_url));
+        assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&fork_url)));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
     }

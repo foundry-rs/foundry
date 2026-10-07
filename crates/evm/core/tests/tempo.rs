@@ -121,7 +121,7 @@ where
 
 async fn primitive_tx(account: &PrivateKeySigner, tx: TempoTransaction) -> TempoTxEnv {
     let signature = account.sign_hash(&tx.signature_hash()).await.unwrap();
-    let envelope = TempoTxEnvelope::AA(tx.into_signed(TempoSignature::from(signature)));
+    let envelope = TempoTxEnvelope::AA(tx.into_signed(signature.into()));
     TempoTxEnv::from_recovered_tx(&envelope, account.address())
 }
 

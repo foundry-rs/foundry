@@ -153,7 +153,7 @@ mod tests {
         slots.record_hash(slot, key, root);
 
         assert!(slots.resolve(root).is_none());
-        assert!(slots.resolve(B256::from(U256::from_be_bytes(slot.0) + U256::ONE)).is_none());
+        assert!(slots.resolve(B256::from(Into::<U256>::into(slot) + U256::ONE)).is_none());
 
         slots.record_hash(root, key, slot);
         assert!(slots.resolve(slot).is_none());

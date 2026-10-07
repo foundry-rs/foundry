@@ -1404,8 +1404,8 @@ async fn test_fork_debug_trace_cache_includes_options() {
         .debug_trace_transaction(receipt.transaction_hash, call_tracer.clone())
         .await
         .unwrap();
-    assert!(matches!(default_trace, GethTrace::Default(_)));
-    assert!(matches!(call_trace, GethTrace::CallTracer(_)));
+    assert!(default_trace.is_default());
+    assert!(call_trace.is_call());
     assert_eq!(
         fork_provider
             .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())

@@ -3,6 +3,7 @@
 use super::*;
 use alloy_primitives::bytes;
 use alloy_signer::SignerSync;
+use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 
 // <https://github.com/foundry-rs/foundry/issues/2705>
 #[casttest]
@@ -699,4 +700,41 @@ Transaction successfully executed.
 ERC-8021 attribution: baseapp (app), privy (wallet), flashbots (service), titan (service)
 
 "#]]);
+}
+
+// The transaction returned by the RPC must be the one that was requested.
+#[casttest]
+async fn cast_run_rejects_mismatched_transaction(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let mut tx_hashes = Vec::new();
+    for to in [Address::with_last_byte(0xaa), Address::with_last_byte(0xbb)] {
+        let receipt = provider
+            .send_transaction(TransactionRequest::default().with_from(from).with_to(to).into())
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        tx_hashes.push(receipt.transaction_hash());
+    }
+    let [requested, returned] = tx_hashes[..] else { unreachable!() };
+    let returned_tx = provider.get_transaction_by_hash(returned).await.unwrap().unwrap();
+    let (endpoint, _) = spawn_rpc_proxy_canned_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        serde_json::to_value(returned_tx).unwrap(),
+    )
+    .await;
+
+    for args in [&[][..], &["--debug-trace-transaction"]] {
+        cmd.cast_fuse()
+            .args(["run", &requested.to_string(), "--rpc-url", &endpoint])
+            .args(args)
+            .assert_failure()
+            .stderr_eq(format!(
+                "Error: RPC returned transaction {returned} for requested {requested}\n"
+            ));
+    }
 }

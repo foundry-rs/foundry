@@ -10,7 +10,7 @@ use std::{
 
 use alloy_primitives::keccak256;
 use eyre::Result;
-use foundry_common::fs::canonicalize_path;
+use foundry_common::fs::{canonicalize_path, normalize_path};
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use foundry_config::{
     Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
@@ -42,22 +42,6 @@ pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
 fn resolve_against_root(root: &Path, path: &Path) -> PathBuf {
     let path = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     normalize_existing_ancestor(&path)
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
 
 /// Build a config for a copied temp workspace from an already materialized config.

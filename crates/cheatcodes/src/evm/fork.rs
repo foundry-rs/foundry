@@ -444,7 +444,6 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         evm_opts,
-        resolved: None,
     };
     Ok(fork)
 }
@@ -524,9 +523,7 @@ fn record_fork_roll<FEN: FoundryEvmNetwork>(
 ) {
     let active_fork_id = ccx.active_fork_id();
     let rolled_fork_id = target_fork_id.or(active_fork_id);
-    if let Some(overrides) = ccx.state.env_overrides.get_mut(&rolled_fork_id) {
-        overrides.implicit_basefee = None;
-    }
+    ccx.state.env_overrides.clear_implicit_basefee(rolled_fork_id);
     if target_fork_id.is_none() || target_fork_id == active_fork_id {
         ccx.state.fork_block_number_override = ccx.active_fork_block_number();
         ccx.state.commit_created_account_changes(active_fork_id);

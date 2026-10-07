@@ -10,7 +10,7 @@ use foundry_config::{Chain, NamedChain};
 use futures::StreamExt;
 use semver::Version;
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     process::Stdio,
@@ -492,25 +492,11 @@ fn compilation_input(input: &Value) -> Result<Value> {
     Ok(input)
 }
 
-fn canonicalize(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => {
-            let mut keys = object.keys().collect::<Vec<_>>();
-            keys.sort_unstable();
-            Value::Object(
-                keys.into_iter()
-                    .map(|key| (key.clone(), canonicalize(&object[key])))
-                    .collect::<Map<_, _>>(),
-            )
-        }
-        Value::Array(values) => Value::Array(values.iter().map(canonicalize).collect()),
-        value => value.clone(),
-    }
-}
-
 fn fingerprint(input: &Value) -> Result<String> {
     validate_input(input)?;
-    Ok(keccak256(serde_json::to_vec(&canonicalize(input))?).to_string())
+    let mut input = input.clone();
+    input.sort_all_objects();
+    Ok(keccak256(serde_json::to_vec(&input)?).to_string())
 }
 
 fn compiler_matches(requested: &Version, actual: &Version) -> bool {

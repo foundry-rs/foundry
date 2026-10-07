@@ -28,6 +28,12 @@ enum ResponseMutation {
         replacement: String,
         lookups: Arc<AtomicUsize>,
     },
+    /// Reports a different transaction hash on the second lookup of `tx_hash`.
+    RefetchedTransactionHash {
+        tx_hash: String,
+        replacement: String,
+        lookups: Arc<AtomicUsize>,
+    },
     MissingTransactionBlock {
         block_hash: String,
     },
@@ -159,6 +165,15 @@ fn mutate_rpc_result(request: &Value, response: &mut Value, mutation: &ResponseM
         } else if let Some(frame) = response.get_mut("result") {
             camel_case_call_types(frame);
         }
+        return;
+    }
+
+    if let ResponseMutation::RefetchedTransactionHash { tx_hash, replacement, lookups } = mutation
+        && method == "eth_getTransactionByHash"
+        && requested_target.is_some_and(|target| target.eq_ignore_ascii_case(tx_hash))
+        && lookups.fetch_add(1, Ordering::Relaxed) == 1
+    {
+        response["result"]["hash"] = json!(replacement);
         return;
     }
 
@@ -605,4 +620,26 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+}
+
+#[casttest]
+async fn cast_run_remote_trace_rejects_refetched_transaction_hash_mismatch(cmd: _) {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let (tx_hash, _, _) = send_identity_transaction(&handle).await;
+    let replacement = B256::repeat_byte(0xcc);
+    let (endpoint, _) = spawn_recording_rpc_proxy(
+        handle.http_endpoint(),
+        ResponseMutation::RefetchedTransactionHash {
+            tx_hash: tx_hash.to_string(),
+            replacement: replacement.to_string(),
+            lookups: Arc::new(AtomicUsize::new(0)),
+        },
+    )
+    .await;
+
+    cmd.args(["run", "--debug-trace-transaction", &tx_hash.to_string(), "--rpc-url", &endpoint])
+        .assert_failure()
+        .stderr_eq(format!(
+            "Error: RPC returned transaction {replacement} for requested {tx_hash}\n"
+        ));
 }

@@ -1920,6 +1920,11 @@ mod tests {
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
+    #[cfg(feature = "monad")]
+    use monad_revm::{
+        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
+        staking::interface::IMonadStaking::getEpochCall,
+    };
     use std::borrow::Cow;
     use tempo_precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,
@@ -3458,7 +3463,7 @@ mod tests {
     async fn test_decodes_monad_staking_precompile_call() {
         let trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
-            data: (&getEpochCall::SELECTOR).into(),
+            data: getEpochCall::SELECTOR.into(),
             output:
                 monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
                     &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
@@ -3508,7 +3513,7 @@ mod tests {
     async fn test_decodes_monad_reserve_balance_precompile_call() {
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: (&dippedIntoReserveCall::SELECTOR).into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3570,7 +3575,7 @@ mod tests {
 
         let staking_trace = CallTrace {
             address: monad_revm::staking::STAKING_ADDRESS,
-            data: (&getEpochCall::SELECTOR).into(),
+            data: getEpochCall::SELECTOR.into(),
             output:
                 monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
                     &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
@@ -3590,7 +3595,7 @@ mod tests {
 
         let reserve_trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: (&dippedIntoReserveCall::SELECTOR).into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3646,7 +3651,7 @@ mod tests {
 
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: (&dippedIntoReserveCall::SELECTOR).into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -3678,7 +3683,7 @@ mod tests {
     async fn test_monad_metadata_refreshes_across_hardforks() {
         let trace = CallTrace {
             address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-            data: (&dippedIntoReserveCall::SELECTOR).into(),
+            data: dippedIntoReserveCall::SELECTOR.into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()

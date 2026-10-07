@@ -573,13 +573,11 @@ fn normalize_sol_type(t: &str) -> String {
     let mut out = String::with_capacity(len + 8);
     let mut i = 0;
     while i < len {
-        if bytes[i..].starts_with(b"uint")
-            && !bytes.get(i + 4).copied().is_some_and(|b| b.is_ascii_digit())
-        {
+        if bytes[i..].starts_with(b"uint") && !bytes.get(i + 4).is_some_and(u8::is_ascii_digit) {
             out.push_str("uint256");
             i += 4;
         } else if bytes[i..].starts_with(b"int")
-            && !bytes.get(i + 3).copied().is_some_and(|b| b.is_ascii_digit())
+            && !bytes.get(i + 3).is_some_and(u8::is_ascii_digit)
         {
             out.push_str("int256");
             i += 3;

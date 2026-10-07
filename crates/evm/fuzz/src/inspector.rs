@@ -185,7 +185,7 @@ impl Fuzzer {
 
     #[inline]
     const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
-        self.record_calls && self.call_depth > 1 && matches!(scheme, CallScheme::Call)
+        self.record_calls && self.call_depth > 1 && scheme.is_call()
     }
 
     #[inline]
@@ -241,7 +241,7 @@ impl Fuzzer {
         // 1. EtherStore pattern: handler sends ETH out, attacker reenters handler
         // 2. Rari pattern: external protocol sends ETH to handler, handler reenters protocol
         if call.transfer_from() == call_generator.test_address
-            || call.scheme != CallScheme::Call
+            || !call.scheme.is_call()
             || call_generator.override_depth > 0
             || target_is_cheatcode
         {

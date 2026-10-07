@@ -982,7 +982,7 @@ fn new_keystores(
             }
             sh_status!("Address:    {address}")?;
             if shell::verbosity() > 0 {
-                sh_status!("Public key: 0x{}", hex::encode(wallet.public_key()))?;
+                sh_status!("Public key: {}", hex::encode_prefixed(wallet.public_key()))?;
             }
             // The machine-readable stdout record duplicates the prose above when stdout is an
             // interactive terminal.
@@ -1012,7 +1012,7 @@ fn new_keypairs(number: u32) -> Result<Vec<Value>> {
             sh_status!("Successfully created new keypair.")?;
             sh_status!("Address:     {address}")?;
             if shell::verbosity() > 0 {
-                sh_status!("Public key:  0x{}", hex::encode(wallet.public_key()))?;
+                sh_status!("Public key:  {}", hex::encode_prefixed(wallet.public_key()))?;
             }
             sh_status!("Private key: {private_key}")?;
             // The machine-readable stdout record duplicates the prose above when stdout is an

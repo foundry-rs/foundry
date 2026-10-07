@@ -1028,7 +1028,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         } else {
             let worker_id = worker_id as u32;
             let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-            U256::from_be_bytes(keccak256(seed_data).0)
+            keccak256(seed_data).into()
         }
     }
 

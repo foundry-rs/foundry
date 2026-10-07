@@ -2366,7 +2366,7 @@ mod tests {
                 },
             )]),
         }));
-        let data_slot = U256::from_be_bytes(keccak256(B256::ZERO).0);
+        let data_slot = keccak256(B256::ZERO).into();
         let mut data_access = step(1);
         data_access.storage_change = Some(Box::new(StorageChange {
             key: data_slot,

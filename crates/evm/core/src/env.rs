@@ -1479,7 +1479,7 @@ mod tests {
             sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap(),
         );
         let signature = sender.sign_hash_sync(&tempo_tx.signature_hash()).unwrap();
-        let aa_signed = tempo_tx.into_signed(TempoSignature::from(signature));
+        let aa_signed = tempo_tx.into_signed(signature.into());
         let tx_hash = *aa_signed.hash();
         let unique_tx_identifier = aa_signed.expiring_nonce_hash(sender.address());
 
@@ -1490,7 +1490,7 @@ mod tests {
         );
         let any_tx: AnyRpcTransaction =
             serde_json::from_value(serde_json::to_value(&rpc_tx).unwrap()).unwrap();
-        assert!(matches!(&*any_tx.inner.inner, AnyTxEnvelope::Unknown(_)));
+        assert!((*any_tx.inner.inner).is_unknown());
 
         let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(tx_env.inner.tx_type, TEMPO_TX_TYPE_ID);
