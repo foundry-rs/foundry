@@ -545,9 +545,7 @@ fn transact<FEN: FoundryEvmNetwork>(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let context_update = super::without_snapshot_tracking(ccx, |ccx| {
-        executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)
-    })?;
+    let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
     #[cfg(not(feature = "monad"))]
     let _ = context_update;
     #[cfg(feature = "monad")]

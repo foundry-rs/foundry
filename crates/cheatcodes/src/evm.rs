@@ -1303,9 +1303,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
         let from = sender;
 
-        without_snapshot_tracking(ccx, |ccx| {
-            executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)
-        })?;
+        executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
         #[cfg(feature = "monad")]
         refresh_chain_journal(ccx.ecx);
 
@@ -1418,7 +1416,7 @@ impl Cheatcode for executeTransactionCall {
 
         let mut res = None;
         let mut cold_state = Some(cold_state);
-        let nested_evm_env = without_snapshot_tracking(ccx, |ccx| {
+        let nested_evm_env = {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
             executor.with_fresh_nested_evm(
                 ccx.state,
@@ -1434,7 +1432,7 @@ impl Cheatcode for executeTransactionCall {
                     Ok(())
                 },
             )
-        });
+        };
         let mut nested_evm_env = nested_evm_env?;
         let res = res.unwrap();
 
@@ -1672,19 +1670,6 @@ fn track_snapshot_restore<FEN: FoundryEvmNetwork>(
     if ccx.state.in_isolation_context {
         ccx.state.pending_isolated_snapshot_journal = Some(restored.journal.clone());
     }
-}
-
-/// Runs a fresh nested transaction with snapshot restoration tracking suspended. Its journal is
-/// independent of the enclosing one, so restorations made inside it must neither be unwound by
-/// nor adopted into enclosing frames.
-fn without_snapshot_tracking<FEN: FoundryEvmNetwork, R>(
-    ccx: &mut CheatsCtxt<'_, '_, FEN>,
-    f: impl FnOnce(&mut CheatsCtxt<'_, '_, FEN>) -> R,
-) -> R {
-    let track_isolated_snapshots = std::mem::take(&mut ccx.state.track_isolated_snapshots);
-    let res = f(ccx);
-    ccx.state.track_isolated_snapshots = track_isolated_snapshots;
-    res
 }
 
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(

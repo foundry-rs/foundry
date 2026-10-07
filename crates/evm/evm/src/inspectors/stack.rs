@@ -558,21 +558,23 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
-        let inherited_disable_fee_charge = evm_env.cfg_env.disable_fee_charge;
-        if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
-            evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
-        }
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = FEN::EvmFactory::default().create_nested_evm_with_inspector(
-            db,
-            evm_env,
-            &mut inspector,
-        );
-        *evm.chain_mut() = chain_context;
-        f(&mut *evm)?;
-        let mut evm_env = evm.to_evm_env();
-        evm_env.cfg_env.disable_fee_charge = inherited_disable_fee_charge;
-        Ok(evm_env)
+        self.with_snapshot_tracking(cheats, |inner, cheats| {
+            let inherited_disable_fee_charge = evm_env.cfg_env.disable_fee_charge;
+            if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {
+                evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
+            }
+            let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner };
+            let mut evm = FEN::EvmFactory::default().create_nested_evm_with_inspector(
+                db,
+                evm_env,
+                &mut inspector,
+            );
+            *evm.chain_mut() = chain_context;
+            f(&mut *evm)?;
+            let mut evm_env = evm.to_evm_env();
+            evm_env.cfg_env.disable_fee_charge = inherited_disable_fee_charge;
+            Ok(evm_env)
+        })
     }
 
     fn transact_on_db(
@@ -582,14 +584,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
-        let mut evm_env = ecx.evm_clone();
-        if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
-            evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
-        }
-        let outer_tx_env = ecx.tx_clone();
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, &mut inspector)
+        self.with_snapshot_tracking(cheats, |inner, cheats| {
+            let mut evm_env = ecx.evm_clone();
+            if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {
+                evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
+            }
+            let outer_tx_env = ecx.tx_clone();
+            let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner };
+            let (db, inner) = ecx.db_journal_inner_mut();
+            db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, &mut inspector)
+        })
     }
 
     fn transact_from_tx_on_db(
@@ -598,13 +602,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<()> {
-        let mut evm_env = ecx.evm_clone();
-        if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
-            evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
-        }
-        let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
+        self.with_snapshot_tracking(cheats, |inner, cheats| {
+            let mut evm_env = ecx.evm_clone();
+            if let Some(disable_fee_charge) = inner.outer_disable_fee_charge {
+                evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
+            }
+            let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner };
+            let (db, inner) = ecx.db_journal_inner_mut();
+            db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
+        })
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -2425,6 +2431,28 @@ impl InspectorStackInner {
         self.in_inner_context
             && self.inner_context_data.as_ref().is_some_and(|inner| depth == inner.root_depth)
     }
+
+    /// Gives a fresh transaction its own restore tracking, independent of the suspended parent.
+    fn with_snapshot_tracking<FEN: FoundryEvmNetwork, R>(
+        &mut self,
+        cheats: &mut Cheatcodes<FEN>,
+        f: impl FnOnce(&mut Self, &mut Cheatcodes<FEN>) -> R,
+    ) -> R {
+        let tracking = std::mem::replace(&mut cheats.track_isolated_snapshots, true);
+        let isolation = std::mem::replace(&mut cheats.in_isolation_context, false);
+        let capture = std::mem::replace(&mut cheats.capture_isolated_snapshot_restore, true);
+        let restores = std::mem::take(&mut cheats.isolated_snapshot_restores);
+        let pending = cheats.pending_isolated_snapshot_journal.take();
+        let frames = std::mem::take(&mut self.isolated_frame_checkpoints);
+        let result = f(self, cheats);
+        self.isolated_frame_checkpoints = frames;
+        cheats.pending_isolated_snapshot_journal = pending;
+        cheats.isolated_snapshot_restores = restores;
+        cheats.capture_isolated_snapshot_restore = capture;
+        cheats.in_isolation_context = isolation;
+        cheats.track_isolated_snapshots = tracking;
+        result
+    }
 }
 
 /// Derive the CREATE2 salt used by `--batch` CREATE rewrites.
@@ -2443,11 +2471,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Address, Fuzzer, InspectorStack, InspectorStackInner, OpcodeStepDispatch, RevertDiagnostic,
-        TraceRequirements, compute_batch_create_salt,
-    };
-    use foundry_evm_core::evm::EthEvmNetwork;
+    use super::*;
 
     #[test]
     fn opcode_dispatch_defaults_to_no_static_inspectors() {
@@ -2569,5 +2593,35 @@ mod tests {
         let addr_a = factory.create2_from_code(salt_a, init_code);
         let addr_b = factory.create2_from_code(salt_b, init_code);
         assert_ne!(addr_a, addr_b);
+    }
+
+    #[test]
+    fn fresh_snapshot_tracking_restores_parent_scope() {
+        for failed in [false, true] {
+            let mut inner = InspectorStackInner::default();
+            let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+            cheats.track_isolated_snapshots = true;
+            cheats.in_isolation_context = true;
+            cheats.isolated_snapshot_restores.push(JournaledState::default());
+            cheats.pending_isolated_snapshot_journal = Some(Vec::new());
+            let result = inner.with_snapshot_tracking(&mut cheats, |inner, cheats| {
+                assert!(cheats.track_isolated_snapshots);
+                assert!(!cheats.in_isolation_context);
+                assert!(cheats.capture_isolated_snapshot_restore);
+                assert!(cheats.isolated_snapshot_restores.is_empty());
+                assert!(cheats.pending_isolated_snapshot_journal.is_none());
+                assert!(inner.isolated_frame_checkpoints.is_empty());
+                cheats.isolated_snapshot_restores.push(JournaledState::default());
+                cheats.capture_isolated_snapshot_restore = false;
+                if failed { Err(()) } else { Ok(()) }
+            });
+            assert_eq!(result.is_err(), failed);
+            assert!(cheats.track_isolated_snapshots);
+            assert!(cheats.in_isolation_context);
+            assert!(!cheats.capture_isolated_snapshot_restore);
+            assert_eq!(cheats.isolated_snapshot_restores.len(), 1);
+            assert_eq!(cheats.pending_isolated_snapshot_journal, Some(Vec::new()));
+            assert!(inner.isolated_frame_checkpoints.is_empty());
+        }
     }
 }
