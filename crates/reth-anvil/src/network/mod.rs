@@ -9,6 +9,7 @@ use crate::{
     fork::{AnvilPrimitives, ForkOf},
     impersonation::ImpersonationState,
     logging::LoggingState,
+    pool::SharedTransactionOrder,
     provider::AnvilProvider,
     state::SharedAnvilState,
     time::AnvilPayloadAttributes,
@@ -67,6 +68,8 @@ pub struct AnvilComponents {
     pub block_env: BlockEnvOverrides,
     /// The anvil state writes.
     pub anvil_state: SharedAnvilState,
+    /// The transaction order of the pool.
+    pub order: SharedTransactionOrder,
     /// The node config.
     pub config: NodeConfig,
 }

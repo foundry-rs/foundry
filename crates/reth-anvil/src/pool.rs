@@ -4,7 +4,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{B256, Signature, U256};
 use eyre::Result;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use reth_ethereum::{
     TransactionSigned,
     chainspec::EthereumHardforks,
@@ -232,13 +232,35 @@ impl PoolTransactionError for BlobTransactionsUnsupported {
     }
 }
 
+/// The transaction order of the pool. It can change at runtime; the change applies to the
+/// transactions added from then on.
+#[derive(Clone, Debug)]
+pub struct SharedTransactionOrder(Arc<RwLock<TransactionOrder>>);
+
+impl SharedTransactionOrder {
+    /// Creates the shared order.
+    pub fn new(order: TransactionOrder) -> Self {
+        Self(Arc::new(RwLock::new(order)))
+    }
+
+    /// Returns the current order.
+    pub fn get(&self) -> TransactionOrder {
+        *self.0.read()
+    }
+
+    /// Sets the order.
+    pub fn set(&self, order: TransactionOrder) {
+        *self.0.write() = order;
+    }
+}
+
 /// Orders transactions by effective tip, or in order of arrival for `--order fifo`.
 ///
 /// The arrival order is the order in which the pool first asked for a transaction's priority. The
 /// bookkeeping is cleared when it grows large, which only reorders transactions still in the pool
 /// among themselves.
 pub struct AnvilOrdering<T> {
-    order: TransactionOrder,
+    order: SharedTransactionOrder,
     next: Arc<AtomicU64>,
     arrivals: Arc<Mutex<HashMap<B256, u64>>>,
     _tx: PhantomData<T>,
@@ -246,14 +268,14 @@ pub struct AnvilOrdering<T> {
 
 impl<T> Debug for AnvilOrdering<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnvilOrdering").field("order", &self.order).finish_non_exhaustive()
+        f.debug_struct("AnvilOrdering").field("order", &self.order.get()).finish_non_exhaustive()
     }
 }
 
 impl<T> Clone for AnvilOrdering<T> {
     fn clone(&self) -> Self {
         Self {
-            order: self.order,
+            order: self.order.clone(),
             next: self.next.clone(),
             arrivals: self.arrivals.clone(),
             _tx: PhantomData,
@@ -265,7 +287,7 @@ impl<T> AnvilOrdering<T> {
     const MAX_TRACKED_ARRIVALS: usize = 100_000;
 
     /// Creates the ordering.
-    pub fn new(order: TransactionOrder) -> Self {
+    pub fn new(order: SharedTransactionOrder) -> Self {
         Self {
             order,
             next: Arc::new(AtomicU64::new(0)),
@@ -283,7 +305,7 @@ where
     type Transaction = T;
 
     fn priority(&self, transaction: &Self::Transaction, base_fee: u64) -> Priority<u128> {
-        match self.order {
+        match self.order.get() {
             TransactionOrder::Fees => transaction.effective_tip_per_gas(base_fee).into(),
             TransactionOrder::Fifo => {
                 let mut arrivals = self.arrivals.lock();
@@ -349,7 +371,7 @@ pub struct AnvilPoolBuilder {
     /// The shared impersonation state.
     pub state: ImpersonationState,
     /// How the pool orders transactions.
-    pub order: TransactionOrder,
+    pub order: SharedTransactionOrder,
     /// The validation knobs.
     pub settings: PoolSettings,
 }

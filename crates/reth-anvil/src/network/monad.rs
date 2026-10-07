@@ -112,7 +112,7 @@ impl AnvilNetwork for Monad {
             .network(NoopNetworkBuilder::eth())
             .pool(AnvilPoolBuilder {
                 state: anvil.impersonation.clone(),
-                order: anvil.config.transaction_order,
+                order: anvil.order.clone(),
                 settings: PoolSettings {
                     balance_rule: if anvil.config.disable_pool_balance_checks {
                         BalanceRule::None

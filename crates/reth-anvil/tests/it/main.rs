@@ -2093,3 +2093,47 @@ async fn eth_resend_replaces_a_pending_transaction() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn fork_at_transaction_hash_replays_the_transactions_before_it() -> Result<()> {
+    // The origin mines three transfers in one block.
+    let (_origin_api, origin, origin_client) = spawn_with_client(NodeConfig::test()).await?;
+    origin_client.request::<(), _>("anvil_setAutomine", rpc_params![false]).await?;
+    let (sender, gas_price) = funder_and_gas_price(&origin_client).await?;
+    let mut hashes = Vec::new();
+    for nonce in 0..3u64 {
+        let tx =
+            transfer(sender, Address::repeat_byte(0x70 + nonce as u8), gas_price).with_nonce(nonce);
+        hashes
+            .push(origin_client.request::<B256, _>("eth_sendTransaction", rpc_params![tx]).await?);
+    }
+    origin_client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    let origin_block = get_block(&origin_client, "0x1").await?;
+    assert_eq!(origin_block["transactions"].as_array().map(Vec::len), Some(3));
+
+    // The fork at the second transaction starts with a block that holds the first two.
+    let config = NodeConfig::test()
+        .with_eth_rpc_url(Some(origin.http_endpoint()))
+        .with_fork_transaction_hash(Some(hashes[1]))
+        .with_no_mining(true);
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+    assert_eq!(block_number(&client).await?, 1);
+    let block = get_block(&client, "0x1").await?;
+    let replayed: Vec<B256> = serde_json::from_value(block["transactions"].clone())?;
+    assert_eq!(replayed, hashes[..2]);
+    assert_eq!(block["timestamp"], origin_block["timestamp"]);
+    assert_eq!(block["miner"], origin_block["miner"]);
+    let nonce: U256 =
+        client.request("eth_getTransactionCount", rpc_params![sender, "latest"]).await?;
+    assert_eq!(nonce, U256::from(2));
+    assert_eq!(wait_for_receipt(&client, hashes[1]).await?["status"], "0x1");
+    assert!(get_receipt(&client, hashes[2]).await?.is_none());
+    assert_eq!(balance(&client, Address::repeat_byte(0x72), "latest").await?, U256::ZERO);
+
+    // Mining continues after the replayed block, and the pool is empty.
+    let status: Value = client.request("txpool_status", rpc_params![]).await?;
+    assert_eq!(status["pending"], "0x0");
+    client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+    assert_eq!(block_number(&client).await?, 2);
+    Ok(())
+}

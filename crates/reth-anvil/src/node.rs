@@ -3,21 +3,23 @@ use crate::{
     block_env::BlockEnvOverrides,
     config::NodeConfig,
     eth_api::EthApi,
-    fork::ForkInfo,
+    fork::{ForkHeader, ForkInfo, ForkNetwork, ForkReplay},
     impersonation::{ImpersonatedSigner, ImpersonationState},
     launcher::AnvilNodeLauncher,
     logging::{LoggingState, log_mined_blocks},
     miner::AnvilMiner,
     mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
     network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
+    pool::SharedTransactionOrder,
     provider::AnvilProvider,
     server::{RpcServer, ServerSettings, SharedModule},
     signer::DevSigner,
     snapshot::SnapshotManager,
     state::{AnvilState, SharedAnvilState},
     time::TimeManager,
+    types::TransactionOrder,
 };
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
@@ -37,7 +39,8 @@ use reth_ethereum::{
             node_config::NodeConfig as RethNodeConfig,
         },
     },
-    primitives::NodePrimitives,
+    pool::{PoolTransaction, TransactionOrigin, TransactionPool},
+    primitives::{NodePrimitives, Recovered, SignedTransaction},
     provider::{
         CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
         db::{
@@ -400,10 +403,12 @@ async fn launch_node<Net: AnvilNetwork>(
         config.slots_in_an_epoch,
         fork.clone(),
     );
+    let order = SharedTransactionOrder::new(config.transaction_order);
     let anvil = AnvilComponents {
         impersonation: impersonation.clone(),
         block_env: block_env.clone(),
         anvil_state: anvil_state.clone(),
+        order: order.clone(),
         config: config.clone(),
     };
 
@@ -490,7 +495,7 @@ async fn launch_node<Net: AnvilNetwork>(
         node.add_ons_handle.beacon_engine_handle.clone(),
         node.payload_builder_handle.clone(),
         Net::payload_attributes(chain_spec),
-        time.payload_attributes_hook(block_env),
+        time.payload_attributes_hook(block_env.clone()),
         move |header| Ok(rewind_provider.rewind_to(header)?),
         move || Ok(insert_provider.materialize_fork_reads()?),
         head,
@@ -501,8 +506,10 @@ async fn launch_node<Net: AnvilNetwork>(
         "reth-anvil automine",
         run_automine_task(node.pool.clone(), mining.clone()),
     );
-    node.task_executor
-        .spawn_critical_task("reth-anvil interval mining", run_interval_mining_task(mining));
+    node.task_executor.spawn_critical_task(
+        "reth-anvil interval mining",
+        run_interval_mining_task(mining.clone()),
+    );
     node.task_executor.spawn_critical_task(
         "reth-anvil state writes",
         clear_applied_state_writes(node.provider.subscribe_to_canonical_state(), anvil_state),
@@ -511,6 +518,9 @@ async fn launch_node<Net: AnvilNetwork>(
         "reth-anvil logging",
         log_mined_blocks(node.provider.subscribe_to_canonical_state(), logging),
     );
+    if let Some(replay) = fork.as_ref().and_then(|fork| fork.take_replay()) {
+        replay_fork_transactions(replay, &node.pool, &mining, &time, &block_env, &order).await?;
+    }
 
     let module = rpc_module
         .lock()
@@ -519,6 +529,76 @@ async fn launch_node<Net: AnvilNetwork>(
         .ok_or_else(|| eyre::eyre!("the rpc modules were not built"))?;
 
     Ok((module, RunningNode { node_exit_future, _datadir: datadir, runtime }))
+}
+
+/// Mines the transactions of a fork at a transaction hash into the first local block, with the
+/// block environment of the remote block they came from, so the node starts right after the
+/// fork transaction.
+async fn replay_fork_transactions<F, Pool>(
+    replay: ForkReplay<F>,
+    pool: &Pool,
+    mining: &MiningController<ForkHeader<F>>,
+    time: &TimeManager,
+    block_env: &BlockEnvOverrides,
+    order: &SharedTransactionOrder,
+) -> Result<()>
+where
+    F: ForkNetwork,
+    Pool: TransactionPool<
+        Transaction: PoolTransaction<Consensus = <F::Primitives as NodePrimitives>::SignedTx>,
+    >,
+{
+    let ForkReplay { header, transactions } = replay;
+    let snapshot = block_env.snapshot();
+    let previous_order = order.get();
+    // The block keeps the remote order, and the remote block environment.
+    order.set(TransactionOrder::Fifo);
+    block_env.set_coinbase(header.beneficiary());
+    block_env.set_gas_limit(header.gas_limit());
+    if let Some(base_fee) = header.base_fee_per_gas() {
+        block_env.set_next_base_fee(base_fee);
+    }
+    if let Some(prev_randao) = header.mix_hash() {
+        block_env.set_next_prev_randao(prev_randao);
+    }
+    if let Some(root) = header.parent_beacon_block_root() {
+        block_env.set_next_parent_beacon_block_root(root);
+    }
+    time.set_next_block_timestamp(header.timestamp()).map_err(|error| eyre::eyre!(error))?;
+
+    let expected = transactions.len();
+    let mut submitted = 0;
+    for tx in transactions {
+        let hash = *tx.tx_hash();
+        let Ok(sender) = tx.try_recover() else {
+            tracing::warn!(target: "node", %hash, "skipping fork transaction: sender not recoverable");
+            continue;
+        };
+        let Ok(pooled) =
+            Pool::Transaction::try_from_consensus(Recovered::new_unchecked(tx, sender))
+        else {
+            tracing::warn!(target: "node", %hash, "skipping fork transaction: not a pool transaction");
+            continue;
+        };
+        match pool.add_transaction(TransactionOrigin::Local, pooled).await {
+            Ok(_) => submitted += 1,
+            Err(error) => {
+                tracing::warn!(target: "node", %hash, %error, "skipping fork transaction");
+            }
+        }
+    }
+    let mined = mining.mine_block().await.map_err(|error| eyre::eyre!(error));
+    order.set(previous_order);
+    block_env.restore(snapshot);
+    let mined = mined?;
+    tracing::info!(
+        target: "node",
+        block = mined.number(),
+        replayed = submitted,
+        skipped = expected - submitted,
+        "replayed the fork transactions"
+    );
+    Ok(())
 }
 
 /// Returns the configured port, or a free port when the config asks for port zero.

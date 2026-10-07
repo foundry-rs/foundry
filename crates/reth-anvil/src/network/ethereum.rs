@@ -60,7 +60,7 @@ impl AnvilNetwork for Ethereum {
             .network(NoopNetworkBuilder::eth())
             .pool(AnvilPoolBuilder {
                 state: anvil.impersonation.clone(),
-                order: anvil.config.transaction_order,
+                order: anvil.order.clone(),
                 settings: PoolSettings::from_config(&anvil.config),
             })
             .executor(AnvilExecutorBuilder {

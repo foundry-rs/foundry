@@ -27,6 +27,7 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Rewrites every EVM environment to set the code size limit, the memory limit, EIP-3607, the block gas limit check, and the EIP-7825 cap | `src/evm.rs` (`EvmSettings`) | ~40 | A `CfgEnv` overrides hook on `ConfigureEvm`, or dev-mode flags for these limits |
 | Registers `eth_config` itself, because reth adds it only to its transport modules, not to the registry the in-process module is built from | `src/node.rs` | ~5 | Register `eth_config` in the RPC registry like the other `eth_*` methods |
 | Runs its own RPC server in front of the node, forwarding every method to the current node's module, so `anvil_reset` to another fork and `anvil_setChainId` can relaunch the node without losing the endpoint, the connections, or the in-process API | `src/server.rs`, `src/node.rs` (`Relauncher`) | ~300 | A way to replace a running node's chain spec and database in place, or to restart the node behind reth's RPC servers |
+| Replays the transactions before a fork transaction through the pool into the first local block, with the remote block's environment and the pool in arrival order | `src/node.rs` (`replay_fork_transactions`) | ~70 | A way to build and insert a block from a given transaction list |
 
 ## Gaps that are not hooks
 
@@ -35,7 +36,6 @@ be free if reth had a dev mode:
 
 - `anvil_setChainId` relaunches the node from a state dump, so the state and the height survive but
   earlier blocks are no longer served; anvil keeps them.
-- Forking at a transaction hash, which replays the transactions before it in the fork block.
 - `BLOCKHASH` of pre-fork blocks during block execution: the engine's state provider cannot reach the
   remote endpoint for block hashes.
 - `--disable-block-gas-limit` sets the block gas limit to `u64::MAX` instead of only skipping the

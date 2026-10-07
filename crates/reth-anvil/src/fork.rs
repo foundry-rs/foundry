@@ -25,7 +25,9 @@ use foundry_fork_db::{
 use parking_lot::RwLock;
 use reth_ethereum::{
     Block, EthPrimitives, Receipt, TransactionSigned,
-    primitives::{Account, Bytecode, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader},
+    primitives::{
+        Account, BlockBody, Bytecode, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
+    },
     provider::ProviderError,
     storage::{
         AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
@@ -199,7 +201,7 @@ impl AnvilPrimitives for EthPrimitives {
 }
 
 /// The header type of a fork network.
-type ForkHeader<F> = <<F as ForkNetwork>::Primitives as NodePrimitives>::BlockHeader;
+pub type ForkHeader<F> = <<F as ForkNetwork>::Primitives as NodePrimitives>::BlockHeader;
 /// The block type of a fork network.
 type ForkBlock<F> = <<F as ForkNetwork>::Primitives as NodePrimitives>::Block;
 /// The receipt type of a fork network.
@@ -316,9 +318,20 @@ impl ForkSettings {
     }
 }
 
+/// The transactions a fork at a transaction hash replays into the first local block: the ones
+/// before the target in its block, and the target itself.
+pub struct ForkReplay<F: ForkNetwork = EthereumFork> {
+    /// The header of the block the transactions came from.
+    pub header: SealedHeader<ForkHeader<F>>,
+    /// The transactions, in block order.
+    pub transactions: Vec<<F::Primitives as NodePrimitives>::SignedTx>,
+}
+
 /// The remote side of a fork.
 pub struct ForkBackend<F: ForkNetwork = EthereumFork> {
     settings: ForkSettings,
+    /// The transactions to replay at startup, for a fork at a transaction hash.
+    replay: RwLock<Option<ForkReplay<F>>>,
     url: RwLock<String>,
     chain_id: u64,
     header: SealedHeader<ForkHeader<F>>,
@@ -367,6 +380,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             None => provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?,
         };
 
+        let mut replay_target = None;
         let block_number = match config.fork_choice.or_else(|| {
             config
                 .fork_urls
@@ -379,8 +393,20 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 number.saturating_add(latest as i128).max(0) as u64
             }
             Some(ForkChoice::Block(number)) => number as u64,
-            Some(ForkChoice::Transaction(_)) => {
-                eyre::bail!("forking at a transaction hash is not supported yet")
+            Some(ForkChoice::Transaction(hash)) => {
+                let tx = chain
+                    .get_transaction_by_hash(hash)
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("transaction {hash} not found on the fork"))?;
+                let (_, position) = F::transaction(tx)?;
+                let Some((_, number, index)) = position else {
+                    eyre::bail!("transaction {hash} is not mined yet");
+                };
+                if number == 0 {
+                    eyre::bail!("transaction {hash} is in the genesis block");
+                }
+                replay_target = Some((number, index));
+                number - 1
             }
             None => find_latest_fork_block(&provider)
                 .await
@@ -404,6 +430,20 @@ impl<F: ForkNetwork> ForkBackend<F> {
         let header = block.sealed_header().clone();
         let gas_price =
             provider.get_gas_price().await.unwrap_or(crate::config::INITIAL_BASE_FEE as u128);
+        let replay = match replay_target {
+            Some((number, index)) => {
+                let block = chain
+                    .get_block_by_number(number.into())
+                    .full()
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("failed to get block {number} from the fork"))?;
+                let block = F::block(block)?;
+                let transactions =
+                    block.body().transactions().iter().take(index as usize + 1).cloned().collect();
+                Some(ForkReplay { header: block.sealed_header().clone(), transactions })
+            }
+            None => None,
+        };
 
         // The genesis accounts keep their remote nonce and code and get the configured balance.
         let mut genesis_accounts = Vec::new();
@@ -439,6 +479,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
         Ok((
             Arc::new(Self {
                 settings,
+                replay: RwLock::new(replay),
                 url: RwLock::new(url),
                 chain_id,
                 header,
@@ -459,6 +500,11 @@ impl<F: ForkNetwork> ForkBackend<F> {
     /// Returns the fork endpoint.
     pub fn url(&self) -> String {
         self.url.read().clone()
+    }
+
+    /// Takes the transactions to replay at startup, if the fork is at a transaction hash.
+    pub fn take_replay(&self) -> Option<ForkReplay<F>> {
+        self.replay.write().take()
     }
 
     /// Returns the chain id of the remote chain.
