@@ -3185,7 +3185,7 @@ contract AnotherCounterTest is Test {
 Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
 ...
 [FAIL: EvmError: Revert] test_Failure() ([GAS])
-Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 1 failed; [..] skipped; [ELAPSED]
 ...
 "#]]);
 }
