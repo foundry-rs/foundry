@@ -304,7 +304,7 @@ impl fmt::Debug for SymExpr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(in crate::runtime) enum SymExprKind {
     Const(U256),
     Var(Symbol),
@@ -315,6 +315,41 @@ pub(in crate::runtime) enum SymExprKind {
     BinOp(SymBinOp, SymExpr, SymExpr),
     TernOp(SymTernOp, SymExpr, SymExpr, SymExpr),
     Ite(SymBoolExpr, SymExpr, SymExpr),
+}
+
+/// Formats an expression as a tree.
+///
+/// A hash node prints only its name, because the name is a digest of the preimage. Printing the
+/// preimage again would repeat every nested preimage, so a chain of hashes over the previous hash
+/// would grow exponentially.
+impl fmt::Debug for SymExprKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Const(value) => f.debug_tuple("Const").field(value).finish(),
+            Self::Var(symbol) => f.debug_tuple("Var").field(symbol).finish(),
+            Self::GasLeft(symbol) => f.debug_tuple("GasLeft").field(symbol).finish(),
+            Self::Keccak { name, len, .. } => f
+                .debug_struct("Keccak")
+                .field("name", name)
+                .field("len", len)
+                .finish_non_exhaustive(),
+            Self::Hash { name, algorithm, .. } => f
+                .debug_struct("Hash")
+                .field("name", name)
+                .field("algorithm", algorithm)
+                .finish_non_exhaustive(),
+            Self::Not(expr) => f.debug_tuple("Not").field(expr).finish(),
+            Self::BinOp(op, left, right) => {
+                f.debug_tuple("BinOp").field(op).field(left).field(right).finish()
+            }
+            Self::TernOp(op, first, second, third) => {
+                f.debug_tuple("TernOp").field(op).field(first).field(second).field(third).finish()
+            }
+            Self::Ite(condition, then, otherwise) => {
+                f.debug_tuple("Ite").field(condition).field(then).field(otherwise).finish()
+            }
+        }
+    }
 }
 
 impl SymExprKind {
@@ -1929,11 +1964,9 @@ impl SymExpr {
         ControlFlow::Continue(())
     }
 
-    pub(crate) fn visit_bool(&self, mut visitor: impl FnMut(&Self) -> bool) -> bool {
-        self.visit(&mut |expr| {
-            if visitor(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
-        })
-        .is_break()
+    /// Returns whether any node satisfies `visitor`, visiting each distinct node once.
+    pub(crate) fn visit_bool(&self, visitor: impl FnMut(&Self) -> bool) -> bool {
+        visit_unique(Vec::new(), vec![self.clone()], visitor)
     }
 
     /// Rewrites each distinct word or nested Boolean node once in bottom-up order.
@@ -2286,7 +2319,8 @@ pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: Sym
     }
 
     let exprs = bytes;
-    let name = stable_symbol(cx, "keccak", format!("{len:?}:{exprs:?}").as_bytes());
+    let identity = ExpressionDigests::identity(std::iter::once(&len).chain(&exprs));
+    let name = stable_symbol(cx, "keccak", identity.as_slice());
     SymExpr::keccak_symbol(cx, name, len, exprs)
 }
 
@@ -2297,7 +2331,8 @@ pub(crate) fn symbolic_hash_word_with_len(
     len: SymExpr,
 ) -> SymExpr {
     let exprs = bytes;
-    let name = stable_symbol(cx, algorithm, format!("{len:?}:{exprs:?}").as_bytes());
+    let identity = ExpressionDigests::identity(std::iter::once(&len).chain(&exprs));
+    let name = stable_symbol(cx, algorithm, identity.as_slice());
     let mut identity = Vec::with_capacity(exprs.len() + 1);
     identity.push(len);
     identity.extend(exprs);
@@ -2335,7 +2370,7 @@ pub(crate) fn create2_address_word(
                 state,
                 format!("{creator:?}"),
                 salt,
-                format!("{initcode_bytes:?}"),
+                format!("{:?}", ExpressionDigests::identity(&initcode_bytes)),
             );
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
@@ -2365,13 +2400,13 @@ pub(crate) fn compute_create2_address_word(
 
     let deployer_identity = deployer_concrete
         .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{deployer:?}"));
+        .unwrap_or_else(|| format!("{:?}", ExpressionDigests::identity([&deployer])));
     let init_code_hash_identity = init_code_hash_concrete
         .map(|init_code_hash| {
             let init_code_hash = B256::from(init_code_hash);
             format!("{init_code_hash:?}")
         })
-        .unwrap_or_else(|| format!("{init_code_hash:?}"));
+        .unwrap_or_else(|| format!("{:?}", ExpressionDigests::identity([&init_code_hash])));
 
     Ok(symbolic_create2_address_word(cx, state, deployer_identity, salt, init_code_hash_identity))
 }
@@ -2394,7 +2429,7 @@ pub(crate) fn compute_create_address_word(
 
     let deployer_identity = deployer_concrete
         .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{deployer:?}"));
+        .unwrap_or_else(|| format!("{:?}", ExpressionDigests::identity([&deployer])));
     Ok(symbolic_create_address_word(cx, state, deployer_identity, nonce))
 }
 
@@ -2404,6 +2439,7 @@ pub(crate) fn symbolic_create_address_word(
     creator_identity: String,
     nonce: SymExpr,
 ) -> SymExpr {
+    let nonce = ExpressionDigests::identity([&nonce]);
     let name =
         stable_symbol(cx, "create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
     let word = SymExpr::get_var(cx, name);
@@ -2421,7 +2457,11 @@ pub(crate) fn symbolic_create2_address_word(
     let name = stable_symbol(
         cx,
         "create2_address",
-        format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
+        format!(
+            "{creator_identity}:{:?}:{initcode_identity}",
+            ExpressionDigests::identity([&salt])
+        )
+        .as_bytes(),
     );
     let word = SymExpr::get_var(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
