@@ -639,7 +639,7 @@ fn properties_check_reports_candidate_result(prj: _, cmd: _) {
     fs::write(prj.root().join("base.toml"), "[profile.default]\nremappings = [\"fee/=src/\"]\n")
         .unwrap();
     prj.update_config(|config| {
-        config.test_pattern_inverse = Some(regex::Regex::new("^testHidden").unwrap().into());
+        config.test_pattern_inverse = Some(regex::Regex::new(r"^testHidden\w*").unwrap().into());
     });
     let foundry_toml = prj.root().join("foundry.toml");
     let toml = fs::read_to_string(&foundry_toml).unwrap();
