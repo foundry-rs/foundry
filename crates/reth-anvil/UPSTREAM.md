@@ -43,9 +43,14 @@ be free if reth had a dev mode:
 - `--disable-min-priority-fee` only affects the pool: reth's gas price oracle suggests its own tip,
   so `eth_gasPrice` keeps a priority fee.
 - `--max-transactions`: reth's payload builder has no cap on the number of transactions per block.
+- `--prune-history`, `--max-persisted-states`, and `--transaction-block-keeper` are accepted and have
+  no effect: reth keeps the full history on disk, which is what these flags bound in anvil's
+  memory.
 - Dev accounts keep their history on a forked chain: anvil resets their nonces and balances in the
   fork genesis, reth-anvil only sets the balances.
-- Networks: Optimism and Base through `op-reth` node types, Tempo through `tempo-node`. Monad runs
+- Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
+  `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; Tempo
+  through `tempo-node`. Monad runs
   (`src/network/monad.rs`) with its own `ConfigureEvm` on `monad-revm`; still missing are the
   protocol system envelopes anvil replays on reorgs and transaction-hash forks, the per-block
   hardfork profiles of a Monad fork, and signature overrides for EIP-7702 authorities.
