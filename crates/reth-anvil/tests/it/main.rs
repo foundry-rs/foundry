@@ -2347,3 +2347,26 @@ async fn celo_node_serves_the_native_transfer_precompile() -> Result<()> {
     assert_eq!(balance(&client, recipient, "latest").await?, amount);
     Ok(())
 }
+
+#[tokio::test]
+async fn rollback_and_reorg_keep_state_writes() -> Result<()> {
+    with_test_client(|client| async move {
+        let account = Address::repeat_byte(0x13);
+        client.request::<(), _>("anvil_setBalance", rpc_params![account, U256::ONE]).await?;
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(balance(&client, account, "latest").await?, U256::ONE);
+
+        // Anvil writes into the state, so a reorg of the block that carried the write keeps it.
+        client.request::<(), _>("anvil_reorg", rpc_params![1u64, Vec::<Value>::new()]).await?;
+        assert_eq!(block_number(&client).await?, 1);
+        assert_eq!(balance(&client, account, "latest").await?, U256::ONE);
+
+        client.request::<(), _>("anvil_rollback", rpc_params![1u64]).await?;
+        assert_eq!(block_number(&client).await?, 0);
+        assert_eq!(balance(&client, account, "latest").await?, U256::ONE, "pending again");
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(balance(&client, account, "latest").await?, U256::ONE);
+        Ok(())
+    })
+    .await
+}

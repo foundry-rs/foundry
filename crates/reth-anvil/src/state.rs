@@ -203,12 +203,33 @@ impl AnvilState {
         self.bytecodes.retain(|hash, _| live_hashes.contains(hash));
     }
 
-    /// Forgets the writes of the blocks above `number`, which a rewind removed from the chain.
-    /// Writes not yet in a block stay pending.
+    /// Queues the writes of the blocks above `number`, which a rewind removed from the chain, for
+    /// the next block again. Anvil writes into the state directly, so a rollback or a reorg keeps
+    /// them; a revert restores the snapshot's state afterwards and drops them.
     pub fn rewind_to(&mut self, number: u64) {
-        self.applied.split_off(&(number + 1));
-        for writes in self.frozen.split_off(&(number + 1)).into_values() {
-            self.pending.extend(writes);
+        let removed: Vec<_> = self
+            .applied
+            .split_off(&(number + 1))
+            .into_values()
+            .chain(self.frozen.split_off(&(number + 1)).into_values())
+            .flatten()
+            .collect();
+        let later = std::mem::take(&mut self.pending);
+        for write in removed {
+            self.apply(write);
+        }
+        self.pending.extend(later);
+    }
+
+    /// Records a write in the overlay and queues it for the next block.
+    fn apply(&mut self, write: StateOverride) {
+        match write {
+            StateOverride::Balance(address, balance) => self.set_balance(address, balance),
+            StateOverride::Nonce(address, nonce) => self.set_nonce(address, nonce),
+            StateOverride::Code(address, code) => self.set_code(address, code),
+            StateOverride::Storage(address, slot, value) => {
+                self.set_storage_at(address, slot, value)
+            }
         }
     }
 
@@ -221,14 +242,7 @@ impl AnvilState {
     pub fn from_writes(writes: &[StateOverride]) -> Self {
         let mut state = Self::default();
         for write in writes {
-            match write {
-                StateOverride::Balance(address, balance) => state.set_balance(*address, *balance),
-                StateOverride::Nonce(address, nonce) => state.set_nonce(*address, *nonce),
-                StateOverride::Code(address, code) => state.set_code(*address, code.clone()),
-                StateOverride::Storage(address, slot, value) => {
-                    state.set_storage_at(*address, *slot, *value)
-                }
-            }
+            state.apply(write.clone());
         }
         state
     }
