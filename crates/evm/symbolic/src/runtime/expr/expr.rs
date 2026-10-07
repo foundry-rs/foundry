@@ -2356,9 +2356,9 @@ pub(crate) fn create2_address_word(
             let word = symbolic_create2_address_word(
                 cx,
                 state,
-                format!("{creator:?}"),
+                format!("address:{creator:?}"),
                 salt,
-                format!("{initcode_hash:?}"),
+                format!("hash:{initcode_hash:?}"),
             );
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
@@ -2368,9 +2368,9 @@ pub(crate) fn create2_address_word(
             let word = symbolic_create2_address_word(
                 cx,
                 state,
-                format!("{creator:?}"),
+                format!("address:{creator:?}"),
                 salt,
-                format!("{:?}", ExpressionDigests::identity(&initcode_bytes)),
+                format!("initcode:{:?}", ExpressionDigests::identity(&initcode_bytes)),
             );
             let address = state.world.symbolic_address_slot(word.clone());
             Ok((word, address))
@@ -2398,15 +2398,15 @@ pub(crate) fn compute_create2_address_word(
         return Ok(SymExpr::constant(cx, address_word(address)));
     }
 
-    let deployer_identity = deployer_concrete
-        .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{:?}", ExpressionDigests::identity([&deployer])));
+    let deployer_identity = deployer_identity(deployer_concrete, &deployer);
     let init_code_hash_identity = init_code_hash_concrete
         .map(|init_code_hash| {
             let init_code_hash = B256::from(init_code_hash);
-            format!("{init_code_hash:?}")
+            format!("hash:{init_code_hash:?}")
         })
-        .unwrap_or_else(|| format!("{:?}", ExpressionDigests::identity([&init_code_hash])));
+        .unwrap_or_else(|| {
+            format!("hash_expr:{:?}", ExpressionDigests::identity([&init_code_hash]))
+        });
 
     Ok(symbolic_create2_address_word(cx, state, deployer_identity, salt, init_code_hash_identity))
 }
@@ -2427,9 +2427,7 @@ pub(crate) fn compute_create_address_word(
         return Ok(SymExpr::constant(cx, address_word(deployer.create(nonce))));
     }
 
-    let deployer_identity = deployer_concrete
-        .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{:?}", ExpressionDigests::identity([&deployer])));
+    let deployer_identity = deployer_identity(deployer_concrete, &deployer);
     Ok(symbolic_create_address_word(cx, state, deployer_identity, nonce))
 }
 
@@ -2466,4 +2464,13 @@ pub(crate) fn symbolic_create2_address_word(
     let word = SymExpr::get_var(cx, name);
     state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
     word
+}
+
+/// Identifies a deployer in a stable address symbol name.
+///
+/// The prefixes keep a concrete address apart from the digest of a symbolic deployer.
+fn deployer_identity(concrete: Option<Address>, deployer: &SymExpr) -> String {
+    concrete
+        .map(|deployer| format!("address:{deployer:?}"))
+        .unwrap_or_else(|| format!("address_expr:{:?}", ExpressionDigests::identity([deployer])))
 }
