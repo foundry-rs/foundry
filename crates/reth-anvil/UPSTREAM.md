@@ -96,12 +96,24 @@ those that need Tempo or Optimism.
 
 ## What Tempo needs
 
-`tempo-node` hard-wires its EVM config: `TempoPayloadBuilder`, `TempoPoolBuilder`, and
-`TempoPayloadBuilderBuilder` name `TempoEvmConfig`, and `TempoBlockAssembler` only implements
-`BlockAssembler<TempoEvmConfig>`. reth-anvil installs its anvil behaviour by wrapping a network's
-`ConfigureEvm`, so Tempo cannot run here until those builders take the EVM config as a type
-parameter, like reth's `EthereumPayloadBuilder` and `EthereumPoolBuilder` do. The alternative is to
-copy the three builders and the assembler into this crate, about 1.5k lines.
+`tempo-node` hard-wires its EVM config, so reth-anvil cannot wrap it the way it wraps
+`EthEvmConfig`. The sites, at tempo rev `6ef1f812`:
+
+| Site | Problem |
+| --- | --- |
+| `crates/node/src/node.rs:555` | `TempoNode` sets `type EVM = TempoEvmConfig`. |
+| `crates/node/src/node.rs:772` | `TempoPoolBuilder` only implements `PoolBuilder<Node, TempoEvmConfig>`. |
+| `crates/node/src/node.rs:885` | `TempoPayloadBuilderBuilder` only implements `PayloadBuilderBuilder<Node, TempoTransactionPool<_>, TempoEvmConfig>`. |
+| `crates/evm/src/assemble.rs:86` | `TempoBlockAssembler` only implements `BlockAssembler<TempoEvmConfig>`. |
+
+`TempoTransactionValidator` (`crates/transaction-pool/src/validator.rs:94`) and
+`TempoTransactionPool` (`tempo_pool.rs:59`) are already generic over `EvmConfig`, with
+`TempoEvmConfig` as the default, so the pool side only needs the builders to pass the type through.
+reth's `EthereumPoolBuilder` and `EthereumPayloadBuilder` show the shape: take the EVM config as a
+type parameter bounded by `ConfigureEvm<Primitives = TempoPrimitives>` plus Tempo's own
+`ConfigureTempoPoolEvm`, and let the assembler accept any config whose block executor factory is
+Tempo's. The alternative is to copy the two builders and the assembler into this crate, about 1.5k
+lines, and keep them in step with tempo.
 
 ## Things reth already fixes
 
