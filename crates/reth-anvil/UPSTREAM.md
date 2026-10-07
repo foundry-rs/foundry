@@ -65,16 +65,17 @@ is a missing method.
 - `eth_getBlockAccessListByBlockNumber` for a block without a list answers `block not found`
   (reth) instead of anvil's `block access list ... not found`.
 - `eth_estimateGas` without `from` and with fee fields set fails with `gas required exceeds
-  allowance (0)`: reth caps the estimate by the zero address's balance, anvil does not.
+  allowance (0)`: reth caps the estimate by the zero address's balance, anvil does not. Reth's
+  estimates also carry a small margin over the gas a call uses, where anvil returns the exact
+  amount, so a replay with the transaction's gas limit as its budget reports a different number.
 - Storage on a plain address. `anvil_setStorageAt` on an account without balance, nonce, or code
   keeps the storage in anvil; here the next block clears the empty account (EIP-161). An account
   without nonce and code keeps the storage, but revm treats it as known to be empty once the
   account changes, so a code override in `eth_call` does not see it (`cast call --delegate` with a
   fresh sender).
-- `cast run` uses the block access lists reth serves to skip replaying the earlier transactions of
-  a block, so its progress output differs, and the replay from that prestate reports less gas than
-  the receipt for calls into contracts set with `anvil_setCode`; anvil serves no lists for its
-  blocks. To be investigated with cast.
+- Reth serves an EIP-7928 block access list for every block it executed, also before Amsterdam;
+  anvil only for blocks whose header carries one. `cast run` uses the list to skip replaying the
+  earlier transactions of a block, so its progress output differs.
 
 ## What Tempo needs
 
