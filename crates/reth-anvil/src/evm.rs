@@ -25,7 +25,8 @@ use reth_ethereum::{
     chainspec::EthereumHardforks,
     evm::primitives::{
         ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-        NextBlockEnvAttributes, SenderRecoveryCache, execute::BlockAssembler,
+        NextBlockEnvAttributes, SenderRecoveryCache,
+        execute::{BlockAssembler, BlockAssemblerInput},
     },
     node::{
         api::{BlockTy, NodePrimitives, PayloadTypes},
@@ -35,7 +36,7 @@ use reth_ethereum::{
     storage::errors::any::AnyError,
 };
 use revm::{
-    Database as RevmDatabase, Inspector,
+    Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{
         Block, CfgEnv, DBErrorMarker,
         result::{InvalidTransaction, ResultAndState},
@@ -382,6 +383,26 @@ impl<E, DB> AnvilEvm<E, DB> {
     }
 }
 
+/// An EVM factory whose EVMs may collect the `console.log` calls of the transaction they
+/// execute. A network whose EVM factory cannot be wrapped in [`AnvilEvmFactory`] collects none.
+pub trait ConsoleEvmFactory: EvmFactory {
+    /// Returns the `console.log` buffer of the EVM, when it collects.
+    fn console<DB: Database, I: Inspector<Self::Context<DB>>>(
+        evm: &Self::Evm<DB, I>,
+    ) -> Option<&ConsoleBuffer>;
+}
+
+impl<F> ConsoleEvmFactory for AnvilEvmFactory<F>
+where
+    F: EvmFactory<Precompiles = PrecompilesMap>,
+{
+    fn console<DB: Database, I: Inspector<Self::Context<DB>>>(
+        evm: &Self::Evm<DB, I>,
+    ) -> Option<&ConsoleBuffer> {
+        evm.console()
+    }
+}
+
 impl<E, DB> Evm for AnvilEvm<E, DB>
 where
     DB: Database,
@@ -495,11 +516,17 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
         );
         Self { inner, executor_factory, state, block_env, settings, sender_cache }
     }
+
+    /// Returns the wrapped EVM config.
+    #[cfg_attr(not(feature = "tempo"), expect(dead_code))]
+    pub const fn inner(&self) -> &Evm {
+        &self.inner
+    }
 }
 
 impl<Evm, Factory> ConfigureEvm for AnvilEvmConfig<Evm>
 where
-    Factory: EvmFactory<
+    Factory: ConsoleEvmFactory<
             Precompiles = PrecompilesMap,
             Tx: TransactionEnvMut
                     + FromRecoveredTx<SignedTxOf<Evm>>
@@ -515,10 +542,10 @@ where
                                       + Unpin
                                       + BlockExecutorFactory<
                 Transaction: TxHashRef,
-                EvmFactory = AnvilEvmFactory<Factory>,
+                EvmFactory = Factory,
             >,
             BlockAssembler: BlockAssembler<
-                AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
+                Evm::BlockExecutorFactory,
                 Block = <Evm::Primitives as NodePrimitives>::Block,
             >,
         >,
@@ -527,14 +554,14 @@ where
     type Error = Evm::Error;
     type NextBlockEnvCtx = Evm::NextBlockEnvCtx;
     type BlockExecutorFactory = AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>;
-    type BlockAssembler = Evm::BlockAssembler;
+    type BlockAssembler = AnvilBlockAssembler<Evm::BlockAssembler>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
         &self.executor_factory
     }
 
     fn block_assembler(&self) -> &Self::BlockAssembler {
-        self.inner.block_assembler()
+        AnvilBlockAssembler::from_ref(self.inner.block_assembler())
     }
 
     fn evm_env(
@@ -582,7 +609,7 @@ where
 
 impl<Evm, Factory, Payload> ConfigureEngineEvm<Payload> for AnvilEvmConfig<Evm>
 where
-    Factory: EvmFactory<
+    Factory: ConsoleEvmFactory<
             Precompiles = PrecompilesMap,
             Tx: TransactionEnvMut
                     + FromRecoveredTx<SignedTxOf<Evm>>
@@ -598,10 +625,10 @@ where
                                       + Unpin
                                       + BlockExecutorFactory<
                 Transaction: TxHashRef,
-                EvmFactory = AnvilEvmFactory<Factory>,
+                EvmFactory = Factory,
             >,
             BlockAssembler: BlockAssembler<
-                AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
+                Evm::BlockExecutorFactory,
                 Block = <Evm::Primitives as NodePrimitives>::Block,
             >,
         > + ConfigureEngineEvm<Payload>,
@@ -693,12 +720,14 @@ impl<F> AnvilBlockExecutorFactory<F> {
     }
 }
 
-impl<F, Evm> BlockExecutorFactory for AnvilBlockExecutorFactory<F>
+impl<F> BlockExecutorFactory for AnvilBlockExecutorFactory<F>
 where
-    F: BlockExecutorFactory<Transaction: TxHashRef, EvmFactory = AnvilEvmFactory<Evm>>,
-    Evm: EvmFactory<
-            Precompiles = PrecompilesMap,
-            Tx: FromRecoveredTx<F::Transaction> + FromTxWithEncoded<F::Transaction>,
+    F: BlockExecutorFactory<
+            Transaction: TxHashRef,
+            EvmFactory: ConsoleEvmFactory<
+                Precompiles = PrecompilesMap,
+                Tx: FromRecoveredTx<F::Transaction> + FromTxWithEncoded<F::Transaction>,
+            >,
         >,
 {
     type EvmFactory = F::EvmFactory;
@@ -723,8 +752,10 @@ where
         I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>,
     {
         let reward = (self.reward.0)(evm.block().number().saturating_to());
+        let console_buffer = F::EvmFactory::console::<DB, I>(&evm).cloned();
         AnvilBlockExecutor {
             inner: self.inner.create_executor(evm, ctx),
+            console_buffer,
             state: self.state.clone(),
             max_transactions: self.block_env.max_transactions(),
             console: self.console.clone(),
@@ -744,6 +775,8 @@ where
 #[derive(Debug)]
 pub struct AnvilBlockExecutor<E> {
     inner: E,
+    /// The `console.log` buffer of the executor's EVM, when it collects.
+    console_buffer: Option<ConsoleBuffer>,
     state: SharedAnvilState,
     max_transactions: Option<usize>,
     console: Option<ConsolePrinter>,
@@ -753,14 +786,15 @@ pub struct AnvilBlockExecutor<E> {
     reward: Option<u128>,
 }
 
-impl<E, Inner, DB> BlockExecutor for AnvilBlockExecutor<E>
+impl<E> BlockExecutor for AnvilBlockExecutor<E>
 where
-    E: BlockExecutor<Transaction: TxHashRef, Evm = AnvilEvm<Inner, DB>>,
-    Inner: Evm<
-            DB = ForkHashDb<DB>,
-            Tx: FromRecoveredTx<E::Transaction> + FromTxWithEncoded<E::Transaction>,
+    E: BlockExecutor<
+            Transaction: TxHashRef,
+            Evm: Evm<
+                DB: StateDB,
+                Tx: FromRecoveredTx<E::Transaction> + FromTxWithEncoded<E::Transaction>,
+            >,
         >,
-    DB: StateDB,
 {
     type Transaction = E::Transaction;
     type Receipt = E::Receipt;
@@ -792,7 +826,7 @@ where
             }
             .into());
         }
-        if let Some(console) = self.inner.evm().console() {
+        if let Some(console) = &self.console_buffer {
             console.clear();
         }
         self.current_tx = Some(hash);
@@ -803,7 +837,7 @@ where
         let gas = self.inner.commit_transaction(output);
         if let Some(printer) = &self.console
             && let Some(hash) = self.current_tx.take()
-            && let Some(console) = self.inner.evm().console()
+            && let Some(console) = &self.console_buffer
         {
             printer.print(hash, console.take());
         }
@@ -897,7 +931,7 @@ type ExecutionDataOf<Node> =
 
 impl<Node, Inner, Factory> ExecutorBuilder<Node> for AnvilExecutorBuilder<Inner>
 where
-    Factory: EvmFactory<
+    Factory: ConsoleEvmFactory<
             Precompiles = PrecompilesMap,
             Tx: TransactionEnvMut
                     + FromRecoveredTx<SignedTxOf<Inner::EVM>>
@@ -916,10 +950,10 @@ where
                                       + Unpin
                                       + BlockExecutorFactory<
                 Transaction: TxHashRef,
-                EvmFactory = AnvilEvmFactory<Factory>,
+                EvmFactory = Factory,
             >,
             BlockAssembler: BlockAssembler<
-                AnvilBlockExecutorFactory<<Inner::EVM as ConfigureEvm>::BlockExecutorFactory>,
+                <Inner::EVM as ConfigureEvm>::BlockExecutorFactory,
                 Block = BlockTy<Node::Types>,
             >,
         > + ConfigureEngineEvm<ExecutionDataOf<Node>>,
@@ -984,4 +1018,65 @@ fn apply_state_writes<DB: StateDB>(
     }
     db.commit(changes);
     Ok(())
+}
+
+/// Lets a network's block assembler assemble the blocks [`AnvilBlockExecutorFactory`] executes:
+/// the factory forwards every type of the network's factory, so the input converts one to one.
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct AnvilBlockAssembler<A>(A);
+
+impl<A> AnvilBlockAssembler<A> {
+    /// Views a network's assembler as the adapter.
+    pub const fn from_ref(inner: &A) -> &Self {
+        // SAFETY: `AnvilBlockAssembler` is a `repr(transparent)` wrapper of `A`.
+        unsafe { &*(std::ptr::from_ref(inner).cast::<Self>()) }
+    }
+}
+
+impl<A, F> BlockAssembler<AnvilBlockExecutorFactory<F>> for AnvilBlockAssembler<A>
+where
+    A: BlockAssembler<F>,
+    AnvilBlockExecutorFactory<F>: BlockExecutorFactory<
+            EvmFactory = F::EvmFactory,
+            Transaction = F::Transaction,
+            Receipt = F::Receipt,
+        > + for<'a> BlockExecutorFactory<ExecutionCtx<'a> = F::ExecutionCtx<'a>>,
+    F: BlockExecutorFactory,
+{
+    type Block = A::Block;
+
+    fn assemble_block(
+        &self,
+        input: BlockAssemblerInput<
+            '_,
+            '_,
+            AnvilBlockExecutorFactory<F>,
+            <Self::Block as reth_ethereum::primitives::Block>::Header,
+        >,
+    ) -> Result<Self::Block, BlockExecutionError> {
+        let BlockAssemblerInput {
+            evm_env,
+            execution_ctx,
+            parent,
+            transactions,
+            output,
+            bundle_state,
+            state_provider,
+            state_root,
+            block_access_list_hash,
+            ..
+        } = input;
+        self.0.assemble_block(BlockAssemblerInput::new(
+            evm_env,
+            execution_ctx,
+            parent,
+            transactions,
+            output,
+            bundle_state,
+            state_provider,
+            state_root,
+            block_access_list_hash,
+        ))
+    }
 }
