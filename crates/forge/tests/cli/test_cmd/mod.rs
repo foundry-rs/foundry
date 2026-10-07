@@ -140,8 +140,7 @@ fn testdata(cmd: _) {
     setup_testdata_cmd(&mut cmd);
 
     let mut args = vec!["test"];
-    // `MockFunctionTest` fails with isolation: the isolated call drops the `mockFunction` redirect.
-    let nmc = format!("--nmc=(MockFunctionTest|{FLAKY_TESTDATA_CONTRACTS})");
+    let nmc = format!("--nmc=({FLAKY_TESTDATA_CONTRACTS})");
     args.push(&nmc);
 
     let orig_assert = cmd.args(args).assert();

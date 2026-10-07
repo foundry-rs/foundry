@@ -1765,6 +1765,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         if self.is_inner_context_root(ecx.journal().depth()) {
             self.adjust_evm_data_for_inner_context(ecx);
             warm_arbitrum_system_contract::<FEN>(ecx);
+            // Transaction call inputs use the original target, so resolve function mocks here too.
+            if let Some(cheatcodes) = self.cheatcodes.as_deref() {
+                apply_mocked_function(cheatcodes, ecx, call);
+            }
             return None;
         }
 
@@ -1845,25 +1849,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 || self.inner.synthetic_create_depth == Some(ecx.journal().depth()));
         let mut cheatcode_outcome = None;
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
-            // Handle mocked functions, replace bytecode address with mock if matched.
-            if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
-                let input_bytes = call.input.bytes(ecx);
-                // Check if any mock function set for call data or if catch-all mock function set
-                // for selector.
-                if let Some(target) = mocks
-                    .get(&input_bytes)
-                    .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
-                {
-                    call.bytecode_address = *target;
-
-                    let target = ecx
-                        .journal_mut()
-                        .load_account_with_code(*target)
-                        .expect("failed to load account");
-                    call.known_bytecode =
-                        (target.info.code_hash(), target.info.code.clone().unwrap_or_default());
-                }
-            }
+            apply_mocked_function(cheatcodes, ecx, call);
 
             let execution_disable_fee_charge = ecx.cfg_env().disable_fee_charge;
             if let Some(disable_fee_charge) = self.inner.outer_disable_fee_charge {
@@ -2469,6 +2455,30 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
     buf[16..24].copy_from_slice(&nonce.to_be_bytes());
     buf[24..32].copy_from_slice(&counter.to_be_bytes());
     keccak256(buf).into()
+}
+
+/// Redirects `call` to the implementation set with `vm.mockFunction`, if one matches.
+fn apply_mocked_function<FEN: FoundryEvmNetwork>(
+    cheatcodes: &Cheatcodes<FEN>,
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    call: &mut CallInputs,
+) {
+    if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
+        let input_bytes = call.input.bytes(ecx);
+        // Check if any mock function set for call data or if catch-all mock function set
+        // for selector.
+        if let Some(target) = mocks
+            .get(&input_bytes)
+            .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
+        {
+            call.bytecode_address = *target;
+
+            let target =
+                ecx.journal_mut().load_account_with_code(*target).expect("failed to load account");
+            call.known_bytecode =
+                (target.info.code_hash(), target.info.code.clone().unwrap_or_default());
+        }
+    }
 }
 
 #[cfg(test)]
