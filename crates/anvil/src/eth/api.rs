@@ -9,11 +9,8 @@ use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
         backend::{
-            self,
-            db::SerializableState,
-            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
-            notifications::ChainNotifications,
-            validate::TransactionValidator,
+            self, db::SerializableState, mem::MIN_TRANSACTION_GAS,
+            notifications::ChainNotifications, validate::TransactionValidator,
         },
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
@@ -117,7 +114,6 @@ use revm::{
     },
     database::CacheDB,
     interpreter::{InstructionResult, SuccessOrHalt, return_ok, return_revert},
-    primitives::{eip2780, eip7702::PER_EMPTY_ACCOUNT_COST},
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
@@ -1918,6 +1914,24 @@ impl EthApi<FoundryNetwork> {
         );
         let disable_fee_charge = is_tempo_keychain || inner.from.is_none();
 
+        // Requests without a sender historically estimate value transfers without requiring the
+        // default caller to hold ETH. Fund only the simulation overlay so the execution probe
+        // preserves that behavior, including transfers that need new-account state gas.
+        let mut funded_state;
+        let state = if !is_tempo_aa_tx
+            && inner.from.is_none()
+            && let Some(value) = inner.value
+            && !value.is_zero()
+        {
+            funded_state = CacheDB::new(state);
+            let mut caller = state.basic_ref(Address::ZERO)?.unwrap_or_default();
+            caller.balance = caller.balance.max(value);
+            funded_state.insert_account_info(Address::ZERO, caller);
+            &funded_state as &dyn DatabaseRef
+        } else {
+            state
+        };
+
         let gas_price = fees.gas_price.unwrap_or_default();
         // Check transfer value before any fast path, and cap gas limit by sender balance when the
         // request has a non-zero gas price. Only enforce this for explicit senders: calls without
@@ -1953,20 +1967,11 @@ impl EthApi<FoundryNetwork> {
             }
         }
 
-        // Amsterdam prices a transaction's intrinsic gas by its recipient and value (EIP-2780), so
-        // a transfer can cost less than 21000, and charges state gas for new accounts
-        // (EIP-8037).
-        let (amsterdam_eip2780, amsterdam_eip8037) = {
-            let evm_env = self.backend.evm_env().read();
-            (evm_env.cfg_env.enable_amsterdam_eip2780, evm_env.cfg_env.enable_amsterdam_eip8037)
-        };
-
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
         // Skip this optimization for Tempo mode since native ETH transfers are not allowed
-        // and Tempo AA transactions have higher intrinsic gas costs (~46k). Under Amsterdam's gas
-        // rules a transfer's cost depends on its recipient and value, so it executes.
-        if !self.backend.is_tempo() && !amsterdam_eip2780 && !amsterdam_eip8037 {
+        // and Tempo AA transactions have higher intrinsic gas costs (~46k).
+        if !self.backend.is_tempo() {
             let to = inner.to.as_ref().and_then(TxKind::to);
 
             // check certain fields to see if the request could be a simple transfer
@@ -1976,19 +1981,30 @@ impl EthApi<FoundryNetwork> {
                 && inner.access_list.is_none()
                 && inner.blob_versioned_hashes.is_none();
 
-            // A priced transfer below the base fee falls through, so execution rejects it. Before
-            // London there is no protocol base fee to check.
             if maybe_transfer
-                && (gas_price == 0
-                    || gas_price >= u128::from(block_env.basefee)
-                    || !self.backend.is_eip1559())
-                && highest_gas_limit >= MIN_TRANSACTION_GAS
                 && let Some(to) = to
                 && !self.backend.is_precompile(to, &block_env)
                 && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
                 && target_code.as_ref().is_empty()
             {
-                return Ok(MIN_TRANSACTION_GAS);
+                // Execute the transfer to account for fork-dependent gas costs and validation.
+                // With no bytecode or authorizations, a successful run receives no refunds and
+                // its gas used is the exact gas required. A new-account state charge can make
+                // this probe fail, in which case estimation continues below.
+                let probe = self.backend.call_with_state_typed_gas_limit(
+                    &state,
+                    request.clone(),
+                    fees.clone(),
+                    block_env.clone(),
+                    GasEstimateCallOptions::new(
+                        highest_gas_limit.min(MIN_TRANSACTION_GAS) as u64,
+                        disable_fee_charge,
+                        monad_context.clone(),
+                    ),
+                );
+                if let Ok(GasEstimationCallResult::Success(gas)) = probe.try_into() {
+                    return Ok(gas);
+                }
             }
         }
 
@@ -2024,19 +2040,16 @@ impl EthApi<FoundryNetwork> {
         // possible range NOTE: this is the gas the transaction used, which is less than the
         // transaction requires to succeed
 
-        // Get the starting lowest gas needed depending on the transaction kind. The search keeps
-        // its lower bound below the answer, so start one under the least possible cost: a
-        // transaction that costs exactly that, like an EIP-2780 self-transfer, is then found.
-        let mut lowest_gas_limit =
-            determine_base_gas_by_kind(&request, amsterdam_eip2780).saturating_sub(1);
+        // Gas used is a lower bound on the gas required. Keep it inside the search interval so
+        // exact-cost transactions, including Amsterdam calls below 21,000 gas, are considered.
+        let mut lowest_gas_limit = gas_used.saturating_sub(1);
 
         // pick a point that's close to the estimated gas
         let mut mid_gas_limit =
             std::cmp::min(gas_used * 3, (highest_gas_limit + lowest_gas_limit) / 2);
 
-        // Binary search for the ideal gas limit. Saturating, so a base above a limit that succeeded
-        // ends the search instead of underflowing.
-        while highest_gas_limit.saturating_sub(lowest_gas_limit) > 1 {
+        // Binary search for the ideal gas limit
+        while lowest_gas_limit + 1 < highest_gas_limit {
             let ethres = self.backend.call_with_state_typed_gas_limit(
                 &state,
                 request.clone(),
@@ -5637,36 +5650,6 @@ fn execution_error(exit: InstructionResult) -> Option<String> {
         SuccessOrHalt::Halt(reason) => Some(reason.to_string()),
         SuccessOrHalt::FatalExternalError => Some("fatal external error".to_string()),
         SuccessOrHalt::Internal(_) => Some("internal EVM error".to_string()),
-    }
-}
-
-/// Determines the minimum gas needed for a transaction depending on the transaction kind.
-fn determine_base_gas_by_kind(
-    request: &FoundryTransactionRequest,
-    amsterdam_eip2780: bool,
-) -> u128 {
-    // EIP-2780 decomposes intrinsic gas into a base, `TX_BASE_COST`, plus charges for the
-    // recipient, value and creation, so the base alone bounds every kind from below.
-    if amsterdam_eip2780 {
-        return eip2780::TX_BASE_COST as u128;
-    }
-    let inner = request.as_ref();
-    let kind = match request {
-        FoundryTransactionRequest::Tempo(request) => {
-            request.calls.first().map(|call| call.to).or_else(|| inner.kind())
-        }
-        _ => inner.kind(),
-    };
-    match kind {
-        Some(TxKind::Call(_)) => {
-            MIN_TRANSACTION_GAS
-                + inner.authorization_list.as_ref().map_or(0, |auths_list| {
-                    auths_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
-                })
-        }
-        Some(TxKind::Create) => MIN_CREATE_GAS,
-        // Tighten the gas limit upwards if we don't know the tx kind to avoid deployments failing.
-        None => MIN_CREATE_GAS,
     }
 }
 
