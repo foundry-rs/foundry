@@ -738,3 +738,41 @@ async fn cast_run_rejects_mismatched_transaction(cmd: _) {
             ));
     }
 }
+
+// A forked Anvil reports the hardfork of the blocks it produced. Upstream blocks keep the rules
+// the upstream chain executed: Cancun charges 21000 where EIP-2780 would charge 15000.
+#[casttest]
+async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
+    let (_, upstream) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()))).await;
+    let mut accounts = upstream.dev_accounts();
+    let tx = TransactionRequest::default()
+        .with_from(accounts.next().unwrap())
+        .with_to(accounts.next().unwrap());
+    let receipt = upstream
+        .http_provider()
+        .send_transaction(tx.into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert_eq!(receipt.gas_used, 21_000);
+
+    let (_, fork) = anvil::spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Amsterdam.into()))
+            .with_eth_rpc_url(Some(upstream.http_endpoint())),
+    )
+    .await;
+    cmd.args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &fork.http_endpoint()])
+        .with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+Gas used: 21000
+
+"#]])
+        .stderr_eq("Executing previous transactions from the block.\n");
+}

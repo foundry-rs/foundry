@@ -538,10 +538,13 @@ impl RunArgs {
             // fork. For unknown chains, use the hardfork the node reports, as Anvil does, or probe
             // the node for the features it executes at the block, falling back to a blob-gas
             // heuristic if the node rejects the probe. The probe stops at Osaka, so it must not
-            // override a reported hardfork that prices gas differently.
+            // override a reported hardfork that prices gas differently. A forked Anvil reports
+            // the hardfork of the blocks it produced, so blocks up to its fork source are probed.
+            let reported_hardfork = fork.context().hardfork().is_some()
+                && fork.source_fork_block_number().is_none_or(|source| tx_block_number > source);
             if evm_version.is_none()
                 && config.hardfork.is_none()
-                && fork.context().hardfork().is_none()
+                && !reported_hardfork
                 && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
                     .is_none()
             {
