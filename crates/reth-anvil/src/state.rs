@@ -37,6 +37,8 @@ pub struct AnvilState {
     pending: Vec<StateOverride>,
     /// Writes applied by the block with the given number, awaiting canonicalization.
     frozen: BTreeMap<u64, Vec<StateOverride>>,
+    /// Writes applied by canonical blocks, so a replay of a block applies them again.
+    applied: BTreeMap<u64, Vec<StateOverride>>,
 }
 
 /// The overlay for one account.
@@ -127,8 +129,8 @@ impl AnvilState {
     /// The first call for a block takes every pending write and freezes it for that block, so a
     /// repeated execution of the same block applies the same writes.
     pub fn overrides_for_block(&mut self, number: u64) -> Vec<StateOverride> {
-        if let Some(frozen) = self.frozen.get(&number) {
-            return frozen.clone();
+        if let Some(writes) = self.frozen.get(&number).or_else(|| self.applied.get(&number)) {
+            return writes.clone();
         }
         if self.pending.is_empty() {
             return Vec::new();
@@ -144,6 +146,7 @@ impl AnvilState {
         let applied: Vec<_> = {
             let later = self.frozen.split_off(&(number + 1));
             let applied = std::mem::replace(&mut self.frozen, later);
+            self.applied.extend(applied.clone());
             applied.into_values().flatten().collect()
         };
         for write in applied {
@@ -198,5 +201,35 @@ impl AnvilState {
         let live_hashes: std::collections::HashSet<_> =
             self.accounts.values().filter_map(|account| account.code_hash).collect();
         self.bytecodes.retain(|hash, _| live_hashes.contains(hash));
+    }
+
+    /// Forgets the writes of the blocks above `number`, which a rewind removed from the chain.
+    /// Writes not yet in a block stay pending.
+    pub fn rewind_to(&mut self, number: u64) {
+        self.applied.split_off(&(number + 1));
+        for writes in self.frozen.split_off(&(number + 1)).into_values() {
+            self.pending.extend(writes);
+        }
+    }
+
+    /// Returns the writes the block with the given number applied, or will apply.
+    pub fn writes_for_block(&self, number: u64) -> Option<&Vec<StateOverride>> {
+        self.frozen.get(&number).or_else(|| self.applied.get(&number))
+    }
+
+    /// Builds an overlay that serves the given writes.
+    pub fn from_writes(writes: &[StateOverride]) -> Self {
+        let mut state = Self::default();
+        for write in writes {
+            match write {
+                StateOverride::Balance(address, balance) => state.set_balance(*address, *balance),
+                StateOverride::Nonce(address, nonce) => state.set_nonce(*address, *nonce),
+                StateOverride::Code(address, code) => state.set_code(*address, code.clone()),
+                StateOverride::Storage(address, slot, value) => {
+                    state.set_storage_at(*address, *slot, *value)
+                }
+            }
+        }
+        state
     }
 }

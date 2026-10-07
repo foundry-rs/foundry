@@ -467,7 +467,9 @@ where
                 .map_err(|error| internal_error(format!("failed to read transactions: {error}")))?;
             self.impersonation.drop_txs(removed.into_iter().flatten().map(|tx| *tx.tx_hash()));
         }
-        self.mining.rewind(header.clone()).await.map_err(internal_error)
+        self.mining.rewind(header.clone()).await.map_err(internal_error)?;
+        self.state.write().rewind_to(header.number());
+        Ok(())
     }
 
     /// Returns the balance of the account in the latest state, including anvil state writes.

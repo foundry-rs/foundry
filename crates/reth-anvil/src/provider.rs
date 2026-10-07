@@ -3,7 +3,7 @@ use crate::{
         AnvilPrimitives, ForkOf, ForkStateProvider, LocalWrites, decode_remote_tx_number,
         remote_tx_number,
     },
-    state::SharedAnvilState,
+    state::{AnvilState, SharedAnvilState},
     state_dump::{AccountDump, SerializableAccountRecord},
     state_provider::AnvilStateProvider,
 };
@@ -13,6 +13,7 @@ use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, TxHash, TxNumber,
 };
 use alloy_rpc_types_engine::ForkchoiceState;
+use parking_lot::RwLock;
 use reth_chain_state::{
     CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ExecutedBlock,
     ForkChoiceNotifications, ForkChoiceSubscriptions, NewCanonicalChain,
@@ -303,8 +304,11 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         Box::new(AnvilStateProvider::new(self.state.clone(), provider))
     }
 
-    /// Wraps the provider when `number` is the canonical head.
-    fn overlay_if_head_number(
+    /// Wraps the state at block `number` with the anvil writes made while that block was the
+    /// head: the pending writes for the current head, and for an older block the writes the next
+    /// block applied. Anvil writes into the head state directly, so a reader at that block sees
+    /// them.
+    fn overlay_for_block(
         &self,
         number: BlockNumber,
         provider: StateProviderBox,
@@ -312,19 +316,14 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         if number == self.inner.best_block_number()? {
             return Ok(self.overlay(provider));
         }
-        Ok(provider)
-    }
-
-    /// Wraps the provider when `hash` is the canonical head.
-    fn overlay_if_head_hash(
-        &self,
-        hash: BlockHash,
-        provider: StateProviderBox,
-    ) -> ProviderResult<StateProviderBox> {
-        if hash == self.inner.chain_info()?.best_hash {
-            return Ok(self.overlay(provider));
+        let writes = self.state.read().writes_for_block(number + 1).cloned();
+        match writes {
+            Some(writes) if !writes.is_empty() => Ok(Box::new(AnvilStateProvider::new(
+                Arc::new(RwLock::new(AnvilState::from_writes(&writes))),
+                provider,
+            ))),
+            _ => Ok(provider),
         }
-        Ok(provider)
     }
 }
 
@@ -964,7 +963,7 @@ impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
             return self.remote_state(fork, block);
         }
         let provider = self.with_fork(self.inner.history_by_block_number(block)?, block)?;
-        self.overlay_if_head_number(block, provider)
+        self.overlay_for_block(block, provider)
     }
 
     fn history_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
@@ -976,7 +975,7 @@ impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
         let number =
             self.inner.block_number(block)?.ok_or(ProviderError::BlockHashNotFound(block))?;
         let provider = self.with_fork(self.inner.history_by_block_hash(block)?, number)?;
-        self.overlay_if_head_hash(block, provider)
+        self.overlay_for_block(number, provider)
     }
 
     fn state_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {

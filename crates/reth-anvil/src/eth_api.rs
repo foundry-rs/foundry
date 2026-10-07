@@ -1,8 +1,9 @@
 use crate::server::SharedModule;
-use alloy_eips::BlockId;
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{anvil::Forking, txpool::TxpoolStatus};
 use alloy_rpc_types_eth::{Account, Index, Transaction, TransactionReceipt, TransactionRequest};
+use alloy_serde::WithOtherFields;
 use eyre::Result;
 use jsonrpsee::core::params::ArrayParams;
 use parking_lot::RwLock;
@@ -91,15 +92,17 @@ impl EthApi {
     /// Returns the transaction at the given block and index.
     pub async fn transaction_by_block_number_and_index(
         &self,
-        block: u64,
+        block: BlockNumberOrTag,
         index: Index,
     ) -> Result<Option<Transaction>> {
-        self.call("eth_getTransactionByBlockNumberAndIndex", params![U256::from(block), index])
-            .await
+        self.call("eth_getTransactionByBlockNumberAndIndex", params![block, index]).await
     }
 
     /// Signs and sends a transaction from a dev or impersonated account.
-    pub async fn send_transaction(&self, request: TransactionRequest) -> Result<B256> {
+    pub async fn send_transaction(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<B256> {
         self.call("eth_sendTransaction", params![request]).await
     }
 

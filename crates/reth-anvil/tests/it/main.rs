@@ -443,11 +443,8 @@ async fn anvil_node_info_and_metadata_follow_latest_head() -> Result<()> {
         assert_eq!(node_info.current_block_number, expected_block_number);
         assert_eq!(node_info.current_block_timestamp, expected_timestamp);
         assert_eq!(node_info.current_block_hash, expected_hash);
-        let expected_hardfork = EthereumHardfork::from_chain_and_timestamp(
-            alloy_chains::Chain::mainnet(),
-            expected_timestamp,
-        )
-        .unwrap_or(EthereumHardfork::Osaka);
+        // The dev chain id is not a known chain, so the latest hardfork is active, as in anvil.
+        let expected_hardfork = EthereumHardfork::default();
         assert_eq!(node_info.hard_fork, expected_hardfork.to_string().to_lowercase());
         assert_eq!(node_info.transaction_order, "fees");
         assert_eq!(node_info.environment.chain_id, metadata.chain_id);
@@ -1034,8 +1031,9 @@ async fn auto_impersonate_config_signs_for_any_account() -> Result<()> {
     let sender = Address::repeat_byte(0xA7);
     api.anvil_set_balance(sender, U256::from(10u64).pow(U256::from(18))).await?;
     let (_, gas_price) = funder_and_gas_price(&client).await?;
-    let tx_hash =
-        api.send_transaction(transfer(sender, Address::repeat_byte(0xA8), gas_price)).await?;
+    let tx_hash = api
+        .send_transaction(transfer(sender, Address::repeat_byte(0xA8), gas_price).into())
+        .await?;
     let receipt = api.transaction_receipt(tx_hash).await?;
     let receipt = match receipt {
         Some(receipt) => receipt,
@@ -2136,4 +2134,63 @@ async fn fork_at_transaction_hash_replays_the_transactions_before_it() -> Result
     client.request::<(), _>("anvil_mine", rpc_params![]).await?;
     assert_eq!(block_number(&client).await?, 2);
     Ok(())
+}
+
+#[tokio::test]
+async fn eth_call_code_override_keeps_overlay_storage() -> Result<()> {
+    with_test_client(|client| async move {
+        // `cast call --delegate` overrides the caller's code and reads the caller's storage. The
+        // caller has a nonce: revm treats the storage of an account without nonce and code as
+        // known to be empty once the account changes, so a code override on a plain address hides
+        // the storage anvil wrote to it. Anvil's own state model keeps it.
+        let caller = Address::repeat_byte(0xD4);
+        let value = B256::from(U256::from(0x1234));
+        client.request::<(), _>("anvil_setNonce", rpc_params![caller, U256::ONE]).await?;
+        client
+            .request::<bool, _>("anvil_setStorageAt", rpc_params![caller, U256::ZERO, value])
+            .await?;
+        let overrides = StateOverridesBuilder::default().with_code(caller, SLOAD_ZERO_CODE).build();
+        let call = TransactionRequest::default().with_to(caller);
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        let storage: B256 =
+            client.request("eth_getStorageAt", rpc_params![caller, U256::ZERO, "latest"]).await?;
+        assert_eq!(storage, value, "the storage landed in the chain state");
+        let result: Bytes = client
+            .request("eth_call", rpc_params![call.clone(), "latest", overrides.clone()])
+            .await?;
+        assert_eq!(B256::from_slice(result.as_ref()), value, "after the write landed");
+
+        let next = B256::from(U256::from(0x5678));
+        client
+            .request::<bool, _>("anvil_setStorageAt", rpc_params![caller, U256::ZERO, next])
+            .await?;
+        let result: Bytes =
+            client.request("eth_call", rpc_params![call, "latest", overrides]).await?;
+        assert_eq!(B256::from_slice(result.as_ref()), next, "from the overlay");
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn state_writes_are_visible_at_the_block_they_were_made_at() -> Result<()> {
+    with_test_client(|client| async move {
+        // Anvil writes into the head state, so a reader at that block sees the write, also after
+        // later blocks carried it into the chain state. Tools that replay a block fork at its
+        // parent and rely on this.
+        let contract = Address::repeat_byte(0xCF);
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        client.request::<(), _>("anvil_setCode", rpc_params![contract, RETURN_42_CODE]).await?;
+        client.request::<(), _>("anvil_mine", rpc_params![]).await?;
+        assert_eq!(block_number(&client).await?, 2);
+
+        for tag in ["0x1", "0x2", "latest"] {
+            let code: Bytes = client.request("eth_getCode", rpc_params![contract, tag]).await?;
+            assert_eq!(code, RETURN_42_CODE, "code at {tag}");
+        }
+        let code: Bytes = client.request("eth_getCode", rpc_params![contract, "0x0"]).await?;
+        assert!(code.is_empty(), "the write was made after block 0");
+        Ok(())
+    })
+    .await
 }

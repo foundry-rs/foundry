@@ -41,4 +41,9 @@ pub use node::{NodeHandle, spawn, try_spawn};
 pub use state_dump::{SerializableAccountRecord, SerializableState, StateFile};
 pub use types::{ForkChoice, ForkUrl, ReorgOptions, TransactionData, TransactionOrder};
 
-pub use alloy_rpc_types::anvil::Forking;
+pub use alloy_rpc_types::anvil::{Forking, Metadata, NodeInfo};
+
+/// The in-process API under anvil's module path.
+pub mod eth {
+    pub use crate::eth_api::EthApi;
+}

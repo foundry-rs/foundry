@@ -272,6 +272,13 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
     }
 
+    /// Returns a test config for the Base network.
+    #[cfg(feature = "base")]
+    #[doc(hidden)]
+    pub fn test_base() -> Self {
+        Self { networks: NetworkConfigs::with_base(), ..Self::test() }
+    }
+
     /// Sets the network the node runs.
     pub const fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
@@ -339,9 +346,10 @@ impl NodeConfig {
         self
     }
 
-    /// Returns the Ethereum hardfork active from genesis.
+    /// Returns the Ethereum hardfork active from genesis: the configured one, the one active on
+    /// the chain at the genesis timestamp for a known chain, or the latest otherwise.
     pub fn get_hardfork(&self) -> Result<EthereumHardfork> {
-        self.ethereum_hardfork_at(Chain::mainnet(), self.get_genesis_timestamp())
+        self.ethereum_hardfork_at(Chain::from_id(self.get_chain_id()), self.get_genesis_timestamp())
     }
 
     /// Returns the configured Ethereum hardfork, or the one active on `chain` at `timestamp`.
@@ -353,8 +361,9 @@ impl NodeConfig {
             return Ok(ethereum_hardfork_of_monad(self.monad_hardfork_at(timestamp)?));
         }
         match self.hardfork {
-            None => Ok(EthereumHardfork::from_chain_and_timestamp(chain, timestamp)
-                .unwrap_or(EthereumHardfork::Osaka)),
+            None => {
+                Ok(EthereumHardfork::from_chain_and_timestamp(chain, timestamp).unwrap_or_default())
+            }
             Some(FoundryHardfork::Ethereum(hardfork)) => Ok(hardfork),
             Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not supported yet"),
         }

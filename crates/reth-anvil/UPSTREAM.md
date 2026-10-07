@@ -53,6 +53,31 @@ be free if reth had a dev mode:
   from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
   on top of it, like anvil's pending block, and a call at an older block replays that block.
 
+## Differences that cast's tests show
+
+Running `crates/cast/tests` against this node instead of anvil (the `anvil` dev-dependency renamed
+to `reth-anvil`) passes everything that does not need Tempo, except these groups. None of them
+is a missing method.
+
+- Error text. Reth reports reverts as `execution reverted` with the revert data in the `data`
+  field; anvil decodes custom errors into the message and prints `data: "0x"` for empty data.
+  Tests that snapshot these messages need new snapshots.
+- `eth_getBlockAccessListByBlockNumber` for a block without a list answers `block not found`
+  (reth) instead of anvil's `block access list ... not found`.
+- `eth_estimateGas` without `from` and with fee fields set fails with `gas required exceeds
+  allowance (0)`: reth caps the estimate by the zero address's balance, anvil does not.
+- Storage on a plain address. `anvil_setStorageAt` on an account without balance, nonce, or code
+  keeps the storage in anvil; here the next block clears the empty account (EIP-161). An account
+  without nonce and code keeps the storage, but revm treats it as known to be empty once the
+  account changes, so a code override in `eth_call` does not see it (`cast call --delegate` with a
+  fresh sender).
+- `cast run` uses the block access lists reth serves to skip replaying the earlier transactions of
+  a block, so its progress output differs, and the replay from that prestate reports less gas than
+  the receipt for calls into contracts set with `anvil_setCode`; anvil serves no lists for its
+  blocks. To be investigated with cast.
+- `cast call --trace` and `--override-state-diff` traces show a few hundred gas more in the outer
+  call than against anvil. To be investigated.
+
 ## What Tempo needs
 
 `tempo-node` hard-wires its EVM config: `TempoPayloadBuilder`, `TempoPoolBuilder`, and
