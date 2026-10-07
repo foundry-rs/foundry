@@ -802,7 +802,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         parent_beacon_block_root: alloy_primitives::B256,
     ) -> eyre::Result<()> {
-        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let calldata = Bytes::from(parent_beacon_block_root);
         let mut evm_env = self.evm_env.clone();
         let inspector = self.inspector().clone();
         let mut state = {

@@ -1,6 +1,7 @@
 //! CLI tests for bytecode commands.
 
 use super::*;
+use alloy_primitives::KECCAK256_EMPTY;
 
 // <https://github.com/foundry-rs/foundry/issues/10945>
 // tests `cast code --disassemble`
@@ -66,7 +67,7 @@ async fn codehash_empty(cmd: _) {
         &handle.http_endpoint(),
     ])
     .assert_success()
-    .stdout_eq(format!("{}\n", keccak256([])));
+    .stdout_eq(format!("{KECCAK256_EMPTY}\n"));
 }
 
 #[casttest]

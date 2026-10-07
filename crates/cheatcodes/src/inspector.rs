@@ -3888,7 +3888,7 @@ const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<
 }
 
 fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheat.func.signature.split('(').next().unwrap()
+    cheatcode_signature(cheat).split('(').next().unwrap()
 }
 
 const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
