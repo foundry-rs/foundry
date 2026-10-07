@@ -1861,11 +1861,16 @@ impl EthApi<FoundryNetwork> {
     /// This will execute the transaction request and find the best gas limit via binary search.
     fn do_estimate_gas_with_state(
         &self,
-        request: FoundryTransactionRequest,
+        mut request: FoundryTransactionRequest,
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
         monad_context: Option<MonadReplayContext>,
     ) -> Result<u128> {
+        // A blob request may carry only its sidecar. Take its versioned hashes first, so the funds
+        // check reserves the blob fee that execution charges.
+        if request.as_ref().blob_versioned_hashes.is_none() {
+            request.as_mut().populate_blob_hashes();
+        }
         let inner = request.as_ref();
         let fees = FeeDetails::new(
             inner.gas_price,
