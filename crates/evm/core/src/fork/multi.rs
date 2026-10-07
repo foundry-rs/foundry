@@ -297,13 +297,14 @@ impl<
     }
 }
 
-type CreateFuture<N, SPEC, BLOCK> = Pin<
+type CreateFuture<SPEC, BLOCK> = Pin<
     Box<
         dyn Future<
                 Output = eyre::Result<(
                     ForkId,
-                    CreatedFork<N, SPEC, BLOCK>,
-                    BackendHandler<N, BLOCK>,
+                    CreateFork,
+                    Fork,
+                    EvmEnv<SPEC, BLOCK>,
                     Option<BlockAccessList>,
                 )>,
             > + Send,
@@ -338,7 +339,7 @@ enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 enum ForkTask<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     /// Contains the future that will establish a new fork.
     Create {
-        future: CreateFuture<N, SPEC, BLOCK>,
+        future: CreateFuture<SPEC, BLOCK>,
         id: ForkId,
         prewarm_bal: bool,
         no_fork_bal: bool,
@@ -601,35 +602,39 @@ impl<
                     additional_senders,
                 } => {
                     if let Poll::Ready(resp) = future.poll_unpin(cx) {
-                        match resp {
-                            Ok((fork_id, fork, handler, mut bal)) => {
-                                let (fork_id, fork) = if let Some(mut cached) =
-                                    this.forks.get(&fork_id).cloned()
+                        let resp = resp.and_then(|(fork_id, opts, resolved, evm_env, mut bal)| {
+                            let (fork_id, fork) = if let Some(mut cached) =
+                                this.forks.get(&fork_id).cloned()
+                            {
+                                if bal.is_some()
+                                    && resolved.fingerprint() != cached.fork.fingerprint()
                                 {
-                                    let source = &fork.fork;
-                                    let selected = &cached.fork;
-                                    if bal.is_some()
-                                        && source.fingerprint() != selected.fingerprint()
-                                    {
-                                        debug!(target: "backend::fork", "ignoring fork BAL for a different cache identity");
-                                        bal = None;
-                                    }
-                                    // Share the remote cache, RPC client, and block while
-                                    // retaining this consumer's selector, execution environment,
-                                    // and BAL policy. The fork ID includes the block hash, so the
-                                    // cached block is the same block.
-                                    cached.opts = fork.opts;
-                                    cached.fork = Fork {
-                                        client: cached.fork.client,
-                                        block: cached.fork.block,
-                                        ..fork.fork
-                                    };
-                                    cached.evm_env = fork.evm_env;
-                                    (cached.inc_senders(fork_id), cached)
-                                } else {
-                                    this.handlers.push((fork_id.clone(), handler));
-                                    (fork_id, fork)
+                                    debug!(target: "backend::fork", "ignoring fork BAL for a different cache identity");
+                                    bal = None;
+                                }
+                                // Share the remote cache, RPC client, and block while retaining
+                                // this consumer's selector, execution environment, and BAL
+                                // policy. The fork ID includes the block hash, so the cached
+                                // block is the same block.
+                                cached.opts = opts;
+                                cached.fork = Fork {
+                                    client: cached.fork.client,
+                                    block: cached.fork.block,
+                                    ..resolved
                                 };
+                                cached.evm_env = evm_env;
+                                (cached.inc_senders(fork_id), cached)
+                            } else {
+                                // Only a new backend loads the disk cache.
+                                let (backend, handler) =
+                                    create_backend(&opts, &resolved, &evm_env.block_env)?;
+                                this.handlers.push((fork_id.clone(), handler));
+                                (fork_id, CreatedFork::new(opts, resolved, evm_env, backend))
+                            };
+                            Ok((fork_id, fork, bal))
+                        });
+                        match resp {
+                            Ok((fork_id, fork, bal)) => {
                                 // Apply only after choosing the backend, including an existing
                                 // cache.
                                 if let Some(bal) = bal {
@@ -783,9 +788,9 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> Drop for ShutDownMultiFork<N, SPEC, 
 
 /// Creates a new fork.
 ///
-/// This will establish a new `Provider` to the endpoint and return the Fork Backend.
+/// This resolves the fork block and environment through the endpoint. The handler creates the
+/// backend with [`create_backend`] only if no backend exists for the fork ID.
 async fn create_fork<
-    N: Network,
     SPEC: Into<SpecId> + Default + Copy + Send,
     BLOCK: FoundryBlock + ForkBlockEnv + Default,
 >(
@@ -793,12 +798,7 @@ async fn create_fork<
     expected_identity: Option<ForkContext>,
     prewarm_bal: bool,
     exact_block: Option<(Fork, BlockNumHash)>,
-) -> eyre::Result<(
-    ForkId,
-    CreatedFork<N, SPEC, BLOCK>,
-    BackendHandler<N, BLOCK>,
-    Option<BlockAccessList>,
-)> {
+) -> eyre::Result<(ForkId, CreateFork, Fork, EvmEnv<SPEC, BLOCK>, Option<BlockAccessList>)> {
     // Ensure evm_opts reflects the fork URL (may differ from the resolved CreateFork url when
     // created via cheatcodes, where evm_opts is cloned from the base config).
     let execution_networks = fork.evm_opts.networks;
@@ -863,12 +863,31 @@ async fn create_fork<
             "fork endpoint identity changed while the fork was being rolled"
         );
     }
+    let bal = if prewarm_bal {
+        bal::prepare(&any_provider, &resolved, &resolved.block).await
+    } else {
+        None
+    };
+    let fork_id = ForkId::resolved(&fork.url, &resolved);
+
+    Ok((fork_id, fork, resolved, evm_env, bal))
+}
+
+/// Creates the backend of a resolved fork.
+///
+/// This loads the disk cache of the fork block, so it only runs for a new fork ID.
+fn create_backend<N: Network, BLOCK: FoundryBlock + ForkBlockEnv>(
+    fork: &CreateFork,
+    resolved: &Fork,
+    block_env: &BLOCK,
+) -> eyre::Result<(SharedBackend<N, BLOCK>, BackendHandler<N, BLOCK>)> {
+    let fork_context = resolved.context();
     let number = resolved.number();
     let account_fetch_policy = crate::backend::account_fetch_policy_for_source(
         fork_context.source_chain_id,
         fork_context.network_profile,
     );
-    let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone())
+    let meta = BlockchainDbMeta::new(block_env.clone(), fork.url.clone())
         .with_fork_identity(resolved.hash(), resolved.source_id())
         .with_account_fetch_policy(account_fetch_policy);
 
@@ -881,26 +900,17 @@ async fn create_fork<
     };
 
     let provider = resolved.provider::<N>();
-    let bal = if prewarm_bal {
-        bal::prepare(&any_provider, &resolved, &resolved.block).await
-    } else {
-        None
-    };
     let db = BlockchainDb::new(meta, cache_path);
     let anchor = ForkBlock::with_rpc_number(
-        evm_env.block_env.number().saturating_to(),
+        block_env.number().saturating_to(),
         resolved.number(),
         resolved.hash(),
     );
-    let (backend, handler) = if resolved.state_by_number {
-        SharedBackend::new_with_anchor_by_number(provider, db, anchor)?
+    if resolved.state_by_number {
+        SharedBackend::new_with_anchor_by_number(provider, db, anchor)
     } else {
-        SharedBackend::new_with_anchor(provider, db, anchor)?
-    };
-    let fork_id = ForkId::resolved(&fork.url, &resolved);
-    let fork = CreatedFork::new(fork, resolved, evm_env, backend);
-
-    Ok((fork_id, fork, handler, bal))
+        SharedBackend::new_with_anchor(provider, db, anchor)
+    }
 }
 
 #[cfg(test)]
@@ -1003,11 +1013,13 @@ mod tests {
                 enable_caching: true,
                 evm_opts: EvmOpts { fork_state_by_number: state_by_number, ..opts.clone() },
             };
-            let (_, fork, handler, _) =
-                create_fork::<AnyNetwork, SpecId, BlockEnv>(fork, None, false, None).await.unwrap();
-            assert_eq!(fork.backend.data().storage.read().contains_key(&address), !state_by_number);
+            let (_, fork, fork_state, evm_env, _) =
+                create_fork::<SpecId, BlockEnv>(fork, None, false, None).await.unwrap();
+            let (backend, handler) =
+                create_backend::<AnyNetwork, _>(&fork, &fork_state, &evm_env.block_env).unwrap();
+            assert_eq!(backend.data().storage.read().contains_key(&address), !state_by_number);
             if state_by_number {
-                fork.backend
+                backend
                     .data()
                     .storage
                     .write()
@@ -1015,8 +1027,8 @@ mod tests {
                     .or_default()
                     .insert(U256::ZERO, U256::from(99));
             }
-            fork.backend.flush_cache();
-            drop(fork);
+            backend.flush_cache();
+            drop(backend);
             drop(handler);
             let reloaded = BlockchainDb::new(meta.clone(), Some(path.clone()));
             assert_eq!(reloaded.storage().read()[&address][&U256::ZERO], U256::from(42));
@@ -1154,24 +1166,24 @@ mod tests {
             assert_eq!(candidate.fingerprint(), cached.fingerprint());
             let (cached, cached_handler) = create(cached);
             let cached_db = cached.backend.data();
-            let (candidate, candidate_handler) = create(candidate);
-            let candidate_db = candidate.backend.data();
             let bal = vec![AccountChanges::new(address).with_storage_change(SlotChanges::new(
                 U256::ONE,
                 vec![StorageChange::new(BlockAccessIndex::new(1), U256::from(42))],
             ))];
+            let future = futures::future::ready(Ok((
+                id.clone(),
+                cached.opts.clone(),
+                candidate,
+                cached.evm_env.clone(),
+                Some(bal),
+            )));
             let (_incoming, receiver) = channel(1);
             let mut manager = MultiForkHandler::<AnyNetwork, SpecId, BlockEnv>::new(receiver);
             manager.forks.insert(id.clone(), cached);
             manager.handlers.push((id.clone(), cached_handler));
             let (sender, receiver) = oneshot_channel();
             manager.pending_tasks.push(ForkTask::Create {
-                future: Box::pin(futures::future::ready(Ok((
-                    id.clone(),
-                    candidate,
-                    candidate_handler,
-                    Some(bal),
-                )))),
+                future: Box::pin(future),
                 id: id.clone(),
                 prewarm_bal: true,
                 no_fork_bal: false,
@@ -1182,8 +1194,8 @@ mod tests {
             assert!(manager.poll_unpin(&mut Context::from_waker(noop_waker_ref())).is_pending());
             let result = receiver.try_recv().unwrap().unwrap();
             assert!(Arc::ptr_eq(&result.backend.data(), &cached_db));
-            assert!(candidate_db.accounts.read().is_empty());
-            assert!(candidate_db.storage.read().is_empty());
+            // Reusing the cached backend creates no second backend.
+            assert_eq!(manager.handlers.len(), 1);
             assert_eq!(
                 cached_db
                     .storage

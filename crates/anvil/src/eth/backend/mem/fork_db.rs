@@ -107,6 +107,10 @@ impl<N: Network> Db for ForkedDatabase<N> {
         self.revert_state_snapshot(id, action)
     }
 
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.state_snapshots().lock().remove_at(id).is_some()
+    }
+
     fn current_state(&self) -> StateDb {
         StateDb::new(self.create_state_snapshot())
     }

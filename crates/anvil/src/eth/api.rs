@@ -539,7 +539,7 @@ impl<N: Network> EthApi<N> {
                     let config = fork.config.read();
 
                     NodeForkConfig {
-                        fork_url: config.eth_rpc_url().map(|s| s.to_string()),
+                        fork_url: config.eth_rpc_url().map(redact_url),
                         fork_block_number: Some(config.block_number),
                         fork_retry_backoff: Some(config.backoff.as_millis()),
                     }
@@ -1967,7 +1967,12 @@ impl EthApi<FoundryNetwork> {
                 && inner.access_list.is_none()
                 && inner.blob_versioned_hashes.is_none();
 
+            // A priced transfer below the base fee falls through, so execution rejects it. Before
+            // London there is no protocol base fee to check.
             if maybe_transfer
+                && (gas_price == 0
+                    || gas_price >= u128::from(block_env.basefee)
+                    || !self.backend.is_eip1559())
                 && highest_gas_limit >= MIN_TRANSACTION_GAS
                 && let Some(to) = to
                 && !self.backend.is_precompile(to, &block_env)
@@ -3889,9 +3894,6 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_getBlockReceipts");
         if number == BlockId::pending() {
             let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-            if transactions.is_empty() {
-                return Ok(Some(Vec::new()));
-            }
             return Ok(Some(self.backend.pending_block_receipts(transactions).await?));
         }
 
