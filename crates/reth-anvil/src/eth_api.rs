@@ -818,6 +818,30 @@ impl EthApi {
         self.request("anvil_setERC20Allowance", params![owner, spender, token, amount]).await
     }
 
+    /// Sets the token an account pays fees with. Tempo only.
+    pub async fn anvil_set_fee_token(&self, user: Address, token: Address) -> Result<()> {
+        self.request("anvil_setFeeToken", params![user, token]).await
+    }
+
+    /// Sets the token a validator receives fees in. Tempo only.
+    pub async fn anvil_set_validator_fee_token(
+        &self,
+        validator: Address,
+        token: Address,
+    ) -> Result<()> {
+        self.request("anvil_setValidatorFeeToken", params![validator, token]).await
+    }
+
+    /// Adds Fee AMM liquidity for a token pair. Tempo only.
+    pub async fn anvil_set_fee_amm_liquidity(
+        &self,
+        user_token: Address,
+        validator_token: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.request("anvil_setFeeAmmLiquidity", params![user_token, validator_token, amount]).await
+    }
+
     /// Returns the blob base fee of the next block.
     pub async fn blob_base_fee(&self) -> Result<U256> {
         self.request("eth_blobBaseFee", ArrayParams::new()).await

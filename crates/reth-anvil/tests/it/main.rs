@@ -53,6 +53,10 @@ mod sign;
 mod simulate;
 mod state;
 mod storage_values;
+#[cfg(feature = "tempo")]
+mod tempo;
+#[cfg(feature = "tempo")]
+mod tempo_canary;
 mod traces;
 mod transaction;
 mod txpool;

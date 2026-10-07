@@ -544,6 +544,12 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe
 ] }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-consensus = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-node = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-payload-builder = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-payload-types = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
+tempo-transaction-pool = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 
 # Monad
 alloy-monad-evm = { version = "0.8.0", default-features = false, features = [
@@ -568,6 +574,7 @@ base-execution-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "2a
 
 # reth
 # Keep the rev string identical to the one the tempo crates pin, so Cargo resolves one reth.
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }

@@ -40,6 +40,14 @@ use std::sync::Arc;
 pub mod ethereum;
 #[cfg(feature = "monad")]
 pub mod monad;
+#[cfg(feature = "tempo")]
+pub mod tempo;
+#[cfg(feature = "tempo")]
+mod tempo_genesis;
+#[cfg(feature = "tempo")]
+mod tempo_payload;
+#[cfg(feature = "tempo")]
+pub(crate) mod tempo_storage;
 
 /// The database every network runs on.
 pub type AnvilDb = Arc<DatabaseEnv>;

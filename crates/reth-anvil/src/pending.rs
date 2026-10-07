@@ -44,6 +44,18 @@ impl AnvilPendingEnv {
     pub const fn new(time: TimeManager, block_env: BlockEnvOverrides) -> Self {
         Self { time, block_env, cancun: None }
     }
+
+    /// Sets the chain whose Cancun schedule decides whether the pending block has a parent
+    /// beacon block root.
+    pub fn with_chain<C: EthereumHardforks + Send + Sync + 'static>(
+        mut self,
+        chain_spec: Arc<C>,
+    ) -> Self {
+        self.cancun = Some(CancunSchedule(Arc::new(move |timestamp| {
+            chain_spec.is_cancun_active_at_timestamp(timestamp)
+        })));
+        self
+    }
 }
 
 impl<Evm> PendingEnvBuilder<Evm> for AnvilPendingEnv
@@ -78,7 +90,7 @@ where
 /// Builds reth's Ethereum `eth` API with [`AnvilPendingEnv`] as the pending block environment.
 #[derive(Clone, Debug)]
 pub struct AnvilEthApiBuilder {
-    pending: AnvilPendingEnv,
+    pub(crate) pending: AnvilPendingEnv,
 }
 
 impl AnvilEthApiBuilder {
@@ -113,15 +125,12 @@ where
 {
     type EthApi = EthApiFor<N, Ethereum>;
 
-    async fn build_eth_api(mut self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
-        let chain_spec = ctx.components.provider().chain_spec();
-        self.pending.cancun = Some(CancunSchedule(Arc::new(move |timestamp| {
-            chain_spec.is_cancun_active_at_timestamp(timestamp)
-        })));
+    async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
+        let pending = self.pending.with_chain(ctx.components.provider().chain_spec());
         Ok(ctx
             .eth_api_builder()
             .map_converter(|converter| converter.with_network())
-            .with_pending_env_builder(self.pending)
+            .with_pending_env_builder(pending)
             .build())
     }
 }

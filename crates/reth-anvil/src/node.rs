@@ -278,6 +278,9 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
         #[cfg(feature = "monad")]
         NetworkVariant::Monad => launch::<crate::network::monad::Monad>(config).await,
+        #[cfg(feature = "tempo")]
+        NetworkVariant::Tempo => launch::<crate::network::tempo::Tempo>(config).await,
+        #[cfg(any(not(feature = "tempo"), feature = "optimism", feature = "base"))]
         network => eyre::bail!("the {network:?} network is not supported yet"),
     }
 }
@@ -599,6 +602,9 @@ async fn launch_node<Net: AnvilNetwork>(
             let snapshots = snapshots.clone();
             let chain_spec = chain_spec.clone();
             let signer_accounts = config.signer_accounts.clone();
+            let tempo_fee_payer = config.tempo_fee_payer_address().and_then(|fee_payer| {
+                config.signer_accounts.iter().find(|wallet| wallet.address() == fee_payer).cloned()
+            });
             let rpc_module = rpc_module.clone();
             let fork = fork.clone();
             let logging = logging.clone();
@@ -662,7 +668,8 @@ async fn launch_node<Net: AnvilNetwork>(
                     ctx.provider().clone(),
                     eth_api,
                     new_filter,
-                );
+                )
+                .with_tempo_fee_payer(tempo_fee_payer);
                 let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
                 let evm_module = EvmApiServer::into_rpc(rpc.clone());
                 let eth_module = EthExtApiServer::into_rpc(rpc.clone());

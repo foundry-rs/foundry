@@ -3,6 +3,7 @@ use crate::{
     state_dump::{CheckpointForks, SerializableState},
     types::{ForkChoice, ForkUrl, TransactionOrder},
 };
+use alloy_consensus::BlockHeader;
 use alloy_eips::{
     eip2935, eip4788, eip7002, eip7251, eip7840::BlobParams, eip7892::BlobScheduleBlobParams,
 };
@@ -38,10 +39,14 @@ use yansi::Paint;
 
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
+#[cfg(feature = "tempo")]
+use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
 #[cfg(feature = "optimism")]
 use reth_ethereum::chainspec::NamedChain;
 #[cfg(feature = "monad")]
 use revm::primitives::hardfork::SpecId;
+#[cfg(feature = "tempo")]
+use tempo_hardfork::constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE};
 
 const BANNER: &str = r"
                              _   _
@@ -184,6 +189,8 @@ pub struct NodeConfig {
     pub max_transactions: usize,
     /// Disable pool balance checks.
     pub disable_pool_balance_checks: bool,
+    /// The account that sponsors Tempo fee-payer requests. Defaults to the last dev account.
+    pub tempo_fee_payer: Option<Address>,
     /// Path of the block cache.
     pub cache_path: Option<PathBuf>,
     /// CORS `allow_origin` header.
@@ -270,6 +277,7 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             max_transactions: 1_000,
             disable_pool_balance_checks: false,
+            tempo_fee_payer: None,
             cache_path: None,
             allow_origin: "*".to_string(),
             no_cors: false,
@@ -327,6 +335,21 @@ impl NodeConfig {
     pub fn with_tempo(mut self) -> Self {
         self.networks = NetworkConfigs::with_tempo();
         self
+    }
+
+    /// Sets the account that sponsors Tempo fee-payer requests.
+    pub const fn with_tempo_fee_payer(mut self, fee_payer: Option<Address>) -> Self {
+        self.tempo_fee_payer = fee_payer;
+        self
+    }
+
+    /// Returns the account that sponsors Tempo fee-payer requests: the configured one, or the
+    /// last dev account. `None` when the node does not run Tempo.
+    pub fn tempo_fee_payer_address(&self) -> Option<Address> {
+        if !self.networks.is_tempo() {
+            return None;
+        }
+        self.tempo_fee_payer.or_else(|| self.genesis_accounts.last().map(|wallet| wallet.address()))
     }
 
     /// Runs the Monad network.
@@ -405,7 +428,19 @@ impl NodeConfig {
                     .as_ref()
                     .and_then(|genesis| genesis.base_fee_per_gas.map(|fee| fee as u64))
             })
-            .unwrap_or(INITIAL_BASE_FEE)
+            .unwrap_or_else(|| self.default_base_fee())
+    }
+
+    /// Returns the base fee the network starts with: Tempo's fixed fee on Tempo, and the
+    /// Ethereum default otherwise.
+    fn default_base_fee(&self) -> u64 {
+        #[cfg(feature = "tempo")]
+        if self.networks.is_tempo()
+            && let Ok(hardfork) = self.get_tempo_hardfork()
+        {
+            return if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE };
+        }
+        INITIAL_BASE_FEE
     }
 
     /// Sets the hardfork active from genesis.
@@ -427,6 +462,12 @@ impl NodeConfig {
         #[cfg(feature = "monad")]
         if self.networks.is_monad() {
             return Ok(ethereum_hardfork_of_monad(self.monad_hardfork_at(timestamp)?));
+        }
+        // Every Tempo hardfork runs on Osaka.
+        #[cfg(feature = "tempo")]
+        if self.networks.is_tempo() {
+            self.tempo_hardfork_at(timestamp)?;
+            return Ok(EthereumHardfork::Osaka);
         }
         match self.hardfork {
             None => {
@@ -451,6 +492,24 @@ impl NodeConfig {
                 .unwrap_or_default()),
             Some(FoundryHardfork::Monad(hardfork)) => Ok(hardfork),
             Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not a Monad hardfork"),
+        }
+    }
+
+    /// Returns the Tempo hardfork active from genesis.
+    #[cfg(feature = "tempo")]
+    pub fn get_tempo_hardfork(&self) -> Result<TempoHardfork> {
+        self.tempo_hardfork_at(self.get_genesis_timestamp())
+    }
+
+    /// Returns the configured Tempo hardfork, or the one active on the chain at `timestamp`, or
+    /// the latest one active on a public Tempo network otherwise.
+    #[cfg(feature = "tempo")]
+    pub(crate) fn tempo_hardfork_at(&self, timestamp: u64) -> Result<TempoHardfork> {
+        match self.hardfork {
+            None => Ok(TempoHardfork::from_chain_and_timestamp(self.get_chain_id(), timestamp)
+                .unwrap_or_else(latest_active_tempo_hardfork)),
+            Some(FoundryHardfork::Tempo(hardfork)) => Ok(hardfork),
+            Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not a Tempo hardfork"),
         }
     }
 
@@ -524,7 +583,7 @@ impl NodeConfig {
 
     /// Returns the gas price for pre-London chains.
     pub fn get_gas_price(&self) -> u128 {
-        self.gas_price.unwrap_or(INITIAL_BASE_FEE as u128)
+        self.gas_price.unwrap_or(self.default_base_fee() as u128)
     }
 
     /// Disables the block gas limit.
@@ -735,23 +794,23 @@ impl NodeConfig {
 
     /// Adopts the chain id, gas limit, and timestamp of the fork block, unless configured
     /// explicitly, and re-keys the dev wallets for the chain id.
-    pub fn apply_fork(&mut self, chain_id: u64, header: &SealedHeader, gas_price: u128) {
+    pub fn apply_fork(&mut self, chain_id: u64, header: &impl BlockHeader, gas_price: u128) {
         if self.chain_id.is_none() {
             self.set_chain_id(Some(chain_id));
             self.adopted_chain_id = true;
         }
         if self.gas_limit.is_none() {
-            self.gas_limit = Some(header.gas_limit);
+            self.gas_limit = Some(header.gas_limit());
         }
         if self.gas_price.is_none() {
             self.gas_price = Some(gas_price);
         }
         if self.base_fee.is_none() {
-            self.base_fee = header.base_fee_per_gas;
+            self.base_fee = header.base_fee_per_gas();
             self.adopted_base_fee = true;
         }
-        self.genesis_timestamp = Some(header.timestamp);
-        self.genesis_block_number = Some(header.number);
+        self.genesis_timestamp = Some(header.timestamp());
+        self.genesis_block_number = Some(header.number());
     }
 
     /// Adopts what an anvil endpoint reports about itself: its network, unless one is selected
@@ -1118,48 +1177,11 @@ impl NodeConfig {
                 .then_some((replay, timestamp + 1))
         });
         let genesis_hardfork = deferred.map_or(hardfork, |(replay, _)| replay);
-        let mut genesis = self
-            .genesis
-            .clone()
-            .unwrap_or_default()
-            .with_timestamp(header.timestamp)
-            .with_gas_limit(header.gas_limit)
-            .with_difficulty(header.difficulty)
-            .with_base_fee(header.base_fee_per_gas.map(u128::from));
-        genesis.number = Some(header.number);
-        genesis.config.chain_id = self.get_chain_id();
-
-        let remote = |address: &Address| {
-            accounts.iter().find(|(remote, _)| remote == address).map(|(_, account)| account)
-        };
-        // A funded account keeps what the genesis allocation gives it besides the balance, and
-        // the remote nonce and code otherwise.
-        let configured = genesis.alloc.clone();
-        let fork_account = |address: &Address, balance: U256| {
-            let remote = remote(address).cloned().unwrap_or_default();
-            let mut account = configured.get(address).cloned().unwrap_or_default();
-            account.balance = balance;
-            account.nonce = account.nonce.or(Some(remote.nonce));
-            account.code = account.code.or(remote.code);
-            account
-        };
-        let mut alloc: Vec<(Address, GenesisAccount)> = self
-            .genesis_accounts
-            .iter()
-            .map(|account| {
-                (account.address(), fork_account(&account.address(), self.genesis_balance))
-            })
-            .collect();
-        alloc.extend(
-            self.funded_accounts
-                .iter()
-                .map(|(address, balance)| (*address, fork_account(address, *balance))),
-        );
-        genesis = genesis.extend_accounts(alloc);
-
+        let genesis = self.fork_genesis(header.header(), accounts);
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
         let mut spec = build_chain_spec(builder, hardfork, deferred);
+
         // A fork block without blob fields starts the local blob schedule at zero excess when
         // the source omits them legitimately: a block from before Cancun, or a chain whose
         // headers carry none, as anvil decides. A Cancun block that lost them stays without, so
@@ -1196,6 +1218,54 @@ impl NodeConfig {
         }
         spec.genesis_header = SealedHeader::new(genesis_header, header.hash());
         Ok(Arc::new(spec))
+    }
+
+    /// Builds the genesis of a fork at `header`: the configured genesis at the fork block's
+    /// number, timestamp, gas limit, difficulty, and base fee, with the dev and funded accounts
+    /// funded over their remote nonce and code.
+    pub fn fork_genesis(
+        &self,
+        header: &impl BlockHeader,
+        accounts: &[(Address, ForkGenesisAccount)],
+    ) -> Genesis {
+        let mut genesis = self
+            .genesis
+            .clone()
+            .unwrap_or_default()
+            .with_timestamp(header.timestamp())
+            .with_gas_limit(header.gas_limit())
+            .with_difficulty(header.difficulty())
+            .with_base_fee(header.base_fee_per_gas().map(u128::from));
+        genesis.number = Some(header.number());
+        genesis.config.chain_id = self.get_chain_id();
+
+        let remote = |address: &Address| {
+            accounts.iter().find(|(remote, _)| remote == address).map(|(_, account)| account)
+        };
+        // A funded account keeps what the genesis allocation gives it besides the balance, and
+        // the remote nonce and code otherwise.
+        let configured = genesis.alloc.clone();
+        let fork_account = |address: &Address, balance: U256| {
+            let remote = remote(address).cloned().unwrap_or_default();
+            let mut account = configured.get(address).cloned().unwrap_or_default();
+            account.balance = balance;
+            account.nonce = account.nonce.or(Some(remote.nonce));
+            account.code = account.code.or(remote.code);
+            account
+        };
+        let mut alloc: Vec<(Address, GenesisAccount)> = self
+            .genesis_accounts
+            .iter()
+            .map(|account| {
+                (account.address(), fork_account(&account.address(), self.genesis_balance))
+            })
+            .collect();
+        alloc.extend(
+            self.funded_accounts
+                .iter()
+                .map(|(address, balance)| (*address, fork_account(address, *balance))),
+        );
+        genesis.extend_accounts(alloc)
     }
 
     /// Gives a state dump with a block environment but no block at its head a checkpoint block
@@ -1265,6 +1335,16 @@ impl NodeConfig {
     /// and the create2 deployer in the genesis allocation.
     pub fn chain_spec(&self) -> Result<Arc<ChainSpec>> {
         let hardfork = self.get_hardfork()?;
+        let genesis = self.genesis_for(hardfork)?;
+        let builder =
+            ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
+        Ok(Arc::new(build_chain_spec(builder, hardfork, None)))
+    }
+
+    /// Builds the genesis of a chain with `hardfork` active: the configured genesis, timestamp,
+    /// gas limit, and base fee, with the dev accounts, the funded accounts, the system contracts
+    /// of the hardfork, the create2 deployer, and the loaded state in the allocation.
+    pub fn genesis_for(&self, hardfork: EthereumHardfork) -> Result<Genesis> {
         // A loaded state continues at the block it was dumped at, with its block environment.
         let init_block = self.init_state.as_ref().and_then(|state| state.block_env());
         let init_number = self.init_state.as_ref().and_then(|state| state.head_number());
@@ -1356,11 +1436,7 @@ impl NodeConfig {
                 )
             }));
         }
-        genesis = genesis.extend_accounts(alloc);
-
-        let builder =
-            ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
-        Ok(Arc::new(build_chain_spec(builder, hardfork, None)))
+        Ok(genesis.extend_accounts(alloc))
     }
 }
 
@@ -1370,6 +1446,9 @@ const fn runs_network(network: NetworkVariant) -> bool {
         NetworkVariant::Ethereum => true,
         #[cfg(feature = "monad")]
         NetworkVariant::Monad => true,
+        #[cfg(feature = "tempo")]
+        NetworkVariant::Tempo => true,
+        #[cfg(any(not(feature = "tempo"), feature = "optimism", feature = "base"))]
         _ => false,
     }
 }

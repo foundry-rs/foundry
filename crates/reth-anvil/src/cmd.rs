@@ -69,6 +69,14 @@ pub struct NodeArgs {
     #[arg(long)]
     pub derivation_path: Option<String>,
 
+    /// The account used to sponsor Tempo fee-payer requests (`eth_signRawTransaction` and raw
+    /// transactions carrying the sponsorship placeholder).
+    ///
+    /// Must be an unlocked account. Only used on Tempo networks; defaults to the last dev
+    /// account.
+    #[arg(long = "tempo.fee-payer", value_name = "ADDRESS")]
+    pub tempo_fee_payer: Option<Address>,
+
     /// The EVM hardfork to use.
     ///
     /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
@@ -304,6 +312,7 @@ impl NodeArgs {
             .with_chain_id(self.evm.chain_id.map(u64::from))
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
+            .with_tempo_fee_payer(self.tempo_fee_payer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)

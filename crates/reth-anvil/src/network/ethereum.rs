@@ -5,7 +5,7 @@ use crate::{
     config::{ForkSource, NodeConfig},
     engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
-    fork::{ForkBackend, ForkInfo},
+    fork::{EthereumFork, ForkBackend, ForkInfo},
     impersonation::ImpersonationState,
     logging::{LoggingState, NodeInfoLayer},
     pending::AnvilEthApiBuilder,
@@ -110,8 +110,8 @@ impl AnvilNetwork for Ethereum {
 /// Resolves the chain spec and the fork of a network built on reth's Ethereum node types.
 pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<EthereumNode>> {
     if config.is_fork() {
-        let (fork, accounts) = ForkBackend::setup(config).await?;
-        config.apply_fork(fork.chain_id(), fork.header(), fork.gas_price());
+        let (fork, accounts) = ForkBackend::<EthereumFork>::setup(config).await?;
+        config.apply_fork(fork.chain_id(), fork.header().header(), fork.gas_price());
         if let Some(info) = fork.node_info() {
             config.adopt_fork_identity(info);
         }

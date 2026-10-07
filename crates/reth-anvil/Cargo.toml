@@ -72,6 +72,20 @@ hyper.workspace = true
 alloy-monad-evm = { workspace = true, optional = true }
 monad-revm = { workspace = true, optional = true }
 
+# tempo
+alloy-rlp = { workspace = true, optional = true }
+reth-basic-payload-builder = { workspace = true, optional = true }
+tempo-alloy = { workspace = true, optional = true }
+tempo-chainspec = { workspace = true, optional = true }
+tempo-evm = { workspace = true, optional = true }
+tempo-hardfork = { workspace = true, optional = true }
+tempo-node = { workspace = true, optional = true }
+tempo-payload-types = { workspace = true, optional = true }
+tempo-precompiles = { workspace = true, optional = true }
+tempo-primitives = { workspace = true, optional = true }
+tempo-revm = { workspace = true, optional = true }
+tempo-transaction-pool = { workspace = true, optional = true }
+
 # misc
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 chrono.workspace = true
@@ -102,6 +116,20 @@ monad = [
     "dep:alloy-monad-evm",
     "dep:monad-revm",
 ]
+tempo = [
+    "dep:alloy-rlp",
+    "dep:reth-basic-payload-builder",
+    "dep:tempo-alloy",
+    "dep:tempo-chainspec",
+    "dep:tempo-evm",
+    "dep:tempo-hardfork",
+    "dep:tempo-node",
+    "dep:tempo-payload-types",
+    "dep:tempo-precompiles",
+    "dep:tempo-primitives",
+    "dep:tempo-revm",
+    "dep:tempo-transaction-pool",
+]
 base = ["foundry-evm-networks/base", "foundry-evm-hardforks/base"]
 optimism = ["foundry-evm-networks/optimism", "foundry-evm-hardforks/optimism"]
 
@@ -115,6 +143,7 @@ alloy-rlp.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
 alloy-transport.workspace = true
 alloy-trie.workspace = true
+foundry-primitives.workspace = true
 foundry-test-utils.workspace = true
 futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }
