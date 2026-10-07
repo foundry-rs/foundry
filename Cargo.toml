@@ -303,7 +303,7 @@ crossterm.opt-level = "s"
 alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
-anvil = { path = "crates/anvil", default-features = false }
+anvil = { package = "reth-anvil", path = "crates/reth-anvil", default-features = false }
 
 forge-doc = { path = "crates/doc", default-features = false }
 forge-fmt = { path = "crates/fmt", default-features = false }

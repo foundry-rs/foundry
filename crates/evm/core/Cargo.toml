@@ -141,6 +141,7 @@ base = [
     "foundry-evm-networks/base",
 ]
 optimism = [
+    "anvil/optimism",
     "dep:op-alloy-consensus",
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",

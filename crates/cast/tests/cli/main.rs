@@ -74,7 +74,7 @@ fn valid_touch_id_sidecar_fixture(version: u32, policy: &str) -> String {
 async fn deploy_counter_and_set_number(
     prj: &foundry_test_utils::TestProject,
     cmd: &mut foundry_test_utils::TestCommand,
-    api: &anvil::eth::EthApi<foundry_primitives::FoundryNetwork>,
+    api: &anvil::eth::EthApi,
     endpoint: &str,
 ) -> alloy_primitives::TxHash {
     foundry_test_utils::util::initialize(prj.root());

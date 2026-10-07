@@ -140,14 +140,22 @@ async fn fork_execution_uses_exact_ancestry_after_reorg(prj: _, cmd: _) {
     )
     .await;
     serve_orphan_by_number.store(false, Ordering::Relaxed);
-    let orphan_hash = fork_api.backend.get_fork().unwrap().block_hash();
-    let reset_number = fork_api.backend.get_fork().unwrap().block_number();
+    let forked = fork_api.anvil_metadata().await.unwrap().forked_network.unwrap();
+    let orphan_hash = forked.fork_block_hash;
+    let reset_number = forked.fork_block_number;
     let canonical =
         rpc(&upstream, "eth_getBlockByNumber", json!([format!("0x{reset_number:x}"), false])).await;
     std::assert_ne!(canonical["hash"], orphan_hash.to_string());
     fork_api.anvil_reset(Some(Default::default())).await.unwrap();
     std::assert_eq!(
-        fork_api.backend.get_fork().unwrap().block_hash().to_string(),
+        fork_api
+            .anvil_metadata()
+            .await
+            .unwrap()
+            .forked_network
+            .unwrap()
+            .fork_block_hash
+            .to_string(),
         canonical["hash"]
     );
     drop(fork_handle);
