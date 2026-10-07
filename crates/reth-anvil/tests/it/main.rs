@@ -2321,3 +2321,29 @@ async fn anvil_reset_at_genesis_is_a_no_op() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn celo_node_serves_the_native_transfer_precompile() -> Result<()> {
+    use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
+
+    let config = NodeConfig::test().with_networks(NetworkConfigs::with_celo());
+    let (_api, _handle, client) = spawn_with_client(config).await?;
+    let (sender, gas_price) = funder_and_gas_price(&client).await?;
+    let recipient = Address::repeat_byte(0x99);
+    let amount = U256::from(1_000);
+    // transfer(from, to, amount), ABI encoded.
+    let mut input = Vec::with_capacity(96);
+    input.extend_from_slice(&B256::left_padding_from(sender.as_slice())[..]);
+    input.extend_from_slice(&B256::left_padding_from(recipient.as_slice())[..]);
+    input.extend_from_slice(&amount.to_be_bytes::<32>());
+    let tx = TransactionRequest::default()
+        .with_from(sender)
+        .with_to(CELO_TRANSFER_ADDRESS)
+        .with_gas_price(gas_price)
+        .with_gas_limit(100_000)
+        .with_input(Bytes::from(input));
+    let hash: B256 = client.request("eth_sendTransaction", rpc_params![tx]).await?;
+    assert_eq!(wait_for_receipt(&client, hash).await?["status"], "0x1");
+    assert_eq!(balance(&client, recipient, "latest").await?, amount);
+    Ok(())
+}

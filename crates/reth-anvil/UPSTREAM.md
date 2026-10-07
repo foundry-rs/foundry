@@ -87,8 +87,7 @@ block access lists carry no storage reads, reth's do, and forge's parent cache t
 back to the endpoint for read-only slots.
 
 The unit tests of `forge-script` and `foundry-evm-core` that spawn a node pass as well, except
-those that need Tempo or Optimism, and a Celo test: anvil installs Celo's native transfer
-precompile when run as a Celo node; this node does not have it yet.
+those that need Tempo or Optimism.
 
 ## What Tempo needs
 

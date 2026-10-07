@@ -6,13 +6,14 @@ use crate::{
 };
 use alloy_eips::Decodable2718;
 use alloy_evm::{
-    Evm, EvmFactory,
+    Database, Evm, EvmEnv, EvmFactory,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
         ExecutableTx, GasOutput, StateDB,
     },
+    precompiles::{DynPrecompile, PrecompilesMap},
 };
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types_engine::ExecutionData;
 use eyre::Result;
 use reth_ethereum::{
@@ -29,10 +30,15 @@ use reth_ethereum::{
 };
 use revm::{
     Inspector,
-    context::{Block as _, CfgEnv},
+    context::{Block as _, CfgEnv, DBErrorMarker},
+    inspector::NoOpInspector,
     state::{Account, EvmState, EvmStorageSlot, TransactionId},
 };
-use std::{collections::hash_map::Entry, fmt::Debug};
+use std::{
+    collections::hash_map::Entry,
+    fmt::{self, Debug},
+    sync::Arc,
+};
 
 /// Next-block attributes whose gas limit the block environment overrides can set.
 pub trait AnvilNextBlockEnv: Clone {
@@ -97,6 +103,75 @@ impl EvmSettings {
         if let Some(memory_limit) = self.memory_limit {
             cfg.memory_limit = memory_limit;
         }
+    }
+}
+
+/// Builds a precompile to install at an address.
+pub type PrecompileBuilder = Arc<dyn Fn() -> DynPrecompile + Send + Sync>;
+
+/// EVM factory that installs extra precompiles, such as Celo's native transfer, into every EVM
+/// it creates.
+#[derive(Clone)]
+pub struct AnvilEvmFactory<F> {
+    inner: F,
+    precompiles: Arc<Vec<(Address, PrecompileBuilder)>>,
+}
+
+impl<F: Debug> Debug for AnvilEvmFactory<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let addresses: Vec<_> = self.precompiles.iter().map(|(address, _)| address).collect();
+        f.debug_struct("AnvilEvmFactory")
+            .field("inner", &self.inner)
+            .field("precompiles", &addresses)
+            .finish()
+    }
+}
+
+impl<F> AnvilEvmFactory<F> {
+    /// Wraps the factory with the precompiles to install.
+    pub fn new(inner: F, precompiles: Vec<(Address, PrecompileBuilder)>) -> Self {
+        Self { inner, precompiles: Arc::new(precompiles) }
+    }
+
+    fn install(&self, precompiles: &mut PrecompilesMap) {
+        for (address, build) in self.precompiles.iter() {
+            precompiles.apply_precompile(address, |_| Some(build()));
+        }
+    }
+}
+
+impl<F> EvmFactory for AnvilEvmFactory<F>
+where
+    F: EvmFactory<Precompiles = PrecompilesMap>,
+{
+    type Evm<DB: Database, I: Inspector<F::Context<DB>>> = F::Evm<DB, I>;
+    type Context<DB: Database> = F::Context<DB>;
+    type Tx = F::Tx;
+    type Error<DBError: DBErrorMarker> = F::Error<DBError>;
+    type HaltReason = F::HaltReason;
+    type Spec = F::Spec;
+    type BlockEnv = F::BlockEnv;
+    type Precompiles = PrecompilesMap;
+
+    fn create_evm<DB: Database>(
+        &self,
+        db: DB,
+        input: EvmEnv<F::Spec, F::BlockEnv>,
+    ) -> Self::Evm<DB, NoOpInspector> {
+        let mut evm = self.inner.create_evm(db, input);
+        self.install(evm.precompiles_mut());
+        evm
+    }
+
+    fn create_evm_with_inspector<DB: Database, I: Inspector<F::Context<DB>>>(
+        &self,
+        db: DB,
+        input: EvmEnv<F::Spec, F::BlockEnv>,
+        inspector: I,
+    ) -> Self::Evm<DB, I> {
+        let mut evm = self.inner.create_evm_with_inspector(db, input, inspector);
+        self.install(evm.precompiles_mut());
+        evm
     }
 }
 

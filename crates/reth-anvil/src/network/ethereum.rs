@@ -3,29 +3,34 @@
 use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, Prepared};
 use crate::{
     config::NodeConfig,
-    evm::{AnvilExecutorBuilder, EvmSettings},
+    evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
     fork::ForkBackend,
     logging::{LoggingState, NodeInfoLayer},
     pool::{AnvilPoolBuilder, PoolSettings},
 };
+use alloy_evm::eth::spec::EthExecutorSpec;
+use alloy_primitives::Address;
 use eyre::Result;
+use foundry_evm_networks::celo::transfer::{self as celo_transfer, CELO_TRANSFER_ADDRESS};
 use reth_ethereum::{
-    chainspec::ChainSpec,
+    EthPrimitives,
+    chainspec::{ChainSpec, EthereumHardforks, Hardforks},
     engine::local::LocalPayloadAttributesBuilder,
+    evm::{EthEvmConfig, factory::RethEvmFactory},
     node::{
-        EthereumAddOns, EthereumEthApiBuilder, EthereumExecutorBuilder, EthereumNode,
-        EthereumPayloadBuilder,
+        EthereumAddOns, EthereumEthApiBuilder, EthereumNode, EthereumPayloadBuilder,
         builder::{
+            BuilderContext, FullNodeTypes, NodeTypes,
             components::{
-                BasicPayloadServiceBuilder, ComponentsBuilder, NoopConsensusBuilder,
-                NoopNetworkBuilder,
+                BasicPayloadServiceBuilder, ComponentsBuilder, ExecutorBuilder,
+                NoopConsensusBuilder, NoopNetworkBuilder,
             },
             rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder},
         },
         node::EthereumEngineValidatorBuilder,
     },
 };
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 /// The Ethereum network.
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,7 +43,7 @@ impl AnvilNetwork for Ethereum {
         AnvilPoolBuilder,
         BasicPayloadServiceBuilder<EthereumPayloadBuilder>,
         NoopNetworkBuilder,
-        AnvilExecutorBuilder<EthereumExecutorBuilder>,
+        AnvilExecutorBuilder<EthereumEvmBuilder>,
         NoopConsensusBuilder,
     >;
     type AddOns = EthereumAddOns<
@@ -64,7 +69,7 @@ impl AnvilNetwork for Ethereum {
                 settings: PoolSettings::from_config(&anvil.config),
             })
             .executor(AnvilExecutorBuilder {
-                inner: EthereumExecutorBuilder::default(),
+                inner: EthereumEvmBuilder::new(network_precompiles(&anvil.config)),
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
                 anvil_state: anvil.anvil_state.clone(),
@@ -91,4 +96,53 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
         return Ok(Prepared { chain_spec, fork: Some(fork) });
     }
     Ok(Prepared { chain_spec: config.chain_spec()?, fork: None })
+}
+
+/// Builds reth's Ethereum EVM config with the anvil precompiles installed.
+#[derive(Clone)]
+pub struct EthereumEvmBuilder {
+    precompiles: Vec<(Address, PrecompileBuilder)>,
+}
+
+impl fmt::Debug for EthereumEvmBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let addresses: Vec<_> = self.precompiles.iter().map(|(address, _)| address).collect();
+        f.debug_struct("EthereumEvmBuilder").field("precompiles", &addresses).finish()
+    }
+}
+
+impl EthereumEvmBuilder {
+    /// Creates the builder with the precompiles to install.
+    pub const fn new(precompiles: Vec<(Address, PrecompileBuilder)>) -> Self {
+        Self { precompiles }
+    }
+}
+
+impl<Types, Node> ExecutorBuilder<Node> for EthereumEvmBuilder
+where
+    Types: NodeTypes<
+            ChainSpec: Hardforks + EthExecutorSpec + EthereumHardforks,
+            Primitives = EthPrimitives,
+        >,
+    Node: FullNodeTypes<Types = Types>,
+{
+    type EVM = EthEvmConfig<Types::ChainSpec, AnvilEvmFactory<RethEvmFactory>>;
+
+    async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
+        let factory = AnvilEvmFactory::new(RethEvmFactory::default(), self.precompiles);
+        let mut evm_config = EthEvmConfig::new_with_evm_factory(ctx.chain_spec(), factory);
+        if let Some(cache) = ctx.sender_recovery_cache() {
+            evm_config = evm_config.with_sender_recovery_cache(cache.clone());
+        }
+        Ok(evm_config)
+    }
+}
+
+/// The precompiles the configured network adds: Celo's native transfer on Celo.
+fn network_precompiles(config: &NodeConfig) -> Vec<(Address, PrecompileBuilder)> {
+    let mut precompiles: Vec<(Address, PrecompileBuilder)> = Vec::new();
+    if config.networks.is_celo() {
+        precompiles.push((CELO_TRANSFER_ADDRESS, Arc::new(celo_transfer::precompile)));
+    }
+    precompiles
 }
