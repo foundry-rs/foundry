@@ -988,7 +988,7 @@ contract ForgeFuzzReplayFailureTest {
 Traces:
   [[..]] ForgeFuzzReplayFailureTest::testFuzz_reverts({persisted_value})
 ...
-[SKIP: not runnable in replay mode] test_unit() (gas: 0)
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
 ...
 "#,
             calldata = persisted.calldata,
