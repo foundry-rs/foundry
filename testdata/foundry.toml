@@ -1,6 +1,8 @@
 [profile.default]
 src = "src"
 test = "./"
+# The nightly compatibility suite runs the original Solidity 0.6 fixtures.
+skip = ["**/LaunchFork.t.sol", "**/DssExecLib.sol"]
 remappings = ["@cheats/=default/cheats/"]
 optimizer = true
 optimizer_runs = 200
@@ -48,6 +50,9 @@ endpoints = "all"
 
 [profile.default.invariant]
 depth = 15
+
+[profile.compiler-compat]
+skip = []
 
 [fmt]
 ignore = ["cheats/Vm.sol"]

@@ -2011,7 +2011,7 @@ contract CleanContract {
 }
 
 #[forgetest]
-fn skips_linting_for_old_solidity_versions(prj: _, cmd: _) {
+fn compiler_compat_skips_linting_for_old_solidity_versions(prj: _, cmd: _) {
     const OLD_CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.0;

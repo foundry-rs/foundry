@@ -729,7 +729,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // tests that `bytecode_hash` will be sanitized
 #[forgetest]
-fn can_test_pre_bytecode_hash(prj: _, cmd: _) {
+fn compiler_compat_can_test_pre_bytecode_hash(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -8097,4 +8097,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
+}
+
+#[forgetest]
+fn compiler_compat_testdata(cmd: _) {
+    setup_testdata_cmd(&mut cmd);
+    cmd.env("FOUNDRY_PROFILE", "compiler-compat");
+    cmd.args(["test", "--match-path", "default/fork/LaunchFork.t.sol"]).assert_success();
 }

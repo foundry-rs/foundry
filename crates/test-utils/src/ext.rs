@@ -1,4 +1,7 @@
-use crate::prj::{TestCommand, TestProject, clone_remote, setup_forge};
+use crate::{
+    prj::{TestCommand, TestProject, clone_remote, setup_forge},
+    util::SOLC_VERSION,
+};
 use foundry_compilers::PathStyle;
 use std::{
     path::{Path, PathBuf},
@@ -210,7 +213,7 @@ impl ExtTester {
         self.run_install_commands(prj.root().to_str().unwrap());
 
         // Run the tests.
-        test_cmd.arg("test");
+        test_cmd.arg("test").env("FOUNDRY_SOLC_VERSION", SOLC_VERSION);
         test_cmd.args(&self.args);
         test_cmd.args([
             format!("--fuzz-runs={}", self.fuzz_runs),

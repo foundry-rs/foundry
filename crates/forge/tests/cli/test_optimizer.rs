@@ -1308,7 +1308,7 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
 #[forgetest_init]
-fn filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
+fn compiler_compat_filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| config.solc = None);
     prj.add_raw_test(
         "fixtures/Fixture.sol",
@@ -1393,7 +1393,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/8842>
 #[forgetest_init]
-fn path_filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
+fn compiler_compat_path_filtered_tests_compile_unimported_test_fixtures(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.solc = None;
         config.dynamic_test_linking = false;
@@ -5019,7 +5019,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest]
 fn filtered_tests_preserve_cyclic_import_order(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 24)));
+        config.solc = Some(OTHER_SOLC_VERSION.into());
         config.evm_version = EvmVersion::Cancun;
     });
     prj.add_test(
@@ -5092,7 +5092,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // <https://github.com/foundry-rs/foundry/issues/17222>
 #[forgetest]
-fn preprocess_analysis_fallback_uses_import_invalidation(prj: _, cmd: _) {
+fn compiler_compat_preprocess_analysis_fallback_uses_import_invalidation(prj: _, cmd: _) {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
         config.solc = Some(foundry_config::SolcReq::Version("0.6.12".parse().unwrap()));

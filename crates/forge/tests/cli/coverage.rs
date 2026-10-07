@@ -2669,7 +2669,7 @@ end_of_record
 // https://github.com/foundry-rs/foundry/issues/9322
 // Test coverage with `--ir-minimum` for solidity < 0.8.5.
 #[forgetest]
-fn ir_minimum_early(prj: _, cmd: _) {
+fn compiler_compat_ir_minimum_early(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.add_source(
         "AContract.sol",
