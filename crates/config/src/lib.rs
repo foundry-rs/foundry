@@ -871,8 +871,7 @@ impl Config {
     /// that may not define all profiles the main project uses.
     #[track_caller]
     pub fn load_with_root_and_fallback(root: impl AsRef<Path>) -> Result<Self, ExtractConfigError> {
-        let figment = Self::figment_with_root(root.as_ref());
-        Self::from_figment_fallback(Figment::from(figment))
+        Self::from_provider_inner(Self::figment_with_root(root.as_ref()), false)
     }
 
     /// Attempts to extract a `Config` from `provider`, returning the result.
@@ -891,6 +890,13 @@ impl Config {
     /// ```
     #[doc(alias = "try_from")]
     pub fn from_provider<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
+        Self::from_provider_inner(provider, true)
+    }
+
+    fn from_provider_inner<T: Provider>(
+        provider: T,
+        strict_profile: bool,
+    ) -> Result<Self, ExtractConfigError> {
         trace!("load config with provider: {:?}", provider.metadata());
         let figment = Figment::from(provider);
         // Read provenance before wrapping, since `LegacyLabelsProvider` drops value metadata.
@@ -900,7 +906,8 @@ impl Config {
             metadata.name.as_ref() != "Foundry Config"
                 || metadata.source == Some(Self::EVM_VERSION_CONFIGURED_SOURCE.into())
         });
-        let mut config = Self::from_figment(Figment::from(figment.legacy_labels()))?;
+        let mut config =
+            Self::from_figment_inner(Figment::from(figment.legacy_labels()), strict_profile)?;
         config.evm_version_configured = evm_version_configured;
         // Derive the default EVM version from the final compiler version, after all providers
         // have been merged. See <https://github.com/foundry-rs/foundry/issues/7014>.
@@ -947,6 +954,8 @@ impl Config {
             invariant_corpus_random_sequence_weight_configured;
         config.invariant.workers_configured = invariant_workers_configured;
         config.evm_version_configured = evm_version_configured;
+        config.evm_version_from_local_solc =
+            self.evm_version_from_local_solc && !evm_version_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -958,11 +967,7 @@ impl Config {
         Self::from_provider(provider)
     }
 
-    fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
-        Self::from_figment_inner(figment, true)
-    }
-
-    /// Same as `from_figment` but allows unknown profiles, falling back to default profile.
+    /// Extracts a config that allows unknown profiles, falling back to the default profile.
     /// Used when loading nested lib configs that may not define all profiles.
     fn from_figment_fallback(figment: Figment) -> Result<Self, ExtractConfigError> {
         Self::from_figment_inner(figment, false)
@@ -6379,6 +6384,12 @@ echo "Version: 0.8.13+commit.abaa5c0e"
             let project = config.project().unwrap();
             assert!(jail.directory().join("fake-solc.invoked").exists());
             assert_eq!(project.settings.solc.evm_version, Some(EvmVersion::London));
+            // Merging an unrelated inline setting keeps the deferred EVM version.
+            let merged = config.merge_inline_provider(("ffi", true)).unwrap();
+            assert_eq!(
+                merged.project().unwrap().settings.solc.evm_version,
+                Some(EvmVersion::London)
+            );
             config.normalize_evm_version_for_project(&project);
             assert_eq!(config.evm_version, EvmVersion::London);
 
@@ -6414,6 +6425,8 @@ echo "Version: 0.8.13+commit.abaa5c0e"
 
             let implicit = Config::load().unwrap();
             assert_eq!(implicit.evm_version, EvmVersion::London);
+            let fallback = Config::load_with_root_and_fallback(jail.directory()).unwrap();
+            assert_eq!(fallback.evm_version, EvmVersion::London);
 
             let overridden =
                 Config::from_provider(Config::figment().merge(("solc", "0.8.37"))).unwrap();
