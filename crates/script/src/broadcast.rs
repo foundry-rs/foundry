@@ -4,6 +4,7 @@ use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
     progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{ScriptSequenceKind, completed_transaction_prefix},
     session::{
@@ -1698,6 +1699,7 @@ async fn wait_for_batch_receipt<N: Network>(
 ) -> Result<Option<N::ReceiptResponse>> {
     loop {
         if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+            && is_mined_receipt_for(&receipt, tx_hash)
             && let Some(receipt_block) = receipt.block_number()
         {
             let latest_block = provider.get_block_number().await?;
@@ -1779,6 +1781,7 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
+    use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
@@ -2183,6 +2186,45 @@ mod tests {
             fee_totals(receipts),
             (60_000_000, Some(1_500 * gwei), 90_000_000_000_000_000_000)
         );
+    }
+
+    #[tokio::test]
+    async fn batch_receipt_watcher_rejects_foreign_or_incomplete_receipts() {
+        let hash = B256::repeat_byte(0x42);
+        let receipt = |field: &str, value: serde_json::Value| {
+            let mut receipt = serde_json::json!({
+                "type": "0x02", "status": "0x1", "cumulativeGasUsed": "0x5208", "logs": [],
+                "transactionHash": hash, "logsBloom": format!("{:#x}", Bloom::ZERO),
+                "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x10",
+                "gasUsed": "0x5208", "effectiveGasPrice": "0x1",
+                "from": Address::ZERO, "to": Address::ZERO, "contractAddress": null
+            });
+            receipt[field] = value;
+            receipt
+        };
+        // Bad receipts fall through to the transaction lookup; valid ones to the block number.
+        let wait = async |receipt: serde_json::Value, next: serde_json::Value| {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                alloy_provider::ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&receipt);
+            asserter.push_success(&next);
+            wait_for_batch_receipt(&provider, hash, 1).await.unwrap()
+        };
+
+        for (field, value) in [
+            ("transactionHash", serde_json::json!(B256::repeat_byte(0x99))),
+            ("blockHash", serde_json::Value::Null),
+            ("transactionIndex", serde_json::Value::Null),
+            ("blockNumber", serde_json::Value::Null),
+        ] {
+            let result = wait(receipt(field, value), serde_json::Value::Null).await;
+            assert!(result.is_none(), "accepted receipt with bad {field}");
+        }
+        let accepted =
+            wait(receipt("status", serde_json::json!("0x1")), serde_json::json!("0x10")).await;
+        let accepted = accepted.unwrap();
+        assert_eq!(accepted.transaction_hash(), hash);
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {
