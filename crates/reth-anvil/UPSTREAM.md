@@ -30,6 +30,7 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Replays the transactions before a fork transaction through the pool into the first local block, with the remote block's environment and the pool in arrival order | `src/node.rs` (`replay_fork_transactions`) | ~70 | A way to build and insert a block from a given transaction list |
 | Rejects every transaction past `--max-transactions` in the executor wrapper, so the payload builder leaves it in the pool for the next block | `src/evm.rs` (`AnvilBlockExecutor`) | ~25 | A transaction count limit in `PayloadBuilderArgs` |
 | Replaces `eth_gasPrice` to return the base fee alone under `--disable-min-priority-fee` | `src/api.rs` (`EthExtApi`) | ~10 | A gas price oracle option for a zero tip |
+| Installs a precompile at Hardhat's console address that decodes `console.log` calls, and prints the lines of every mined transaction from the executor wrapper, because the payload builder has no inspector hook. The precompile address is warm at the start of a transaction, so the first `console.log` of a transaction costs 2,500 gas less than on anvil | `src/console.rs`, `src/evm.rs` | ~120 | An inspector hook on the payload builder, or an `Inspector` slot on `ConfigureEvm::evm_for_block` |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -46,6 +47,8 @@ be free if reth had a dev mode:
 - `--prune-history`, `--max-persisted-states`, and `--transaction-block-keeper` are accepted and have
   no effect: reth keeps the full history on disk, which is what these flags bound in anvil's
   memory.
+- `--print-traces` and `--steps-tracing` are accepted and have no effect: printing the trace of
+  every mined transaction needs an inspector during block building, or a replay of every block.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
   `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; Tempo
   through `tempo-node`. Monad runs

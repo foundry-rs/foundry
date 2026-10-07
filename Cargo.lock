@@ -11318,6 +11318,7 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-types",
  "chrono",
  "clap",
  "clap_complete",

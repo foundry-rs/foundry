@@ -72,11 +72,13 @@ impl AnvilNetwork for Ethereum {
                 inner: EthereumEvmBuilder::new(
                     network_precompiles(&anvil.config),
                     anvil.fork.clone(),
+                    anvil.console.is_some(),
                 ),
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
                 anvil_state: anvil.anvil_state.clone(),
                 settings: EvmSettings::from_config(&anvil.config),
+                console: anvil.console.clone(),
             })
             .consensus(NoopConsensusBuilder)
     }
@@ -107,6 +109,7 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
 pub struct EthereumEvmBuilder {
     precompiles: Vec<(Address, PrecompileBuilder)>,
     fork: Option<Arc<dyn ForkInfo>>,
+    console: bool,
 }
 
 impl fmt::Debug for EthereumEvmBuilder {
@@ -115,17 +118,20 @@ impl fmt::Debug for EthereumEvmBuilder {
         f.debug_struct("EthereumEvmBuilder")
             .field("precompiles", &addresses)
             .field("fork", &self.fork)
+            .field("console", &self.console)
             .finish()
     }
 }
 
 impl EthereumEvmBuilder {
-    /// Creates the builder with the precompiles to install and the fork, if any.
+    /// Creates the builder with the precompiles to install, the fork, if any, and whether to
+    /// collect `console.log` calls.
     pub const fn new(
         precompiles: Vec<(Address, PrecompileBuilder)>,
         fork: Option<Arc<dyn ForkInfo>>,
+        console: bool,
     ) -> Self {
-        Self { precompiles, fork }
+        Self { precompiles, fork, console }
     }
 }
 
@@ -140,7 +146,12 @@ where
     type EVM = EthEvmConfig<Types::ChainSpec, AnvilEvmFactory<RethEvmFactory>>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
-        let factory = AnvilEvmFactory::new(RethEvmFactory::default(), self.precompiles, self.fork);
+        let factory = AnvilEvmFactory::new(
+            RethEvmFactory::default(),
+            self.precompiles,
+            self.fork,
+            self.console,
+        );
         let mut evm_config = EthEvmConfig::new_with_evm_factory(ctx.chain_spec(), factory);
         if let Some(cache) = ctx.sender_recovery_cache() {
             evm_config = evm_config.with_sender_recovery_cache(cache.clone());

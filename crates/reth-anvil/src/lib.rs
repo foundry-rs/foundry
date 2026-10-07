@@ -7,6 +7,7 @@ pub mod args;
 mod block_env;
 pub mod cmd;
 mod config;
+mod console;
 mod eth_api;
 mod evm;
 mod fork;

@@ -2,6 +2,7 @@ use crate::{
     api::{AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, PersonalApiServer},
     block_env::BlockEnvOverrides,
     config::NodeConfig,
+    console::ConsolePrinter,
     eth_api::EthApi,
     fork::{ForkHeader, ForkInfo, ForkNetwork, ForkReplay},
     impersonation::{ImpersonatedSigner, ImpersonationState},
@@ -416,6 +417,7 @@ async fn launch_node<Net: AnvilNetwork>(
         order: order.clone(),
         config: config.clone(),
         fork: fork.clone().map(|fork| fork as Arc<dyn ForkInfo>),
+        console: config.print_logs.then(|| ConsolePrinter::new(logging.clone())),
     };
 
     let builder = NodeBuilder::new(node_config)

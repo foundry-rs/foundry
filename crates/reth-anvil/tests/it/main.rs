@@ -2442,3 +2442,41 @@ async fn disabled_min_priority_fee_suggests_the_base_fee() -> Result<()> {
     assert!(gas_price > base_fee, "{gas_price} > {base_fee}");
     Ok(())
 }
+
+#[tokio::test]
+async fn console_log_calls_are_decoded_in_mined_transactions() -> Result<()> {
+    use alloy_primitives::keccak256;
+    use alloy_sol_types::SolValue;
+    use foundry_evm_core::constants::HARDHAT_CONSOLE_ADDRESS;
+
+    let mut log = keccak256("log(string)")[..4].to_vec();
+    log.extend(("hello".to_string(),).abi_encode_params());
+    let call = |data: Vec<u8>, funder, gas_price| {
+        transfer(funder, HARDHAT_CONSOLE_ADDRESS, gas_price)
+            .with_value(U256::ZERO)
+            .with_input(Bytes::from(data))
+            .with_gas_limit(100_000)
+    };
+
+    // With `console.log` output on, the console address decodes its calls and rejects
+    // malformed ones, as anvil does.
+    let (_api, _handle, client) = spawn_with_client(NodeConfig::test()).await?;
+    let (funder, gas_price) = funder_and_gas_price(&client).await?;
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![call(log.clone(), funder, gas_price)])
+        .await?;
+    assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![call(vec![0xde, 0xad], funder, gas_price)])
+        .await?;
+    assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x0");
+
+    // With the output off, the console address is a plain empty account.
+    let (_api, _handle, client) =
+        spawn_with_client(NodeConfig::test().with_print_logs(false)).await?;
+    let tx_hash: B256 = client
+        .request("eth_sendTransaction", rpc_params![call(vec![0xde, 0xad], funder, gas_price)])
+        .await?;
+    assert_eq!(wait_for_receipt(&client, tx_hash).await?["status"], "0x1");
+    Ok(())
+}

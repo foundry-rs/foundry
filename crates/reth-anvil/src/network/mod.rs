@@ -5,6 +5,7 @@ use crate::{
     api::NodeIdentity,
     block_env::BlockEnvOverrides,
     config::NodeConfig,
+    console::ConsolePrinter,
     evm::{AnvilExecutionPayload, AnvilNextBlockEnv},
     fork::{AnvilPrimitives, ForkInfo, ForkOf},
     impersonation::ImpersonationState,
@@ -74,6 +75,8 @@ pub struct AnvilComponents {
     pub config: NodeConfig,
     /// The fork, if any.
     pub fork: Option<Arc<dyn ForkInfo>>,
+    /// The `console.log` printer, when printing.
+    pub console: Option<ConsolePrinter>,
 }
 
 /// What a network prepares before the node launches: the chain spec, and the fork when the

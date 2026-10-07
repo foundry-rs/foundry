@@ -125,11 +125,16 @@ impl AnvilNetwork for Monad {
                 },
             })
             .executor(AnvilExecutorBuilder {
-                inner: MonadExecutorBuilder { hardfork, fork: anvil.fork.clone() },
+                inner: MonadExecutorBuilder {
+                    hardfork,
+                    fork: anvil.fork.clone(),
+                    console: anvil.console.is_some(),
+                },
                 state: anvil.impersonation.clone(),
                 block_env: anvil.block_env.clone(),
                 anvil_state: anvil.anvil_state.clone(),
                 settings: EvmSettings::from_config(&anvil.config),
+                console: anvil.console.clone(),
             })
             .consensus(NoopConsensusBuilder)
     }
@@ -157,6 +162,8 @@ pub struct MonadExecutorBuilder {
     pub hardfork: MonadHardfork,
     /// The fork, if any.
     pub fork: Option<Arc<dyn ForkInfo>>,
+    /// Whether to collect `console.log` calls.
+    pub console: bool,
 }
 
 impl<Types, Node> ExecutorBuilder<Node> for MonadExecutorBuilder
@@ -172,6 +179,7 @@ where
             self.hardfork,
             Arc::new(ctx.provider().clone()),
             self.fork,
+            self.console,
         ))
     }
 }
@@ -466,12 +474,18 @@ impl MonadEvmConfig {
         hardfork: MonadHardfork,
         participants: Arc<dyn ParticipantsLookup>,
         fork: Option<Arc<dyn ForkInfo>>,
+        console: bool,
     ) -> Self {
         let executor_factory = MonadBlockExecutorFactory {
             inner: EthBlockExecutorFactory::new(
                 RethReceiptBuilder::default(),
                 chain_spec.clone(),
-                AnvilEvmFactory::new(MonadContextEvmFactory::new(participants), Vec::new(), fork),
+                AnvilEvmFactory::new(
+                    MonadContextEvmFactory::new(participants),
+                    Vec::new(),
+                    fork,
+                    console,
+                ),
             ),
             hardfork,
         };
