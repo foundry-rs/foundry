@@ -3182,16 +3182,11 @@ impl<N: Network> Backend<N> {
     ///  - `nonce` check is skipped
     fn build_call_env_with_base(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
         base_evm_env: Option<&EvmEnv>,
     ) -> (EvmEnv, TxEnv, CallTransactionInfo) {
-        // A blob request may carry only its sidecar. Run it with the versioned hashes the signed
-        // transaction will commit to.
-        if request.blob_versioned_hashes.is_none() {
-            request.populate_blob_hashes();
-        }
         let tx_type = request.minimal_tx_type() as u8;
         #[cfg(any(feature = "base", feature = "optimism"))]
         let mut transaction_info = CallTransactionInfo::default();

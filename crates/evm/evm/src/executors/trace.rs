@@ -1,5 +1,5 @@
 use crate::executors::{Executor, ExecutorBuilder};
-use alloy_primitives::{Address, BlockNumber, ChainId, U256, map::HashMap};
+use alloy_primitives::{Address, ChainId, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::{Context, ContextCompat};
 use foundry_compilers::artifacts::EvmVersion;
@@ -30,17 +30,11 @@ pub struct TracingFork<FEN: FoundryEvmNetwork> {
     pub tx_env: TxEnvFor<FEN>,
     fork: Backend<FEN>,
     context: TraceContext,
-    source_fork_block_number: Option<BlockNumber>,
 }
 
 impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
     pub const fn context(&self) -> TraceContext {
         self.context
-    }
-
-    /// Returns the block from which the fork endpoint was itself forked, when it reports one.
-    pub const fn source_fork_block_number(&self) -> Option<BlockNumber> {
-        self.source_fork_block_number
     }
 
     /// Resolves the execution spec and carries it into the trace decoding context.
@@ -190,7 +184,6 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             tx_env,
             fork,
             context: TraceContext::new(chain, networks, fork_context.hardfork),
-            source_fork_block_number: fork_context.source_fork_block_number,
         })
     }
 

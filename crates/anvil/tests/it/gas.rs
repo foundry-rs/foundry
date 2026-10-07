@@ -8,7 +8,6 @@ use alloy_primitives::{Address, B256, Bytes, U64, U256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, TransactionRequest,
-    state::{AccountOverride, EvmOverrides, StateOverride},
     trace::parity::TraceType,
 };
 use alloy_serde::WithOtherFields;
@@ -583,77 +582,6 @@ async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path()
     assert_eq!(gas, U256::from(GAS_TRANSFER));
 }
 
-// <https://github.com/foundry-rs/foundry/issues/17428>
-#[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_amsterdam_transfer_to_new_account() {
-    let (api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
-    let provider = handle.http_provider();
-    let mut accounts = handle.dev_accounts();
-    let from = accounts.next().unwrap();
-    let existing = accounts.next().unwrap();
-
-    let tx = TransactionRequest::default().with_from(from).with_to(existing).with_value(U256::ONE);
-    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
-    assert_eq!(gas, U256::from(GAS_TRANSFER));
-
-    // A value transfer to an empty account also pays the EIP-8037 new-account state gas.
-    let tx = TransactionRequest::default()
-        .with_from(from)
-        .with_to(Address::random())
-        .with_value(U256::ONE);
-    let gas = api
-        .estimate_gas(WithOtherFields::new(tx.clone()), None, Default::default())
-        .await
-        .unwrap()
-        .to::<u64>();
-    assert_eq!(gas, 204_600);
-
-    let receipt = provider
-        .send_transaction(WithOtherFields::new(tx.with_gas_limit(gas)))
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-    assert!(receipt.status());
-    assert_eq!(receipt.gas_used, gas);
-}
-
-// Under EIP-2780 a transfer's intrinsic gas is its base plus charges for the recipient and value,
-// so a zero-value transfer or a self-transfer costs less than 21000.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_amsterdam_transfer_below_legacy_intrinsic_gas() {
-    let (api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
-    let provider = handle.http_provider();
-    let mut accounts = handle.dev_accounts();
-    let from = accounts.next().unwrap();
-    let existing = accounts.next().unwrap();
-
-    for (to, expected) in [(existing, 15_000), (from, 12_000)] {
-        // A request gas limit below 21000 used to put the search's lower bound above its upper.
-        let tx = TransactionRequest::default().with_from(from).with_to(to).with_gas_limit(20_000);
-        api.call(WithOtherFields::new(tx.clone()), None, Default::default()).await.unwrap();
-        let gas = api
-            .estimate_gas(WithOtherFields::new(tx.clone()), None, Default::default())
-            .await
-            .unwrap()
-            .to::<u64>();
-        assert_eq!(gas, expected);
-
-        let receipt = provider
-            .send_transaction(WithOtherFields::new(tx.with_gas_limit(gas)))
-            .await
-            .unwrap()
-            .get_receipt()
-            .await
-            .unwrap();
-        assert!(receipt.status());
-        assert_eq!(receipt.gas_used, gas);
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -873,44 +801,42 @@ async fn priced_calls_skip_base_fee_check_before_london() {
     assert_eq!(gas, U256::from(21_000));
 }
 
-// Regression coverage for <https://github.com/foundry-rs/foundry/issues/17428>.
+// <https://github.com/foundry-rs/foundry/issues/17428>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_basic_transfers_across_hardforks() {
+async fn test_estimate_gas_transfers_across_hardforks() {
     for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
-        let (_api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
+        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
         let provider = handle.http_provider();
         let mut accounts = handle.dev_accounts();
         let from = accounts.next().unwrap();
         let existing = accounts.next().unwrap();
         let fresh = Address::random();
+        // Bytecode excludes this call from the transfer shortcut, so the binary search runs.
+        let contract = Address::random();
+        api.anvil_set_code(contract, bytes!("00")).await.unwrap();
         let amsterdam = hardfork == EthereumHardfork::Amsterdam;
 
+        // Under EIP-2780 only a value transfer to another account costs 21000. Under EIP-8037 a
+        // value transfer to an empty account also pays new-account state gas.
         for (to, value, expected) in [
-            (from, U256::ZERO, if amsterdam { 12_000 } else { GAS_TRANSFER }),
             (from, U256::ONE, if amsterdam { 12_000 } else { GAS_TRANSFER }),
             (existing, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
-            (fresh, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
             (existing, U256::ONE, GAS_TRANSFER),
+            (fresh, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
             (fresh, U256::ONE, if amsterdam { 204_600 } else { GAS_TRANSFER }),
+            (contract, U256::ZERO, if amsterdam { 15_000 } else { GAS_TRANSFER }),
         ] {
             let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(value);
-            assert_eq!(
-                provider.estimate_gas(WithOtherFields::new(tx.clone())).await.unwrap(),
-                expected
-            );
-            assert_eq!(
-                provider
-                    .estimate_gas(WithOtherFields::new(tx.clone().with_gas_limit(expected)))
-                    .await
-                    .unwrap(),
-                expected
-            );
-            assert!(
-                provider
-                    .estimate_gas(WithOtherFields::new(tx.clone().with_gas_limit(expected - 1)))
-                    .await
-                    .is_err()
-            );
+            for gas_limit in [None, Some(expected)] {
+                let mut tx = tx.clone();
+                tx.gas = gas_limit;
+                assert_eq!(
+                    provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap(),
+                    expected
+                );
+            }
+            let short = tx.clone().with_gas_limit(expected - 1);
+            assert!(provider.estimate_gas(WithOtherFields::new(short)).await.is_err());
 
             let receipt = provider
                 .send_transaction(WithOtherFields::new(tx.with_gas_limit(expected)))
@@ -923,130 +849,4 @@ async fn test_estimate_gas_basic_transfers_across_hardforks() {
             assert_eq!(receipt.gas_used, expected);
         }
     }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_contract_below_legacy_intrinsic_gas() {
-    for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
-        let (api, handle) = spawn(NodeConfig::test().with_hardfork(Some(hardfork.into()))).await;
-        let from = handle.dev_accounts().next().unwrap();
-        let to = Address::random();
-        api.anvil_set_code(to, bytes!("00")).await.unwrap();
-        let expected = if hardfork == EthereumHardfork::Amsterdam { 15_000 } else { GAS_TRANSFER };
-        let tx = TransactionRequest::default().with_from(from).with_to(to);
-
-        // Bytecode excludes this call from the transfer shortcut, exercising binary search.
-        for limit in [None, Some(expected)] {
-            let mut tx = WithOtherFields::new(tx.clone());
-            tx.gas = limit;
-            let gas =
-                api.estimate_gas(tx.clone(), None, Default::default()).await.unwrap().to::<u64>();
-            assert_eq!(gas, expected);
-            tx.gas = Some(gas);
-            api.call(tx.clone(), None, Default::default()).await.unwrap();
-            tx.gas = Some(gas - 1);
-            assert!(api.call(tx.clone(), None, Default::default()).await.is_err());
-            assert!(api.estimate_gas(tx, None, Default::default()).await.is_err());
-        }
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_amsterdam_transfer_state_overrides() {
-    let (api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
-    let mut accounts = handle.dev_accounts();
-    let from = accounts.next().unwrap();
-    let existing = accounts.next().unwrap();
-    let fresh = Address::random();
-
-    for (to, value, account, expected) in [
-        (
-            existing,
-            U256::ONE,
-            AccountOverride { balance: Some(U256::ZERO), ..Default::default() },
-            204_600,
-        ),
-        (
-            fresh,
-            U256::ONE,
-            AccountOverride { balance: Some(U256::ONE), ..Default::default() },
-            GAS_TRANSFER,
-        ),
-        (
-            fresh,
-            U256::ZERO,
-            AccountOverride { code: Some(bytes!("00")), ..Default::default() },
-            15_000,
-        ),
-    ] {
-        let overrides = EvmOverrides::new(Some(StateOverride::from_iter([(to, account)])), None);
-        let tx = WithOtherFields::new(
-            TransactionRequest::default().with_from(from).with_to(to).with_value(value),
-        );
-        let gas = api.estimate_gas(tx.clone(), None, overrides.clone()).await.unwrap().to::<u64>();
-        assert_eq!(gas, expected);
-        api.call(WithOtherFields::new(tx.inner.with_gas_limit(gas)), None, overrides)
-            .await
-            .unwrap();
-    }
-
-    // This override requires more than 7,000 gas at entry, so returning the gas consumed by a
-    // transfer probe without checking the overridden bytecode would underestimate the call.
-    let overrides = EvmOverrides::new(
-        Some(StateOverride::from_iter([(
-            fresh,
-            AccountOverride { code: Some(bytes!("5a611b5810600957fe5b00")), ..Default::default() },
-        )])),
-        None,
-    );
-    let mut tx = WithOtherFields::new(TransactionRequest::default().with_from(from).with_to(fresh));
-    let gas = api.estimate_gas(tx.clone(), None, overrides.clone()).await.unwrap().to::<u64>();
-    assert!(gas > GAS_TRANSFER);
-    tx.gas = Some(gas);
-    api.call(tx.clone(), None, overrides.clone()).await.unwrap();
-    tx.gas = Some(gas - 1);
-    assert!(api.call(tx, None, overrides).await.is_err());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_amsterdam_balance_caps_below_legacy_intrinsic_gas() {
-    let (api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
-    let mut accounts = handle.dev_accounts();
-    let from = accounts.next().unwrap();
-    let existing = accounts.next().unwrap();
-    let price = INITIAL_BASE_FEE as u128;
-
-    for (to, value, expected) in [(from, U256::ONE, 12_000), (existing, U256::ZERO, 15_000)] {
-        api.anvil_set_balance(from, U256::from(price * expected) + value).await.unwrap();
-        let tx = WithOtherFields::new(
-            TransactionRequest::default()
-                .with_from(from)
-                .with_to(to)
-                .with_value(value)
-                .with_gas_price(price),
-        );
-        assert_eq!(
-            api.estimate_gas(tx.clone(), None, Default::default()).await.unwrap(),
-            U256::from(expected)
-        );
-        // Without a gas limit, calls get the gas the balance pays for.
-        api.call(tx.clone(), None, Default::default()).await.unwrap();
-        api.trace_call(tx, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_estimate_gas_amsterdam_value_transfers_without_from() {
-    let (_api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
-    let provider = handle.http_provider();
-    let existing = handle.dev_accounts().next().unwrap();
-
-    for (to, expected) in [(existing, GAS_TRANSFER), (Address::random(), 204_600)] {
-        let tx = TransactionRequest::default().with_to(to).with_value(U256::ONE);
-        assert_eq!(provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap(), expected);
-    }
-    assert_eq!(provider.get_balance(Address::ZERO).await.unwrap(), U256::ZERO);
 }

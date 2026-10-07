@@ -1866,8 +1866,8 @@ impl EthApi<FoundryNetwork> {
         block_env: BlockEnv,
         monad_context: Option<MonadReplayContext>,
     ) -> Result<u128> {
-        // A blob request may carry only its sidecar. Take its versioned hashes first, so the funds
-        // check reserves the blob fee that execution charges.
+        // A blob request may carry only its sidecar. Take its versioned hashes first, so that the
+        // funds check and every execution below price the blob fee.
         if request.as_ref().blob_versioned_hashes.is_none() {
             request.as_mut().populate_blob_hashes();
         }
