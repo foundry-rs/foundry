@@ -115,16 +115,15 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         tx: TxEnvFor<FEN>,
     ) -> eyre::Result<()>;
 
-    /// Runs a closure with a fresh nested EVM built from a raw database and environment.
-    /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
+    /// Runs a closure with a fresh nested EVM using the current environment and database.
+    /// Unlike `with_nested_evm`, this starts an independent journal and does not write back.
     /// The caller is responsible for state merging. Used by `executeTransactionCall`.
     /// Returns the final EVM environment after the closure runs (consumed without cloning).
     #[allow(clippy::type_complexity)]
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
@@ -136,11 +135,6 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
-
-    /// Marks that the next EVM frame is an "inner context" so that isolation mode does not
-    /// trigger a nested `transact_inner`. `original_origin` is stored for the existing
-    /// inner-context adjustment logic that restores `tx.origin`.
-    fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
@@ -192,13 +186,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
+        let depth = ecx.journal().depth();
+        let evm_env = ecx.evm_clone();
+        let (db, _) = ecx.db_journal_inner_mut();
         let mut evm =
             FEN::EvmFactory::default().create_nested_evm_with_inspector(db, evm_env, cheats);
+        evm.journal_inner_mut().depth = depth;
         *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
@@ -849,11 +846,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// suspended parent alongside the returned state.
     pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
 
-    /// Whether snapshot restorations belong to the active isolated transaction.
+    /// Whether snapshot restorations belong to the tracked transaction (an isolated call, or the
+    /// top-level transaction when isolation is disabled) and must be unwound by failing frames.
     pub track_isolated_snapshots: bool,
 
-    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    /// Journals replaced by snapshot restorations that may need to be reinstated when an
+    /// enclosing frame of the tracked transaction fails.
     pub isolated_snapshot_restores: Vec<JournaledState>,
+
+    /// Whether the next snapshot restoration is the first one since its calling frame started,
+    /// and so must be recorded in `isolated_snapshot_restores`.
+    pub capture_isolated_snapshot_restore: bool,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -940,6 +943,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_isolated_snapshot_journal: None,
             track_isolated_snapshots: false,
             isolated_snapshot_restores: Vec::new(),
+            capture_isolated_snapshot_restore: false,
         }
     }
 
