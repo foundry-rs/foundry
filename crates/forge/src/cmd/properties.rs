@@ -1,6 +1,11 @@
 //! The `forge properties` command: generate test properties and keep only verified ones.
 
-use crate::{cmd::test::RerunFailure, mutation::MutationJsonOutput, result::TestStatus, workspace};
+use crate::{
+    cmd::test::RerunFailure,
+    mutation::MutationJsonOutput,
+    result::{TestResult, TestStatus},
+    workspace,
+};
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
@@ -28,6 +33,22 @@ const MAX_CANDIDATE_BYTES: usize = 256 * 1024;
 // Bound each source-context section so it cannot dominate the prompt.
 const MAX_PROMPT_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_PROJECT_CONTEXT_FILES: usize = 2;
+/// Overrides configured test filters, so they cannot hide generated tests. `$^` matches no
+/// contract or test name, and no project file is under the absolute path
+/// `/forge-properties-none`.
+const SELECT_ALL_TESTS: [&str; 10] = [
+    "--match-contract",
+    ".*",
+    "--match-test",
+    ".*",
+    "--no-match-contract",
+    "$^",
+    "--no-match-test",
+    "$^",
+    "--no-match-path",
+    "/forge-properties-none/**",
+];
+
 const GUIDANCE: &[&str] = &[
     "Derive expected behavior from the specification first: NatSpec (@notice, @dev, @param, @return, and error docs) in project_context.target_sources, the project's README and documentation files, interfaces, and reference implementations.",
     "List the documented claims of each public function and find claims that no existing test encodes. Encode both directions of a revert rule: the documented failure reverts with the exact error, and every other input does not revert.",
@@ -584,6 +605,13 @@ impl PropertiesArgs {
                 Some(&selection),
             )?;
             for (before, after) in current_results.iter().zip(&results) {
+                // Kills are inferred from absence, so both runs must name mutants the same way.
+                let population = not_killed_identities(&before.output);
+                ensure!(
+                    not_killed_identities(&after.output).is_subset(&population),
+                    "mutation results on seed {} name mutants that the baseline does not have",
+                    before.seed
+                );
                 // Invalid is an execution outcome, not part of the population: a stronger test can
                 // expose a previously skipped mutant that does not compile. Only a survivor that
                 // became invalid would be miscounted as resolved.
@@ -686,16 +714,8 @@ impl PropertiesArgs {
         for seed in &self.seed {
             let mut command = forge_command(forge, config, workspace, seed);
             // Configured test filters must not hide generated tests.
-            command.args([
-                "test",
-                "--json",
-                "--match-path",
-                &format!("{{{paths}}}"),
-                "--match-contract",
-                ".*",
-                "--match-test",
-                ".*",
-            ]);
+            command.args(["test", "--json", "--match-path", &format!("{{{paths}}}")]);
+            command.args(SELECT_ALL_TESTS);
             add_dependency_args(&mut command, config, workspace);
             let output = command.output().wrap_err("failed to run candidate tests")?;
             if !output.status.success() && output.stdout.is_empty() {
@@ -806,18 +826,17 @@ impl PropertiesArgs {
         if let Some(selection) = selection {
             // `--rerun` selects exact contract and test pairs; the broad patterns keep configured
             // filters from removing any of them.
-            let failures_file = seed_dir.join("test-failures");
             fs::create_dir_all(&seed_dir)?;
             fs::write(
-                &failures_file,
+                seed_dir.join("test-failures"),
                 serde_json::to_vec(&serde_json::json!({ "version": 1, "failures": selection }))?,
             )?;
-            command.env("FOUNDRY_TEST_FAILURES_FILE", failures_file);
         }
         command.args(["test", "--json", "--mutate"]);
         command.args(&self.mutate);
         if selection.is_some() {
-            command.args(["--rerun", "--match-contract", ".*", "--match-path", "**"]);
+            command.args(["--rerun", "--match-path", "**"]);
+            command.args(SELECT_ALL_TESTS);
         }
         if let Some(timeout) = self.mutation_timeout {
             command.args(["--mutation-timeout", &timeout.to_string()]);
@@ -904,7 +923,8 @@ fn candidate_workspace(
     Ok(candidate_workspace)
 }
 
-/// Returns every test result in Forge's JSON output.
+/// Returns every test result in Forge's JSON output, with one result per invariant predicate of a
+/// merged invariant campaign.
 fn candidate_test_results(
     output: &Output,
 ) -> Result<Vec<(RerunFailure, TestStatus, Option<String>)>> {
@@ -917,37 +937,63 @@ fn candidate_test_results(
             continue;
         };
         for (test, result) in tests {
-            let status = serde_json::from_value(
-                result.get("status").ok_or_else(|| eyre!("test result has no status"))?.clone(),
-            )?;
-            let mut reason =
-                result.get("reason").and_then(serde_json::Value::as_str).map(str::to_string);
-            if let Some(counterexample) = result
-                .get("counterexample")
-                .and_then(|value| CounterExample::deserialize(value).ok())
-            {
-                let calls = match counterexample {
-                    CounterExample::Single(call) => vec![call],
-                    CounterExample::Sequence(_, calls) => calls,
-                };
-                let calls = calls
-                    .iter()
-                    .map(|call| call.to_string().trim().to_string())
-                    .collect::<Vec<_>>();
-                let counterexample = format!("counterexample: {}", calls.join(", "));
-                reason = Some(match reason {
-                    Some(reason) => format!("{reason}; {counterexample}"),
-                    None => counterexample,
+            let result = TestResult::deserialize(result)
+                .wrap_err_with(|| format!("invalid result for {contract}::{test}"))?;
+            let key = |name: &str| RerunFailure { contract: contract.clone(), test: name.into() };
+            if result.invariant_predicate_results.is_empty() {
+                let reason = result.reason.clone().or_else(|| {
+                    let reasons = result
+                        .invariant_failures
+                        .iter()
+                        .map(|failure| failure_reason(failure.reason(), failure.counterexample()))
+                        .collect::<Vec<_>>();
+                    (!reasons.is_empty()).then(|| reasons.join("; "))
                 });
+                let reason = match (reason, result.counterexample.as_ref()) {
+                    (Some(reason), counterexample) => Some(failure_reason(&reason, counterexample)),
+                    (None, Some(counterexample)) => Some(failure_reason("", Some(counterexample))),
+                    (None, None) => None,
+                };
+                results.push((key(test), result.status, reason));
+                continue;
             }
-            results.push((
-                RerunFailure { contract: contract.clone(), test: test.clone() },
-                status,
-                reason,
-            ));
+            for predicate in &result.invariant_predicate_results {
+                let failure = result
+                    .invariant_failures
+                    .iter()
+                    .find(|failure| failure.predicate_name() == Some(predicate.name.as_str()));
+                let reason =
+                    predicate.reason.as_deref().or(failure.map(|failure| failure.reason()));
+                let reason = reason.map(|reason| {
+                    failure_reason(reason, failure.and_then(|failure| failure.counterexample()))
+                });
+                results.push((key(&predicate.name), predicate.status, reason));
+            }
+            // Handler assertion failures belong to the campaign, not to one predicate.
+            for failure in result.invariant_failures.iter().filter(|f| f.predicate_name().is_none())
+            {
+                let reason = format!(
+                    "handler {}: {}",
+                    failure.name(),
+                    failure_reason(failure.reason(), failure.counterexample())
+                );
+                results.push((key(test), TestStatus::Failure, Some(reason)));
+            }
         }
     }
     Ok(results)
+}
+
+/// Appends the counterexample calls to a failure reason.
+fn failure_reason(reason: &str, counterexample: Option<&CounterExample>) -> String {
+    let Some(counterexample) = counterexample else { return reason.to_string() };
+    let calls = match counterexample {
+        CounterExample::Single(call) => vec![call],
+        CounterExample::Sequence(_, calls) => calls.iter().collect(),
+    };
+    let calls = calls.iter().map(|call| call.to_string().trim().to_string()).collect::<Vec<_>>();
+    let counterexample = format!("counterexample: {}", calls.join(", "));
+    if reason.is_empty() { counterexample } else { format!("{reason}; {counterexample}") }
 }
 
 /// Lists the tests that the filter arguments select in a project.
@@ -1200,26 +1246,26 @@ fn resolved_survivor_identities(
     if baseline.iter().map(|result| result.seed).ne(candidate.iter().map(|result| result.seed)) {
         return BTreeSet::new();
     }
-    let not_killed = candidate
-        .iter()
-        .map(|result| {
-            let output = &result.output;
-            [
-                &output.survived_mutants,
-                &output.timed_out_mutants,
-                &output.invalid_mutants,
-                &output.skipped_mutants,
-            ]
-            .into_iter()
-            .flat_map(mutant_identities)
-            .collect::<BTreeSet<_>>()
-        })
-        .collect::<Vec<_>>();
+    let not_killed =
+        candidate.iter().map(|result| not_killed_identities(&result.output)).collect::<Vec<_>>();
     baseline
         .iter()
         .flat_map(|result| survivor_identities(&result.output))
         .filter(|identity| not_killed.iter().all(|not_killed| !not_killed.contains(identity)))
         .collect()
+}
+
+/// Returns the mutants that the run did not kill: survived, timed out, invalid, or skipped.
+fn not_killed_identities(output: &MutationJsonOutput) -> BTreeSet<MutationIdentity> {
+    [
+        &output.survived_mutants,
+        &output.timed_out_mutants,
+        &output.invalid_mutants,
+        &output.skipped_mutants,
+    ]
+    .into_iter()
+    .flat_map(mutant_identities)
+    .collect()
 }
 
 fn survivor_identities(output: &MutationJsonOutput) -> BTreeSet<MutationIdentity> {
@@ -1338,7 +1384,17 @@ fn forge_command(forge: &Path, config: &Config, workspace: &Path, seed: &U256) -
         .current_dir(workspace)
         .env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"))
         .env("FOUNDRY_FUZZ_FAILURE_PERSIST_DIR", seed_dir.join("fuzz"))
-        .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"));
+        .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"))
+        // Internal runs must not replace the project's own `--rerun` state.
+        .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"));
+    // Read the project's own config file, so `extends` resolves next to it, not in the copy.
+    let config_file = config.root.join(Config::FILE_NAME);
+    if workspace != config.root
+        && std::env::var_os("FOUNDRY_CONFIG").is_none()
+        && config_file.is_file()
+    {
+        command.env("FOUNDRY_CONFIG", config_file);
+    }
     command
 }
 

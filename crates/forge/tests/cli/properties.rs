@@ -470,6 +470,10 @@ contract ArithmeticTest {
     let outside = tempfile::tempdir().unwrap();
     fs::create_dir_all(prj.root().join("test/generated")).unwrap();
     std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/link")).unwrap();
+    // Internal runs keep their own `--rerun` state; the project's file stays as it is.
+    let failures = prj.root().join("cache/test-failures");
+    fs::create_dir_all(failures.parent().unwrap()).unwrap();
+    fs::write(&failures, r#"{"version":1,"failures":[]}"#).unwrap();
     let generator = prj.root().join("generator.sh");
     fs::write(&generator, GENERATOR).unwrap();
     let mut permissions = fs::metadata(&generator).unwrap().permissions();
@@ -510,6 +514,7 @@ no candidate reproducibly resolved a mutation survivor
         ]
     );
     assert!(!outside.path().join("ArithmeticLower.t.sol").exists());
+    assert_eq!(fs::read_to_string(&failures).unwrap(), r#"{"version":1,"failures":[]}"#);
 }
 
 #[cfg(unix)]
@@ -629,6 +634,20 @@ Error: generator failed in round 3 (exit status: 3): generator quota exceeded
 #[cfg(unix)]
 #[forgetest_init]
 fn properties_check_reports_candidate_result(prj: _, cmd: _) {
+    // Candidate checks run in a copy of the project; inherited config and negative filters must
+    // still apply as in the project, and must not hide generated tests.
+    fs::write(prj.root().join("base.toml"), "[profile.default]\nremappings = [\"fee/=src/\"]\n")
+        .unwrap();
+    prj.update_config(|config| {
+        config.test_pattern_inverse = Some(regex::Regex::new("^testHidden").unwrap().into());
+    });
+    let foundry_toml = prj.root().join("foundry.toml");
+    let toml = fs::read_to_string(&foundry_toml).unwrap();
+    fs::write(
+        &foundry_toml,
+        toml.replacen("[profile.default]\n", "[profile.default]\nextends = \"base.toml\"\n", 1),
+    )
+    .unwrap();
     prj.add_source(
         "Fee.sol",
         r#"
@@ -652,7 +671,7 @@ library Fee {
     fs::write(
         prj.root().join("passing.json"),
         candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"fee/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
         ),
     )
     .unwrap();
@@ -668,7 +687,15 @@ library Fee {
     fs::write(
         prj.root().join("extra.json"),
         candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testHiddenRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
+        ),
+    )
+    .unwrap();
+    // A merged invariant campaign reports each predicate on its own.
+    fs::write(
+        prj.root().join("invariants.json"),
+        candidate(
+            "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeHandler {\n    uint256 public total;\n    function add(uint256 amount) public {\n        total += Fee.fee(amount % 1e30);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract FeeInvariantTest is Test {\n    FeeHandler internal handler;\n    function setUp() public {\n        handler = new FeeHandler();\n        targetContract(address(handler));\n    }\n    function invariant_totalFitsSupply() public view {\n        assertLe(handler.total(), 1e30);\n    }\n    function invariant_totalStaysZero() public view {\n        assertEq(handler.total(), 0);\n    }\n}\n",
         ),
     )
     .unwrap();
@@ -715,11 +742,27 @@ Error: candidate check failed
 {
   "passed": false,
   "reasons": [
-    "FeeRoundingTest::testRoundsUp failed on seed 1: EvmError: Revert",
-    "FeeRoundingTest::testRoundsUp failed on seed 2: EvmError: Revert"
+    "FeeRoundingTest::testHiddenRoundsUp failed on seed 1: EvmError: Revert",
+    "FeeRoundingTest::testHiddenRoundsUp failed on seed 2: EvmError: Revert"
   ],
   "possible_bugs": [
-    "FeeRoundingTest::testRoundsUp (seed 1: EvmError: Revert; seed 2: EvmError: Revert)"
+    "FeeRoundingTest::testHiddenRoundsUp (seed 1: EvmError: Revert; seed 2: EvmError: Revert)"
+  ]
+}
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["properties", "--check", "invariants.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "FeeInvariantTest::invariant_totalStaysZero failed on seed 1: assertion failed: 1 != 0; counterexample: [..]",
+    "FeeInvariantTest::invariant_totalStaysZero failed on seed 2: assertion failed: 3 != 0; counterexample: [..]"
+  ],
+  "possible_bugs": [
+    "FeeInvariantTest::invariant_totalStaysZero (seed 1: assertion failed: 1 != 0; counterexample: [..]; seed 2: assertion failed: 3 != 0; counterexample: [..])"
   ]
 }
 
