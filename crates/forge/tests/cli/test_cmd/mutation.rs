@@ -2115,3 +2115,51 @@ contract NestedTest {
     assert_eq!(run("4"), serial);
     assert_eq!(run("8"), serial);
 }
+
+// `copy_project` links `lib` into each mutant workspace. A mutant of a dependency source must be
+// written into the workspace, not through the link into the real dependency.
+#[forgetest_init]
+fn mutation_keeps_linked_dependency_sources_unchanged(prj: _, cmd: _) {
+    let source = r#"pragma solidity ^0.8.13;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#;
+    let dependency = prj.root().join("lib/bucket/Arithmetic.sol");
+    fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+    fs::write(&dependency, source).unwrap();
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("bucket/=lib/bucket/").unwrap().into()];
+    });
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import {Arithmetic} from "bucket/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic private arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        assert(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--mutation-jobs", "4", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&output);
+    assert_eq!(summary["invalid"], 0, "{summary}");
+    assert!(summary["survived"].as_u64().unwrap() > 0, "{summary}");
+    assert_eq!(fs::read_to_string(&dependency).unwrap(), source);
+}

@@ -730,6 +730,45 @@ fn copy_dir_recursive_inner(
     result
 }
 
+/// Makes `root/rel` writable without changing the files that `copy_project` links into `root`.
+///
+/// Every symlinked directory on the path becomes a real directory whose entries link to (or, for
+/// files, copy) the original entries, and a symlinked file at `rel` is removed. Writing the file
+/// afterwards then changes only the workspace, not the shared dependency tree.
+pub fn unshare_path(root: &Path, rel: &Path) -> Result<()> {
+    let mut current = root.to_path_buf();
+    let mut components = rel.components().peekable();
+    while let Some(component) = components.next() {
+        current.push(component);
+        let Ok(metadata) = fs::symlink_metadata(&current) else { return Ok(()) };
+        if !metadata.file_type().is_symlink() {
+            continue;
+        }
+        if components.peek().is_none() {
+            fs::remove_file(&current)?;
+            return Ok(());
+        }
+        let source = current.canonicalize()?;
+        #[cfg(unix)]
+        fs::remove_file(&current)?;
+        #[cfg(windows)]
+        fs::remove_dir(&current)?;
+        fs::create_dir(&current)?;
+        for entry in fs::read_dir(&source)? {
+            let entry = entry?;
+            let destination = current.join(entry.file_name());
+            if entry.path().is_dir() {
+                if symlink_dir(&entry.path(), &destination).is_err() {
+                    copy_dir_recursive(&entry.path(), &destination)?;
+                }
+            } else {
+                fs::copy(entry.path(), &destination)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
