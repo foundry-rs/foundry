@@ -25,6 +25,7 @@ use crate::{
     snapshot::SnapshotManager,
     state::{AnvilState, SharedAnvilState},
     time::TimeManager,
+    txpool::{AnvilTxPool, AnvilTxPoolApiServer},
     types::TransactionOrder,
 };
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
@@ -527,6 +528,9 @@ async fn launch_node<Net: AnvilNetwork>(
     let (mining, miner_requests) = MiningController::new(initial_mining_mode(&config));
     let time = TimeManager::new(chain_spec.genesis().timestamp);
     let block_env = BlockEnvOverrides::default();
+    if let Some(coinbase) = config.coinbase {
+        block_env.set_coinbase(coinbase);
+    }
     if config.disable_block_gas_limit {
         block_env.set_gas_limit(u64::MAX);
     } else if fork.is_some()
@@ -655,6 +659,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     signers.push(Box::new(ImpersonatedSigner::new(impersonation.clone())));
                 }
                 let fork_info = fork.map(|fork| fork as Arc<dyn ForkInfo>);
+                let txpool_eth = eth_api.clone();
                 // Tempo's pool keeps the reads it made at the tip; replaying the tip to it drops
                 // them, so anvil state writes reach it before the next block.
                 let pool_refresh = (identity.network == Some("tempo")).then(|| {
@@ -698,12 +703,14 @@ async fn launch_node<Net: AnvilNetwork>(
                     new_filter,
                 )
                 .with_tempo_fee_payer(tempo_fee_payer)
-                .with_pool_refresh(pool_refresh);
+                .with_pool_refresh(pool_refresh)
+                .with_first_block_keeps_genesis_base_fee(Net::FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE);
                 let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
                 let evm_module = EvmApiServer::into_rpc(rpc.clone());
                 let eth_module = EthExtApiServer::into_rpc(rpc.clone());
                 let web3_module = Web3ExtApiServer::into_rpc(rpc.clone());
                 let personal_module = PersonalApiServer::into_rpc(rpc);
+                let txpool_module = AnvilTxPoolApiServer::into_rpc(AnvilTxPool::new(txpool_eth));
                 let debug_module = AnvilDebugApiServer::into_rpc(AnvilDebugApi::new(
                     ctx.registry.debug_api(),
                     fork_info.clone(),
@@ -720,7 +727,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 // anvil's does.
                 let mut config_module = RpcModule::new(EthConfigHandler::new(
                     ctx.provider().clone(),
-                    ctx.node().evm_config().clone(),
+                    FullNodeComponents::evm_config(ctx.node()).clone(),
                 ));
                 config_module.register_method("eth_config", move |_, handler, _| {
                     let mut config = EthConfigApiServer::config(handler)?;
@@ -743,6 +750,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     .chain(web3_module.method_names())
                     .chain(debug_module.method_names())
                     .chain(trace_module.method_names())
+                    .chain(txpool_module.method_names())
                 {
                     module.remove_method(name);
                 }
@@ -751,6 +759,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 module.merge(personal_module.clone())?;
                 module.merge(debug_module.clone())?;
                 module.merge(trace_module.clone())?;
+                module.merge(txpool_module.clone())?;
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
                 ctx.modules.merge_configured(anvil_module)?;
@@ -760,6 +769,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 ctx.modules.merge_configured(personal_module)?;
                 ctx.modules.replace_configured(debug_module)?;
                 ctx.modules.replace_configured(trace_module)?;
+                ctx.modules.replace_configured(txpool_module)?;
                 Ok(())
             }
         });

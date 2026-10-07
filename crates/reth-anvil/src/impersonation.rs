@@ -1,4 +1,4 @@
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{SignableTransaction, transaction::TxHashRef};
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
@@ -171,7 +171,7 @@ impl<T, TxReq> Clone for ImpersonatedSigner<T, TxReq> {
 #[async_trait]
 impl<T, TxReq> EthSigner<T, TxReq> for ImpersonatedSigner<T, TxReq>
 where
-    T: Send + Sync + 'static,
+    T: TxHashRef + Send + Sync + 'static,
     TxReq: SignableTxRequest<T> + Send + Sync + 'static,
 {
     fn accounts(&self) -> Vec<Address> {
@@ -187,10 +187,14 @@ where
     }
 
     async fn sign_transaction(&self, request: TxReq, address: &Address) -> Result<T, SignError> {
-        request
+        let tx = request
             .try_build_and_sign(ImpersonatedTxSigner { address: *address })
             .await
-            .map_err(|_| SignError::InvalidTransactionRequest)
+            .map_err(|_| SignError::InvalidTransactionRequest)?;
+        // No signature recovers the sender, so block execution looks it up by hash. A pool
+        // without anvil's validator, such as Tempo's, learns it only here.
+        self.state.remember_tx_sender(*tx.tx_hash(), *address);
+        Ok(tx)
     }
 
     fn sign_typed_data(

@@ -33,6 +33,7 @@ mod state;
 mod state_dump;
 mod state_provider;
 mod time;
+mod txpool;
 mod types;
 
 pub use api::{

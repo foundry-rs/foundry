@@ -119,8 +119,8 @@ be free if reth had a dev mode:
 - `--print-traces` and `--steps-tracing` are accepted and have no effect: printing the trace of
   every mined transaction needs an inspector during block building, or a replay of every block.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
-  `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; Tempo
-  through `tempo-node`. Monad runs
+  `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; see
+  `docs/networks.md`. Tempo runs (`src/network/tempo.rs`); see "What Tempo needs". Monad runs
   (`src/network/monad.rs`) with its own `ConfigureEvm` on `monad-revm`; still missing are the
   protocol system envelopes anvil replays on reorgs and transaction-hash forks, the per-block
   hardfork profiles of a Monad fork, and signature overrides for EIP-7702 authorities.
@@ -152,7 +152,7 @@ be free if reth had a dev mode:
 
 `tests/it/{anvil_api,api,transaction,gas,revert,logs,filter,pubsub,sign,txpool,genesis,proof,
 block_index,storage_values,eip2935,eip4844,eip6110,eip7702,eip7928,otterscan,beacon_api,ipc,wsapi,
-anvil,traces,simulate,state,fork,fork_bal,fork_chains}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
+anvil,traces,simulate,state,fork,fork_bal,fork_chains,tempo,tempo_canary}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
 (`api.backend`, `api.execute`, pool types, `eth_callBundle`, the ready-transaction listener, the
 state dump's transaction records, the fee manager's blob fee, the Optimism variants, the block
 listener count, the precompile factory, the JavaScript tracer). Ignored tests carry the reason on the attribute: the pending
@@ -204,36 +204,36 @@ those that need Tempo or Optimism.
 
 ## What Tempo needs
 
-`tempo-node` hard-wires its EVM config, so reth-anvil cannot wrap it the way it wraps
-`EthEvmConfig`. The sites, at tempo rev `6ef1f812`:
+Tempo runs (`src/network/tempo.rs`) on Tempo's node types, primitives, pool implementation, eth
+API, and block executor, with `AnvilEvmConfig<TempoEvmConfig>` as the EVM config, and without a
+change to tempo (rev `6ef1f812`). These are the workarounds, and the tempo hook that would remove
+each.
 
-| Site | Problem |
+| Workaround in reth-anvil | Tempo hook that removes it |
 | --- | --- |
-| `crates/node/src/node.rs:555` | `TempoNode` sets `type EVM = TempoEvmConfig`. |
-| `crates/node/src/node.rs:772` | `TempoPoolBuilder` only implements `PoolBuilder<Node, TempoEvmConfig>`. |
-| `crates/node/src/node.rs:885` | `TempoPayloadBuilderBuilder` only implements `PayloadBuilderBuilder<Node, TempoTransactionPool<_>, TempoEvmConfig>`. |
-| `crates/evm/src/assemble.rs:86` | `TempoBlockAssembler` only implements `BlockAssembler<TempoEvmConfig>`. |
+| A dev block builder (`tempo_payload.rs`): sequential, without prewarming, parallel replay, or build budgets. `TempoPayloadBuilderBuilder` takes `TempoEvmConfig` as a concrete type (`crates/node/src/node.rs:885`). | Builders generic over the EVM config, as reth's `EthereumPayloadBuilder` is. |
+| A pool builder that repeats `TempoPoolBuilder::build_pool` (`node.rs:772`) for the wrapped config. | The same. |
+| An assembler adapter around `TempoBlockAssembler`, which implements only `BlockAssembler<TempoEvmConfig>` (`crates/evm/src/assemble.rs:86`). | An assembler over any config whose block executor factory is Tempo's. |
+| No `console.log`, no `anvil_impersonateSignature` in `ecrecover` or EIP-7702 authorities, and no fork block hashes below the fork block: `TempoEvmConfig::new` builds `TempoEvmFactory::default()`, so the anvil EVM factory cannot wrap it. One test is ignored for this. | A constructor that takes an EVM factory. |
+| No pending block: `TempoEthApi` returns `PendingBlockKind::None`. Calls at `pending` still run on anvil's next block environment. Two tests are ignored for this. | A configurable pending block kind on `TempoEthApi`. |
+| `eth_getBalance` is anvil's: `TempoEthApi` reports `NATIVE_BALANCE_PLACEHOLDER` (`crates/node/src/rpc/mod.rs:351`), and a fork reads accounts with `eth_getAccountInfo`, as anvil does. | None needed; anvil reports the native balance on purpose. |
+| A pool-only EVM config (`TempoPoolEvmConfig`): the pool validates against the block anvil mines next, at anvil's clock, and skips the fee balance check when pool balance checks are off. The validator still bounds `valid_before` by the tip timestamp (`crates/transaction-pool/src/validator.rs:210`), and `valid_after` by the wall clock, which reth-anvil lifts and checks against anvil's clock at its API instead. | A clock the node can give the validator. |
+| A pool refresh after anvil state writes: the validator keeps the state it read at the tip until the next block (`validator.rs:399`), so reth-anvil replays the tip to the pool. The 2D nonce pool still learns lane changes only from blocks. | A way to drop the validator's read cache. |
+| Calls, estimates, and access lists run with the request's nonce through a state override: reth drops the request's nonce for calls (`crates/rpc/rpc-eth-api/src/helpers/call.rs:895`), and Tempo charges a new account's cost to nonce zero. | A reth option to keep the request's nonce. |
+| Simulated and sent call batches keep no create target: reth's `resolve_transaction` and anvil's request filling mark a request without `to` as a creation, which adds a create call to a Tempo batch. | A reth hook for the default kind of a request. |
+| Two expiring nonce calls in one `eth_callMany` bundle collide: Tempo simulates every AA call with a zero transaction hash (`crates/alloy/src/rpc/revm_compat.rs:94`). Two tests are ignored for this. | A unique hash per simulated call. |
 
-`TempoTransactionValidator` (`crates/transaction-pool/src/validator.rs:94`) and
-`TempoTransactionPool` (`tempo_pool.rs:59`) are already generic over `EvmConfig`, with
-`TempoEvmConfig` as the default, so the pool side only needs the builders to pass the type through.
-reth's `EthereumPoolBuilder` and `EthereumPayloadBuilder` show the shape: take the EVM config as a
-type parameter bounded by `ConfigureEvm<Primitives = TempoPrimitives>` plus Tempo's own
-`ConfigureTempoPoolEvm`, and let the assembler accept any config whose block executor factory is
-Tempo's. The alternative is to copy the two builders and the assembler into this crate, about 1.5k
-lines, and keep them in step with tempo.
+Behavior that follows Tempo instead of anvil's emulation of it:
 
-`TempoEvmConfig` has no factory seam (`TempoEvmConfig::new` builds `TempoEvmFactory::default()`), and
-`TempoBlockExecutor` has no pre-execution callback, so the state writes, the transaction cap, and
-the console cannot move into an EVM factory wrapper either. The plan without a tempo change: keep
-Tempo's consensus, primitives, pool implementation, and eth API; give the node reth-anvil's
-`AnvilEvmConfig<TempoEvmConfig>`; and build blocks with a dev-only sequential payload builder in
-this crate (from `crates/payload/builder/src/lib.rs`, without prewarming and action replay) plus an
-assembler input adapter around `TempoBlockAssembler`. A Tempo dev chain must also follow Tempo's
-consensus: millisecond timestamps, DKG data in `extra_data` at epoch boundaries (T8 on), the T4
-block layout without the subblock-metadata system transaction, TIP-20 fee tokens instead of native
-balances, and host-side sender recovery that ignores a changed ECRECOVER. Tempo's eth API forces
-`PendingBlockKind::None`, and its add-ons use `NoopEngineApiBuilder`.
+- Pool errors carry the text of Tempo's validator, for example `value transfer not allowed`
+  instead of `native value transfer not allowed in Tempo mode`, `invalid chain ID` instead of
+  `invalid chain id for signer`, and Tempo's intrinsic gas and `valid_before` messages. A fee
+  token shortfall keeps anvil's `insufficient fee token balance` message.
+- A Tempo chain stores Tempo headers only, so a loaded Ethereum dump cannot add Ethereum blocks
+  to its history (one test ignored), and loading a Tempo dump with blocks at launch is not
+  supported yet.
+- The dev chain's epoch length is `u64::MAX`, so no block ends an epoch: from T8 on, the last
+  block of an epoch must carry a key generation outcome, which a dev chain has none of.
 
 ## Things reth already fixes
 

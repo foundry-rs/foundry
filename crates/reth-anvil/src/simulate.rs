@@ -5,7 +5,11 @@
 //! receipts and the bloom), the warm addresses after precompile moves, and the state roots. This
 //! module keeps reth's execution and block assembly, and puts anvil's rules around them.
 
-use crate::{api::CallBatch, evm::AnvilNextBlockEnv, fork::ForkInfo};
+use crate::{
+    api::{CallBatch, NonceLane},
+    evm::AnvilNextBlockEnv,
+    fork::ForkInfo,
+};
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_evm::{
@@ -567,8 +571,10 @@ where
         if exceeds_gas_limit {
             return Err(EthApiError::other(EthSimulateError::BlockGasLimitExceeded));
         }
-        // The request budget caps every call; the block gas limit is checked above.
-        let execution_gas = requested_gas.min(*budget);
+        // The request budget caps every call; the block gas limit is checked above. A fee payer
+        // signs the gas limit, so a sponsored call keeps its own, or its sponsor would change.
+        let execution_gas =
+            if call.signs_gas() { requested_gas } else { requested_gas.min(*budget) };
         call.as_mut().gas = Some(execution_gas);
 
         let caller = call.as_ref().from.unwrap_or_default();
@@ -977,8 +983,15 @@ where
         let from = tx.as_ref().from.unwrap_or_default();
         tx.as_mut().from = Some(from);
         if tx.as_ref().nonce.is_none() {
-            let nonce =
-                db.basic(from).map_err(Into::into)?.map(|acc| acc.nonce).unwrap_or_default();
+            let nonce = match tx.nonce_lane(from) {
+                NonceLane::Account => {
+                    db.basic(from).map_err(Into::into)?.map(|acc| acc.nonce).unwrap_or_default()
+                }
+                NonceLane::Expiring => 0,
+                NonceLane::Storage(address, slot) => {
+                    db.storage(address, slot).map_err(Into::into)?.saturating_to()
+                }
+            };
             tx.as_mut().nonce = Some(nonce);
         }
         if disable_nonce_check && tx.as_ref().nonce == Some(u64::MAX) {

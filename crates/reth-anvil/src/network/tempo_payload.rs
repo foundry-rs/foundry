@@ -172,33 +172,36 @@ where
             .build();
 
         let chain_spec = self.provider.chain_spec();
-        let block_gas_limit = self.gas_limit.unwrap_or_else(|| parent_header.gas_limit());
-        let general_gas_limit =
-            chain_spec.general_gas_limit_at(attributes.timestamp, block_gas_limit, 0);
         let hardfork = chain_spec.tempo_hardfork_at(attributes.timestamp);
-
-        let next_attributes = TempoNextBlockEnvAttributes {
+        let next_attributes = |gas_limit| TempoNextBlockEnvAttributes {
             inner: NextBlockEnvAttributes {
                 timestamp: attributes.timestamp,
                 suggested_fee_recipient: attributes.suggested_fee_recipient,
                 prev_randao: attributes.prev_randao,
-                gas_limit: block_gas_limit,
+                gas_limit,
                 parent_beacon_block_root: attributes.parent_beacon_block_root,
                 withdrawals: attributes.withdrawals.clone().map(Into::into),
                 extra_data: attributes.extra_data().clone(),
                 slot_number: attributes.slot_number,
             },
-            general_gas_limit,
+            general_gas_limit: chain_spec.general_gas_limit_at(attributes.timestamp, gas_limit, 0),
             shared_gas_limit: 0,
             timestamp_millis_part: attributes.timestamp_millis_part(),
             consensus_context: attributes.consensus_context(),
         };
-        let tx_gas_limit_cap = self
+        // The block gas limit is the configured one, unless `evm_setBlockGasLimit` overrides it;
+        // the EVM config applies the override, so the block's environment tells the limit.
+        let env = self
             .evm_config
-            .next_evm_env(&parent_header, &next_attributes)
-            .map_err(PayloadBuilderError::other)?
-            .cfg_env
-            .tx_gas_limit_cap();
+            .next_evm_env(
+                &parent_header,
+                &next_attributes(self.gas_limit.unwrap_or_else(|| parent_header.gas_limit())),
+            )
+            .map_err(PayloadBuilderError::other)?;
+        let block_gas_limit = env.block_env.inner.gas_limit;
+        let tx_gas_limit_cap = env.cfg_env.tx_gas_limit_cap();
+        let next_attributes = next_attributes(block_gas_limit);
+        let general_gas_limit = next_attributes.general_gas_limit;
         let mut builder = self
             .evm_config
             .builder_for_next_block(&mut db, &parent_header, next_attributes)
@@ -220,14 +223,10 @@ where
             // The regular gas a transaction can use is capped, so a transaction above the cap
             // fits on what it can use.
             let gas_limit = pool_tx.gas_limit().min(tx_gas_limit_cap);
+            // A transaction that does not fit waits for a later block, as on anvil. Its successors
+            // stay eligible: anvil state writes may have moved its nonce lane past it, which the
+            // pool learns only from the next block.
             if cumulative_gas_used + gas_limit > block_gas_limit {
-                best_txs.mark_invalid(
-                    &pool_tx,
-                    InvalidPoolTransactionError::ExceedsGasLimit(
-                        pool_tx.gas_limit(),
-                        block_gas_limit - cumulative_gas_used,
-                    ),
-                );
                 continue;
             }
             let is_payment = if hardfork.is_t5() {

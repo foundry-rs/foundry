@@ -91,6 +91,8 @@ use alloy_signer::SignerSync;
 use foundry_evm_core::tempo::PATH_USD_ADDRESS;
 #[cfg(feature = "tempo")]
 use tempo_precompiles::{
+    NONCE_PRECOMPILE_ADDRESS,
+    nonce::NonceManager,
     storage::{Handler, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
@@ -98,7 +100,8 @@ use tempo_precompiles::{
 };
 #[cfg(feature = "tempo")]
 use tempo_primitives::{
-    TEMPO_TX_TYPE_ID, TempoTxEnvelope, transaction::FEE_PAYER_SIGNATURE_MARKER,
+    TEMPO_TX_TYPE_ID, TempoTxEnvelope,
+    transaction::{FEE_PAYER_SIGNATURE_MARKER, TEMPO_EXPIRING_NONCE_KEY},
 };
 #[cfg(feature = "tempo")]
 use tempo_transaction_pool::validator::DEFAULT_AA_VALID_AFTER_MAX_SECS;
@@ -626,6 +629,28 @@ pub trait CallBatch {
     fn has_calls(&self) -> bool {
         false
     }
+
+    /// Returns where the nonce of the request's sender lives.
+    fn nonce_lane(&self, _from: Address) -> NonceLane {
+        NonceLane::Account
+    }
+
+    /// Returns whether a signature in the request covers its gas limit, as a Tempo fee payer's
+    /// does.
+    fn signs_gas(&self) -> bool {
+        false
+    }
+}
+
+/// Where the nonce of a transaction lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NonceLane {
+    /// The sender's account nonce.
+    Account,
+    /// No nonce: an expiring nonce transaction carries nonce zero.
+    Expiring,
+    /// A storage slot of a contract, as a Tempo nonce lane.
+    Storage(Address, U256),
 }
 
 impl CallBatch for TransactionRequest {}
@@ -634,6 +659,21 @@ impl CallBatch for TransactionRequest {}
 impl CallBatch for tempo_alloy::rpc::TempoTransactionRequest {
     fn has_calls(&self) -> bool {
         !self.calls.is_empty()
+    }
+
+    fn signs_gas(&self) -> bool {
+        self.fee_payer_signature.is_some()
+    }
+
+    fn nonce_lane(&self, from: Address) -> NonceLane {
+        match self.nonce_key.filter(|key| !key.is_zero()) {
+            None => NonceLane::Account,
+            Some(TEMPO_EXPIRING_NONCE_KEY) => NonceLane::Expiring,
+            Some(key) => NonceLane::Storage(
+                NONCE_PRECOMPILE_ADDRESS,
+                NonceManager::new().nonces[from][key].slot(),
+            ),
+        }
     }
 }
 
@@ -773,6 +813,9 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     next_block_base_fee: NextBlockBaseFee<HeaderOf<Provider>>,
     /// Makes the pool drop the state it read at the tip, after an anvil state write.
     pool_refresh: Option<PoolRefresh>,
+    /// Whether the first block takes the genesis base fee; see
+    /// `AnvilNetwork::FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE`.
+    first_block_keeps_genesis_base_fee: bool,
 }
 
 /// Makes the pool drop the state it read at the tip. Tempo's pool keeps the reads it made at a
@@ -880,7 +923,15 @@ where
             tempo_fee_payer: None,
             next_block_base_fee,
             pool_refresh: None,
+            first_block_keeps_genesis_base_fee: true,
         }
+    }
+
+    /// Sets whether the first block takes the genesis base fee, as on Ethereum, or the fee the
+    /// chain spec's rule gives it.
+    pub const fn with_first_block_keeps_genesis_base_fee(mut self, keeps: bool) -> Self {
+        self.first_block_keeps_genesis_base_fee = keeps;
+        self
     }
 
     /// Sets the refresh that makes the pool see anvil state writes before the next block.
@@ -1392,7 +1443,7 @@ where
                 .map_err(internal_error);
         }
         if self.fork.is_some() {
-            // Anvil turns a forked node back into a plain one.
+            // Anvil turns a forked node back into a plain one, with a fresh block environment.
             return self
                 .relauncher
                 .relaunch_from_original(|config| {
@@ -1416,7 +1467,9 @@ where
         self.time.remove_block_timestamp_interval();
         self.block_env.restore(Default::default());
         // The first block keeps the genesis base fee, as at launch.
-        if let Some(base_fee) = genesis.base_fee_per_gas() {
+        if self.first_block_keeps_genesis_base_fee
+            && let Some(base_fee) = genesis.base_fee_per_gas()
+        {
             self.block_env.set_next_base_fee(base_fee);
         }
         *self.instance_id.write() = B256::random();
@@ -1699,6 +1752,7 @@ where
 
     async fn anvil_set_coinbase(&self, address: Address) -> RpcResult<()> {
         self.block_env.set_coinbase(address);
+        self.relauncher.update_config(|config| config.coinbase = Some(address));
         Ok(())
     }
 
@@ -1924,6 +1978,42 @@ where
     Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch>>,
     Spec: EthChainSpec + EthereumHardforks,
 {
+    /// Makes a call or an estimate on Tempo run with the request's nonce, as anvil runs it, by
+    /// overriding the sender's nonce, or its lane's nonce, with it. Reth runs calls with the
+    /// state's nonce, and Tempo charges a new account's cost to a transaction with nonce zero.
+    fn with_request_nonce(
+        &self,
+        request: &RpcTxReq<Eth::NetworkTypes>,
+        state_overrides: Option<StateOverride>,
+    ) -> Option<StateOverride> {
+        #[cfg(feature = "tempo")]
+        if self.is_tempo()
+            && let Some(nonce) = request.as_ref().nonce
+            && let Some(from) = request.as_ref().from
+        {
+            let mut overrides = state_overrides.unwrap_or_default();
+            match request.nonce_lane(from) {
+                NonceLane::Account => {
+                    let account = overrides.entry(from).or_default();
+                    account.nonce.get_or_insert(nonce);
+                }
+                // An expiring nonce has no lane state.
+                NonceLane::Expiring => {}
+                NonceLane::Storage(address, slot) => {
+                    let account = overrides.entry(address).or_default();
+                    account
+                        .state_diff
+                        .get_or_insert_default()
+                        .entry(slot.into())
+                        .or_insert(U256::from(nonce).into());
+                }
+            }
+            return Some(overrides);
+        }
+        let _ = request;
+        state_overrides
+    }
+
     /// Fills a missing `from` with the first dev account, as anvil does, and marks a missing
     /// `to` as a contract creation.
     fn with_sender(
@@ -1949,6 +2039,7 @@ where
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         let request = self.with_call_fees(request)?;
+        let state_overrides = self.with_request_nonce(&request, state_overrides);
         // Anvil checks the value against the balance before it runs the call.
         if let Some(from) = request.as_ref().from
             && let Some(value) = request.as_ref().value
@@ -2020,6 +2111,13 @@ where
             let blob_fee = EthApiServer::blob_base_fee(&self.eth).await?;
             request.as_mut().max_fee_per_blob_gas = Some(blob_fee.saturating_to::<u128>().max(1));
         }
+        self.fill_fees(&mut request).await?;
+        Ok(request)
+    }
+
+    /// Fills missing fees: twice the base fee plus the suggested tip, or the gas price before
+    /// London, as anvil does.
+    async fn fill_fees(&self, request: &mut RpcTxReq<Eth::NetworkTypes>) -> RpcResult<()> {
         if request.as_ref().gas_price.is_none() && request.as_ref().max_fee_per_gas.is_none() {
             match self.sealed_header(self.best_block_number()?)?.base_fee_per_gas() {
                 Some(base_fee) => {
@@ -2034,7 +2132,24 @@ where
                 None => request.as_mut().gas_price = Some(self.gas_price().await?.to()),
             }
         }
-        Ok(request)
+        Ok(())
+    }
+
+    /// Returns the next nonce of the request's sender: the pending account nonce, zero for an
+    /// expiring nonce, or the nonce stored for its Tempo nonce lane.
+    async fn next_nonce(&self, request: &RpcTxReq<Eth::NetworkTypes>) -> RpcResult<u64> {
+        let from = request.as_ref().from.unwrap_or_default();
+        match request.nonce_lane(from) {
+            NonceLane::Account => Ok(self.pending_nonce(from).await?.to()),
+            NonceLane::Expiring => Ok(0),
+            NonceLane::Storage(address, slot) => Ok(self
+                .provider
+                .latest()
+                .and_then(|state| state.storage(address, slot.into()))
+                .map_err(|error| internal_error(format!("failed to read state: {error}")))?
+                .unwrap_or_default()
+                .saturating_to()),
+        }
     }
 
     /// Returns the gas price: the base fee plus the suggested tip, the base fee alone when the
@@ -2519,6 +2634,7 @@ where
         ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
         self.ensure_call_funds(&request, block, state_overrides.as_ref())?;
         let request = self.with_call_fees(request)?;
+        let state_overrides = self.with_request_nonce(&request, state_overrides);
         EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides)
             .await
             .map_err(with_revert_data)
@@ -2710,8 +2826,7 @@ where
             request.as_mut().chain_id = EthApiServer::chain_id(&self.eth).await?.map(|id| id.to());
         }
         if request.as_ref().nonce.is_none() {
-            let from = request.as_ref().from.unwrap_or_default();
-            request.as_mut().nonce = Some(self.pending_nonce(from).await?.to());
+            request.as_mut().nonce = Some(self.next_nonce(&request).await?);
         }
         if request.as_ref().gas.is_none() {
             // The estimate runs without the fee fields, which the signed transaction keeps as
@@ -2726,6 +2841,10 @@ where
                 Err(_) => self.fallback_gas_limit()?,
             };
             request.as_mut().gas = Some(gas);
+        }
+        // A Tempo transaction cannot be built without fees; reth signs what it is given.
+        if self.is_tempo() {
+            self.fill_fees(&mut request).await?;
         }
         EthApiServer::sign_transaction(&self.eth, request).await
     }
@@ -2793,6 +2912,7 @@ where
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> RpcResult<AccessListResult> {
+        let state_override = self.with_request_nonce(&request, state_override);
         #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
         let mut result = EthApiServer::create_access_list(
             &self.eth,

@@ -192,6 +192,9 @@ pub struct NodeConfig {
     pub disable_pool_balance_checks: bool,
     /// The account that sponsors Tempo fee-payer requests. Defaults to the last dev account.
     pub tempo_fee_payer: Option<Address>,
+    /// The coinbase `anvil_setCoinbase` set. A reset to a fork keeps it, as on anvil; a reset
+    /// back to a plain node starts from the original config without it.
+    pub coinbase: Option<Address>,
     /// Path of the block cache.
     pub cache_path: Option<PathBuf>,
     /// CORS `allow_origin` header.
@@ -279,6 +282,7 @@ impl Default for NodeConfig {
             max_transactions: 1_000,
             disable_pool_balance_checks: false,
             tempo_fee_payer: None,
+            coinbase: None,
             cache_path: None,
             allow_origin: "*".to_string(),
             no_cors: false,

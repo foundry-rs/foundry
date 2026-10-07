@@ -14,6 +14,7 @@ use crate::{
     provider::AnvilProvider,
     state::SharedAnvilState,
     time::{AnvilPayloadAttributes, TimeManager},
+    txpool::TxPoolKey,
 };
 use alloy_consensus::{Transaction, TxReceipt, transaction::TxHashRef};
 use eyre::Result;
@@ -31,7 +32,7 @@ use reth_ethereum::{
         },
     },
     pool::TransactionPoolExt,
-    primitives::{SignerRecoverable, header::HeaderMut},
+    primitives::{NodePrimitives, SignerRecoverable, header::HeaderMut},
     provider::{db::DatabaseEnv, providers::NodeTypesForProvider},
 };
 use reth_rpc_eth_api::{FullEthApiServer, RpcTypes, helpers::EthTransactions};
@@ -131,6 +132,7 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
             EthApi: FullEthApiServer<
                 NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>,
                 Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>,
+                Primitives: NodePrimitives<SignedTx: TxPoolKey>,
             > + EthTransactions
                         + Clone,
         > + EngineValidatorAddOn<NodeOf<Self>>;
