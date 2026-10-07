@@ -13,7 +13,7 @@ use crate::{
     pool::SharedTransactionOrder,
     provider::AnvilProvider,
     state::SharedAnvilState,
-    time::AnvilPayloadAttributes,
+    time::{AnvilPayloadAttributes, TimeManager},
 };
 use alloy_consensus::{Transaction, TxReceipt, transaction::TxHashRef};
 use eyre::Result;
@@ -77,6 +77,8 @@ pub struct AnvilComponents {
     pub fork: Option<Arc<dyn ForkInfo>>,
     /// The `console.log` printer, when printing.
     pub console: Option<ConsolePrinter>,
+    /// The block time manager.
+    pub time: TimeManager,
 }
 
 /// What a network prepares before the node launches: the chain spec, and the fork when the
@@ -133,7 +135,7 @@ pub trait AnvilNetwork: Sized + Send + Sync + 'static {
     fn components(anvil: &AnvilComponents) -> Self::Components;
 
     /// Builds the RPC add-ons.
-    fn add_ons(logging: LoggingState) -> Self::AddOns;
+    fn add_ons(anvil: &AnvilComponents, logging: LoggingState) -> Self::AddOns;
 
     /// Builds the payload attributes builder.
     fn payload_attributes(

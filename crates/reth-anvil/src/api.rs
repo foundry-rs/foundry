@@ -11,7 +11,10 @@ use crate::{
     time::TimeManager,
     types::{ForkChoice, ForkUrl, ReorgOptions, ReorgParams, TransactionData, TransactionOrder},
 };
-use alloy_consensus::{Blob, BlockHeader, transaction::TxHashRef};
+use alloy_consensus::{
+    Blob, BlockHeader, Transaction,
+    transaction::{PooledTransaction, TxHashRef},
+};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7594::BlobTransactionSidecarVariant};
 use alloy_json_rpc::RpcObject;
 use alloy_network::{TransactionBuilder, primitives::HeaderResponse};
@@ -34,20 +37,26 @@ use jsonrpsee::{
         error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
     },
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use reth_ethereum::{
     chainspec::{EthChainSpec, EthereumHardforks, Hardforks, MIN_TRANSACTION_GAS},
     pool::TransactionPool,
     primitives::{Bytecode, SealedHeader},
+    rpc::eth::{
+        EthApiError, RpcInvalidTransactionError, error::RpcPoolError,
+        utils::recover_raw_transaction,
+    },
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
 use reth_rpc_eth_api::{EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTxReq, RpcTypes};
 use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
 use revm::{context::BlockEnv, primitives::eip7825::TX_GAS_LIMIT_CAP};
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::sync::Mutex as AsyncMutex;
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -305,6 +314,10 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject> {
         gas_limit: Option<U64>,
     ) -> RpcResult<B256>;
 
+    /// Sends a signed transaction. A replacement must raise the fee, as on anvil.
+    #[method(name = "sendRawTransaction")]
+    async fn eth_send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
+
     /// Sends a signed transaction. The condition is accepted and ignored, as anvil does.
     #[method(name = "sendRawTransactionConditional")]
     async fn eth_send_raw_transaction_conditional(
@@ -458,6 +471,9 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     pool: Pool,
     provider: Provider,
     eth: Eth,
+    /// One lock per sender for requests without a nonce, so concurrent requests get distinct
+    /// nonces.
+    nonce_locks: Arc<Mutex<HashMap<Address, Arc<AsyncMutex<()>>>>>,
 }
 
 impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec> {
@@ -502,6 +518,7 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
             pool,
             provider,
             eth,
+            nonce_locks: Default::default(),
         }
     }
 }
@@ -627,7 +644,6 @@ where
         Err(internal_error("Unable to find storage slot"))
     }
 
-    /// Returns the lowercase name of the latest hardfork active at the given block.
     /// Reads the accounts, the pending anvil state writes, and the block environment into a
     /// state dump.
     fn serializable_state(&self) -> RpcResult<SerializableState> {
@@ -674,6 +690,7 @@ where
         Ok(state)
     }
 
+    /// Returns the lowercase name of the latest hardfork active at the given block.
     fn hardfork_name(&self, timestamp: u64, number: u64) -> String {
         self.chain_spec
             .forks_iter()
@@ -726,8 +743,8 @@ where
 
     async fn anvil_set_automine(&self, enabled: bool) -> RpcResult<()> {
         self.mining.set_automine(enabled);
-        if enabled && self.pool.pending_and_queued_txn_count().0 > 0 {
-            self.mining.trigger();
+        if enabled {
+            self.mining.trigger_if_pending();
         }
         Ok(())
     }
@@ -1268,6 +1285,7 @@ where
 
 impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
 where
+    Pool: TransactionPool,
     Provider: BlockNumReader + HeaderProvider,
     Eth: FullEthApiServer,
     Spec: EthereumHardforks,
@@ -1296,6 +1314,23 @@ where
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         let request = self.with_call_fees(request)?;
+        // Anvil checks the value against the balance before it runs the call.
+        if let Some(from) = request.as_ref().from
+            && let Some(value) = request.as_ref().value
+            && !value.is_zero()
+        {
+            let balance = match state_overrides.as_ref().and_then(|overrides| overrides.get(&from))
+            {
+                Some(AccountOverride { balance: Some(balance), .. }) => *balance,
+                _ => EthApiServer::balance(&self.eth, from, block).await?,
+            };
+            if value > balance {
+                return Err(EthApiError::InvalidTransaction(
+                    RpcInvalidTransactionError::InsufficientFunds { cost: value, balance },
+                )
+                .into());
+            }
+        }
         let state_overrides = fund_default_caller(request.as_ref(), state_overrides);
         let estimate = EthApiServer::estimate_gas(
             &self.eth,
@@ -1335,9 +1370,10 @@ where
     }
 
     /// Prepares a request for `eth_sendTransaction`: the sender and the recipient as
-    /// [`Self::with_sender`], and a gas limit. A request without one gets the estimate, or, when
-    /// the estimate fails because the call reverts, the largest limit a transaction may have,
-    /// so the transaction is mined and reverts, as on anvil.
+    /// [`Self::with_sender`], a gas limit, and fees. A request without a gas limit gets the
+    /// estimate, or, when the estimate fails because the call reverts, the largest limit a
+    /// transaction may have, so the transaction is mined and reverts, as on anvil. A request
+    /// without fees gets the ones reth fills, or the gas price before London.
     async fn prepare_send(
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
@@ -1350,7 +1386,98 @@ where
             };
             request.as_mut().gas = Some(gas);
         }
+        if request.as_ref().gas_price.is_none() && request.as_ref().max_fee_per_gas.is_none() {
+            match self.sealed_header(self.best_block_number()?)?.base_fee_per_gas() {
+                Some(base_fee) => {
+                    let tip = match request.as_ref().max_priority_fee_per_gas {
+                        Some(tip) => tip,
+                        None => EthApiServer::max_priority_fee_per_gas(&self.eth).await?.to(),
+                    };
+                    let tx = request.as_mut();
+                    tx.max_priority_fee_per_gas = Some(tip);
+                    tx.max_fee_per_gas = Some(u128::from(base_fee) * 2 + tip);
+                }
+                None => request.as_mut().gas_price = Some(self.gas_price().await?.to()),
+            }
+        }
         Ok(request)
+    }
+
+    /// Returns the gas price: the base fee plus the suggested tip, the base fee alone when the
+    /// minimum priority fee is disabled, or the node's gas price before London, as anvil does.
+    async fn gas_price(&self) -> RpcResult<U256> {
+        let base_fee = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas();
+        match base_fee {
+            // Before London, the node's gas price, as `anvil_setMinGasPrice` sets it.
+            None if let Some(gas_price) = self.block_env.gas_price() => Ok(U256::from(gas_price)),
+            Some(base_fee) if !self.min_priority_fee_enforced => Ok(U256::from(base_fee)),
+            _ => EthApiServer::gas_price(&self.eth).await,
+        }
+    }
+
+    /// Sends a transaction from a dev or impersonated account; see `eth_sendTransaction`. The
+    /// sender's lock is held from the nonce selection to the pool insertion, so concurrent
+    /// requests get distinct nonces and a replacement is checked against the pool it meets.
+    async fn send(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
+        let request = self.with_sender(request)?;
+        let _guard = self.nonce_lock(request.as_ref().from.unwrap_or_default()).lock_owned().await;
+        let request = self.prepare_send(request).await?;
+        self.ensure_request_replacement_priced(&request)?;
+        EthApiServer::send_transaction(&self.eth, request).await
+    }
+
+    /// Sends a signed transaction; see `eth_sendRawTransaction`. The sender's lock is held
+    /// through the pool insertion, as in [`Self::send`]. A transaction reth cannot decode fails
+    /// in reth's handler with reth's error.
+    async fn send_raw(&self, tx: Bytes) -> RpcResult<B256> {
+        let recovered = recover_raw_transaction::<PooledTransaction>(&tx).ok();
+        let _guard = match &recovered {
+            Some(recovered) => Some(self.nonce_lock(recovered.signer()).lock_owned().await),
+            None => None,
+        };
+        if let Some(recovered) = &recovered {
+            self.ensure_replacement_priced(
+                recovered.signer(),
+                recovered.nonce(),
+                recovered.max_fee_per_gas(),
+            )?;
+        }
+        EthApiServer::send_raw_transaction(&self.eth, tx).await
+    }
+
+    /// Returns the nonce lock of a sender.
+    fn nonce_lock(&self, sender: Address) -> Arc<AsyncMutex<()>> {
+        self.nonce_locks.lock().entry(sender).or_default().clone()
+    }
+
+    /// Rejects a transaction whose fee does not exceed the pooled transaction with the same
+    /// sender and nonce, as anvil does; reth replaces at an equal fee.
+    fn ensure_replacement_priced(
+        &self,
+        sender: Address,
+        nonce: u64,
+        max_fee: u128,
+    ) -> RpcResult<()> {
+        if let Some(existing) = self.pool.get_transaction_by_sender_and_nonce(sender, nonce)
+            && max_fee <= existing.transaction.max_fee_per_gas()
+        {
+            return Err(EthApiError::PoolError(RpcPoolError::ReplaceUnderpriced).into());
+        }
+        Ok(())
+    }
+
+    /// [`Self::ensure_replacement_priced`] for a request with an explicit nonce and fee.
+    fn ensure_request_replacement_priced(
+        &self,
+        request: &RpcTxReq<Eth::NetworkTypes>,
+    ) -> RpcResult<()> {
+        let tx = request.as_ref();
+        if let (Some(from), Some(nonce), Some(max_fee)) =
+            (tx.from, tx.nonce, tx.max_fee_per_gas.or(tx.gas_price))
+        {
+            self.ensure_replacement_priced(from, nonce, max_fee)?;
+        }
+        Ok(())
     }
 
     /// Returns the largest gas limit a transaction may have: the block gas limit, capped by
@@ -1415,32 +1542,36 @@ impl<Pool, Provider, Eth, Spec>
     EthExtApiServer<RpcTxReq<Eth::NetworkTypes>, RpcReceipt<Eth::NetworkTypes>>
     for AnvilRpc<Pool, Provider, Eth, Spec>
 where
-    Pool: Send + Sync + 'static,
+    Pool: TransactionPool + 'static,
     Provider: BlockNumReader + HeaderProvider + Send + Sync + 'static,
     Eth: FullEthApiServer,
     Spec: EthereumHardforks + Send + Sync + 'static,
 {
     async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
-        EthApiServer::send_transaction(&self.eth, self.prepare_send(request).await?).await
+        self.send(request).await
     }
 
     async fn eth_send_transaction_sync(
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
-        let hash =
-            EthApiServer::send_transaction(&self.eth, self.prepare_send(request).await?).await?;
+        let hash = self.send(request).await?;
         self.await_receipt(hash, TRANSACTION_CONFIRMATION_TIMEOUT).await
     }
 
     async fn eth_resend(
         &self,
-        mut request: RpcTxReq<Eth::NetworkTypes>,
+        request: RpcTxReq<Eth::NetworkTypes>,
         gas_price: Option<U256>,
         gas_limit: Option<U64>,
     ) -> RpcResult<B256> {
-        if request.as_ref().nonce.is_none() {
+        let Some(nonce) = request.as_ref().nonce else {
             return Err(invalid_params("missing transaction nonce in transaction spec"));
+        };
+        let mut request = self.with_sender(request)?;
+        let from = request.as_ref().from.unwrap_or_default();
+        if self.pool.get_transaction_by_sender_and_nonce(from, nonce).is_none() {
+            return Err(invalid_params("transaction not found"));
         }
         if let Some(gas_price) = gas_price {
             let gas_price =
@@ -1455,7 +1586,12 @@ where
         if let Some(gas_limit) = gas_limit {
             request.as_mut().gas = Some(gas_limit.to());
         }
-        EthApiServer::send_transaction(&self.eth, with_recipient(request)).await
+        self.ensure_request_replacement_priced(&request)?;
+        EthApiServer::send_transaction(&self.eth, request).await
+    }
+
+    async fn eth_send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256> {
+        self.send_raw(tx).await
     }
 
     async fn eth_send_raw_transaction_conditional(
@@ -1463,7 +1599,7 @@ where
         tx: Bytes,
         _condition: TransactionConditional,
     ) -> RpcResult<B256> {
-        EthApiServer::send_raw_transaction(&self.eth, tx).await
+        self.send_raw(tx).await
     }
 
     async fn eth_request_accounts(&self) -> RpcResult<Vec<Address>> {
@@ -1475,13 +1611,7 @@ where
     }
 
     async fn eth_gas_price(&self) -> RpcResult<U256> {
-        let base_fee = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas();
-        match base_fee {
-            // Before London, the node's gas price, as `anvil_setMinGasPrice` sets it.
-            None if let Some(gas_price) = self.block_env.gas_price() => Ok(U256::from(gas_price)),
-            Some(base_fee) if !self.min_priority_fee_enforced => Ok(U256::from(base_fee)),
-            _ => EthApiServer::gas_price(&self.eth).await,
-        }
+        self.gas_price().await
     }
 
     async fn eth_estimate_gas(
@@ -1559,7 +1689,7 @@ where
         tx: Bytes,
         timeout_ms: Option<u64>,
     ) -> RpcResult<RpcReceipt<Eth::NetworkTypes>> {
-        let hash = EthApiServer::send_raw_transaction(&self.eth, tx).await?;
+        let hash = self.send_raw(tx).await?;
         let timeout = timeout_ms.map_or(TRANSACTION_CONFIRMATION_TIMEOUT, Duration::from_millis);
         self.await_receipt(hash, timeout).await
     }

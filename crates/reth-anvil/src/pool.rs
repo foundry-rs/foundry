@@ -7,7 +7,7 @@ use eyre::Result;
 use parking_lot::{Mutex, RwLock};
 use reth_ethereum::{
     TransactionSigned,
-    chainspec::EthereumHardforks,
+    chainspec::{EthereumHardfork, EthereumHardforks},
     node::{
         api::{ConfigureEvm, NodePrimitives, PrimitivesTy},
         builder::{
@@ -16,8 +16,8 @@ use reth_ethereum::{
         },
     },
     pool::{
-        EthPooledTransaction, EthTransactionValidator, Pool, PoolTransaction, Priority,
-        TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
+        EthPooledTransaction, EthTransactionValidator, Pool, PoolTransaction, PriceBumpConfig,
+        Priority, TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
         TransactionValidationTaskExecutor, TransactionValidator,
         blobstore::DiskFileBlobStore,
         error::{InvalidPoolTransactionError, PoolTransactionError},
@@ -400,6 +400,9 @@ where
         let mut pool_config = ctx.pool_config();
         // Anvil has no minimum fee: a zero gas price is fine with a zero base fee.
         pool_config.minimal_protocol_basefee = 0;
+        // Anvil replaces a pooled transaction with any higher fee.
+        pool_config.price_bumps =
+            PriceBumpConfig { default_price_bump: 0, replace_blob_tx_price_bump: 0 };
         let blob_store = create_blob_store_with_cache(ctx, None)?;
 
         let minimum_priority_fee = if self.settings.disable_min_priority_fee {
@@ -407,8 +410,20 @@ where
         } else {
             ctx.config().txpool.minimum_priority_fee
         };
+        // Anvil's hardfork is fixed, so the transaction types the latest block does not support
+        // are rejected, as anvil does.
+        let latest = ctx.provider().latest_header()?;
+        let (number, timestamp) =
+            latest.as_ref().map(|header| (header.number(), header.timestamp())).unwrap_or_default();
+        let chain_spec = ctx.chain_spec();
+        let active_at_block =
+            |fork| chain_spec.ethereum_fork_activation(fork).active_at_block(number);
         let mut validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
+                .set_eip2718(active_at_block(EthereumHardfork::Berlin))
+                .set_eip1559(active_at_block(EthereumHardfork::London))
+                .set_eip4844(chain_spec.is_cancun_active_at_timestamp(timestamp))
+                .set_eip7702(chain_spec.is_prague_active_at_timestamp(timestamp))
                 .kzg_settings(ctx.kzg_settings()?)
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
                 .with_local_transactions_config(pool_config.local_transactions_config.clone())
@@ -420,7 +435,7 @@ where
         if self.settings.balance_rule != BalanceRule::Full {
             validator = validator.disable_balance_check();
         }
-        let base_fee = ctx.provider().latest_header()?.and_then(|header| header.base_fee_per_gas());
+        let base_fee = latest.and_then(|header| header.base_fee_per_gas());
         let validator = validator
             .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
             .map(|inner| AnvilValidator {

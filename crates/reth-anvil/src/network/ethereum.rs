@@ -7,6 +7,7 @@ use crate::{
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
     fork::{ForkBackend, ForkInfo},
     logging::{LoggingState, NodeInfoLayer},
+    pending::AnvilEthApiBuilder,
     pool::{AnvilPoolBuilder, PoolSettings},
 };
 use alloy_evm::eth::spec::EthExecutorSpec;
@@ -19,7 +20,7 @@ use reth_ethereum::{
     engine::local::LocalPayloadAttributesBuilder,
     evm::{EthEvmConfig, factory::RethEvmFactory},
     node::{
-        EthereumAddOns, EthereumEthApiBuilder, EthereumNode, EthereumPayloadBuilder,
+        EthereumAddOns, EthereumNode, EthereumPayloadBuilder,
         builder::{
             BuilderContext, FullNodeTypes, NodeTypes,
             components::{
@@ -49,7 +50,7 @@ impl AnvilNetwork for Ethereum {
     >;
     type AddOns = EthereumAddOns<
         super::NodeOf<Self>,
-        EthereumEthApiBuilder,
+        AnvilEthApiBuilder,
         AnvilEngineValidatorBuilder,
         BasicEngineApiBuilder<AnvilEngineValidatorBuilder>,
         BasicEngineValidatorBuilder<AnvilEngineValidatorBuilder>,
@@ -84,9 +85,9 @@ impl AnvilNetwork for Ethereum {
             .consensus(NoopConsensusBuilder)
     }
 
-    fn add_ons(logging: LoggingState) -> Self::AddOns {
+    fn add_ons(anvil: &AnvilComponents, logging: LoggingState) -> Self::AddOns {
         EthereumAddOns::new(RpcAddOns::new(
-            EthereumEthApiBuilder::default(),
+            AnvilEthApiBuilder::new(anvil.time.clone(), anvil.block_env.clone()),
             AnvilEngineValidatorBuilder,
             BasicEngineApiBuilder::default(),
             BasicEngineValidatorBuilder::default(),

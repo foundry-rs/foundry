@@ -14,6 +14,7 @@ use crate::{
     evm::{AnvilEvm, AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, ForkHashDb},
     fork::ForkInfo,
     logging::{LoggingState, NodeInfoLayer},
+    pending::AnvilEthApiBuilder,
     pool::{AnvilPoolBuilder, BalanceRule, PoolSettings},
 };
 use alloy_consensus::Transaction as ConsensusTransaction;
@@ -47,7 +48,7 @@ use reth_ethereum::{
         revm_spec_by_timestamp_and_block_number,
     },
     node::{
-        EthereumAddOns, EthereumEthApiBuilder, EthereumNode, EthereumPayloadBuilder,
+        EthereumAddOns, EthereumNode, EthereumPayloadBuilder,
         builder::{
             BuilderContext, FullNodeTypes, NodeTypes,
             components::{
@@ -96,7 +97,7 @@ impl AnvilNetwork for Monad {
     >;
     type AddOns = EthereumAddOns<
         NodeOf<Self>,
-        EthereumEthApiBuilder,
+        AnvilEthApiBuilder,
         AnvilEngineValidatorBuilder,
         BasicEngineApiBuilder<AnvilEngineValidatorBuilder>,
         BasicEngineValidatorBuilder<AnvilEngineValidatorBuilder>,
@@ -140,9 +141,9 @@ impl AnvilNetwork for Monad {
             .consensus(NoopConsensusBuilder)
     }
 
-    fn add_ons(logging: LoggingState) -> Self::AddOns {
+    fn add_ons(anvil: &AnvilComponents, logging: LoggingState) -> Self::AddOns {
         EthereumAddOns::new(RpcAddOns::new(
-            EthereumEthApiBuilder::default(),
+            AnvilEthApiBuilder::new(anvil.time.clone(), anvil.block_env.clone()),
             AnvilEngineValidatorBuilder,
             BasicEngineApiBuilder::default(),
             BasicEngineValidatorBuilder::default(),

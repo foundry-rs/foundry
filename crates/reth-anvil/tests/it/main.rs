@@ -28,6 +28,7 @@ mod api;
 mod fork;
 #[cfg(feature = "monad")]
 mod monad;
+mod transaction;
 pub mod utils;
 
 async fn with_test_client<F, Fut>(test: F) -> Result<()>

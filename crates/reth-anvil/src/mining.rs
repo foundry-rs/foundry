@@ -1,9 +1,7 @@
 use alloy_consensus::Header;
-use reth_ethereum::{
-    pool::{TransactionListenerKind, TransactionPool},
-    primitives::SealedHeader,
-};
-use std::time::Duration;
+use alloy_primitives::B256;
+use reth_ethereum::{pool::TransactionPool, primitives::SealedHeader};
+use std::time::{Duration, Instant};
 use tokio::{
     select,
     sync::{
@@ -32,6 +30,8 @@ pub enum MiningMode {
 pub enum MinerRequest<H = Header> {
     /// Builds and inserts one block. The sender, if any, receives the mined header.
     Mine(Option<oneshot::Sender<Result<SealedHeader<H>, String>>>),
+    /// Builds and inserts one block if the pool holds pending transactions.
+    MineIfPending,
     /// Rewinds the chain head to the given canonical header.
     Rewind(Box<SealedHeader<H>>, oneshot::Sender<Result<(), String>>),
 }
@@ -104,6 +104,11 @@ impl<H> MiningController<H> {
         let _ = self.requests.send(MinerRequest::Mine(None));
     }
 
+    /// Requests one block for the pending transactions without waiting for it.
+    pub fn trigger_if_pending(&self) {
+        let _ = self.requests.send(MinerRequest::MineIfPending);
+    }
+
     /// Mines one block and returns its header.
     pub async fn mine_block(&self) -> Result<SealedHeader<H>, String> {
         let (tx, rx) = oneshot::channel();
@@ -123,16 +128,27 @@ impl<H> MiningController<H> {
     }
 }
 
-/// Requests a block for every pool transaction while automine is enabled.
+/// How long the instant miner waits for more transactions after one arrives, so transactions
+/// sent together, in one JSON-RPC batch or in parallel, land in one block.
+const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
+
+/// How long the instant miner waits for the pool to see a mined block.
+const POOL_SYNC_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Requests a block for every transaction that enters the pool while automine is enabled. Only
+/// new transactions request blocks: a transaction a block left behind is picked up by the
+/// follow-up blocks, or by the next new transaction.
 pub async fn run_automine_task<Pool, H>(pool: Pool, mining: MiningController<H>)
 where
     Pool: TransactionPool + Clone + Unpin + Send + Sync + 'static,
 {
-    let mut pending_txs = pool.pending_transactions_listener_for(TransactionListenerKind::All);
+    let mut new_txs = pool.new_transactions_listener();
 
-    while pending_txs.recv().await.is_some() {
-        if mining.is_automine() && pool.pending_and_queued_txn_count().0 > 0 {
-            mining.trigger();
+    while new_txs.recv().await.is_some() {
+        sleep(INSTANT_COALESCE_WINDOW).await;
+        while new_txs.try_recv().is_ok() {}
+        if mining.is_automine() {
+            mining.trigger_if_pending();
         }
     }
 }
@@ -165,4 +181,25 @@ pub async fn run_interval_mining_task<H>(mining: MiningController<H>) {
             }
         }
     }
+}
+
+/// The number of pending and of queued transactions in the pool.
+pub type PoolCounts = (usize, usize);
+
+/// Returns the pool counts once the pool has seen the block `head`, if the pool holds pending
+/// transactions. The pool learns of a block after the miner does, so a check right after a
+/// block waits for it.
+pub async fn pool_pending_after<Pool: TransactionPool>(
+    pool: Pool,
+    head: B256,
+) -> Option<PoolCounts> {
+    let deadline = Instant::now() + POOL_SYNC_TIMEOUT;
+    while pool.block_info().last_seen_block_hash != head {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        sleep(Duration::from_millis(1)).await;
+    }
+    let counts = pool.pending_and_queued_txn_count();
+    (counts.0 > 0).then_some(counts)
 }

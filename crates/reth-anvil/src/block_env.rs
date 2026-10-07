@@ -78,6 +78,11 @@ impl BlockEnvOverrides {
         *self.next_prev_randao.write() = Some(prev_randao);
     }
 
+    /// Returns the next block prevrandao override.
+    pub fn next_prev_randao(&self) -> Option<B256> {
+        *self.next_prev_randao.read()
+    }
+
     /// Sets the parent beacon block root of the next block only.
     pub fn set_next_parent_beacon_block_root(&self, root: B256) {
         *self.next_parent_beacon_block_root.write() = Some(root);

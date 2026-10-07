@@ -1,4 +1,4 @@
-use crate::{server::SharedModule, types::ReorgOptions};
+use crate::{server::SharedModule, state_dump::SerializableState, types::ReorgOptions};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip7910::EthConfig};
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -10,7 +10,7 @@ use alloy_rpc_types::{
 };
 use alloy_rpc_types_eth::{
     Account, Block, FeeHistory, FillTransaction, Index, Transaction, TransactionReceipt,
-    TransactionRequest, state::StateOverride,
+    TransactionRequest, state::EvmOverrides,
 };
 use alloy_serde::WithOtherFields;
 use eyre::Result;
@@ -44,7 +44,7 @@ impl EthApi {
     }
 
     /// Calls an RPC method with positional parameters.
-    pub async fn call<R>(&self, method: &str, params: ArrayParams) -> Result<R>
+    pub async fn request<R>(&self, method: &str, params: ArrayParams) -> Result<R>
     where
         R: DeserializeOwned + Clone,
     {
@@ -68,27 +68,27 @@ impl EthApi {
 
     /// Returns the current block number.
     pub async fn block_number(&self) -> Result<U256> {
-        self.call("eth_blockNumber", ArrayParams::new()).await
+        self.request("eth_blockNumber", ArrayParams::new()).await
     }
 
     /// Returns the chain id.
     pub async fn chain_id(&self) -> Result<u64> {
-        Ok(self.call::<U256>("eth_chainId", ArrayParams::new()).await?.to())
+        Ok(self.request::<U256>("eth_chainId", ArrayParams::new()).await?.to())
     }
 
     /// Returns the balance of an account.
     pub async fn balance(&self, address: Address, block: Option<BlockId>) -> Result<U256> {
-        self.call("eth_getBalance", params![address, block.unwrap_or_default()]).await
+        self.request("eth_getBalance", params![address, block.unwrap_or_default()]).await
     }
 
     /// Returns the code of an account.
     pub async fn get_code(&self, address: Address, block: Option<BlockId>) -> Result<Bytes> {
-        self.call("eth_getCode", params![address, block.unwrap_or_default()]).await
+        self.request("eth_getCode", params![address, block.unwrap_or_default()]).await
     }
 
     /// Returns the account at the given block.
     pub async fn get_account(&self, address: Address, block: Option<BlockId>) -> Result<Account> {
-        self.call("eth_getAccount", params![address, block.unwrap_or_default()]).await
+        self.request("eth_getAccount", params![address, block.unwrap_or_default()]).await
     }
 
     /// Returns the nonce of an account.
@@ -97,12 +97,12 @@ impl EthApi {
         address: Address,
         block: Option<BlockId>,
     ) -> Result<U256> {
-        self.call("eth_getTransactionCount", params![address, block.unwrap_or_default()]).await
+        self.request("eth_getTransactionCount", params![address, block.unwrap_or_default()]).await
     }
 
     /// Returns the receipt of a transaction.
     pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<TransactionReceipt>> {
-        self.call("eth_getTransactionReceipt", params![hash]).await
+        self.request("eth_getTransactionReceipt", params![hash]).await
     }
 
     /// Returns the transaction at the given block and index.
@@ -111,7 +111,7 @@ impl EthApi {
         block: BlockNumberOrTag,
         index: Index,
     ) -> Result<Option<Transaction>> {
-        self.call("eth_getTransactionByBlockNumberAndIndex", params![block, index]).await
+        self.request("eth_getTransactionByBlockNumberAndIndex", params![block, index]).await
     }
 
     /// Signs and sends a transaction from a dev or impersonated account.
@@ -119,12 +119,12 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<B256> {
-        self.call("eth_sendTransaction", params![request]).await
+        self.request("eth_sendTransaction", params![request]).await
     }
 
     /// Returns the pool status.
     pub async fn txpool_status(&self) -> Result<TxpoolStatus> {
-        self.call("txpool_status", ArrayParams::new()).await
+        self.request("txpool_status", ArrayParams::new()).await
     }
 
     /// Mines one block.
@@ -134,17 +134,17 @@ impl EthApi {
 
     /// Mines the given number of blocks, with an optional timestamp interval between them.
     pub async fn anvil_mine(&self, blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
-        self.call("anvil_mine", params![blocks, interval]).await
+        self.request("anvil_mine", params![blocks, interval]).await
     }
 
     /// Enables or disables automine.
     pub async fn anvil_set_auto_mine(&self, enabled: bool) -> Result<()> {
-        self.call("anvil_setAutomine", params![enabled]).await
+        self.request("anvil_setAutomine", params![enabled]).await
     }
 
     /// Impersonates an account.
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
-        self.call("anvil_impersonateAccount", params![address]).await
+        self.request("anvil_impersonateAccount", params![address]).await
     }
 
     /// Returns the state of the chain as gzipped JSON.
@@ -152,17 +152,26 @@ impl EthApi {
         &self,
         preserve_historical_states: Option<bool>,
     ) -> Result<Bytes> {
-        self.call("anvil_dumpState", params![preserve_historical_states]).await
+        self.request("anvil_dumpState", params![preserve_historical_states]).await
+    }
+
+    /// Returns the state of the chain decoded from `anvil_dumpState`.
+    pub async fn serialized_state(
+        &self,
+        preserve_historical_states: bool,
+    ) -> Result<SerializableState> {
+        let buf = self.anvil_dump_state(Some(preserve_historical_states)).await?;
+        SerializableState::decode(&buf)
     }
 
     /// Applies a state dump on top of the current state.
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
-        self.call("anvil_loadState", params![buf]).await
+        self.request("anvil_loadState", params![buf]).await
     }
 
     /// Resets the chain to genesis, or to the fork block when forking.
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
-        self.call("anvil_reset", params![forking]).await
+        self.request("anvil_reset", params![forking]).await
     }
 
     /// Sets the TIP-20 balance of an account. Only Tempo serves it.
@@ -172,27 +181,27 @@ impl EthApi {
         token_address: Address,
         balance: U256,
     ) -> Result<()> {
-        self.call("anvil_dealTIP20", params![address, token_address, balance]).await
+        self.request("anvil_dealTIP20", params![address, token_address, balance]).await
     }
 
     /// Sets the chain id. The node relaunches with its state and height.
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
-        self.call("anvil_setChainId", params![chain_id]).await
+        self.request("anvil_setChainId", params![chain_id]).await
     }
 
     /// Sets the balance of an account.
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
-        self.call("anvil_setBalance", params![address, balance]).await
+        self.request("anvil_setBalance", params![address, balance]).await
     }
 
     /// Sets the nonce of an account.
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
-        self.call("anvil_setNonce", params![address, nonce]).await
+        self.request("anvil_setNonce", params![address, nonce]).await
     }
 
     /// Sets the code of an account.
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
-        self.call("anvil_setCode", params![address, code]).await
+        self.request("anvil_setCode", params![address, code]).await
     }
 
     /// Sets one storage slot of an account.
@@ -202,47 +211,47 @@ impl EthApi {
         slot: U256,
         value: B256,
     ) -> Result<bool> {
-        self.call("anvil_setStorageAt", params![address, slot, value]).await
+        self.request("anvil_setStorageAt", params![address, slot, value]).await
     }
 
     /// Removes a transaction from the pool.
     pub async fn anvil_drop_transaction(&self, hash: B256) -> Result<Option<B256>> {
-        self.call("anvil_dropTransaction", params![hash]).await
+        self.request("anvil_dropTransaction", params![hash]).await
     }
 
     /// Sets the base fee of the next block.
     pub async fn anvil_set_next_block_base_fee_per_gas(&self, base_fee: U256) -> Result<()> {
-        self.call("anvil_setNextBlockBaseFeePerGas", params![base_fee]).await
+        self.request("anvil_setNextBlockBaseFeePerGas", params![base_fee]).await
     }
 
     /// Sets the prevrandao of the next block.
     pub async fn anvil_set_next_block_prevrandao(&self, prev_randao: B256) -> Result<()> {
-        self.call("anvil_setNextBlockPrevRandao", params![prev_randao]).await
+        self.request("anvil_setNextBlockPrevRandao", params![prev_randao]).await
     }
 
     /// Sets the exact timestamp of the next block.
     pub async fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
-        self.call("anvil_setNextBlockTimestamp", params![seconds]).await
+        self.request("anvil_setNextBlockTimestamp", params![seconds]).await
     }
 
     /// Snapshots the chain. Returns the snapshot id.
     pub async fn evm_snapshot(&self) -> Result<U256> {
-        self.call("anvil_snapshot", ArrayParams::new()).await
+        self.request("anvil_snapshot", ArrayParams::new()).await
     }
 
     /// Reverts the chain to a snapshot.
     pub async fn evm_revert(&self, id: U256) -> Result<bool> {
-        self.call("anvil_revert", params![id]).await
+        self.request("anvil_revert", params![id]).await
     }
 
     /// Returns the dev accounts.
     pub async fn accounts(&self) -> Result<Vec<Address>> {
-        self.call("eth_accounts", ArrayParams::new()).await
+        self.request("eth_accounts", ArrayParams::new()).await
     }
 
     /// Returns the gas price.
     pub async fn gas_price(&self) -> Result<u128> {
-        Ok(self.call::<U256>("eth_gasPrice", ArrayParams::new()).await?.to())
+        Ok(self.request::<U256>("eth_gasPrice", ArrayParams::new()).await?.to())
     }
 
     /// Returns the base fee of the next block.
@@ -259,12 +268,12 @@ impl EthApi {
 
     /// Returns the block with the given number, with transaction hashes.
     pub async fn block_by_number(&self, number: BlockNumberOrTag) -> Result<Option<Block>> {
-        self.call("eth_getBlockByNumber", params![number, false]).await
+        self.request("eth_getBlockByNumber", params![number, false]).await
     }
 
     /// Returns the block with the given number, with full transactions.
     pub async fn block_by_number_full(&self, number: BlockNumberOrTag) -> Result<Option<Block>> {
-        self.call("eth_getBlockByNumber", params![number, true]).await
+        self.request("eth_getBlockByNumber", params![number, true]).await
     }
 
     /// Returns the storage value of an account at a slot.
@@ -274,7 +283,7 @@ impl EthApi {
         index: U256,
         block: Option<BlockId>,
     ) -> Result<B256> {
-        self.call("eth_getStorageAt", params![address, index, block.unwrap_or_default()]).await
+        self.request("eth_getStorageAt", params![address, index, block.unwrap_or_default()]).await
     }
 
     /// Returns the fee history.
@@ -284,7 +293,22 @@ impl EthApi {
         newest_block: BlockNumberOrTag,
         reward_percentiles: Vec<f64>,
     ) -> Result<FeeHistory> {
-        self.call("eth_feeHistory", params![block_count, newest_block, reward_percentiles]).await
+        self.request("eth_feeHistory", params![block_count, newest_block, reward_percentiles]).await
+    }
+
+    /// Executes a call in the given block and returns its output.
+    pub async fn call(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+        block: Option<BlockId>,
+        overrides: EvmOverrides,
+    ) -> Result<Bytes> {
+        let EvmOverrides { state, block: block_overrides } = overrides;
+        self.request(
+            "eth_call",
+            params![request, block.unwrap_or_default(), state, block_overrides],
+        )
+        .await
     }
 
     /// Estimates the gas of a call.
@@ -292,15 +316,19 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block: Option<BlockId>,
-        state_overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<U256> {
-        self.call("eth_estimateGas", params![request, block.unwrap_or_default(), state_overrides])
-            .await
+        let EvmOverrides { state, block: block_overrides } = overrides;
+        self.request(
+            "eth_estimateGas",
+            params![request, block.unwrap_or_default(), state, block_overrides],
+        )
+        .await
     }
 
     /// Sends a signed transaction.
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<B256> {
-        self.call("eth_sendRawTransaction", params![tx]).await
+        self.request("eth_sendRawTransaction", params![tx]).await
     }
 
     /// Sends a signed transaction and waits for its receipt.
@@ -309,7 +337,7 @@ impl EthApi {
         tx: Bytes,
         timeout_ms: Option<u64>,
     ) -> Result<TransactionReceipt> {
-        self.call("eth_sendRawTransactionSync", params![tx, timeout_ms]).await
+        self.request("eth_sendRawTransactionSync", params![tx, timeout_ms]).await
     }
 
     /// Signs and sends a transaction from a dev account, and waits for its receipt.
@@ -317,7 +345,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<TransactionReceipt> {
-        self.call("eth_sendTransactionSync", params![request]).await
+        self.request("eth_sendTransactionSync", params![request]).await
     }
 
     /// Fills the missing fields of a transaction request.
@@ -325,12 +353,12 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
     ) -> Result<FillTransaction<TxEnvelope>> {
-        self.call("eth_fillTransaction", params![request]).await
+        self.request("eth_fillTransaction", params![request]).await
     }
 
     /// Returns the chain id as a decimal string.
     pub async fn network_id(&self) -> Result<Option<String>> {
-        self.call("net_version", ArrayParams::new()).await.map(Some)
+        self.request("net_version", ArrayParams::new()).await.map(Some)
     }
 
     /// Returns the bytecode with the given hash.
@@ -339,7 +367,7 @@ impl EthApi {
         hash: B256,
         block: Option<BlockId>,
     ) -> Result<Option<Bytes>> {
-        self.call("debug_codeByHash", params![hash, block]).await
+        self.request("debug_codeByHash", params![hash, block]).await
     }
 
     /// Returns the execution witness of a block.
@@ -347,12 +375,22 @@ impl EthApi {
         &self,
         block: BlockNumberOrTag,
     ) -> Result<ExecutionWitness> {
-        self.call("debug_executionWitness", params![block]).await
+        self.request("debug_executionWitness", params![block]).await
+    }
+
+    /// Returns the EIP-2718 encoded transaction with the given hash, mined or pending.
+    pub async fn raw_transaction(&self, hash: B256) -> Result<Option<Bytes>> {
+        self.request("debug_getRawTransaction", params![hash]).await
+    }
+
+    /// Returns the EIP-2718 encoded receipts of a block.
+    pub async fn raw_receipts(&self, block: BlockId) -> Result<Vec<Bytes>> {
+        self.request("debug_getRawReceipts", params![block]).await
     }
 
     /// Returns the chain configuration.
     pub async fn config(&self) -> Result<EthConfig> {
-        self.call("eth_config", ArrayParams::new()).await
+        self.request("eth_config", ArrayParams::new()).await
     }
 
     /// Replays a mined transaction and returns its traces.
@@ -361,107 +399,107 @@ impl EthApi {
         hash: B256,
         trace_types: HashSet<TraceType>,
     ) -> Result<Option<TraceResults>> {
-        self.call("trace_replayTransaction", params![hash, trace_types]).await
+        self.request("trace_replayTransaction", params![hash, trace_types]).await
     }
 
     /// Mines a block, with optional timestamp and block count.
     pub async fn evm_mine(&self, opts: Option<MineOptions>) -> Result<String> {
-        self.call("evm_mine", params![opts]).await
+        self.request("evm_mine", params![opts]).await
     }
 
     /// Sets the timestamp of the next block and shifts time by the difference.
     pub async fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
-        self.call("evm_setTime", params![timestamp]).await
+        self.request("evm_setTime", params![timestamp]).await
     }
 
     /// Moves time forward.
     pub async fn evm_increase_time(&self, seconds: U256) -> Result<i64> {
-        self.call("evm_increaseTime", params![seconds]).await
+        self.request("evm_increaseTime", params![seconds]).await
     }
 
     /// Sets the interval between the timestamps of consecutive blocks.
     pub async fn evm_set_block_timestamp_interval(&self, seconds: u64) -> Result<()> {
-        self.call("anvil_setBlockTimestampInterval", params![seconds]).await
+        self.request("anvil_setBlockTimestampInterval", params![seconds]).await
     }
 
     /// Removes the block timestamp interval.
     pub async fn evm_remove_block_timestamp_interval(&self) -> Result<bool> {
-        self.call("anvil_removeBlockTimestampInterval", ArrayParams::new()).await
+        self.request("anvil_removeBlockTimestampInterval", ArrayParams::new()).await
     }
 
     /// Sets the block gas limit.
     pub async fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
-        self.call("evm_setBlockGasLimit", params![gas_limit]).await
+        self.request("evm_setBlockGasLimit", params![gas_limit]).await
     }
 
     /// Returns whether automine is on.
     pub async fn anvil_get_auto_mine(&self) -> Result<bool> {
-        self.call("anvil_getAutomine", ArrayParams::new()).await
+        self.request("anvil_getAutomine", ArrayParams::new()).await
     }
 
     /// Mines a block every `secs` seconds.
     pub async fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
-        self.call("evm_setIntervalMining", params![secs]).await
+        self.request("evm_setIntervalMining", params![secs]).await
     }
 
     /// Stops impersonating an account.
     pub async fn anvil_stop_impersonating_account(&self, address: Address) -> Result<()> {
-        self.call("anvil_stopImpersonatingAccount", params![address]).await
+        self.request("anvil_stopImpersonatingAccount", params![address]).await
     }
 
     /// Impersonates every sender.
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
-        self.call("anvil_autoImpersonateAccount", params![enabled]).await
+        self.request("anvil_autoImpersonateAccount", params![enabled]).await
     }
 
     /// Returns the node info.
     pub async fn anvil_node_info(&self) -> Result<NodeInfo> {
-        self.call("anvil_nodeInfo", ArrayParams::new()).await
+        self.request("anvil_nodeInfo", ArrayParams::new()).await
     }
 
     /// Returns the node metadata.
     pub async fn anvil_metadata(&self) -> Result<Metadata> {
-        self.call("anvil_metadata", ArrayParams::new()).await
+        self.request("anvil_metadata", ArrayParams::new()).await
     }
 
     /// Reorganizes the chain.
     pub async fn anvil_reorg(&self, options: ReorgOptions) -> Result<()> {
-        self.call("anvil_reorg", params![options]).await
+        self.request("anvil_reorg", params![options]).await
     }
 
     /// Rolls the chain back by `depth` blocks.
     pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
-        self.call("anvil_rollback", params![depth]).await
+        self.request("anvil_rollback", params![depth]).await
     }
 
     /// Sets the minimum gas price before London.
     pub async fn anvil_set_min_gas_price(&self, gas_price: U256) -> Result<()> {
-        self.call("anvil_setMinGasPrice", params![gas_price]).await
+        self.request("anvil_setMinGasPrice", params![gas_price]).await
     }
 
     /// Sets the parent beacon block root of the next block.
     pub async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> Result<()> {
-        self.call("anvil_setNextBlockParentBeaconBlockRoot", params![root]).await
+        self.request("anvil_setNextBlockParentBeaconBlockRoot", params![root]).await
     }
 
     /// Removes every pool transaction of a sender.
     pub async fn anvil_remove_pool_transactions(&self, address: Address) -> Result<()> {
-        self.call("anvil_removePoolTransactions", params![address]).await
+        self.request("anvil_removePoolTransactions", params![address]).await
     }
 
     /// Adds to the balance of an account.
     pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
-        self.call("anvil_addBalance", params![address, balance]).await
+        self.request("anvil_addBalance", params![address, balance]).await
     }
 
     /// Sets the coinbase of the following blocks.
     pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
-        self.call("anvil_setCoinbase", params![address]).await
+        self.request("anvil_setCoinbase", params![address]).await
     }
 
     /// Replaces the fork endpoint.
     pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
-        self.call("anvil_setRpcUrl", params![url]).await
+        self.request("anvil_setRpcUrl", params![url]).await
     }
 }
 

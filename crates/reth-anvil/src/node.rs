@@ -11,8 +11,11 @@ use crate::{
     impersonation::{ImpersonatedSigner, ImpersonationState},
     launcher::AnvilNodeLauncher,
     logging::{LoggingState, log_mined_blocks},
-    miner::AnvilMiner,
-    mining::{MiningController, MiningMode, run_automine_task, run_interval_mining_task},
+    miner::{AnvilMiner, HookFuture},
+    mining::{
+        MiningController, MiningMode, PoolCounts, pool_pending_after, run_automine_task,
+        run_interval_mining_task,
+    },
     network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
     pool::SharedTransactionOrder,
     provider::AnvilProvider,
@@ -460,13 +463,14 @@ async fn launch_node<Net: AnvilNetwork>(
         config: config.clone(),
         fork: fork.clone().map(|fork| fork as Arc<dyn ForkInfo>),
         console: config.print_logs.then(|| ConsolePrinter::new(logging.clone())),
+        time: time.clone(),
     };
 
     let builder = NodeBuilder::new(node_config)
         .with_database(Arc::new(db))
         .with_types_and_provider::<Net::Node, AnvilProvider<AnvilTypes<Net::Node>>>()
         .with_components(Net::components(&anvil))
-        .with_add_ons(Net::add_ons(logging.clone()))
+        .with_add_ons(Net::add_ons(&anvil, logging.clone()))
         .extend_rpc_modules({
             let mining = mining.clone();
             let time = time.clone();
@@ -548,6 +552,16 @@ async fn launch_node<Net: AnvilNetwork>(
         .ok_or_else(|| eyre::eyre!("missing head header"))?;
     let insert_provider = node.provider.clone();
     let (map_attributes, finish) = time.build_hooks(block_env.clone());
+    let automine = {
+        let mining = mining.clone();
+        move || mining.is_automine()
+    };
+    let pending_after = {
+        let pool = node.pool.clone();
+        move |head| {
+            Box::pin(pool_pending_after(pool.clone(), head)) as HookFuture<Option<PoolCounts>>
+        }
+    };
     let miner = AnvilMiner::<<Net::Node as NodeTypes>::Payload>::new(
         node.add_ons_handle.beacon_engine_handle.clone(),
         node.payload_builder_handle.clone(),
@@ -556,6 +570,8 @@ async fn launch_node<Net: AnvilNetwork>(
         finish,
         node.provider.clone(),
         move || Ok(insert_provider.materialize_fork_reads()?),
+        automine,
+        pending_after,
         head,
         miner_requests,
     );

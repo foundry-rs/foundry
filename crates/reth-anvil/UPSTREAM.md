@@ -6,8 +6,8 @@ hook for a piece of that behaviour, this crate carries a copy or a workaround. T
 one, the reth change that would replace it, and what it costs here, so the upstream work has a
 ready list and the crate shrinks as hooks land.
 
-Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is about 11.6k plus
-2.9k of tests, with about 3.4k of the 11.6k in the items below. The target is to delete
+Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is about 13k plus
+8.9k of tests, with about 4k of the 13k in the items below. The target is to delete
 `crates/anvil` and end up net negative.
 
 ## Workarounds and the hooks that remove them
@@ -36,6 +36,10 @@ Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is ab
 | Reports a failed block build as `failed to build payload <id>: missing payload`, because the payload service logs the build error and resolves with `MissingPayload`; anvil reports the EVM error | `src/miner.rs` | ~5 | Keep the job's error and return it from `resolve` |
 | Replaces reth's engine validator to accept payload attributes with a timestamp at or below the parent's, and to convert a payload of a block before London to a header without a base fee, which the engine API cannot express | `src/engine.rs` | ~100 | A dev-mode switch for the timestamp check, and an engine API that carries an optional base fee |
 | Replaces `eth_call` and `eth_estimateGas` to drop fee fields below the base fee, `eth_callMany` to answer every bundle and move each one a block past the one before, `eth_baseFee` to report the next-block override, `eth_sendRawTransactionSync` and `eth_sendTransactionSync` to report a timeout with code 4 and the hash, `eth_sendTransaction` to fall back to the largest gas limit when the estimate reverts, and `web3_clientVersion` to name this node | `src/api.rs` (`EthExtApi`, `Web3ExtApi`) | ~150 | Anvil's semantics for these are dev-node conveniences; a dev mode in reth could carry them |
+| Serializes `eth_sendTransaction` and `eth_sendRawTransaction` per sender, from the nonce selection to the pool insertion, so concurrent requests without a nonce get distinct nonces: reth reads the next nonce and inserts without a lock | `src/api.rs` (`send`, `send_raw`) | ~30 | A per-sender lock around `send_transaction_request`, or a nonce reservation in the pool |
+| Rejects a replacement whose fee does not exceed the pooled transaction's before it reaches the pool, because `PriceBumpConfig` with a zero bump replaces at an equal fee, and anvil requires a higher one; reth's default ten percent bump rejects anvil's `gas_price + 1` replacements | `src/api.rs` (`ensure_replacement_priced`), `src/pool.rs` | ~40 | A strict-inequality option on `PriceBumpConfig`, or a bump below one percent |
+| Replaces the pending block environment builder so calls at `pending` see the next block's timestamp, coinbase, and prevrandao as the miner sets them; reth's `BuildPendingEnv` uses the parent timestamp plus twelve seconds | `src/pending.rs` | ~110 | A `PendingEnvBuilder` hook on `EthereumEthApiBuilder` |
+| Chains automine blocks after a block that leaves ready transactions behind, waiting for the pool to see each block first, and groups transactions that arrive within five milliseconds into one block, as anvil's instant miner does; a block without transactions idles automine until the pool changes | `src/mining.rs`, `src/miner.rs` (`follow_up`, `MineIfPending`) | ~90 | A local miner mode that drains the pool |
 | Wraps the database of every EVM to answer `BLOCKHASH` for the blocks below the fork block from the fork, because the engine executes against the local database, whose static files start at the fork block, and `StateProviderDatabase` reads a missing hash as zero | `src/evm.rs` (`ForkHashDb`, `AnvilEvm`) | ~110 | A block hash hook on the engine's state provider, or `StateProviderDatabase` falling back to a configurable source |
 
 ## Gaps that are not hooks
@@ -54,7 +58,12 @@ be free if reth had a dev mode:
   memory.
 - Reth caches its pending block for a second, so a transaction that reaches the pool shows in
   `eth_getBlockByNumber("pending")` and in calls at `pending` up to a second late; anvil builds
-  the pending block on every request.
+  the pending block on every request. Calls and estimates without a block run at `latest`, as on
+  reth; anvil runs them on the pending block, so an estimate there sees the pool's transactions.
+- Reth's pool validator rejects transaction types by the hardfork of the latest block when the
+  pool is built, with reth's messages (`transaction type not supported`,
+  `EIP-1559 transactions are disabled`); a gas limit above the block's is
+  `exceeds block gas limit`, and one above the EIP-7825 cap is `gas limit too high`.
 - `--print-traces` and `--steps-tracing` are accepted and have no effect: printing the trace of
   every mined transaction needs an inspector during block building, or a replay of every block.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
@@ -69,13 +78,15 @@ be free if reth had a dev mode:
 
 ## Anvil's own tests
 
-`tests/it/anvil_api.rs` and `tests/it/api.rs` are anvil's modules of the same name with the
-in-process calls made async and the anvil-internal hooks removed (`api.backend`, `api.execute`,
-pool types, `eth_callBundle`). Ignored tests carry the reason on the attribute: the pending call
-that expects the beacon root system call, the Arbitrum tip rule, and the pending block cache
-above. Assertions on wall-clock seconds became lower bounds, because blocks take longer to build
-here than on anvil, and error messages compare case-insensitively where reth's text differs only
-in case. The other modules (`transaction.rs`, `gas.rs`, `fork.rs`, ...) are next.
+`tests/it/anvil_api.rs`, `tests/it/api.rs`, and `tests/it/transaction.rs` are anvil's modules of
+the same name with the in-process calls made async and the anvil-internal hooks removed
+(`api.backend`, `api.execute`, pool types, `eth_callBundle`, the ready-transaction listener, the
+state dump's transaction records). Ignored tests carry the reason on the attribute: the pending
+call that expects the beacon root system call, the Arbitrum tip rule, the pending block cache
+above, and the estimate that defaults to the pending block. Assertions on wall-clock seconds
+became lower bounds, because blocks take longer to build here than on anvil, error messages
+compare case-insensitively where reth's text differs only in case, and accept reth's text where
+it differs. The other modules (`gas.rs`, `fork.rs`, ...) are next.
 
 ## Differences that cast's tests show
 

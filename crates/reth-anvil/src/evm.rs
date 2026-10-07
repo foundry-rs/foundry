@@ -51,6 +51,12 @@ use std::{
 
 /// Next-block attributes the block environment overrides can set.
 pub trait AnvilNextBlockEnv: Clone {
+    /// Sets the block timestamp.
+    fn set_timestamp(&mut self, timestamp: u64);
+    /// Sets the block beneficiary.
+    fn set_suggested_fee_recipient(&mut self, recipient: Address);
+    /// Sets the block prevrandao.
+    fn set_prev_randao(&mut self, prev_randao: B256);
     /// Sets the block gas limit.
     fn set_gas_limit(&mut self, gas_limit: u64);
     /// Replaces the parent beacon block root, when the block has one.
@@ -58,6 +64,18 @@ pub trait AnvilNextBlockEnv: Clone {
 }
 
 impl AnvilNextBlockEnv for NextBlockEnvAttributes {
+    fn set_timestamp(&mut self, timestamp: u64) {
+        self.timestamp = timestamp;
+    }
+
+    fn set_suggested_fee_recipient(&mut self, recipient: Address) {
+        self.suggested_fee_recipient = recipient;
+    }
+
+    fn set_prev_randao(&mut self, prev_randao: B256) {
+        self.prev_randao = prev_randao;
+    }
+
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = gas_limit;
     }

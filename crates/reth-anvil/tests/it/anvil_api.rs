@@ -159,7 +159,7 @@ async fn can_set_storage() {
     params.insert(addr).unwrap();
     params.insert(slot).unwrap();
     params.insert(val).unwrap();
-    assert!(api.call::<bool>("hardhat_setStorageAt", params).await.unwrap());
+    assert!(api.request::<bool>("hardhat_setStorageAt", params).await.unwrap());
 
     let storage_value = api.storage_at(addr, slot, None).await.unwrap();
     assert_eq!(val, storage_value);
