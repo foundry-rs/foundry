@@ -517,6 +517,23 @@ fn to_base_uppercase(cmd: _) {
     cmd.cast_fuse().args(["to-dec", "-0X10"]).assert_success().stdout_eq("-16\n");
 }
 
+// Converting to the input base must still normalize the output instead of echoing the input.
+#[casttest]
+fn to_base_same_base_normalizes(cmd: _) {
+    cmd.cast_fuse().args(["to-hex", "--base-in", "16", "ff"]).assert_success().stdout_eq("0xff\n");
+    cmd.cast_fuse().args(["to-hex", "0XFF"]).assert_success().stdout_eq("0xff\n");
+    cmd.cast_fuse().args(["to-hex", "0x00ff"]).assert_success().stdout_eq("0xff\n");
+    cmd.cast_fuse().args(["to-hex", "+0x10"]).assert_success().stdout_eq("0x10\n");
+    cmd.cast_fuse().args(["to-dec", "0010"]).assert_success().stdout_eq("10\n");
+    cmd.cast_fuse().args(["to-base", "0b0011", "bin"]).assert_success().stdout_eq("0b11\n");
+    // Negative values use two's complement in non-decimal bases, regardless of the input base.
+    cmd.cast_fuse()
+        .args(["to-hex", "-0x1"])
+        .assert_success()
+        .stdout_eq("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n");
+    cmd.cast_fuse().args(["to-dec", "-10"]).assert_success().stdout_eq("-10\n");
+}
+
 #[casttest]
 fn to_bytes32(cmd: _) {
     cmd.cast_fuse()
