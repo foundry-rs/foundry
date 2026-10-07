@@ -7,7 +7,6 @@ use crate::{
     MultiContractRunnerBuilder,
     cmd::test::{FilterArgs, RerunFailure},
     mutation::{
-        SurvivedSpans,
         mutant::{Mutant, MutationResult},
         progress::MutationProgress,
     },
@@ -72,10 +71,8 @@ pub struct MutationEvmConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub create2_deployer_available: bool,
 }
 
-/// Tracks progress and adaptive span skipping across parallel workers.
+/// Tracks progress, cancellation, and timed-out workers across parallel workers.
 pub struct SharedMutationState {
-    /// Spans where mutations have survived - shared across workers for adaptive skipping.
-    pub survived_spans: Mutex<SurvivedSpans>,
     /// Progress counter.
     pub completed: AtomicUsize,
     pub total: AtomicUsize,
@@ -96,13 +93,12 @@ pub struct SharedMutationState {
 }
 
 impl SharedMutationState {
-    pub fn new(
+    pub const fn new(
         cancelled: Arc<AtomicBool>,
         silent: bool,
         progress: Option<MutationProgress>,
     ) -> Self {
         Self {
-            survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
             cancelled,
@@ -121,18 +117,6 @@ impl SharedMutationState {
         self.cancelled.store(true, Ordering::SeqCst);
         if let Some(ref progress) = self.progress {
             progress.cancel();
-        }
-    }
-
-    pub fn should_skip_span(&self, span: solar::ast::Span) -> bool {
-        // Handle mutex poisoning gracefully - don't skip if we can't check
-        self.survived_spans.lock().map(|guard| guard.should_skip_in_live_run(span)).unwrap_or(false)
-    }
-
-    pub fn mark_span_survived(&self, span: solar::ast::Span) {
-        // Handle mutex poisoning gracefully - just skip marking if poisoned
-        if let Ok(mut guard) = self.survived_spans.lock() {
-            guard.mark_survived(span);
         }
     }
 
@@ -360,22 +344,6 @@ fn test_single_mutant_isolated<FEN: FoundryEvmNetwork>(
     selected_sources_relative: &Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutantTestResult {
-    // Check if we should skip this mutant based on adaptive span tracking
-    if shared_state.should_skip_span(mutant.span) {
-        if let Some(ref progress) = shared_state.progress {
-            progress.complete_mutant(&mutant, &MutationResult::Skipped);
-        } else if !shared_state.silent {
-            let completed = shared_state.increment_completed();
-            let total = shared_state.total.load(Ordering::SeqCst);
-            let _ = sh_println!(
-                "[{}/{}] Skipping mutant (adaptive: span already has surviving mutation)",
-                completed,
-                total
-            );
-        }
-        return MutantTestResult { mutant, result: MutationResult::Skipped };
-    }
-
     // Show progress or log
     if let Some(ref progress) = shared_state.progress {
         progress.start_mutant(&mutant);
@@ -456,12 +424,6 @@ fn test_single_mutant_isolated<FEN: FoundryEvmNetwork>(
             res
         }
     };
-
-    // Track adaptive survived spans only for genuinely Alive mutants; TimedOut
-    // is unresolved and must not mask other mutations on the same span.
-    if matches!(result, MutationResult::Alive) {
-        shared_state.mark_span_survived(mutant.span);
-    }
 
     // Update progress
     if let Some(ref progress) = shared_state.progress {
