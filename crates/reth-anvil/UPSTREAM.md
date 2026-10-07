@@ -216,6 +216,18 @@ type parameter bounded by `ConfigureEvm<Primitives = TempoPrimitives>` plus Temp
 Tempo's. The alternative is to copy the two builders and the assembler into this crate, about 1.5k
 lines, and keep them in step with tempo.
 
+`TempoEvmConfig` has no factory seam (`TempoEvmConfig::new` builds `TempoEvmFactory::default()`), and
+`TempoBlockExecutor` has no pre-execution callback, so the state writes, the transaction cap, and
+the console cannot move into an EVM factory wrapper either. The plan without a tempo change: keep
+Tempo's consensus, primitives, pool implementation, and eth API; give the node reth-anvil's
+`AnvilEvmConfig<TempoEvmConfig>`; and build blocks with a dev-only sequential payload builder in
+this crate (from `crates/payload/builder/src/lib.rs`, without prewarming and action replay) plus an
+assembler input adapter around `TempoBlockAssembler`. A Tempo dev chain must also follow Tempo's
+consensus: millisecond timestamps, DKG data in `extra_data` at epoch boundaries (T8 on), the T4
+block layout without the subblock-metadata system transaction, TIP-20 fee tokens instead of native
+balances, and host-side sender recovery that ignores a changed ECRECOVER. Tempo's eth API forces
+`PendingBlockKind::None`, and its add-ons use `NoopEngineApiBuilder`.
+
 ## Things reth already fixes
 
 Bugs open on anvil that reth-anvil does not have, because the logic is reth's:
