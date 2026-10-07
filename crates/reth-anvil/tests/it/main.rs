@@ -2221,3 +2221,46 @@ async fn eth_call_without_gas_gets_the_block_gas_limit() -> Result<()> {
     })
     .await
 }
+
+#[tokio::test]
+async fn genesis_deploys_the_system_contracts() -> Result<()> {
+    with_test_client(|client| async move {
+        for address in [
+            alloy_eips::eip4788::BEACON_ROOTS_ADDRESS,
+            alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS,
+            alloy_eips::eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+            alloy_eips::eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+        ] {
+            let code: Bytes = client.request("eth_getCode", rpc_params![address, "latest"]).await?;
+            assert!(!code.is_empty(), "{address} has code");
+        }
+        // The history contract records the parent hashes once blocks are mined.
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(2), U256::ZERO]).await?;
+        let parent = get_block(&client, "0x1").await?;
+        let recorded: B256 = client
+            .request(
+                "eth_getStorageAt",
+                rpc_params![alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS, U256::from(1), "latest"],
+            )
+            .await?;
+        assert_eq!(recorded.to_string(), parent["hash"]);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn eth_get_proof_serves_older_blocks() -> Result<()> {
+    with_test_client(|client| async move {
+        let (funder, _) = funder_and_gas_price(&client).await?;
+        client.request::<(), _>("anvil_mine", rpc_params![U256::from(3), U256::ZERO]).await?;
+        let proof: Value =
+            client.request("eth_getProof", rpc_params![funder, Vec::<U256>::new(), "0x1"]).await?;
+        assert_eq!(
+            proof["address"].as_str().map(str::to_lowercase),
+            Some(funder.to_string().to_lowercase())
+        );
+        Ok(())
+    })
+    .await
+}

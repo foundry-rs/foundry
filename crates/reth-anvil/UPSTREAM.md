@@ -77,6 +77,11 @@ is a missing method.
   anvil only for blocks whose header carries one. `cast run` uses the list to skip replaying the
   earlier transactions of a block, so its progress output differs.
 
+Running `crates/forge/tests/cli` the same way passes everything that does not need Tempo, except
+`forge create`'s gas estimate snapshot (the estimate margin above) and a `--fork-bal` test: anvil's
+block access lists carry no storage reads, reth's do, and forge's parent cache then does not fall
+back to the endpoint for read-only slots.
+
 ## What Tempo needs
 
 `tempo-node` hard-wires its EVM config: `TempoPayloadBuilder`, `TempoPoolBuilder`, and

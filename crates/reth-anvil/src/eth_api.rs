@@ -149,6 +149,16 @@ impl EthApi {
         self.call("anvil_reset", params![forking]).await
     }
 
+    /// Sets the TIP-20 balance of an account. Only Tempo serves it.
+    pub async fn anvil_deal_tip20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        self.call("anvil_dealTIP20", params![address, token_address, balance]).await
+    }
+
     /// Sets the chain id. The node relaunches with its state and height.
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
         self.call("anvil_setChainId", params![chain_id]).await

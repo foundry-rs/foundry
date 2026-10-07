@@ -48,7 +48,7 @@ use reth_ethereum::{
             mdbx::{DatabaseArguments, GIGABYTE, MEGABYTE},
         },
     },
-    rpc::builder::RpcModuleSelection,
+    rpc::builder::{RpcModuleSelection, constants::MAX_ETH_PROOF_WINDOW},
     storage::BlockNumReader,
     tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
@@ -361,6 +361,8 @@ async fn launch_node<Net: AnvilNetwork>(
     }
     // Calls and estimates without a gas limit get the block gas limit, as in anvil.
     rpc_args.rpc_gas_cap = config.get_gas_limit();
+    // Proofs for any block, not only the latest.
+    rpc_args.rpc_eth_proof_window = MAX_ETH_PROOF_WINDOW;
     let node_config = RethNodeConfig::new(chain_spec.clone())
         .with_storage(StorageArgs { v2: false })
         .with_rpc(rpc_args)

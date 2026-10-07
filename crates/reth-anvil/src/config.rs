@@ -3,6 +3,7 @@ use crate::{
     state_dump::SerializableState,
     types::{ForkChoice, ForkUrl, TransactionOrder},
 };
+use alloy_eips::{eip2935, eip4788, eip7002, eip7251};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, U256, hex, map::HashMap, utils::Unit};
 use alloy_signer::Signer;
@@ -1011,6 +1012,30 @@ impl NodeConfig {
         alloc.extend(self.funded_accounts.iter().map(|(address, balance)| {
             (*address, GenesisAccount::default().with_balance(*balance))
         }));
+        // The system contracts anvil deploys at genesis, so the block executor's system calls
+        // record beacon roots, block hashes, and requests.
+        if hardfork >= EthereumHardfork::Cancun {
+            alloc.push((
+                eip4788::BEACON_ROOTS_ADDRESS,
+                GenesisAccount::default().with_code(Some(eip4788::BEACON_ROOTS_CODE.clone())),
+            ));
+        }
+        if hardfork >= EthereumHardfork::Prague {
+            alloc.extend(
+                [
+                    (eip2935::HISTORY_STORAGE_ADDRESS, eip2935::HISTORY_STORAGE_CODE.clone()),
+                    (
+                        eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+                        eip7002::WITHDRAWAL_REQUEST_PREDEPLOY_CODE.clone(),
+                    ),
+                    (
+                        eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+                        eip7251::CONSOLIDATION_REQUEST_PREDEPLOY_CODE.clone(),
+                    ),
+                ]
+                .map(|(address, code)| (address, GenesisAccount::default().with_code(Some(code)))),
+            );
+        }
         if !self.disable_default_create2_deployer {
             alloc.push((
                 DEFAULT_CREATE2_DEPLOYER,
