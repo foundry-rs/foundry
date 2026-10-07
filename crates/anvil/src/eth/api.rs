@@ -318,7 +318,8 @@ impl<N: Network> EthApi<N> {
             self.miner.set_mining_mode(MiningMode::None);
         } else if enable_automine {
             let listener = self.pool.add_ready_listener();
-            let mode = MiningMode::instant(1_000, listener);
+            let window = self.backend.node_config.read().await.transaction_coalescing_window;
+            let mode = MiningMode::instant(1_000, listener).with_coalescing_window(window);
             self.miner.set_mining_mode(mode);
         }
         Ok(())
