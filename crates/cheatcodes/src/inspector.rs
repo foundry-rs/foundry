@@ -115,16 +115,15 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         tx: TxEnvFor<FEN>,
     ) -> eyre::Result<()>;
 
-    /// Runs a closure with a fresh nested EVM built from a raw database and environment.
-    /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
+    /// Runs a closure with a fresh nested EVM using the current environment and database.
+    /// Unlike `with_nested_evm`, this starts an independent journal and does not write back.
     /// The caller is responsible for state merging. Used by `executeTransactionCall`.
     /// Returns the final EVM environment after the closure runs (consumed without cloning).
     #[allow(clippy::type_complexity)]
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
@@ -136,11 +135,6 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
-
-    /// Marks that the next EVM frame is an "inner context" so that isolation mode does not
-    /// trigger a nested `transact_inner`. `original_origin` is stored for the existing
-    /// inner-context adjustment logic that restores `tx.origin`.
-    fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
@@ -192,13 +186,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
+        let depth = ecx.journal().depth();
+        let evm_env = ecx.evm_clone();
+        let (db, _) = ecx.db_journal_inner_mut();
         let mut evm =
             FEN::EvmFactory::default().create_nested_evm_with_inspector(db, evm_env, cheats);
+        evm.journal_inner_mut().depth = depth;
         *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
@@ -1484,28 +1481,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
 
-            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                // At the target depth we set `msg.sender`
-                let prank_applied = if curr_depth == prank.depth {
+            if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
+                if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded and touched
-                    let _ = journaled_account(ecx, prank.new_caller);
-                    call.caller = prank.new_caller;
-                    true
-                } else {
-                    false
-                };
-
-                // At the target depth, or deeper, we set `tx.origin`
-                let prank_applied = if let Some(new_origin) = prank.new_origin {
+                    let _ = journaled_account(ecx, new_caller);
+                    call.caller = new_caller;
+                }
+                if let Some(new_origin) = changes.origin {
                     ecx.tx_mut().set_caller(new_origin);
-                    true
-                } else {
-                    prank_applied
-                };
-
-                // If prank applied for first time, then update
-                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                    self.pranks.insert(curr_depth, applied_prank);
+                }
+                if let Some(used) = changes.used {
+                    self.pranks.insert(curr_depth, used);
                 }
             }
         }
@@ -2455,40 +2441,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             let curr_depth = ecx.journal().depth();
             if curr_depth <= expected_revert.depth {
-                // Decide whether this `call_end` should consume the pending `expectRevert`.
-                // With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but
-                // we must not consume it for external calls that succeed (e.g. calls to
-                // non-contract addresses that return `Stop` before Solidity's own revert).
-                let internal = self.config.internal_expect_revert;
-                let went_deeper = expected_revert.max_depth > expected_revert.depth;
-                let needs_processing = match expected_revert.kind {
-                    ExpectedRevertKind::Default => (|| {
-                        // Cheatcode reverts propagate up; let the outer frame catch them.
-                        if cheatcode_call {
-                            return false;
-                        }
-                        // Any failure satisfies the expectation.
-                        if call_failed {
-                            return true;
-                        }
-                        // Traditional expectRevert: succeeded external call went deeper.
-                        if !internal && went_deeper {
-                            return true;
-                        }
-                        // Test function returned: catch dangling expectations.
-                        if curr_depth == 0 {
-                            return true;
-                        }
-                        // Same-depth success with internal mode off is an error; with it on,
-                        // keep waiting for the actual revert.
-                        !internal
-                    })(),
-                    // `pending_processing == true` means we're in the `call_end` hook for
-                    // `vm.expectCheatcodeRevert` and shouldn't expect a revert here.
-                    ExpectedRevertKind::Cheatcode { pending_processing } => {
-                        cheatcode_call && !pending_processing
-                    }
-                };
+                let needs_processing = expected_revert.needs_processing(
+                    cheatcode_call,
+                    call_failed,
+                    curr_depth,
+                    self.config.internal_expect_revert,
+                );
 
                 if needs_processing {
                     let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
@@ -2706,31 +2664,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth)
-            && curr_depth >= prank.depth
-            && input.caller() == prank.prank_caller
+        if let Some(prank) = self.get_prank(curr_depth)
+            && let Some(changes) = prank.changes_for(curr_depth, input.caller())
         {
-            // At the target depth we set `msg.sender`
-            let prank_applied = if curr_depth == prank.depth {
+            if let Some(new_caller) = changes.caller {
                 // Ensure new caller is loaded and touched
-                let _ = journaled_account(ecx, prank.new_caller);
-                input.set_caller(prank.new_caller);
-                true
-            } else {
-                false
-            };
-
-            // At the target depth, or deeper, we set `tx.origin`
-            let prank_applied = if let Some(new_origin) = prank.new_origin {
+                let _ = journaled_account(ecx, new_caller);
+                input.set_caller(new_caller);
+            }
+            if let Some(new_origin) = changes.origin {
                 ecx.tx_mut().set_caller(new_origin);
-                true
-            } else {
-                prank_applied
-            };
-
-            // If prank applied for first time, then update
-            if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                self.pranks.insert(curr_depth, applied_prank);
+            }
+            if let Some(used) = changes.used {
+                self.pranks.insert(curr_depth, used);
             }
         }
 
@@ -3923,7 +3869,7 @@ const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<
 }
 
 fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheat.func.signature.split('(').next().unwrap()
+    cheatcode_signature(cheat).split('(').next().unwrap()
 }
 
 const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {

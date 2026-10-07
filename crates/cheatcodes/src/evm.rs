@@ -2,7 +2,7 @@
 
 use crate::{
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
-    Vm::*, inspector::RecordDebugStepInfo,
+    Vm::*, env::FORGE_CONTEXT, inspector::RecordDebugStepInfo,
 };
 use alloy_consensus::{Typed2718, transaction::SignerRecoverable};
 use alloy_evm::FromRecoveredTx;
@@ -1264,7 +1264,7 @@ impl Cheatcode for getStorageSlotsCall {
                     let length = usize::try_from(length)
                         .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
                     let num_data_slots = length.div_ceil(32);
-                    let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
+                    let data_start = Into::<U256>::into(keccak256(B256::from(slot).0));
 
                     for i in 0..num_data_slots {
                         slots.push(data_start + U256::from(i));
@@ -1346,8 +1346,6 @@ impl Cheatcode for executeTransactionCall {
         ccx: &mut CheatsCtxt<'_, '_, FEN>,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        use crate::env::FORGE_CONTEXT;
-
         // Block in script contexts.
         if let Some(ctx) = FORGE_CONTEXT.get()
             && *ctx == ForgeContext::ScriptGroup
@@ -1400,12 +1398,8 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_env_mut().tx_gas_limit_cap = None;
 
         // Snapshot the modified env for EVM construction.
-        let modified_evm_env = ccx.ecx.evm_clone();
         let modified_tx_env = ccx.ecx.tx_clone();
 
-        // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
-        // when the inner EVM executes calls at depth == 1.
-        executor.set_in_inner_context(true, Some(sender));
         if let Some(address) = created_address {
             let fork_id = ccx.active_fork_id();
             ccx.state.record_created_account(fork_id, address);
@@ -1416,23 +1410,13 @@ impl Cheatcode for executeTransactionCall {
 
         let mut res = None;
         let mut cold_state = Some(cold_state);
-        let nested_evm_env = {
-            let (db, _) = ccx.ecx.db_journal_inner_mut();
-            executor.with_fresh_nested_evm(
-                ccx.state,
-                db,
-                modified_evm_env,
-                chain_context,
-                &mut |evm| {
-                    // SAFETY: closure is called exactly once by the executor.
-                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                    // Set depth to 1 for proper trace collection.
-                    evm.journal_inner_mut().depth = 1;
-                    res = Some(evm.transact_raw(modified_tx_env.clone()));
-                    Ok(())
-                },
-            )
-        };
+        let nested_evm_env =
+            executor.with_fresh_nested_evm(ccx.state, ccx.ecx, chain_context, &mut |evm| {
+                // SAFETY: closure is called exactly once by the executor.
+                evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                res = Some(evm.transact_raw(modified_tx_env.clone()));
+                Ok(())
+            });
         let mut nested_evm_env = nested_evm_env?;
         let res = res.unwrap();
 
@@ -1446,9 +1430,6 @@ impl Cheatcode for executeTransactionCall {
         nested_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
         ccx.ecx.set_evm(nested_evm_env);
         ccx.ecx.set_tx(cached_tx_env);
-
-        // Reset inner context flag.
-        executor.set_in_inner_context(false, None);
 
         let res = res.map_err(|e| fmt_err!("transaction execution failed: {e}"))?;
 
@@ -2130,7 +2111,7 @@ fn encode_short_string(bytes: &[u8]) -> U256 {
 }
 
 fn solidity_dynamic_data_slot(base_slot: U256) -> U256 {
-    U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
+    Into::<U256>::into(keccak256(base_slot.to_be_bytes::<32>()))
 }
 
 const fn is_long_string(slot_value: U256) -> bool {

@@ -28,7 +28,10 @@ use anvil_core::{
     eth::{EthRequest, transaction::PendingTransaction},
     types::{ReorgOptions, TransactionData},
 };
-use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
+use foundry_common::{
+    provider::redact_url,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
@@ -67,7 +70,7 @@ async fn fork_resets_allow_celo_as_a_non_monad_source() {
         .unwrap();
     let node_info = ethereum_fork.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("ethereum"));
-    assert_eq!(node_info.fork_config.fork_url, Some(celo_origin.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&celo_origin.http_endpoint())));
 
     let (celo_fork, _) = spawn(
         NodeConfig::test()
@@ -85,7 +88,7 @@ async fn fork_resets_allow_celo_as_a_non_monad_source() {
         .unwrap();
     let node_info = celo_fork.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("celo"));
-    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&ethereum_origin.http_endpoint())));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -847,7 +850,7 @@ async fn test_set_next_block_prevrandao_evm() {
 
     // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
     let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from_be_bytes(prevrandao.0));
+    assert_eq!(difficulty, Into::<U256>::into(prevrandao));
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));

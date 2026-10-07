@@ -344,7 +344,7 @@ async fn can_get_pending_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
+async fn rejects_estimate_gas_with_undersized_max_fee_per_gas() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumWallet = wallet.clone().into();
@@ -365,15 +365,17 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
 
     assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
-    let estimated_gas = simple_storage_contract
+    let err = simple_storage_contract
         .setValue("new_value".to_string())
         .max_fee_per_gas(undersized_max_fee_per_gas.into())
         .from(wallet.address())
         .estimate_gas()
         .await
-        .unwrap();
-
-    assert!(estimated_gas > 0);
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: max fee per gas less than block base fee"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -452,7 +454,7 @@ async fn can_call_on_pending_block() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_call_with_undersized_max_fee_per_gas() {
+async fn rejects_call_with_undersized_max_fee_per_gas() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let signer: EthereumWallet = wallet.clone().into();
@@ -472,14 +474,17 @@ async fn can_call_with_undersized_max_fee_per_gas() {
 
     assert!(undersized_max_fee_per_gas < latest_block_base_fee_per_gas);
 
-    let last_sender = simple_storage_contract
+    let err = simple_storage_contract
         .lastSender()
         .max_fee_per_gas(undersized_max_fee_per_gas.into())
         .from(wallet.address())
         .call()
         .await
-        .unwrap();
-    assert_eq!(last_sender, Address::ZERO);
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "server returned an error response: error code -32003: max fee per gas less than block base fee"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

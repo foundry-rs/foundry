@@ -140,10 +140,9 @@ fn testdata(cmd: _) {
     setup_testdata_cmd(&mut cmd);
 
     let mut args = vec!["test"];
-    let nmc_isolate = format!(
-        "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|{FLAKY_TESTDATA_CONTRACTS})",
-    );
-    args.push(&nmc_isolate);
+    // `MockFunctionTest` fails with isolation: the isolated call drops the `mockFunction` redirect.
+    let nmc = format!("--nmc=(MockFunctionTest|{FLAKY_TESTDATA_CONTRACTS})");
+    args.push(&nmc);
 
     let orig_assert = cmd.args(args).assert();
     if orig_assert.get_output().status.success() {

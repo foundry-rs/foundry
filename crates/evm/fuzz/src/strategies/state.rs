@@ -20,13 +20,14 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{
     bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
 };
-#[cfg(test)]
-use revm::database::InMemoryDB;
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
 use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
+
+#[cfg(test)]
+use revm::database::InMemoryDB;
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -834,6 +835,7 @@ impl FuzzDictionary {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
     use foundry_evm_core::eip2935::HISTORY_STORAGE_ADDRESS;
@@ -855,11 +857,7 @@ mod tests {
         let contract = TargetedContract::new("Target".to_string(), abi);
         let matched_events = contract.event_lookup.by_topic(&selector, 0).unwrap();
         let word: B256 = U256::from(42).into();
-        let log = Log::new_unchecked(
-            Address::ZERO,
-            vec![selector],
-            Bytes::copy_from_slice(word.as_slice()),
-        );
+        let log = Log::new_unchecked(Address::ZERO, vec![selector], Bytes::from(word));
         let mut samples = Vec::new();
 
         assert!(FuzzDictionary::decode_log_events(

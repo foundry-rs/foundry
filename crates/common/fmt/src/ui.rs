@@ -1412,7 +1412,7 @@ payerAuth            0x02"
             "0x18bcfe568c8"
         );
         assert!(pretty.contains(&format!("logs                 {logs}")), "{pretty}");
-        assert_eq!(receipt.logs_bloom_pretty(), receipt.inner.inner.bloom().pretty());
+        assert_eq!(receipt.logs_bloom_pretty(), receipt_logs_bloom_pretty(&receipt.inner));
         assert!(pretty.contains("l1Fee                24681034813"), "{pretty}");
         assert!(pretty.contains("operatorFeeScalar    1"), "{pretty}");
         assert!(pretty.contains("depositNonce         9055505"), "{pretty}");

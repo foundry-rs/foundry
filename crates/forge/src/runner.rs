@@ -5560,7 +5560,7 @@ fn parse_frontier_selectors(selectors: &[String], signature: &str) -> Vec<Select
     selectors
         .iter()
         .filter_map(|selector| {
-            let parsed = hex::decode(selector.strip_prefix("0x").unwrap_or(selector))
+            let parsed = hex::decode(selector)
                 .ok()
                 .filter(|bytes| bytes.len() == 4)
                 .map(|bytes| Selector::from_slice(&bytes));

@@ -11,6 +11,7 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
+        miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
     },
     mem::{self, in_memory_db::StateRootDb},
@@ -254,6 +255,8 @@ pub struct NodeConfig {
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
+    /// Window for grouping ready transactions in auto mining; zero disables coalescing.
+    pub transaction_coalescing_window: Duration,
     /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
@@ -658,6 +661,7 @@ impl Default for NodeConfig {
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
+            transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
@@ -1043,6 +1047,13 @@ impl NodeConfig {
     ) -> Self {
         self.block_time = block_time.map(Into::into);
         self.mixed_mining = mixed_mining;
+        self
+    }
+
+    /// Sets the auto-mining coalescing window. Zero disables the delay.
+    #[must_use]
+    pub const fn with_transaction_coalescing_window(mut self, window: Duration) -> Self {
+        self.transaction_coalescing_window = window;
         self
     }
 
@@ -1457,7 +1468,7 @@ impl NodeConfig {
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
-        cfg.spec = self.get_hardfork().into();
+        cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -2706,6 +2717,7 @@ mod tests {
         config.fork_urls.push("https://mirror.example/private-api-key?token=secret".to_string());
 
         let fork = api.backend.get_fork().unwrap();
+        let node_info = api.anvil_node_info().await.unwrap();
         let output = config.as_string(Some(&fork));
         let temp = tempfile::tempdir().unwrap();
         let config_out = temp.path().join("config.json");
@@ -2720,6 +2732,7 @@ mod tests {
         assert!(!output.contains("private-api-key"));
         assert!(!output.contains("secret"));
         assert_eq!(json["endpoint"], redact_url(&fork_url));
+        assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&fork_url)));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
     }
