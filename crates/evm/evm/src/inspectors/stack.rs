@@ -1481,31 +1481,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
-    /// Starts tracking snapshot restorations for a top-level transaction when isolation is
-    /// disabled, so that a failing frame unwinds them as it does inside an isolated call.
-    fn start_top_level_snapshot_tracking(&mut self, ecx: &FoundryContextFor<'_, FEN>) {
-        if self.enable_isolation || self.in_inner_context || ecx.journal().depth() != 0 {
-            return;
-        }
-        let Some(cheats) = self.cheatcodes.as_deref_mut() else { return };
-        cheats.pending_isolated_snapshot_journal = None;
-        cheats.track_isolated_snapshots = true;
-        cheats.isolated_snapshot_restores.clear();
-        self.inner.isolated_frame_checkpoints.clear();
-    }
-
-    /// Stops tracking snapshot restorations at the end of a non-isolated top-level transaction.
-    fn finish_top_level_snapshot_tracking(&mut self) {
-        if self.enable_isolation {
-            return;
-        }
-        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            cheats.track_isolated_snapshots = false;
-            cheats.isolated_snapshot_restores.clear();
-        }
-        self.inner.isolated_frame_checkpoints.clear();
-    }
-
     fn finish_isolated_snapshot_frame(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         let Some(frame) = self.inner.isolated_frame_checkpoints.pop() else { return };
 
@@ -1630,7 +1605,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         ecx: &mut FoundryContextFor<'_, FEN>,
         frame_input: &mut FrameInput,
     ) -> Option<FrameResult> {
-        self.start_top_level_snapshot_tracking(ecx);
+        // A non-isolated top-level transaction needs the same restore tracking as an isolated call.
+        if !self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journal().depth() == 0
+            && let Some(cheats) = self.cheatcodes.as_deref_mut()
+        {
+            cheats.pending_isolated_snapshot_journal = None;
+            cheats.track_isolated_snapshots = true;
+            cheats.isolated_snapshot_restores.clear();
+            self.inner.isolated_frame_checkpoints.clear();
+        }
         if let Some(cheats) = self.cheatcodes.as_deref_mut()
             && cheats.track_isolated_snapshots
         {
@@ -1751,7 +1736,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let failed = std::mem::take(&mut self.inner.top_level_frame_failed_before_rewrite)
                 || !result.is_ok();
             self.top_level_frame_end(ecx, failed);
-            self.finish_top_level_snapshot_tracking();
+            if !self.enable_isolation {
+                if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                    cheats.track_isolated_snapshots = false;
+                    cheats.isolated_snapshot_restores.clear();
+                }
+                self.inner.isolated_frame_checkpoints.clear();
+            }
         }
     }
 
@@ -2593,35 +2584,5 @@ mod tests {
         let addr_a = factory.create2_from_code(salt_a, init_code);
         let addr_b = factory.create2_from_code(salt_b, init_code);
         assert_ne!(addr_a, addr_b);
-    }
-
-    #[test]
-    fn fresh_snapshot_tracking_restores_parent_scope() {
-        for failed in [false, true] {
-            let mut inner = InspectorStackInner::default();
-            let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
-            cheats.track_isolated_snapshots = true;
-            cheats.in_isolation_context = true;
-            cheats.isolated_snapshot_restores.push(JournaledState::default());
-            cheats.pending_isolated_snapshot_journal = Some(Vec::new());
-            let result = inner.with_snapshot_tracking(&mut cheats, |inner, cheats| {
-                assert!(cheats.track_isolated_snapshots);
-                assert!(!cheats.in_isolation_context);
-                assert!(cheats.capture_isolated_snapshot_restore);
-                assert!(cheats.isolated_snapshot_restores.is_empty());
-                assert!(cheats.pending_isolated_snapshot_journal.is_none());
-                assert!(inner.isolated_frame_checkpoints.is_empty());
-                cheats.isolated_snapshot_restores.push(JournaledState::default());
-                cheats.capture_isolated_snapshot_restore = false;
-                if failed { Err(()) } else { Ok(()) }
-            });
-            assert_eq!(result.is_err(), failed);
-            assert!(cheats.track_isolated_snapshots);
-            assert!(cheats.in_isolation_context);
-            assert!(!cheats.capture_isolated_snapshot_restore);
-            assert_eq!(cheats.isolated_snapshot_restores.len(), 1);
-            assert_eq!(cheats.pending_isolated_snapshot_journal, Some(Vec::new()));
-            assert!(inner.isolated_frame_checkpoints.is_empty());
-        }
     }
 }

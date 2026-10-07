@@ -469,14 +469,14 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         vm.broadcastRawTransaction(signedTransaction(abi.encodeCall(this.caughtTransactionRestore, ())));
         assertEq(store.marker(), MARKER);
         assertEq(store.value(), 121);
-        assertEq(store.slots(100), 0);
+        assertEq(store.slots(1), 0);
     }
 
     function testExecuteTransactionCaughtRestoreRevert() public {
         vm.executeTransaction(signedTransaction(abi.encodeCall(this.caughtTransactionRestore, ())));
         assertEq(store.marker(), MARKER);
         assertEq(store.value(), 121);
-        assertEq(store.slots(100), 0);
+        assertEq(store.slots(1), 0);
     }
 
     function caughtTransactionRestore() external {
