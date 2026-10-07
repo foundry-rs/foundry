@@ -43,6 +43,7 @@ const GUIDANCE: &[&str] = &[
     "When documented behavior spans several calls, such as conservation, solvency, permissions, or state transitions, write a stateful invariant test. Write one invariant_ function per documented claim and check every actor and asset.",
     "For a stateful test, write a handler contract that wraps each documented state-changing function, and target only the handler with targetContract and targetSelector. In setUp, deploy the contracts, then fund and approve two or three fixed actors.",
     "In each handler action, pick the actor from a fuzzed seed modulo the actor list, bound every input to its documented range, and return early when a documented precondition fails. Do not use vm.assume.",
+    "vm.expectRevert only checks the next external call. To expect a revert from an internal or library function, wrap it in an external function of the test contract and call it through this.",
     "Do not wrap target calls in try/catch. Expect a revert only to assert its exact documented error. Use fail_on_revert only when the handler checks every documented precondition before the call.",
     "Track expected state in ghost variables that handlers update from their own inputs, such as amounts deposited and withdrawn per actor. Never derive the expected value by calling or copying the code under test.",
     "For monotonic claims, compare with the maximum or minimum that a ghost records across the whole sequence, not only the previous call. Record the last operation in a ghost when a claim depends on it.",
