@@ -1653,8 +1653,8 @@ fn restore_isolation_fee_accounting<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt
     ccx.ecx.chain_mut().clear_transaction_fee_cache();
 }
 
-/// Records the journal replaced by a snapshot restoration so that a failing enclosing frame can
-/// reinstate it and unwind the restoration together with its own writes.
+/// Records the live journal replaced by a snapshot restoration so that a failing enclosing frame
+/// can reinstate it and unwind its journaled writes.
 fn track_snapshot_restore<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     journaled_state: JournaledState,

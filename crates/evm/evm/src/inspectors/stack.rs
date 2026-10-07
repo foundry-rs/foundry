@@ -1499,7 +1499,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         // The caller only needs the first restoration made since it started, so drop the ones a
-        // finished call captured after it. This bounds the retained journals by the call depth.
+        // finished call captured after it. This bounds their count by call depth; each retained
+        // journal can still contain all loaded account state.
         if let Some(caller) = self.inner.isolated_frame_checkpoints.last()
             && let Some(cheats) = self.cheatcodes.as_deref_mut()
         {

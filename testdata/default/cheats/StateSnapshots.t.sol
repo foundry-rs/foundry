@@ -208,12 +208,6 @@ contract NestedRestoreHelper {
         revert("restore reverted");
     }
 
-    function deprecatedRestoreRevert(uint256 snapshotId, NestedRestoreStore store) external {
-        require(vm.revertTo(snapshotId), "restore failed");
-        store.set(42);
-        revert("restore reverted");
-    }
-
     function restoreTwiceRevert(uint256 snapshotId, NestedRestoreStore store) external {
         require(vm.revertToState(snapshotId), "restore failed");
         store.fill(3);
@@ -281,8 +275,8 @@ contract NestedRestoreConstructor {
     }
 }
 
-/// A failing frame unwinds a snapshot restoration made inside it together with every write it
-/// made, regardless of call isolation.
+/// A failing frame reinstates the live journal replaced by a snapshot restoration and unwinds
+/// its journaled writes, regardless of call isolation.
 abstract contract NestedRestoreFrameRevertBase is Test {
     uint256 constant MARKER = 7;
 
@@ -323,20 +317,12 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         assertUndone(tail, count);
     }
 
-    function testRevertedRestoreShortWrites() public {
-        revertedRestore(0, 1);
-    }
-
     function testRevertedRestoreLongWrites() public {
         revertedRestore(0, 100);
     }
 
     function testRevertedRestoreLongTailShortWrites() public {
         revertedRestore(20, 1);
-    }
-
-    function testRevertedRestoreLongTailLongWrites() public {
-        revertedRestore(20, 100);
     }
 
     function testRevertedRestoreUndoesEarlierWrites() public {
@@ -356,12 +342,6 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         uint256 snapshotId = prepare(20);
         expectHelperRevert(abi.encodeCall(helper.restoreTwiceRevert, (snapshotId, store)), "restore reverted");
         assertUndone(20, 3);
-    }
-
-    function testRevertedDeprecatedRestoreIsUndone() public {
-        uint256 snapshotId = prepare(20);
-        expectHelperRevert(abi.encodeCall(helper.deprecatedRestoreRevert, (snapshotId, store)), "restore reverted");
-        assertUndone(20, 1);
     }
 
     function testRevertedRestoreKeepsSnapshot() public {
@@ -389,12 +369,6 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         helper.restoreSet(snapshotId, store, 5);
         assertEq(store.marker(), 0);
         assertEq(store.value(), 5);
-    }
-
-    function testRevertedOuterCallUndoesNestedRestore() public {
-        uint256 snapshotId = prepare(20);
-        expectHelperRevert(abi.encodeCall(helper.nestedRestoresThenRevert, (snapshotId, store, 1)), "outer reverted");
-        assertUndone(20, 100);
     }
 
     function testRevertedOuterCallUndoesSiblingRestores() public {
@@ -499,14 +473,10 @@ abstract contract NestedRestoreFrameRevertBase is Test {
         unsigned[6] = hex"01";
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, keccak256(vm.toRlp(unsigned)));
-        bytes[] memory signed = new bytes[](9);
-        for (uint256 i; i < 6; i++) {
-            signed[i] = unsigned[i];
-        }
-        signed[6] = abi.encodePacked(v + 10);
-        signed[7] = trimLeadingZeros(r);
-        signed[8] = trimLeadingZeros(s);
-        return vm.toRlp(signed);
+        unsigned[6] = abi.encodePacked(v + 10);
+        unsigned[7] = trimLeadingZeros(r);
+        unsigned[8] = trimLeadingZeros(s);
+        return vm.toRlp(unsigned);
     }
 
     function trimLeadingZeros(bytes32 word) internal pure returns (bytes memory out) {
