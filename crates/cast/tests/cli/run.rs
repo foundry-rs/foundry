@@ -770,7 +770,7 @@ async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
                 .with_eth_rpc_url(Some(upstream.http_endpoint())),
         )
         .await;
-        cmd.forge_fuse()
+        cmd.cast_fuse()
             .args([
                 "run",
                 &receipt.transaction_hash.to_string(),
@@ -779,6 +779,6 @@ async fn cast_run_upstream_tx_through_amsterdam_fork(cmd: _) {
             ])
             .with_no_redact()
             .assert_success()
-            .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n\n"));
+            .stdout_eq(format!("...\nTransaction successfully executed.\nGas used: {gas}\n"));
     }
 }
