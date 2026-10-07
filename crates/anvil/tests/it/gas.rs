@@ -619,6 +619,40 @@ async fn test_estimate_gas_amsterdam_transfer_to_new_account() {
     assert_eq!(receipt.gas_used, gas);
 }
 
+// Under EIP-2780 a transfer's intrinsic gas is its base plus charges for the recipient and value,
+// so a zero-value transfer or a self-transfer costs less than 21000.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_amsterdam_transfer_below_legacy_intrinsic_gas() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()))).await;
+    let provider = handle.http_provider();
+    let mut accounts = handle.dev_accounts();
+    let from = accounts.next().unwrap();
+    let existing = accounts.next().unwrap();
+
+    for (to, expected) in [(existing, 15_000), (from, 12_000)] {
+        // A request gas limit below 21000 used to put the search's lower bound above its upper.
+        let tx = TransactionRequest::default().with_from(from).with_to(to).with_gas_limit(20_000);
+        api.call(WithOtherFields::new(tx.clone()), None, Default::default()).await.unwrap();
+        let gas = api
+            .estimate_gas(WithOtherFields::new(tx.clone()), None, Default::default())
+            .await
+            .unwrap()
+            .to::<u64>();
+        assert_eq!(gas, expected);
+
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(tx.with_gas_limit(gas)))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status());
+        assert_eq!(receipt.gas_used, gas);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let (api, handle) = spawn(NodeConfig::test()).await;
