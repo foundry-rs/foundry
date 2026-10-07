@@ -911,20 +911,28 @@ impl Config {
         config.evm_version_configured = evm_version_configured;
         // Derive the default EVM version from the final compiler version, after all providers
         // have been merged. See <https://github.com/foundry-rs/foundry/issues/7014>.
-        if !evm_version_configured && config.evm_version == Self::DEFAULT_EVM_VERSION {
-            match &config.solc {
-                Some(SolcReq::Version(version)) => {
-                    if let Some(evm_version) = config.evm_version.normalize_version_solc(version) {
-                        config.evm_version = evm_version;
-                    }
-                }
-                // The version of a local binary is only known by running it, so defer until the
-                // compiler is resolved.
-                Some(SolcReq::Local(_)) => config.evm_version_from_local_solc = true,
-                None => {}
-            }
-        }
+        config.derive_evm_version_from_solc();
         Ok(config)
+    }
+
+    /// Derives the default EVM version from the configured `solc`, unless it is explicitly
+    /// configured.
+    fn derive_evm_version_from_solc(&mut self) {
+        self.evm_version_from_local_solc = false;
+        if self.evm_version_configured || self.evm_version != Self::DEFAULT_EVM_VERSION {
+            return;
+        }
+        match &self.solc {
+            Some(SolcReq::Version(version)) => {
+                if let Some(evm_version) = self.evm_version.normalize_version_solc(version) {
+                    self.evm_version = evm_version;
+                }
+            }
+            // The version of a local binary is only known by running it, so defer until the
+            // compiler is resolved.
+            Some(SolcReq::Local(_)) => self.evm_version_from_local_solc = true,
+            None => {}
+        }
     }
 
     /// Applies an inline provider on top of the current config without reloading external
@@ -943,6 +951,7 @@ impl Config {
             || provider.extract_inner::<InvariantWorkers>("invariant.workers").is_ok();
         let evm_version_configured =
             self.evm_version_configured || provider.contains("evm_version");
+        let solc_configured = provider.contains("solc");
         let figment = self.to_figment(FigmentProviders::None).merge(provider);
         let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
@@ -956,6 +965,9 @@ impl Config {
         config.evm_version_configured = evm_version_configured;
         config.evm_version_from_local_solc =
             self.evm_version_from_local_solc && !evm_version_configured;
+        if solc_configured {
+            config.derive_evm_version_from_solc();
+        }
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -965,12 +977,6 @@ impl Config {
     #[deprecated(note = "use `Config::from_provider` instead")]
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
         Self::from_provider(provider)
-    }
-
-    /// Extracts a config that allows unknown profiles, falling back to the default profile.
-    /// Used when loading nested lib configs that may not define all profiles.
-    fn from_figment_fallback(figment: Figment) -> Result<Self, ExtractConfigError> {
-        Self::from_figment_inner(figment, false)
     }
 
     fn from_figment_inner(
@@ -6357,11 +6363,17 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
-                [default]
+                r#"
+                [profile.default]
                 solc = './fake-solc'
-            ",
+
+                [[profile.default.compilation_restrictions]]
+                paths = "src/**"
+                evm_version = "london"
+            "#,
             )?;
+            jail.create_dir("src")?;
+            jail.create_file("src/Foo.sol", "pragma solidity ^0.8.0; contract Foo {}")?;
             jail.create_file(
                 "fake-solc",
                 r#"#!/bin/sh
@@ -6390,6 +6402,14 @@ echo "Version: 0.8.13+commit.abaa5c0e"
                 merged.project().unwrap().settings.solc.evm_version,
                 Some(EvmVersion::London)
             );
+            // Sources still match EVM version restrictions against the derived EVM version.
+            let ephemeral = merged.ephemeral_project().unwrap();
+            let graph = Graph::<MultiCompilerParser>::resolve(&ephemeral.paths).unwrap();
+            graph.into_sources_by_version(&ephemeral).unwrap();
+            // Pinning `solc` inline derives the EVM version from the pinned version.
+            let pinned = config.merge_inline_provider(("solc", "0.8.20")).unwrap();
+            assert_eq!(pinned.evm_version, EvmVersion::Shanghai);
+            assert!(!pinned.evm_version_from_local_solc);
             config.normalize_evm_version_for_project(&project);
             assert_eq!(config.evm_version, EvmVersion::London);
 

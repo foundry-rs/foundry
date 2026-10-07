@@ -530,7 +530,7 @@ impl RemappingsProvider<'_> {
 
 fn load_nested_config(root: &Path) -> Result<Option<CachedNestedConfig>, Error> {
     let figment = Config::with_root(root).to_figment(FigmentProviders::Cast);
-    let Ok(config) = Config::from_figment_fallback(figment) else { return Ok(None) };
+    let Ok(config) = Config::from_provider_inner(figment, false) else { return Ok(None) };
     let src = config.src.clone();
     let libs = config.libs.clone();
     let remappings = config.sanitized().remappings.into_iter().map(Remapping::from).collect();
