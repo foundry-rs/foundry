@@ -538,11 +538,21 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        mut evm_env: EvmEnvFor<FEN>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
+        let depth = ecx.journal().depth();
+        let previous_inner_context = self.in_inner_context;
+        let previous_inner_context_data = self.inner_context_data.replace(InnerContextData {
+            original_origin: ecx.tx().caller(),
+            locally_created_accounts: AddressHashSet::default(),
+            root_depth: depth,
+        });
+        let previous_precompile = self.isolated_call_was_precompile.take();
+        self.in_inner_context = true;
+        let mut evm_env = ecx.evm_clone();
+        let (db, _) = ecx.db_journal_inner_mut();
         let inherited_disable_fee_charge = evm_env.cfg_env.disable_fee_charge;
         if let Some(disable_fee_charge) = self.outer_disable_fee_charge {
             evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
@@ -554,10 +564,18 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             &mut inspector,
         );
         *evm.chain_mut() = chain_context;
-        f(&mut *evm)?;
-        let mut evm_env = evm.to_evm_env();
-        evm_env.cfg_env.disable_fee_charge = inherited_disable_fee_charge;
-        Ok(evm_env)
+        // The fresh root duplicates the suspended frame; its children share the existing tracer.
+        evm.journal_inner_mut().depth = depth;
+        let result = f(&mut *evm).map(|()| {
+            let mut evm_env = evm.to_evm_env();
+            evm_env.cfg_env.disable_fee_charge = inherited_disable_fee_charge;
+            evm_env
+        });
+        drop(evm);
+        self.in_inner_context = previous_inner_context;
+        self.inner_context_data = previous_inner_context_data;
+        self.isolated_call_was_precompile = previous_precompile;
+        result
     }
 
     fn transact_on_db(
@@ -600,15 +618,6 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
 
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         self.tracer.as_deref_mut()
-    }
-
-    fn set_in_inner_context(&mut self, enabled: bool, original_origin: Option<Address>) {
-        self.in_inner_context = enabled;
-        self.inner_context_data = enabled.then(|| InnerContextData {
-            original_origin: original_origin.expect("origin required when enabling inner ctx"),
-            locally_created_accounts: AddressHashSet::default(),
-            root_depth: 1,
-        });
     }
 }
 
