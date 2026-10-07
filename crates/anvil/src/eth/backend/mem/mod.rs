@@ -3341,6 +3341,11 @@ impl<N: Network> Backend<N> {
             CallTxEnv::Op(tx) => tx.tx_type() != DEPOSIT_TX_TYPE_ID,
             _ => true,
         };
+        let min_gas = if prepared.evm_env.cfg_env.enable_amsterdam_eip2780 {
+            eip2780::TX_BASE_COST
+        } else {
+            MIN_TRANSACTION_GAS as u64
+        };
         let tx_env = prepared.tx_env.base_mut();
         if gas_omitted && cap_by_balance && tx_env.gas_price > 0 {
             let balance =
@@ -3351,7 +3356,7 @@ impl<N: Network> Backend<N> {
             if let Some(allowance) = balance
                 .checked_sub(upfront)
                 .map(|available| available / U256::from(tx_env.gas_price))
-                && allowance >= U256::from(MIN_TRANSACTION_GAS)
+                && allowance >= U256::from(min_gas)
             {
                 tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
             }

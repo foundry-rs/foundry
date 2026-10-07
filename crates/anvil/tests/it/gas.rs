@@ -1028,9 +1028,12 @@ async fn test_estimate_gas_amsterdam_balance_caps_below_legacy_intrinsic_gas() {
                 .with_gas_price(price),
         );
         assert_eq!(
-            api.estimate_gas(tx, None, Default::default()).await.unwrap(),
+            api.estimate_gas(tx.clone(), None, Default::default()).await.unwrap(),
             U256::from(expected)
         );
+        // Without a gas limit, calls get the gas the balance pays for.
+        api.call(tx.clone(), None, Default::default()).await.unwrap();
+        api.trace_call(tx, [TraceType::Trace].into_iter().collect(), None).await.unwrap();
     }
 }
 
