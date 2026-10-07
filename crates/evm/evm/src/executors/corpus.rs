@@ -797,15 +797,15 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             } else {
                 (CampaignCallKind::Accepted, execute_tx(executor, tx)?)
             };
-            cmp_seq.push(
+            cmp_seq.push(ComparisonHint::applicable(
+                &tx.call_details.calldata,
                 call_result
                     .evm_cmp_values
                     .take()
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 })
-                    .collect(),
-            );
+                    .map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
+            ));
             let (new_coverage, is_edge) = call_result.merge_all_coverage(
                 coverage.history_map,
                 coverage.edge_indices,
@@ -1063,9 +1063,12 @@ impl WorkerCorpus {
         }
         let corpus_cmp_seq = cmp_seq
             .iter()
-            .take(corpus_inputs.len())
-            .map(|values| {
-                values.iter().map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }).collect()
+            .zip(&corpus_inputs)
+            .map(|(values, tx)| {
+                ComparisonHint::applicable(
+                    &tx.call_details.calldata,
+                    values.iter().map(|cmp| ComparisonHint { lhs: cmp.op1, rhs: cmp.op2 }),
+                )
             })
             .collect();
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
@@ -2136,14 +2139,17 @@ mod tests {
         accepted.roll = Some(U256::from(2));
 
         // Branch on the argument. The rejected branch writes state and returns MAGIC_ASSUME;
-        // the accepted branch writes the current timestamp. Both branches record comparisons.
+        // the accepted branch writes the current timestamp. Both branches compare the argument
+        // with 42, so both record comparisons that cmp mutations can apply to the calldata.
         let mut code = vec![0x60, 0x04, 0x35, 0x60, 0x00, 0x57];
-        code.extend_from_slice(&[0x60, 0x09, 0x60, 0x08, 0x10, 0x50, 0x60, 0x63, 0x5f, 0x55]);
+        code.extend_from_slice(&[0x60, 0x2a, 0x60, 0x04, 0x35, 0x10, 0x50, 0x60, 0x63, 0x5f, 0x55]);
         code.push(0x6e); // PUSH15.
         code.extend_from_slice(MAGIC_ASSUME);
         code.extend_from_slice(&[0x5f, 0x52, 0x60, 0x0f, 0x60, 0x11, 0xf3]);
         code[4] = code.len().try_into().unwrap();
-        code.extend_from_slice(&[0x5b, 0x60, 0x01, 0x60, 0x02, 0x10, 0x50, 0x42, 0x5f, 0x55, 0x00]);
+        code.extend_from_slice(&[
+            0x5b, 0x60, 0x2a, 0x60, 0x04, 0x35, 0x10, 0x50, 0x42, 0x5f, 0x55, 0x00,
+        ]);
 
         for accept_last in [false, true] {
             let mut executor = sync_test_executor(temp_corpus_dir(), target);
