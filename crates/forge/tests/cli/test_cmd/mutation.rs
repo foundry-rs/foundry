@@ -2176,9 +2176,8 @@ fn mutation_keeps_links_next_to_dependency_sources(prj: _, cmd: _) {
         r#"pragma solidity ^0.8.13;
 
 contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        return 2;
+    function bucket(uint256 value) external pure returns (bool) {
+        return value < 10;
     }
 }
 "#,
@@ -2200,25 +2199,29 @@ contract ArithmeticTest {
     Arithmetic private arithmetic = new Arithmetic();
 
     function testBoundary() public view {
-        assert(arithmetic.bucket(9) == 1);
-        assert(arithmetic.bucket(10) == 2);
+        assert(arithmetic.bucket(9));
+        assert(!arithmetic.bucket(10));
+        assert(!arithmetic.bucket(11));
     }
 }
 "#,
     );
 
-    let output = cmd
-        .args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let result = serde_json::from_str::<serde_json::Value>(output.trim()).unwrap();
-    assert_eq!(result["summary"]["invalid"], 0, "{result}");
-    let survived = &result["survived_mutants"]["lib/bucket/Arithmetic.sol"];
-    let boundary_survived = survived.as_array().is_some_and(|mutants| {
-        mutants
-            .iter()
-            .any(|mutant| mutant["original"] == "value < 10" && mutant["mutant"] == "value <= 10")
-    });
-    assert!(!boundary_survived, "{result}");
+    cmd.args(["test", "--mutate", "lib/bucket/Arithmetic.sol", "--json"]).assert_json_stdout(str![
+        [r#"
+{
+  "summary": {
+    "total": 5,
+    "killed": 5,
+    "survived": 0,
+    "invalid": 0,
+    "skipped": 0,
+    "timed_out": 0,
+    "mutation_score": 100.0,
+    "duration_secs": "{...}"
+  },
+  "survived_mutants": {}
+}
+"#]
+    ]);
 }

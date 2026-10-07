@@ -732,10 +732,8 @@ fn copy_dir_recursive_inner(
 
 /// Makes `root/rel` writable without changing the files that `copy_project` links into `root`.
 ///
-/// Every symlinked directory on the path becomes a real directory: its files are copied, its
-/// directories are linked, and its symlinks are recreated without being followed, so aliases of
-/// the file see the mutant and dangling links stay harmless. A symlinked file at `rel` is removed.
-/// Writing the file afterwards then changes only the workspace, not the shared dependency tree.
+/// Copies files along the target path while preserving directory links and sibling symlinks.
+/// Removes a symlink at `rel` so the caller can write the mutant without changing its source.
 pub fn unshare_path(root: &Path, rel: &Path) -> Result<()> {
     let mut current = root.to_path_buf();
     let mut components = rel.components().peekable();
@@ -760,8 +758,7 @@ pub fn unshare_path(root: &Path, rel: &Path) -> Result<()> {
             let destination = current.join(entry.file_name());
             let file_type = entry.file_type()?;
             if file_type.is_symlink() {
-                // Keep links as links, without following them: an alias of the mutated file
-                // must see the mutant, and a dangling link must not fail the copy.
+                // Preserve aliases and dangling links without following them.
                 let target = fs::read_link(entry.path())?;
                 let target = target
                     .strip_prefix(&source)
