@@ -1477,28 +1477,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
 
-            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                // At the target depth we set `msg.sender`
-                let prank_applied = if curr_depth == prank.depth {
+            if let Some(changes) = prank.changes_for(curr_depth, call.caller) {
+                if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded and touched
-                    let _ = journaled_account(ecx, prank.new_caller);
-                    call.caller = prank.new_caller;
-                    true
-                } else {
-                    false
-                };
-
-                // At the target depth, or deeper, we set `tx.origin`
-                let prank_applied = if let Some(new_origin) = prank.new_origin {
+                    let _ = journaled_account(ecx, new_caller);
+                    call.caller = new_caller;
+                }
+                if let Some(new_origin) = changes.origin {
                     ecx.tx_mut().set_caller(new_origin);
-                    true
-                } else {
-                    prank_applied
-                };
-
-                // If prank applied for first time, then update
-                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                    self.pranks.insert(curr_depth, applied_prank);
+                }
+                if let Some(used) = changes.used {
+                    self.pranks.insert(curr_depth, used);
                 }
             }
         }
@@ -2671,31 +2660,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth)
-            && curr_depth >= prank.depth
-            && input.caller() == prank.prank_caller
+        if let Some(prank) = self.get_prank(curr_depth)
+            && let Some(changes) = prank.changes_for(curr_depth, input.caller())
         {
-            // At the target depth we set `msg.sender`
-            let prank_applied = if curr_depth == prank.depth {
+            if let Some(new_caller) = changes.caller {
                 // Ensure new caller is loaded and touched
-                let _ = journaled_account(ecx, prank.new_caller);
-                input.set_caller(prank.new_caller);
-                true
-            } else {
-                false
-            };
-
-            // At the target depth, or deeper, we set `tx.origin`
-            let prank_applied = if let Some(new_origin) = prank.new_origin {
+                let _ = journaled_account(ecx, new_caller);
+                input.set_caller(new_caller);
+            }
+            if let Some(new_origin) = changes.origin {
                 ecx.tx_mut().set_caller(new_origin);
-                true
-            } else {
-                prank_applied
-            };
-
-            // If prank applied for first time, then update
-            if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                self.pranks.insert(curr_depth, applied_prank);
+            }
+            if let Some(used) = changes.used {
+                self.pranks.insert(curr_depth, used);
             }
         }
 
