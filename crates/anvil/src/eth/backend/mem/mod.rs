@@ -1092,6 +1092,19 @@ impl HistoricalState {
             Self::ChildExecution => states.get_state(hash),
         }
     }
+
+    fn select_on_disk<'a>(
+        &self,
+        states: &'a mut InMemoryBlockStates,
+        hash: &B256,
+    ) -> Option<&'a StateDb> {
+        match self {
+            Self::PostBlock if states.has_on_disk_post_block_state(hash) => {
+                states.get_on_disk_post_block_state(hash)
+            }
+            Self::PostBlock | Self::ChildExecution => states.get_on_disk_state(hash),
+        }
+    }
 }
 
 struct StateSnapshot {
@@ -7217,7 +7230,7 @@ where
             }
 
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+            if let Some(state) = historical.select_on_disk(&mut write_guard, &block_hash) {
                 return Ok(f(Box::new(state), self.block_env_from_header(&block.header)));
             }
         }
@@ -7296,7 +7309,9 @@ where
             }
 
             let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
-            if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
+            if let Some(state) =
+                HistoricalState::PostBlock.select_on_disk(&mut write_guard, &block_hash)
+            {
                 return f(Box::new(state), self.block_env_from_header(&block.header), context);
             }
         }

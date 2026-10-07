@@ -5,7 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
-        mem::cache::DiskStateCache,
+        mem::cache::{CacheSlot, DiskStateCache},
     },
     pool::transactions::PoolTransaction,
 };
@@ -73,6 +73,8 @@ pub struct InMemoryBlockStates {
     ///
     /// For those blocks, `states` holds the state the child was executed on.
     post_block_states: B256HashMap<StateDb>,
+    /// Post-block states that moved to the secondary tier along with their block's state.
+    on_disk_post_block_states: B256HashMap<StateDb>,
 }
 
 impl InMemoryBlockStates {
@@ -89,6 +91,7 @@ impl InMemoryBlockStates {
             present: Default::default(),
             disk_cache: Default::default(),
             post_block_states: Default::default(),
+            on_disk_post_block_states: Default::default(),
         }
     }
 
@@ -157,31 +160,33 @@ impl InMemoryBlockStates {
                 .pop_front()
                 .and_then(|hash| self.states.remove(&hash).map(|state| (hash, state)))
             {
+                // only write to disk if supported
                 if self.is_memory_only() {
                     self.post_block_states.remove(&hash);
+                    continue;
                 }
-                // only write to disk if supported
-                if !self.is_memory_only() {
-                    if state.is_persistent() {
-                        self.on_disk_states.insert(hash, state);
-                        self.oldest_on_disk.push_back(hash);
-                        continue;
-                    }
 
-                    let state_snapshot = state.read_as_state_snapshot();
-                    if self.disk_cache.write(hash, &state_snapshot) {
-                        state.clear();
-                        // Write succeeded, move state to on-disk tracking
-                        self.on_disk_states.insert(hash, state);
-                        self.oldest_on_disk.push_back(hash);
-                    } else {
-                        // Write failed, keep state in memory to avoid data loss
-                        self.states.insert(hash, state);
-                        self.present.push_front(hash);
-                        // Increase limit temporarily to prevent infinite retry loop
-                        self.in_memory_limit = self.in_memory_limit.saturating_add(1);
-                        break;
-                    }
+                if state.is_persistent() {
+                    self.spill_post_block_state(hash);
+                    self.on_disk_states.insert(hash, state);
+                    self.oldest_on_disk.push_back(hash);
+                    continue;
+                }
+
+                let state_snapshot = state.read_as_state_snapshot();
+                if self.disk_cache.write(hash, CacheSlot::ChildExecution, &state_snapshot) {
+                    state.clear();
+                    // Write succeeded, move state to on-disk tracking
+                    self.spill_post_block_state(hash);
+                    self.on_disk_states.insert(hash, state);
+                    self.oldest_on_disk.push_back(hash);
+                } else {
+                    // Write failed, keep state in memory to avoid data loss
+                    self.states.insert(hash, state);
+                    self.present.push_front(hash);
+                    // Increase limit temporarily to prevent infinite retry loop
+                    self.in_memory_limit = self.in_memory_limit.saturating_add(1);
+                    break;
                 }
             }
         }
@@ -190,11 +195,38 @@ impl InMemoryBlockStates {
         while !self.is_memory_only() && self.oldest_on_disk.len() >= self.max_on_disk_limit {
             // evict the oldest block
             if let Some(hash) = self.oldest_on_disk.pop_front() {
-                self.post_block_states.remove(&hash);
+                self.evict_post_block_state(&hash);
                 if self.on_disk_states.remove(&hash).is_some_and(|state| !state.is_persistent()) {
-                    self.disk_cache.remove(hash);
+                    self.disk_cache.remove(hash, CacheSlot::ChildExecution);
                 }
             }
+        }
+    }
+
+    /// Moves the post-block state of `hash` into the secondary tier, mirroring its block's state.
+    fn spill_post_block_state(&mut self, hash: B256) {
+        let Some(mut state) = self.post_block_states.remove(&hash) else { return };
+        if state.is_persistent() {
+            self.on_disk_post_block_states.insert(hash, state);
+            return;
+        }
+
+        let state_snapshot = state.read_as_state_snapshot();
+        if self.disk_cache.write(hash, CacheSlot::PostBlock, &state_snapshot) {
+            state.clear();
+            self.on_disk_post_block_states.insert(hash, state);
+        } else {
+            // Dropping it would make historical reads of the block see the later overrides, so
+            // keep it in memory rather than lose it.
+            self.post_block_states.insert(hash, state);
+        }
+    }
+
+    /// Drops both tiers of the post-block state of `hash`, including its cache file.
+    fn evict_post_block_state(&mut self, hash: &B256) {
+        self.post_block_states.remove(hash);
+        if self.on_disk_post_block_states.remove(hash).is_some_and(|state| !state.is_persistent()) {
+            self.disk_cache.remove(*hash, CacheSlot::PostBlock);
         }
     }
 
@@ -211,6 +243,12 @@ impl InMemoryBlockStates {
     /// Number of tracked post-block states, including those moved to the secondary tier.
     #[cfg(test)]
     pub(crate) fn post_block_state_count(&self) -> usize {
+        self.post_block_states.len() + self.on_disk_post_block_states.len()
+    }
+
+    /// Number of post-block states still resident in the memory tier.
+    #[cfg(test)]
+    pub(crate) fn in_memory_post_block_state_count(&self) -> usize {
         self.post_block_states.len()
     }
 
@@ -221,7 +259,7 @@ impl InMemoryBlockStates {
 
     /// Drops the post-block state recorded for the given `hash`, if any.
     pub fn remove_post_block_state(&mut self, hash: &B256) {
-        self.post_block_states.remove(hash);
+        self.evict_post_block_state(hash);
     }
 
     /// Returns on-disk state for the given `hash` if present
@@ -231,7 +269,27 @@ impl InMemoryBlockStates {
                 return Some(state);
             }
 
-            let cached = self.disk_cache.read(*hash)?;
+            let cached = self.disk_cache.read(*hash, CacheSlot::ChildExecution)?;
+            state.init_from_state_snapshot(cached);
+            return Some(state);
+        }
+
+        None
+    }
+
+    /// Returns whether a post-block state for `hash` moved to the secondary tier.
+    pub fn has_on_disk_post_block_state(&self, hash: &B256) -> bool {
+        self.on_disk_post_block_states.contains_key(hash)
+    }
+
+    /// Returns the secondary-tier post-block state for `hash` if present
+    pub fn get_on_disk_post_block_state(&mut self, hash: &B256) -> Option<&StateDb> {
+        if let Some(state) = self.on_disk_post_block_states.get_mut(hash) {
+            if state.is_persistent() {
+                return Some(state);
+            }
+
+            let cached = self.disk_cache.read(*hash, CacheSlot::PostBlock)?;
             state.init_from_state_snapshot(cached);
             return Some(state);
         }
@@ -255,7 +313,12 @@ impl InMemoryBlockStates {
         self.oldest_on_disk.clear();
         for (hash, state) in std::mem::take(&mut self.on_disk_states) {
             if !state.is_persistent() {
-                self.disk_cache.remove(hash);
+                self.disk_cache.remove(hash, CacheSlot::ChildExecution);
+            }
+        }
+        for (hash, state) in std::mem::take(&mut self.on_disk_post_block_states) {
+            if !state.is_persistent() {
+                self.disk_cache.remove(hash, CacheSlot::PostBlock);
             }
         }
     }
@@ -267,9 +330,9 @@ impl InMemoryBlockStates {
     pub fn remove_block_states(&mut self, hashes: &[B256]) {
         for hash in hashes {
             self.states.remove(hash);
-            self.post_block_states.remove(hash);
+            self.evict_post_block_state(hash);
             if self.on_disk_states.remove(hash).is_some_and(|state| !state.is_persistent()) {
-                self.disk_cache.remove(*hash);
+                self.disk_cache.remove(*hash, CacheSlot::ChildExecution);
             }
         }
         self.present.retain(|h| !hashes.contains(h));
@@ -289,7 +352,9 @@ impl InMemoryBlockStates {
         for (hash, state) in &mut self.on_disk_states {
             if state.is_persistent() {
                 states.push((*hash, state.serialize_state()));
-            } else if let Some(state_snapshot) = self.disk_cache.read(*hash) {
+            } else if let Some(state_snapshot) =
+                self.disk_cache.read(*hash, CacheSlot::ChildExecution)
+            {
                 states.push((*hash, state_snapshot));
             }
         }
@@ -914,6 +979,62 @@ mod tests {
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn post_block_states_spill_with_the_memory_tier() {
+        let mut storage = InMemoryBlockStates::new(2, MAX_ON_DISK_HISTORY_LIMIT);
+
+        let num_states = 20u64;
+        for idx in 0..num_states {
+            let hash = B256::from(U256::from(idx));
+            let addr = Address::from_word(hash);
+
+            // Mirrors an `anvil_set*` override on the head followed by mining its child.
+            let mut post_block = MemDb::default();
+            post_block.insert_account(addr, AccountInfo::from_balance(U256::from(idx)));
+            storage.insert_post_block_state_with(hash, || StateDb::new(post_block));
+
+            let mut child_execution = MemDb::default();
+            child_execution.insert_account(addr, AccountInfo::from_balance(U256::from(idx + 1000)));
+            storage.insert(hash, StateDb::new(child_execution));
+        }
+
+        // wait for files to be flushed
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // The post-block snapshots follow their block out of the memory tier.
+        assert!(
+            storage.in_memory_post_block_state_count() <= storage.min_in_memory_limit,
+            "{} post-block states still resident, limit is {}",
+            storage.in_memory_post_block_state_count(),
+            storage.min_in_memory_limit
+        );
+        assert_eq!(storage.post_block_state_count(), num_states as usize);
+
+        // Both versions of a spilled block remain readable and distinct.
+        let hash = B256::from(U256::ZERO);
+        let addr = Address::from_word(hash);
+        assert!(storage.has_on_disk_post_block_state(&hash));
+        assert_eq!(
+            storage
+                .get_on_disk_post_block_state(&hash)
+                .unwrap()
+                .basic_ref(addr)
+                .unwrap()
+                .unwrap()
+                .balance,
+            U256::ZERO
+        );
+        assert_eq!(
+            storage.get_on_disk_state(&hash).unwrap().basic_ref(addr).unwrap().unwrap().balance,
+            U256::from(1000)
+        );
+
+        // The on-disk limit purges both versions together.
+        storage.remove_block_states(&[hash]);
+        assert!(!storage.has_on_disk_post_block_state(&hash));
+        assert_eq!(storage.post_block_state_count(), num_states as usize - 1);
     }
 
     #[test]
