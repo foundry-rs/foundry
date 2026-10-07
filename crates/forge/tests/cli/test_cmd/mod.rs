@@ -397,7 +397,7 @@ Warning: No tests found in project! Forge looks for functions that start with `t
 // fetched from Etherscan when using state diff recording on a fork.
 // Uses 1inch token (non-proxy, Solidity 0.6.12) which supports storageLayout output.
 #[forgetest_init]
-fn compiler_compat_decode_external_storage_on_fork(prj: _, cmd: _) {
+fn decode_external_storage_on_fork(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     let etherscan_api_key = next_etherscan_api_key();
 
@@ -457,7 +457,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 // Test that `--decode-external-storage` correctly resolves proxy contracts
 // by fetching the implementation's storage layout (e.g., USDC is an EIP-1967 proxy).
 #[forgetest_init]
-fn compiler_compat_decode_external_storage_proxy_on_fork(prj: _, cmd: _) {
+fn decode_external_storage_proxy_on_fork(prj: _, cmd: _) {
     let endpoint = rpc::next_http_archive_rpc_url();
     let etherscan_api_key = next_etherscan_api_key();
 
@@ -729,7 +729,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // tests that `bytecode_hash` will be sanitized
 #[forgetest]
-fn compiler_compat_can_test_pre_bytecode_hash(prj: _, cmd: _) {
+fn can_test_pre_bytecode_hash(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -8102,11 +8102,4 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
-}
-
-#[forgetest]
-fn compiler_compat_testdata(cmd: _) {
-    setup_testdata_cmd(&mut cmd);
-    cmd.env("FOUNDRY_PROFILE", "compiler-compat");
-    cmd.args(["test", "--match-path", "default/fork/LaunchFork.t.sol"]).assert_success();
 }

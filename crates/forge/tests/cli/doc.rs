@@ -7,7 +7,7 @@ use foundry_test_utils::{
 use std::fs;
 
 #[test]
-fn compiler_compat_can_generate_solmate_docs() {
+fn can_generate_solmate_docs() {
     let (prj, _) =
         setup_forge_remote(RemoteProject::new("transmissions11/solmate").set_build(false));
     prj.forge_command().args(["doc"]).assert_success();
@@ -84,7 +84,7 @@ contract Revision {}
 }
 
 #[forgetest]
-fn compiler_compat_doc_supports_mixed_solidity_versions(prj: _, cmd: _) {
+fn doc_supports_mixed_solidity_versions(prj: _, cmd: _) {
     prj.add_source(
         "New.sol",
         r#"

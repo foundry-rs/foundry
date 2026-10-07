@@ -1763,9 +1763,9 @@ contract FailingSnapshotTest is DSTest {
 // test that `forge build` does not print `(with warnings)` if file path is ignored
 #[forgetest]
 fn can_compile_without_warnings_ignored_file_paths(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     // Ignoring path and setting empty error_codes as default would set some error codes
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.ignored_file_paths = vec![Path::new("src").to_path_buf()];
         config.ignored_error_codes = vec![];
     });

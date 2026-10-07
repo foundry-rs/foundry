@@ -43,7 +43,7 @@ ensure_svm_releases!(
 
 // Ensures we can always test with the latest solc build
 #[forgetest_init]
-fn compiler_compat_can_test_with_latest_solc(prj: _, cmd: _) {
+fn can_test_with_latest_solc(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "Counter.2.t.sol",
@@ -84,7 +84,7 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 }
 
 #[forgetest_init]
-fn compiler_compat_can_test_with_solc_0_8_37_amsterdam(prj: _, cmd: _) {
+fn can_test_with_solc_0_8_37_amsterdam(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_test(
         "StateGas.t.sol",
@@ -290,7 +290,7 @@ contract StateGasTest is Test {
 }
 
 #[forgetest_init]
-fn compiler_compat_can_test_slot_number_amsterdam(prj: _, cmd: _) {
+fn can_test_slot_number_amsterdam(prj: _, cmd: _) {
     prj.add_test(
         "SlotNumber.t.sol",
         r#"

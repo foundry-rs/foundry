@@ -272,7 +272,6 @@ Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 #[forgetest]
 fn test_library_backtrace(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.insert_ds_test();
     prj.insert_vm();
 

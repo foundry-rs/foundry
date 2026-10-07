@@ -1439,25 +1439,25 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_single_file_contract() {
+    async fn test_clone_single_file_contract() {
         let address = address!("0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_contract_with_optimization_details() {
+    async fn test_clone_contract_with_optimization_details() {
         let address = address!("0x8B3D32cf2bb4d0D16656f4c0b04Fa546274f1545");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_contract_with_libraries() {
+    async fn test_clone_contract_with_libraries() {
         let address = address!("0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec");
         one_test_case(address, true).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_contract_with_metadata() {
+    async fn test_clone_contract_with_metadata() {
         let address = address!("0x71356E37e0368Bd10bFDbF41dC052fE5FA24cD05");
         one_test_case(address, true).await
     }
@@ -1469,19 +1469,19 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_contract_with_original_remappings() {
+    async fn test_clone_contract_with_original_remappings() {
         let address = address!("0x9ab6b21cdf116f611110b048987e58894786c244");
         one_test_case(address, false).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_contract_with_relative_import2() {
+    async fn test_clone_contract_with_relative_import2() {
         let address = address!("0x044b75f554b886A065b9567891e45c79542d7357");
         one_test_case(address, false).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn compiler_compat_test_clone_contract_with_nested_src() {
+    async fn test_clone_contract_with_nested_src() {
         let address = address!("0x9d27527Ada2CF29fBDAB2973cfa243845a08Bd3F");
         one_test_case(address, false).await
     }

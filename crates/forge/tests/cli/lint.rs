@@ -1267,11 +1267,11 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 
 #[forgetest]
 fn build_runs_linter_by_default(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show only medium severity lints
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1323,11 +1323,11 @@ Warning (2018): Function state mutability can be restricted to pure
 
 #[forgetest]
 fn build_respects_quiet_flag_for_linting(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1343,11 +1343,11 @@ fn build_respects_quiet_flag_for_linting(prj: _, cmd: _) {
 
 #[forgetest]
 fn build_with_json_uses_json_linter_output(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1373,11 +1373,11 @@ fn build_with_json_uses_json_linter_output(prj: _, cmd: _) {
 
 #[forgetest]
 fn build_respects_lint_on_build_false(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints but disable lint_on_build
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1418,10 +1418,10 @@ Warning (2018): Function state mutability can be restricted to pure
 // installed inside `SolidityLinter::lint`.
 #[forgetest]
 fn build_emits_lint_diagnostics(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint.severity = vec![LintSeverity::Info];
     });
 
@@ -1467,12 +1467,12 @@ contract Importer is RelativeImporter {}
 
 #[forgetest]
 fn build_no_lint_flag_skips_lint(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("ContractWithLints", CONTRACT);
 
     // Configure linter with medium severity lints and ensure lint_on_build is enabled
     // so the only thing skipping the lint step is the `--no-lint` flag.
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1513,10 +1513,10 @@ Warning (2018): Function state mutability can be restricted to pure
 // Denied lint diagnostics are expected failures and must not be presented as internal errors.
 #[forgetest]
 fn build_denied_lints_do_not_emit_internal_failure_notice(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint.severity = vec![LintSeverity::Info];
         config.deny = DenyLevel::Notes;
     });
@@ -1587,10 +1587,10 @@ Context:
 // Same setup as above, but `--no-lint` skips the lint step so the failure notice never fires.
 #[forgetest]
 fn build_no_lint_flag_does_not_emit_lint_failure_notice(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
         config.lint.severity = vec![LintSeverity::Info];
         config.deny = DenyLevel::Notes;
     });
@@ -2022,7 +2022,7 @@ contract CleanContract {
 }
 
 #[forgetest]
-fn compiler_compat_skips_linting_for_old_solidity_versions(prj: _, cmd: _) {
+fn skips_linting_for_old_solidity_versions(prj: _, cmd: _) {
     const OLD_CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.7.0;

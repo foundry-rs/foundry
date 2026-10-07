@@ -34,7 +34,7 @@ pub const SOLC_VERSION: &str = "0.8.35";
 
 /// Another Solc version used when compiling tests.
 ///
-/// Use this for version-switching tests instead of adding another compiler download.
+/// Necessary to avoid downloading multiple versions.
 pub const OTHER_SOLC_VERSION: &str = "0.8.26";
 
 /// Initializes a project with `forge init` at the given path from a template directory.

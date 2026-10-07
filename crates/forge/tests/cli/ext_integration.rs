@@ -85,7 +85,7 @@ fn snekmate() {
 
 // <https://github.com/mds1/multicall>
 #[test]
-fn compiler_compat_mds1_multicall3() {
+fn mds1_multicall3() {
     ExtTester::new("mds1", "multicall", "b667d67ecfa5361a81e8f110234ce242613b0012")
         .env("FOUNDRY_SOLC_VERSION", "0.8.12")
         .run();
