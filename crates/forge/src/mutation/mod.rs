@@ -189,6 +189,7 @@ impl MutationsSummary {
             survived_mutants: group_mutants(&self.survived),
             timed_out_mutants: group_mutants(&self.timed_out),
             invalid_mutants: group_mutants(&self.invalid),
+            skipped_mutants: group_mutants(&self.skipped),
         }
     }
 }
@@ -226,6 +227,8 @@ pub struct MutationJsonOutput {
     pub timed_out_mutants: BTreeMap<String, Vec<SurvivedMutantJson>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub invalid_mutants: BTreeMap<String, Vec<SurvivedMutantJson>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub skipped_mutants: BTreeMap<String, Vec<SurvivedMutantJson>>,
 }
 
 /// Summary section of JSON output

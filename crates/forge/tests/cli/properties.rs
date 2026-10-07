@@ -1,7 +1,10 @@
 //! Tests for the `forge properties` command.
 
-use foundry_test_utils::{forgetest_init, str};
-use std::{fs, os::unix::fs::PermissionsExt};
+use foundry_test_utils::{assert_data_eq, forgetest_init, str};
+use std::fs;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[cfg(unix)]
 #[forgetest_init]
@@ -104,13 +107,12 @@ if grep -q '"round": 1' "$prompt" &&
 fi
 if ! grep -q '"round": 1' "$prompt"; then grep -q '"candidate_results"' "$prompt"; fi
 if grep -q '"round": 1' "$prompt"; then
-grep -q '"contract": "GeneratedRound1Test"' "$prompt"
+grep -q 'contract GeneratedRound1Test' "$prompt"
 cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "exercise candidate rejection",
-  "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-overwrite-marker\n"}],
-  "tests": [{"path": "tests/generated/Existing.t.sol", "contract": "ExistingTest", "name": "testExisting"}]
+  "files": [{"path": "tests/generated/Existing.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-overwrite-marker\n"}]
 }
 JSON
 exit 0
@@ -125,11 +127,6 @@ cat > "$output" <<'JSON'
   "files": [{
     "path": "tests/generated/ArithmeticNoGain.t.sol",
     "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\n// rejected-no-gain-marker\ncontract ArithmeticNoGainTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testSmallValue() public view {\n        require(arithmetic.bucket(1) == 1);\n    }\n}\n"
-  }],
-  "tests": [{
-    "path": "tests/generated/ArithmeticNoGain.t.sol",
-    "contract": "ArithmeticNoGainTest",
-    "name": "testSmallValue"
   }]
 }
 JSON
@@ -147,11 +144,6 @@ cat > "$output" <<'JSON'
   "files": [{
     "path": "tests/generated/ArithmeticLower.t.sol",
     "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1);\n        Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"
-  }],
-  "tests": [{
-    "path": "tests/generated/ArithmeticLower.t.sol",
-    "contract": "ArithmeticLowerTest",
-    "name": "testLowerBoundary"
   }]
 }
 JSON
@@ -165,8 +157,7 @@ cat > "$output" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "try to replace an accepted property",
-  "files": [{"path": "tests/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-retained-path-marker\n"}],
-  "tests": [{"path": "tests/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
+  "files": [{"path": "tests/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\n// rejected-retained-path-marker\n"}]
 }
 JSON
 exit 0
@@ -182,11 +173,6 @@ cat > "$output" <<'JSON'
   "files": [{
     "path": "tests/generated/ArithmeticUpper.t.sol",
     "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"../../lib/example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticUpperTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testUpperBoundary() public view {\n        Assertions.equal(arithmetic.bucket(99), 2);\n        Assertions.equal(arithmetic.bucket(100), 3);\n    }\n}\n"
-  }],
-  "tests": [{
-    "path": "tests/generated/ArithmeticUpper.t.sol",
-    "contract": "ArithmeticUpperTest",
-    "name": "testUpperBoundary"
   }]
 }
 JSON
@@ -270,32 +256,17 @@ cat > "$2" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"example/Assertions.sol\";\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1); Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"}],
-  "tests": [{"path": "test/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
+  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Assertions} from \"example/Assertions.sol\";\nimport {Arithmetic} from \"bucket/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        Assertions.equal(arithmetic.bucket(9), 1); Assertions.equal(arithmetic.bucket(10), 2);\n    }\n}\n"}]
 }
 JSON
 "#;
 
-    prj.add_source(
-        "Arithmetic.sol",
-        r#"
-pragma solidity ^0.8.20;
-
-contract Arithmetic {
-    function bucket(uint256 value) external pure returns (uint256) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3;
-    }
-}
-"#,
-    );
     prj.add_test(
         "Arithmetic.t.sol",
         r#"
 pragma solidity ^0.8.20;
 
-import {Arithmetic} from "../src/Arithmetic.sol";
+import {Arithmetic} from "bucket/Arithmetic.sol";
 
 contract ArithmeticTest {
     Arithmetic internal arithmetic = new Arithmetic();
@@ -308,6 +279,13 @@ contract ArithmeticTest {
     );
     let brief = prj.root().join("brief.md");
     fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    // The mutation target is a dependency: candidate workspaces must copy it, not link it.
+    fs::create_dir_all(prj.root().join("node_modules/bucket")).unwrap();
+    fs::write(
+        prj.root().join("node_modules/bucket/Arithmetic.sol"),
+        "pragma solidity ^0.8.20;\ncontract Arithmetic {\n    function bucket(uint256 value) external pure returns (uint256) {\n        if (value < 10) return 1;\n        if (value < 100) return 2;\n        return 3;\n    }\n}\n",
+    )
+    .unwrap();
     fs::create_dir_all(prj.root().join("node_modules/example")).unwrap();
     fs::write(
         prj.root().join("node_modules/example/Assertions.sol"),
@@ -315,12 +293,14 @@ contract ArithmeticTest {
     )
     .unwrap();
     prj.update_config(|config| {
-        config.remappings = vec![
-            "example/=node_modules/example/"
-                .parse::<foundry_compilers::artifacts::remappings::Remapping>()
-                .unwrap()
-                .into(),
-        ];
+        config.remappings = ["bucket/=node_modules/bucket/", "example/=node_modules/example/"]
+            .map(|remapping| {
+                remapping
+                    .parse::<foundry_compilers::artifacts::remappings::Remapping>()
+                    .unwrap()
+                    .into()
+            })
+            .to_vec();
     });
     let generator = prj.root().join("generator.sh");
     fs::write(&generator, GENERATOR).unwrap();
@@ -333,7 +313,7 @@ contract ArithmeticTest {
         "--root",
         prj.root().to_str().unwrap(),
         "--mutate",
-        "src/Arithmetic.sol",
+        "node_modules/bucket/Arithmetic.sol",
         "--brief",
         brief.to_str().unwrap(),
         "--generator",
@@ -362,8 +342,7 @@ cat > "$2" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "exercise the lower comparison boundary",
-  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}],
-  "tests": [{"path": "test/generated/ArithmeticLower.t.sol", "contract": "ArithmeticLowerTest", "name": "testLowerBoundary"}]
+  "files": [{"path": "test/generated/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n    function testUpperBoundary() public pure {}\n}\n"}]
 }
 JSON
 "#;
@@ -395,12 +374,18 @@ contract ArithmeticTest {
     function testSmallValue() public view {
         require(arithmetic.bucket(1) == 1);
     }
+
+    function testUpperBoundary() public view {
+        require(arithmetic.bucket(99) == 2);
+        require(arithmetic.bucket(100) == 3);
+    }
 }
 "#,
     );
     let brief = prj.root().join("brief.md");
     fs::write(&brief, "Exercise every bucket boundary.").unwrap();
     // Configured filters exclude the generated test; candidate mutation runs must still select it.
+    // They must not select `ArithmeticTest::testUpperBoundary`, which shares a generated test name.
     prj.update_config(|config| {
         config.test_pattern = Some(regex::Regex::new(r"^testSmall\w*\(").unwrap().into());
         config.path_pattern = Some("**/Arithmetic.t.sol".parse().unwrap());
@@ -430,10 +415,101 @@ contract ArithmeticTest {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-added 1 generated test file(s) that reproducibly resolve [..] mutation survivor(s):
+added 1 generated test file(s) that reproducibly resolve 4 mutation survivor(s):
   test/generated/ArithmeticLower.t.sol
 
 "#]]);
+}
+
+#[cfg(unix)]
+#[forgetest_init]
+fn properties_rejects_symlinked_generated_directory(prj: _, cmd: _) {
+    const GENERATOR: &str = r#"#!/bin/sh
+set -eu
+cat > "$2" <<'JSON'
+{
+  "schema": "foundry/properties-candidate-v1",
+  "rationale": "exercise the lower comparison boundary",
+  "files": [{"path": "test/generated/link/ArithmeticLower.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Arithmetic} from \"../../../src/Arithmetic.sol\";\ncontract ArithmeticLowerTest {\n    Arithmetic internal arithmetic = new Arithmetic();\n    function testLowerBoundary() public view {\n        require(arithmetic.bucket(9) == 1); require(arithmetic.bucket(10) == 2);\n    }\n}\n"}]
+}
+JSON
+"#;
+
+    prj.add_source(
+        "Arithmetic.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+contract Arithmetic {
+    function bucket(uint256 value) external pure returns (uint256) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Arithmetic.t.sol",
+        r#"
+pragma solidity ^0.8.20;
+
+import {Arithmetic} from "../src/Arithmetic.sol";
+
+contract ArithmeticTest {
+    Arithmetic internal arithmetic = new Arithmetic();
+
+    function testSmallValue() public view {
+        require(arithmetic.bucket(1) == 1);
+    }
+}
+"#,
+    );
+    let brief = prj.root().join("brief.md");
+    fs::write(&brief, "Exercise every bucket boundary.").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir_all(prj.root().join("test/generated")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), prj.root().join("test/generated/link")).unwrap();
+    let generator = prj.root().join("generator.sh");
+    fs::write(&generator, GENERATOR).unwrap();
+    let mut permissions = fs::metadata(&generator).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&generator, permissions).unwrap();
+
+    cmd.args([
+        "properties",
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--mutate",
+        "src/Arithmetic.sol",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--generator",
+        generator.to_str().unwrap(),
+        "--seed",
+        "0x5eed",
+        "--seed",
+        "0xc0ffee",
+        "--match-contract",
+        "^ArithmeticTest$",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+no candidate reproducibly resolved a mutation survivor
+
+"#]]);
+
+    let rounds: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(prj.root().join("cache/properties/rounds.json")).unwrap(),
+    )
+    .unwrap();
+    assert_data_eq!(
+        rounds[0]["reasons"][0].as_str().unwrap(),
+        str![
+            "generated test path test/generated/link/ArithmeticLower.t.sol escapes project root [..]"
+        ]
+    );
+    assert!(!outside.path().join("ArithmeticLower.t.sol").exists());
 }
 
 #[cfg(unix)]
@@ -451,8 +527,7 @@ cat > "$2" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "large fees are capped at the current cap",
-  "files": [{"path": "test/generated/FeeCurrentCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCurrentCapTest {\n    function testCurrentCap() public pure {\n        require(Fee.fee(1e30) == 10 ether);\n        require(Fee.fee(1001 ether) == 10 ether);\n    }\n}\n"}],
-  "tests": [{"path": "test/generated/FeeCurrentCap.t.sol", "contract": "FeeCurrentCapTest", "name": "testCurrentCap"}]
+  "files": [{"path": "test/generated/FeeCurrentCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCurrentCapTest {\n    function testCurrentCap() public pure {\n        require(Fee.fee(1e30) == 10 ether);\n        require(Fee.fee(1001 ether) == 10 ether);\n    }\n}\n"}]
 }
 JSON
 exit 0
@@ -464,8 +539,7 @@ cat > "$2" <<'JSON'
 {
   "schema": "foundry/properties-candidate-v1",
   "rationale": "the documented cap is 100 ether",
-  "files": [{"path": "test/generated/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testFuzzCap(uint256 amount) public pure {\n        amount = amount % 1e30;\n        uint256 expected = amount / 100;\n        if (expected > 100 ether) expected = 100 ether;\n        require(Fee.fee(amount) == expected, \"fee\");\n    }\n}\n"}],
-  "tests": [{"path": "test/generated/FeeCap.t.sol", "contract": "FeeCapTest", "name": "testFuzzCap"}]
+  "files": [{"path": "test/generated/FeeCap.t.sol", "content": "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCapTest {\n    function testFuzzCap(uint256 amount) public pure {\n        amount = amount % 1e30;\n        uint256 expected = amount / 100;\n        if (expected > 100 ether) expected = 100 ether;\n        require(Fee.fee(amount) == expected, \"fee\");\n    }\n}\n"}]
 }
 JSON
 "#;
@@ -571,8 +645,7 @@ library Fee {
         serde_json::json!({
             "schema": "foundry/properties-candidate-v1",
             "rationale": "fee is 1% rounded down",
-            "files": [{"path": "test/generated/FeeCheck.t.sol", "content": content}],
-            "tests": [{"path": "test/generated/FeeCheck.t.sol", "contract": "FeeCheckTest", "name": "testFee"}]
+            "files": [{"path": "test/generated/FeeCheck.t.sol", "content": content}]
         })
         .to_string()
     };
@@ -587,6 +660,22 @@ library Fee {
         prj.root().join("broken.json"),
         candidate(
             "pragma solidity ^0.8.20;\ncontract FeeCheckTest {\n    function unused() public {\n        uint256 x;\n    }\n    function testFee() public {\n        missing();\n    }\n}\n",
+        ),
+    )
+    .unwrap();
+
+    // Forge runs every test in the files, including contracts that no manifest lists.
+    fs::write(
+        prj.root().join("extra.json"),
+        candidate(
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\ncontract FeeRoundingTest {\n    function testRoundsUp() public pure {\n        require(Fee.fee(199) == 2);\n    }\n}\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        prj.root().join("seeded.json"),
+        candidate(
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"../../src/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: default.fuzz.seed = \"0x3\"\n    function testFuzzFee(uint256 amount) public pure {\n        require(Fee.fee(amount) <= amount);\n    }\n}\n",
         ),
     )
     .unwrap();
@@ -608,8 +697,8 @@ library Fee {
 {
   "passed": false,
   "reasons": [
-    "FeeCheckTest::testFee failed on seed 1: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^",
-    "FeeCheckTest::testFee failed on seed 2: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^"
+    "candidate tests failed on seed 1: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^",
+    "candidate tests failed on seed 2: Error: Compiler run failed:/nError (7576): Undeclared identifier./n [FILE]:7:9:/n  |/n7 |         missing();/n  |         ^^^^^^^"
   ],
   "possible_bugs": []
 }
@@ -617,6 +706,29 @@ library Fee {
 "#]])
         .stderr_eq(str![[r#"
 Error: candidate check failed
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["properties", "--check", "extra.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "FeeRoundingTest::testRoundsUp failed on seed 1: EvmError: Revert",
+    "FeeRoundingTest::testRoundsUp failed on seed 2: EvmError: Revert"
+  ],
+  "possible_bugs": [
+    "FeeRoundingTest::testRoundsUp (seed 1: EvmError: Revert; seed 2: EvmError: Revert)"
+  ]
+}
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["properties", "--check", "seeded.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: candidate test/generated/FeeCheck.t.sol sets a seed in inline config
 
 "#]]);
     assert!(!prj.root().join("test/generated/FeeCheck.t.sol").exists());

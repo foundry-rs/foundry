@@ -212,7 +212,7 @@ fn rebase_remapping(
 /// that escape the project root.
 ///
 /// `label` and `orig` are only used for error messages.
-fn ensure_within_root(
+pub(crate) fn ensure_within_root(
     allowed_root: &Path,
     candidate: &Path,
     label: &str,

@@ -1,6 +1,6 @@
 //! The `forge properties` command: generate test properties and keep only verified ones.
 
-use crate::{mutation::MutationJsonOutput, result::TestStatus, workspace};
+use crate::{cmd::test::RerunFailure, mutation::MutationJsonOutput, result::TestStatus, workspace};
 use alloy_primitives::{U256, keccak256};
 use clap::Parser;
 use eyre::{Context, Result, ensure, eyre};
@@ -105,7 +105,6 @@ struct Candidate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     generator: Option<GeneratorMetadata>,
     files: Vec<CandidateFile>,
-    tests: Vec<CandidateTest>,
 }
 
 /// Self-reported metadata from the external generator.
@@ -119,13 +118,6 @@ struct GeneratorMetadata {
 struct CandidateFile {
     path: PathBuf,
     content: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct CandidateTest {
-    path: PathBuf,
-    contract: String,
-    name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -211,7 +203,6 @@ struct ProposalFeedback {
     candidate_digest: String,
     accepted: bool,
     rationale: Option<String>,
-    tests: Vec<CandidateTest>,
     reasons: Vec<String>,
     candidate_results: Vec<MutationResultSummary>,
     resolved_survivors: usize,
@@ -273,7 +264,6 @@ impl Evaluation {
             candidate_digest: self.candidate_digest.clone(),
             accepted: self.accepted,
             rationale: candidate.map(|candidate| candidate.rationale.clone()),
-            tests: candidate.map(|candidate| candidate.tests.clone()).unwrap_or_default(),
             reasons: self.reasons.clone(),
             candidate_results: self.candidate.clone(),
             resolved_survivors: self.resolved_survivors,
@@ -323,7 +313,9 @@ impl PropertiesArgs {
         let contract_filter_args = contract_filter
             .map(|contract| vec!["--match-contract".to_string(), contract.to_string()])
             .unwrap_or_default();
-        let baseline = self.run_mutations(&forge, &config, &config.root, &contract_filter_args)?;
+        let baseline =
+            self.run_mutations(&forge, &config, &config.root, &contract_filter_args, None)?;
+        let baseline_tests = list_tests(&forge, &config.root, &contract_filter_args)?;
         let project_context = project_context(&config, &self.mutate);
         let prompt_baseline = baseline
             .iter()
@@ -394,18 +386,13 @@ impl PropertiesArgs {
                             model: "model name".to_string(),
                         }),
                         files: vec![CandidateFile {
-                            path: example_path.clone(),
+                            path: example_path,
                             content: format!(
                                 "pragma solidity ^0.8.0;\ncontract {example_contract} {{\n    function testProperty() external {{}}\n}}\n"
                             ),
                         }],
-                        tests: vec![CandidateTest {
-                            path: example_path,
-                            contract: example_contract,
-                            name: "testProperty".to_string(),
-                        }],
                     },
-                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, tests, and generator metadata with a useful property for this project. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional.",
+                    note: "Return one JSON object with exactly this shape. Keep schema unchanged; replace the structural example's rationale, files, and generator metadata with a useful property for this project. Forge runs every test in the files. Generated assertions are candidates for human review, not proofs. Each file path must be new relative to current_candidate. The generator object is optional.",
                 },
             };
             fs::write(&prompt_path, serde_json::to_vec_pretty(&prompt)?)?;
@@ -433,28 +420,15 @@ impl PropertiesArgs {
                     &generated_tests,
                 ) {
                     Ok(candidate) => {
-                        let digest = keccak256(serde_json::to_vec(&candidate)?).to_string();
-                        let evaluated = self.evaluate(
+                        let (mut evaluation, candidate_results, newly_resolved) = self.evaluate(
                             &config,
                             &forge,
                             &baseline,
+                            &baseline_tests,
                             &current_results,
                             &resolved_survivors,
                             &candidate,
-                        );
-                        let (mut evaluation, candidate_results, newly_resolved) = evaluated
-                            .unwrap_or_else(|error| {
-                                (
-                                    Evaluation::rejected(
-                                        digest,
-                                        candidate.generator.clone(),
-                                        &baseline,
-                                        error,
-                                    ),
-                                    vec![],
-                                    BTreeSet::new(),
-                                )
-                            });
+                        )?;
                         evaluation.after_possible_bug = evaluation.accepted
                             && evaluations
                                 .iter()
@@ -527,7 +501,8 @@ impl PropertiesArgs {
             }
         }
         if let Some(candidate) = current_candidate {
-            // Evaluation rejects paths that already exist, so this adds files without overwriting.
+            // Evaluation rejects paths that already exist or leave the project, so this adds files
+            // without overwriting.
             for file in &candidate.files {
                 let path = config.root.join(&file.path);
                 fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
@@ -559,24 +534,51 @@ impl PropertiesArgs {
         generator_error.map_or(Ok(()), Err)
     }
 
+    /// Evaluates a candidate. Problems with the candidate become rejection reasons; failures of
+    /// Forge itself are errors.
+    #[allow(clippy::too_many_arguments)]
     fn evaluate(
         &self,
         config: &Config,
         forge: &Path,
         baseline: &[SeedMutation],
+        baseline_tests: &[RerunFailure],
         current_results: &[SeedMutation],
         previously_resolved: &BTreeSet<MutationIdentity>,
         candidate: &Candidate,
     ) -> Result<(Evaluation, Vec<SeedMutation>, BTreeSet<MutationIdentity>)> {
-        let candidate_workspace = candidate_workspace(config, candidate)?;
-        let (mut reasons, possible_bugs) =
+        let digest = keccak256(serde_json::to_vec(candidate)?).to_string();
+        let conflict = candidate.files.iter().find_map(|file| {
+            let path = config.root.join(&file.path);
+            if path.exists() {
+                return Some(format!("candidate would overwrite {}", file.path.display()));
+            }
+            // A symlinked directory on the path must not lead outside the project.
+            let existing = path.ancestors().find(|ancestor| ancestor.exists())?;
+            workspace::ensure_within_root(&config.root, existing, "generated test", &file.path)
+                .err()
+                .map(|err| err.to_string())
+        });
+        if let Some(reason) = conflict {
+            let evaluation =
+                Evaluation::rejected(digest, candidate.generator.clone(), baseline, reason);
+            return Ok((evaluation, vec![], BTreeSet::new()));
+        }
+        let candidate_workspace = candidate_workspace(config, candidate, &self.mutate)?;
+        let (mut reasons, possible_bugs, tests) =
             self.check_candidate_tests(forge, candidate_workspace.path(), config, candidate)?;
 
         let candidate_results = if reasons.is_empty() {
-            let filter_args =
-                candidate_filter_args(self.match_contract.as_deref(), config, candidate);
-            let results =
-                self.run_mutations(forge, config, candidate_workspace.path(), &filter_args)?;
+            // Run exactly the baseline tests and the generated tests. Widening filters instead
+            // could also select existing tests that the baseline excluded.
+            let selection = baseline_tests.iter().chain(&tests).cloned().collect::<Vec<_>>();
+            let results = self.run_mutations(
+                forge,
+                config,
+                candidate_workspace.path(),
+                &[],
+                Some(&selection),
+            )?;
             for (before, after) in current_results.iter().zip(&results) {
                 // Invalid is an execution outcome, not part of the population: a stronger test can
                 // expose a previously skipped mutant that does not compile. Only a survivor that
@@ -643,7 +645,7 @@ impl PropertiesArgs {
         }
         Ok((
             Evaluation {
-                candidate_digest: keccak256(serde_json::to_vec(candidate)?).to_string(),
+                candidate_digest: digest,
                 generator: candidate.generator.clone(),
                 accepted: reasons.is_empty(),
                 reasons,
@@ -660,71 +662,79 @@ impl PropertiesArgs {
         ))
     }
 
-    /// Runs every candidate test on every seed. Returns the rejection reasons and the tests that
-    /// fail on every seed, which are possible bugs.
+    /// Runs every test in the candidate files on every seed. Returns the rejection reasons, the
+    /// tests that fail on every seed (possible bugs), and the tests that ran.
     fn check_candidate_tests(
         &self,
         forge: &Path,
         workspace: &Path,
         config: &Config,
         candidate: &Candidate,
-    ) -> Result<(Vec<String>, Vec<String>)> {
+    ) -> Result<(Vec<String>, Vec<String>, Vec<RerunFailure>)> {
+        let paths = candidate
+            .files
+            .iter()
+            .map(|file| file.path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         let mut reasons = Vec::new();
-        let mut failures = vec![Vec::new(); candidate.tests.len()];
+        let mut failures = BTreeMap::<(String, String), Vec<String>>::new();
         for seed in &self.seed {
-            for (test, failures) in candidate.tests.iter().zip(&mut failures) {
-                let output = self.run_candidate_test(forge, workspace, config, seed, test)?;
-                if !output.status.success() && output.stdout.is_empty() {
-                    reasons.push(format!(
-                        "{}::{} failed on seed {seed}: {}",
-                        test.contract,
-                        test.name,
-                        stderr(&output)
-                    ));
-                    continue;
-                }
-                match candidate_test_result(&output, test) {
-                    Ok((TestStatus::Success, _)) if output.status.success() => {}
-                    Ok((TestStatus::Success, _)) => reasons.push(format!(
-                        "{}::{} passed but Forge exited unsuccessfully on seed {seed}: {}",
-                        test.contract,
-                        test.name,
-                        stderr(&output)
-                    )),
-                    Ok((TestStatus::Failure, reason)) => {
+            let mut command = forge_command(forge, config, workspace, seed);
+            // Configured test filters must not hide generated tests.
+            command.args([
+                "test",
+                "--json",
+                "--match-path",
+                &format!("{{{paths}}}"),
+                "--match-contract",
+                ".*",
+                "--match-test",
+                ".*",
+            ]);
+            add_dependency_args(&mut command, config, workspace);
+            let output = command.output().wrap_err("failed to run candidate tests")?;
+            if !output.status.success() && output.stdout.is_empty() {
+                reasons.push(format!("candidate tests failed on seed {seed}: {}", stderr(&output)));
+                continue;
+            }
+            let results = candidate_test_results(&output)?;
+            if results.is_empty() {
+                reasons.push(format!("candidate files contain no runnable tests on seed {seed}"));
+                continue;
+            }
+            for (test, status, reason) in results {
+                let name = test_display_name(&test);
+                let seed_failures =
+                    failures.entry((test.contract.clone(), test.test.clone())).or_default();
+                match status {
+                    TestStatus::Success => {}
+                    TestStatus::Failure => {
                         let mut reason = reason.unwrap_or_else(|| stderr(&output));
                         if reason.is_empty() {
                             reason = "the test failed without a reason".to_string();
                         }
-                        reasons.push(format!(
-                            "{}::{} failed on seed {seed}: {reason}",
-                            test.contract, test.name
-                        ));
-                        failures.push(format!("seed {seed}: {reason}"));
+                        reasons.push(format!("{name} failed on seed {seed}: {reason}"));
+                        seed_failures.push(format!("seed {seed}: {reason}"));
                     }
-                    Ok((TestStatus::Skipped, reason)) => reasons.push(format!(
-                        "{}::{} was skipped on seed {seed}: {}",
-                        test.contract,
-                        test.name,
+                    TestStatus::Skipped => reasons.push(format!(
+                        "{name} was skipped on seed {seed}: {}",
                         reason.unwrap_or_else(|| "no reason reported".to_string())
-                    )),
-                    Err(error) => reasons.push(format!(
-                        "{}::{} could not be verified on seed {seed}: {error}",
-                        test.contract, test.name
                     )),
                 }
             }
         }
-        let possible_bugs = candidate
-            .tests
+        let possible_bugs = failures
             .iter()
-            .zip(failures)
-            .filter(|(_, failures)| failures.len() == self.seed.len())
-            .map(|(test, failures)| {
-                format!("{}::{} ({})", test.contract, test.name, failures.join("; "))
+            .filter(|(_, seed_failures)| seed_failures.len() == self.seed.len())
+            .map(|((contract, test), seed_failures)| {
+                let test = RerunFailure { contract: contract.clone(), test: test.clone() };
+                format!("{} ({})", test_display_name(&test), seed_failures.join("; "))
             })
             .collect();
-        Ok((reasons, possible_bugs))
+        let tests =
+            failures.into_keys().map(|(contract, test)| RerunFailure { contract, test }).collect();
+        Ok((reasons, possible_bugs, tests))
     }
 
     fn check(
@@ -735,8 +745,8 @@ impl PropertiesArgs {
         path: &Path,
     ) -> Result<()> {
         let candidate = read_candidate(path, generated_tests)?;
-        let workspace = candidate_workspace(config, &candidate)?;
-        let (reasons, possible_bugs) =
+        let workspace = candidate_workspace(config, &candidate, &[])?;
+        let (reasons, possible_bugs, _) =
             self.check_candidate_tests(forge, workspace.path(), config, &candidate)?;
         let passed = reasons.is_empty();
         sh_println!(
@@ -751,39 +761,15 @@ impl PropertiesArgs {
         Ok(())
     }
 
-    fn run_candidate_test(
-        &self,
-        forge: &Path,
-        workspace: &Path,
-        dependency_config: &Config,
-        seed: &U256,
-        test: &CandidateTest,
-    ) -> Result<Output> {
-        let mut command = forge_command(forge, workspace, seed);
-        let contract = format!("^{}$", regex::escape(&test.contract));
-        let test_name = format!(r"^{}(?:\(.*\))?$", regex::escape(&test.name));
-        command.args([
-            "test",
-            "--json",
-            "--match-path",
-            test.path.to_str().expect("validated candidate path is UTF-8"),
-            "--match-contract",
-            &contract,
-            "--match-test",
-            &test_name,
-        ]);
-        add_dependency_args(&mut command, dependency_config, workspace);
-        command.output().wrap_err("failed to run candidate test")
-    }
-
     /// Runs mutation testing for every seed concurrently. Each seed builds into its own
-    /// directories.
+    /// directories. With `selection`, exactly those tests run.
     fn run_mutations(
         &self,
         forge: &Path,
         config: &Config,
         workspace: &Path,
         filter_args: &[String],
+        selection: Option<&[RerunFailure]>,
     ) -> Result<Vec<SeedMutation>> {
         std::thread::scope(|scope| {
             let runs = self
@@ -791,7 +777,7 @@ impl PropertiesArgs {
                 .iter()
                 .map(|seed| {
                     scope.spawn(move || {
-                        self.run_mutation(forge, config, workspace, filter_args, seed)
+                        self.run_mutation(forge, config, workspace, filter_args, selection, seed)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -805,18 +791,30 @@ impl PropertiesArgs {
         config: &Config,
         workspace: &Path,
         filter_args: &[String],
+        selection: Option<&[RerunFailure]>,
         seed: &U256,
     ) -> Result<SeedMutation> {
-        let build_dir = workspace
-            .join(workspace::relative_to_root(&config.root, &config.cache_path))
-            .join("properties/seeds")
-            .join(format!("{seed:#x}"));
-        let mut command = forge_command(forge, workspace, seed);
+        let seed_dir = seed_dir(config, workspace, seed);
+        let mut command = forge_command(forge, config, workspace, seed);
         command
-            .env("FOUNDRY_OUT", build_dir.join("out"))
-            .env("FOUNDRY_CACHE_PATH", build_dir.join("cache"));
+            .env("FOUNDRY_OUT", seed_dir.join("out"))
+            .env("FOUNDRY_CACHE_PATH", seed_dir.join("cache"));
+        if let Some(selection) = selection {
+            // `--rerun` selects exact contract and test pairs; the broad patterns keep configured
+            // filters from removing any of them.
+            let failures_file = seed_dir.join("test-failures");
+            fs::create_dir_all(&seed_dir)?;
+            fs::write(
+                &failures_file,
+                serde_json::to_vec(&serde_json::json!({ "version": 1, "failures": selection }))?,
+            )?;
+            command.env("FOUNDRY_TEST_FAILURES_FILE", failures_file);
+        }
         command.args(["test", "--json", "--mutate"]);
         command.args(&self.mutate);
+        if selection.is_some() {
+            command.args(["--rerun", "--match-contract", ".*", "--match-path", "**"]);
+        }
         if let Some(timeout) = self.mutation_timeout {
             command.args(["--mutation-timeout", &timeout.to_string()]);
         }
@@ -845,7 +843,11 @@ impl PropertiesArgs {
 }
 
 /// Copies the project into a temporary workspace and adds the candidate files.
-fn candidate_workspace(config: &Config, candidate: &Candidate) -> Result<TempDir> {
+fn candidate_workspace(
+    config: &Config,
+    candidate: &Candidate,
+    mutate: &[PathBuf],
+) -> Result<TempDir> {
     let candidate_workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
     workspace::copy_project(config, candidate_workspace.path())?;
     // Mutation testing copies this workspace again. Materialize project-local library and
@@ -874,8 +876,15 @@ fn candidate_workspace(config: &Config, candidate: &Candidate) -> Result<TempDir
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
             let destination = target.join(entry.file_name());
+            // Mutation testing only accepts targets inside its workspace, so copy dependency
+            // directories that contain a mutation target instead of linking them.
+            let contains_target = || {
+                let relative = relative.join(entry.file_name());
+                mutate.iter().any(|target| target.starts_with(&relative))
+            };
             if entry.path().is_dir() {
-                if workspace::symlink_dir(&entry.path(), &destination).is_err() {
+                if contains_target() || workspace::symlink_dir(&entry.path(), &destination).is_err()
+                {
                     workspace::copy_dir_recursive(&entry.path(), &destination)?;
                 }
             } else {
@@ -885,99 +894,86 @@ fn candidate_workspace(config: &Config, candidate: &Candidate) -> Result<TempDir
     }
     for file in &candidate.files {
         let path = candidate_workspace.path().join(&file.path);
-        ensure!(!path.exists(), "candidate would overwrite {}", file.path.display());
         fs::create_dir_all(path.parent().expect("candidate path has a parent"))?;
         fs::write(path, &file.content)?;
     }
     Ok(candidate_workspace)
 }
 
-fn candidate_test_result(
+/// Returns every test result in Forge's JSON output.
+fn candidate_test_results(
     output: &Output,
-    test: &CandidateTest,
-) -> Result<(TestStatus, Option<String>)> {
+) -> Result<Vec<(RerunFailure, TestStatus, Option<String>)>> {
     let suites = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         .wrap_err_with(|| format!("invalid Forge JSON: {}", stderr(output)))?;
     let suites = suites.as_object().ok_or_else(|| eyre!("Forge JSON is not an object"))?;
-    let suite_suffix = format!(":{}", test.contract);
-    let mut matches = suites
-        .iter()
-        .filter(|(suite, _)| suite.ends_with(&suite_suffix))
-        .filter_map(|(_, suite)| suite.get("test_results")?.as_object())
-        .flat_map(|tests| tests.iter())
-        .filter(|(signature, _)| {
-            if test.name.contains('(') {
-                signature.as_str() == test.name
-            } else {
-                signature.split_once('(').is_some_and(|(name, _)| name == test.name)
-            }
-        });
-    let (_, result) = matches.next().ok_or_else(|| eyre!("test did not execute"))?;
-    ensure!(matches.next().is_none(), "test name matched multiple results");
-    let status = serde_json::from_value(
-        result.get("status").ok_or_else(|| eyre!("test result has no status"))?.clone(),
-    )?;
-    let mut reason = result.get("reason").and_then(serde_json::Value::as_str).map(str::to_string);
-    if let Some(counterexample) =
-        result.get("counterexample").and_then(|value| CounterExample::deserialize(value).ok())
-    {
-        let calls = match counterexample {
-            CounterExample::Single(call) => vec![call],
-            CounterExample::Sequence(_, calls) => calls,
+    let mut results = Vec::new();
+    for (contract, suite) in suites {
+        let Some(tests) = suite.get("test_results").and_then(serde_json::Value::as_object) else {
+            continue;
         };
-        let calls =
-            calls.iter().map(|call| call.to_string().trim().to_string()).collect::<Vec<_>>();
-        let counterexample = format!("counterexample: {}", calls.join(", "));
-        reason = Some(match reason {
-            Some(reason) => format!("{reason}; {counterexample}"),
-            None => counterexample,
-        });
+        for (test, result) in tests {
+            let status = serde_json::from_value(
+                result.get("status").ok_or_else(|| eyre!("test result has no status"))?.clone(),
+            )?;
+            let mut reason =
+                result.get("reason").and_then(serde_json::Value::as_str).map(str::to_string);
+            if let Some(counterexample) = result
+                .get("counterexample")
+                .and_then(|value| CounterExample::deserialize(value).ok())
+            {
+                let calls = match counterexample {
+                    CounterExample::Single(call) => vec![call],
+                    CounterExample::Sequence(_, calls) => calls,
+                };
+                let calls = calls
+                    .iter()
+                    .map(|call| call.to_string().trim().to_string())
+                    .collect::<Vec<_>>();
+                let counterexample = format!("counterexample: {}", calls.join(", "));
+                reason = Some(match reason {
+                    Some(reason) => format!("{reason}; {counterexample}"),
+                    None => counterexample,
+                });
+            }
+            results.push((
+                RerunFailure { contract: contract.clone(), test: test.clone() },
+                status,
+                reason,
+            ));
+        }
     }
-    Ok((status, reason))
+    Ok(results)
 }
 
-/// Returns test filter arguments that select the configured tests plus the generated tests.
-///
-/// Configured filters still apply to the mutation run, so each one is widened to include the
-/// candidate's contracts, test functions, and files rather than replaced.
-fn candidate_filter_args(
-    match_contract: Option<&str>,
-    config: &Config,
-    candidate: &Candidate,
-) -> Vec<String> {
-    let alternatives = |items: BTreeSet<String>| items.into_iter().collect::<Vec<_>>().join("|");
-    let mut args = Vec::new();
-    let contract =
-        match_contract.or_else(|| config.contract_pattern.as_ref().map(|pattern| pattern.as_str()));
-    if let Some(contract) = contract {
-        let generated = alternatives(
-            candidate.tests.iter().map(|test| regex::escape(&test.contract)).collect(),
-        );
-        args.extend([
-            "--match-contract".to_string(),
-            format!("(?:{contract})|(?:^(?:{generated})$)"),
-        ]);
-    }
-    if let Some(test) = &config.test_pattern {
-        let generated =
-            alternatives(candidate.tests.iter().map(|test| regex::escape(&test.name)).collect());
-        args.extend([
-            "--match-test".to_string(),
-            format!("(?:{})|(?:^(?:{generated})(?:\\(.*\\))?$)", test.as_str()),
-        ]);
-    }
-    if let Some(path) = &config.path_pattern {
-        let generated = candidate
-            .tests
-            .iter()
-            // Test paths can be matched relative to the project root or as absolute paths.
-            .map(|test| format!("**/{}", test.path.display()))
-            .collect::<BTreeSet<_>>();
-        let globs =
-            std::iter::once(path.glob().to_string()).chain(generated).collect::<Vec<_>>().join(",");
-        args.extend(["--match-path".to_string(), format!("{{{globs}}}")]);
-    }
-    args
+/// Lists the tests that the filter arguments select in a project.
+fn list_tests(forge: &Path, root: &Path, filter_args: &[String]) -> Result<Vec<RerunFailure>> {
+    let output = Command::new(forge)
+        .current_dir(root)
+        .args(["test", "--list", "--json"])
+        .args(filter_args)
+        .output()
+        .wrap_err("failed to list tests")?;
+    ensure!(output.status.success(), "failed to list tests: {}", stderr(&output));
+    let files =
+        serde_json::from_slice::<BTreeMap<String, BTreeMap<String, Vec<String>>>>(&output.stdout)
+            .wrap_err("invalid test list JSON")?;
+    Ok(files
+        .into_iter()
+        .flat_map(|(path, contracts)| {
+            contracts.into_iter().flat_map(move |(contract, tests)| {
+                let contract = format!("{path}:{contract}");
+                tests.into_iter().map(move |test| RerunFailure { contract: contract.clone(), test })
+            })
+        })
+        .collect())
+}
+
+/// Returns `Contract::test` for a test identity.
+fn test_display_name(test: &RerunFailure) -> String {
+    let contract = test.contract.rsplit_once(':').map_or(test.contract.as_str(), |(_, name)| name);
+    let name = test.test.split_once('(').map_or(test.test.as_str(), |(name, _)| name);
+    format!("{contract}::{name}")
 }
 
 fn project_context(config: &Config, mutate: &[PathBuf]) -> ProjectContext {
@@ -1189,26 +1185,36 @@ fn mutation_result_summaries(results: &[SeedMutation]) -> Vec<MutationResultSumm
         .collect()
 }
 
+/// Returns the baseline survivors that the candidate kills on every seed.
+///
+/// The mutant population does not change, so a mutant is killed when it is not survived, timed
+/// out, invalid, or skipped. Being absent from the survivors alone is not enough.
 fn resolved_survivor_identities(
     baseline: &[SeedMutation],
     candidate: &[SeedMutation],
 ) -> BTreeSet<MutationIdentity> {
-    let baseline = baseline
-        .iter()
-        .map(|result| (result.seed, survivor_identities(&result.output)))
-        .collect::<BTreeMap<_, _>>();
-    let candidate = candidate
-        .iter()
-        .map(|result| (result.seed, survivor_identities(&result.output)))
-        .collect::<BTreeMap<_, _>>();
-    if baseline.keys().ne(candidate.keys()) {
+    if baseline.iter().map(|result| result.seed).ne(candidate.iter().map(|result| result.seed)) {
         return BTreeSet::new();
     }
-    let identities = baseline.values().flatten().cloned().collect::<BTreeSet<_>>();
-
-    identities
-        .into_iter()
-        .filter(|identity| candidate.values().all(|survivors| !survivors.contains(identity)))
+    let not_killed = candidate
+        .iter()
+        .map(|result| {
+            let output = &result.output;
+            [
+                &output.survived_mutants,
+                &output.timed_out_mutants,
+                &output.invalid_mutants,
+                &output.skipped_mutants,
+            ]
+            .into_iter()
+            .flat_map(mutant_identities)
+            .collect::<BTreeSet<_>>()
+        })
+        .collect::<Vec<_>>();
+    baseline
+        .iter()
+        .flat_map(|result| survivor_identities(&result.output))
+        .filter(|identity| not_killed.iter().all(|not_killed| !not_killed.contains(identity)))
         .collect()
 }
 
@@ -1259,10 +1265,8 @@ fn accumulate_candidate(
             None
         },
         files: current.files.clone(),
-        tests: current.tests.clone(),
     };
     candidate.files.extend(proposal.files.iter().cloned());
-    candidate.tests.extend(proposal.tests.iter().cloned());
     validate_candidate(&candidate, generated_tests)?;
     Ok(candidate)
 }
@@ -1284,7 +1288,6 @@ fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<(
         ensure!(!generator.model.trim().is_empty(), "candidate generator model is empty");
     }
     ensure!(!candidate.files.is_empty(), "candidate contains no files");
-    ensure!(!candidate.tests.is_empty(), "candidate contains no tests");
     ensure!(candidate.files.len() <= MAX_CANDIDATE_FILES, "candidate contains too many files");
     ensure!(
         candidate.files.iter().map(|file| file.content.len()).sum::<usize>() <= MAX_CANDIDATE_BYTES,
@@ -1294,12 +1297,13 @@ fn validate_candidate(candidate: &Candidate, generated_tests: &Path) -> Result<(
     for file in &candidate.files {
         validate_candidate_path(&file.path, generated_tests)?;
         ensure!(paths.insert(&file.path), "candidate contains duplicate file paths");
-    }
-    for test in &candidate.tests {
-        validate_candidate_path(&test.path, generated_tests)?;
-        ensure!(paths.contains(&test.path), "candidate test names a file absent from files");
-        ensure!(!test.contract.is_empty(), "candidate test contract is empty");
-        ensure!(!test.name.is_empty(), "candidate test name is empty");
+        // The campaign seeds must decide every run, so a generated test cannot pin its own seed.
+        let sets_seed = file.content.lines().any(|line| {
+            line.split_once("forge-config:")
+                .and_then(|(_, setting)| setting.split_once('='))
+                .is_some_and(|(key, _)| key.trim().ends_with(".seed"))
+        });
+        ensure!(!sets_seed, "candidate {} sets a seed in inline config", file.path.display());
     }
     Ok(())
 }
@@ -1321,10 +1325,25 @@ fn validate_candidate_path(path: &Path, generated_tests: &Path) -> Result<()> {
     Ok(())
 }
 
-fn forge_command(forge: &Path, workspace: &Path, seed: &U256) -> Command {
+/// Runs Forge with one seed. Each seed persists fuzz and invariant failures in its own
+/// directory, so a counterexample found with one seed is not replayed with another.
+fn forge_command(forge: &Path, config: &Config, workspace: &Path, seed: &U256) -> Command {
+    let seed_dir = seed_dir(config, workspace, seed);
     let mut command = Command::new(forge);
-    command.current_dir(workspace).env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"));
     command
+        .current_dir(workspace)
+        .env("FOUNDRY_FUZZ_SEED", format!("{seed:#x}"))
+        .env("FOUNDRY_FUZZ_FAILURE_PERSIST_DIR", seed_dir.join("fuzz"))
+        .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"));
+    command
+}
+
+/// Returns the directory for one seed's builds and persisted state in a workspace.
+fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
+    workspace
+        .join(workspace::relative_to_root(&config.root, &config.cache_path))
+        .join("properties/seeds")
+        .join(format!("{seed:#x}"))
 }
 
 fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path) {
