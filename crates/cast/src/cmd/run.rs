@@ -535,10 +535,13 @@ impl RunArgs {
 
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
-            // fork. For unknown chains, probe the node for the features it executes at the block,
-            // falling back to a blob-gas heuristic if the node rejects the probe.
+            // fork. For unknown chains, use the hardfork the node reports, as Anvil does, or probe
+            // the node for the features it executes at the block, falling back to a blob-gas
+            // heuristic if the node rejects the probe. The probe stops at Osaka, so it must not
+            // override a reported hardfork that prices gas differently.
             if evm_version.is_none()
                 && config.hardfork.is_none()
+                && fork.context().hardfork().is_none()
                 && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
                     .is_none()
             {
