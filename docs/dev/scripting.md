@@ -149,10 +149,10 @@ returns no transaction, the durable attempt remains the source of identity: sign
 replayed; delegated attempts with a known hash remain checkpointed for a later plain `--resume`,
 while unknown outcomes remain blocked until explicitly resolved. Receipt polling stops at the first
 transaction the endpoint stops returning, because later nonces may stay visible forever behind it;
-the unpolled hashes stay in `pending`. Broadcast still continues and exits successfully, since a
-lagging endpoint can briefly return no transaction, but it replaces the success message with a
-warning that lists every operation without a receipt; a later `--resume` resends the saved signed
-bytes.
+the unpolled hashes stay in `pending`, but each is checked once for a receipt so a confirmed revert
+still fails the broadcast. Otherwise, broadcast continues and exits successfully, since a lagging
+endpoint can briefly return no transaction, but it replaces the success message with a warning that
+lists every operation without a receipt; a later `--resume` resends the saved signed bytes.
 
 An RPC receipt that repeatedly lacks block metadata follows a separate bounded retry path and can
 also remove the compatibility hash from `pending`. Neither that incomplete receipt nor one endpoint

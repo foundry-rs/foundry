@@ -5,7 +5,7 @@ use alloy_primitives::{
     B256,
     map::{B256HashMap, HashMap},
 };
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
@@ -221,6 +221,7 @@ impl ScriptProgress {
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
+        let mut dropped = false;
 
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
@@ -266,6 +267,7 @@ impl ScriptProgress {
 
                     // A later nonce may remain visible indefinitely without this transaction.
                     // Stop polling so the caller can checkpoint and either abort or replay it.
+                    dropped = true;
                     break;
                 }
                 Ok(TxStatus::Success(receipt)) => {
@@ -295,6 +297,22 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
+                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
+                }
+            }
+        }
+
+        // The break above skipped hashes that may already have failed on-chain; surface those
+        // failures like the polling loop does.
+        if dropped {
+            let receipts = futures::stream::iter(deployment_sequence.pending.clone())
+                .map(|hash| provider.get_transaction_receipt(hash))
+                .buffer_unordered(10)
+                .collect::<Vec<_>>()
+                .await;
+            for receipt in receipts.into_iter().flatten().flatten() {
+                if !receipt.status() && receipt.block_number().is_some() {
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
                     errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
                 }
             }
