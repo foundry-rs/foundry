@@ -192,15 +192,6 @@ impl<'a> ContractsByArtifactBuilder<'a> {
 
 type ArtifactWithContractRef<'a> = (&'a ArtifactId, &'a ContractData);
 
-/// Result of a deployed-code search.
-#[derive(Default)]
-struct DeployedCodeMatch<'a> {
-    /// The selected match, if any.
-    contract: Option<ArtifactWithContractRef<'a>>,
-    /// Whether no metadata-exact match exists and more than one partial match exists.
-    ambiguous_partial: bool,
-}
-
 /// Wrapper type that maps an artifact to a contract ABI and bytecode.
 #[derive(Clone, Default, Debug)]
 pub struct ContractsByArtifact(Arc<BTreeMap<ArtifactId, ContractData>>);
@@ -291,7 +282,7 @@ impl ContractsByArtifact {
         code: &[u8],
         preferred: impl Fn(&ArtifactId) -> bool,
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, false, preferred).contract
+        self.find_by_deployed_code_exact_inner(code, false, preferred).0
     }
 
     /// Finds the only contract whose deployed bytecode exactly matches the given code.
@@ -299,7 +290,7 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_deployed_code_exact_inner(code, true, |_| false).contract
+        self.find_by_deployed_code_exact_inner(code, true, |_| false).0
     }
 
     /// Finds a deployed-code match, preferring exact metadata matches and rejecting ambiguous
@@ -308,13 +299,14 @@ impl ContractsByArtifact {
         &self,
         code: &[u8],
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let found = self.find_by_deployed_code_exact_inner(code, false, |_| true);
-        if found.ambiguous_partial {
+        let (matched, ambiguous_partial) =
+            self.find_by_deployed_code_exact_inner(code, false, |_| true);
+        if ambiguous_partial {
             eyre::bail!(
                 "Multiple local contracts match the deployed bytecode with different metadata. Specify the contract as <path>:<contract>"
             );
         }
-        Ok(found.contract)
+        Ok(matched)
     }
 
     fn find_by_deployed_code_exact_inner(
@@ -322,10 +314,10 @@ impl ContractsByArtifact {
         code: &[u8],
         unique: bool,
         preferred: impl Fn(&ArtifactId) -> bool,
-    ) -> DeployedCodeMatch<'_> {
+    ) -> (Option<ArtifactWithContractRef<'_>>, bool) {
         // Immediately return None if the code is empty.
         if code.is_empty() {
-            return DeployedCodeMatch::default();
+            return (None, false);
         }
 
         let mut partial_match = None;
@@ -452,13 +444,13 @@ impl ContractsByArtifact {
 
             if matches_metadata {
                 if unique && exact_match.is_some() {
-                    return DeployedCodeMatch::default();
+                    return (None, false);
                 }
                 if exact_match.is_none() || preferred(id) {
                     exact_match = Some((id, contract));
                 }
                 if !unique && preferred(id) {
-                    return DeployedCodeMatch { contract: exact_match, ambiguous_partial: false };
+                    return (exact_match, false);
                 }
             } else {
                 ambiguous_partial |= partial_match.is_some();
@@ -468,10 +460,8 @@ impl ContractsByArtifact {
             }
         }
 
-        DeployedCodeMatch {
-            contract: if unique { exact_match } else { exact_match.or(partial_match) },
-            ambiguous_partial: exact_match.is_none() && ambiguous_partial,
-        }
+        let ambiguous_partial = exact_match.is_none() && ambiguous_partial;
+        (if unique { exact_match } else { exact_match.or(partial_match) }, ambiguous_partial)
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
