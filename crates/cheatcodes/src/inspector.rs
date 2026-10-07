@@ -846,11 +846,17 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// suspended parent alongside the returned state.
     pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
 
-    /// Whether snapshot restorations belong to the active isolated transaction.
+    /// Whether snapshot restorations belong to the tracked transaction (an isolated call, or the
+    /// top-level transaction when isolation is disabled) and must be unwound by failing frames.
     pub track_isolated_snapshots: bool,
 
-    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    /// Journals replaced by snapshot restorations that may need to be reinstated when an
+    /// enclosing frame of the tracked transaction fails.
     pub isolated_snapshot_restores: Vec<JournaledState>,
+
+    /// Whether the next snapshot restoration is the first one since its calling frame started,
+    /// and so must be recorded in `isolated_snapshot_restores`.
+    pub capture_isolated_snapshot_restore: bool,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -937,6 +943,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_isolated_snapshot_journal: None,
             track_isolated_snapshots: false,
             isolated_snapshot_restores: Vec::new(),
+            capture_isolated_snapshot_restore: false,
         }
     }
 
