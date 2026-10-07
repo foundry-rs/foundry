@@ -1920,11 +1920,6 @@ mod tests {
     use alloy_primitives::{address, aliases::U96, bytes, hex};
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
-    #[cfg(feature = "monad")]
-    use monad_revm::{
-        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
-        staking::interface::IMonadStaking::getEpochCall,
-    };
     use std::borrow::Cow;
     use tempo_precompiles::{
         ACCOUNT_KEYCHAIN_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STORAGE_CREDITS_ADDRESS,

@@ -1,4 +1,3 @@
-use alloy_primitives::B256;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};

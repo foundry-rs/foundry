@@ -20,8 +20,6 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{
     bytecode::InstIter, eip2935::is_history_storage_address, utils::StateChangeset,
 };
-#[cfg(test)]
-use revm::database::InMemoryDB;
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
