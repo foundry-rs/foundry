@@ -43,6 +43,8 @@ mod ipc;
 mod logs;
 #[cfg(feature = "monad")]
 mod monad;
+#[cfg(feature = "monad")]
+mod monad_rpc;
 mod otterscan;
 mod proof;
 mod pubsub;

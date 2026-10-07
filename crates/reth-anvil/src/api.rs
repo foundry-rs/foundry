@@ -32,8 +32,8 @@ use alloy_rpc_types::anvil::{
     ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
 };
 use alloy_rpc_types_eth::{
-    BlockOverrides, Bundle, EthCallResponse, FeeHistory, Filter, FilterId, StateContext,
-    TransactionRequest,
+    AccessListResult, BlockOverrides, Bundle, EthCallResponse, FeeHistory, Filter, FilterId,
+    StateContext, TransactionRequest,
     erc4337::TransactionConditional,
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
@@ -69,7 +69,7 @@ use reth_rpc_eth_api::{
     EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTransaction, RpcTxReq, RpcTypes,
 };
 use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
-use revm::{context::BlockEnv, primitives::eip7825::TX_GAS_LIMIT_CAP};
+use revm::context::{BlockEnv, Cfg};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -409,6 +409,16 @@ pub trait EthExtApi<TxReq: RpcObject, Receipt: RpcObject, Tx: RpcObject, Blk: Rp
         reward_percentiles: Option<Vec<f64>>,
     ) -> RpcResult<FeeHistory>;
 
+    /// Creates an access list for a request. From MonadTen on, Monad lists one storage key per
+    /// storage page, as anvil does.
+    #[method(name = "createAccessList")]
+    async fn eth_create_access_list(
+        &self,
+        request: TxReq,
+        block: Option<BlockId>,
+        state_override: Option<StateOverride>,
+    ) -> RpcResult<AccessListResult>;
+
     /// Returns the receipt of a transaction. An impersonated transaction has no valid signature,
     /// so a lookup that recovers the sender from it fails; the lookup then runs again with the
     /// block in the RPC cache, which carries the senders the block recorded.
@@ -654,7 +664,6 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     logging: LoggingState,
     transaction_order: TransactionOrder,
     min_priority_fee_enforced: bool,
-    enforce_tx_gas_limit: bool,
     fork: Option<Arc<dyn ForkInfo>>,
     pool: Pool,
     provider: Provider,
@@ -705,7 +714,6 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
         logging: LoggingState,
         transaction_order: TransactionOrder,
         min_priority_fee_enforced: bool,
-        enforce_tx_gas_limit: bool,
         fork: Option<Arc<dyn ForkInfo>>,
         pool: Pool,
         provider: Provider,
@@ -726,7 +734,6 @@ impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Sp
             logging,
             transaction_order,
             min_priority_fee_enforced,
-            enforce_tx_gas_limit,
             fork,
             pool,
             provider,
@@ -1188,10 +1195,28 @@ where
         if let Some(forking) = forking
             && (self.fork.is_some() || forking.json_rpc_url.is_some() || has_fork_url)
         {
-            if let Some(url) = &forking.json_rpc_url
-                && self.is_own_endpoint(url).await
-            {
-                return Err(invalid_params("cannot reset Anvil to its own RPC endpoint"));
+            if let Some(url) = &forking.json_rpc_url {
+                if self.is_own_endpoint(url).await {
+                    return Err(invalid_params("cannot reset Anvil to its own RPC endpoint"));
+                }
+                // The node runs one network for good; another network needs another node.
+                let current = self.relauncher.current_config();
+                let mut target = current.clone();
+                target.fork_chain_id = None;
+                if !current.explicit_network
+                    && let Some(networks) = target
+                        .fork_networks(url)
+                        .await
+                        .map_err(|error| internal_error(format!("{error:#}")))?
+                    && !current.networks.supports_fork_source(&networks)
+                {
+                    return Err(invalid_params(format!(
+                        "cannot reset Anvil across network families ({} -> {}); start a new \
+                         instance with matching network configuration",
+                        current.networks.execution_family_name(),
+                        networks.execution_family_name()
+                    )));
+                }
             }
             // A fork reset relaunches the node on the fork, at the given block or the endpoint's
             // latest one, as anvil does.
@@ -1474,7 +1499,7 @@ where
             latest_block_number: latest.header.number(),
             latest_block_hash: latest.header.hash(),
             forked_network: self.fork.as_ref().map(|fork| ForkedNetwork {
-                chain_id: fork.chain_id(),
+                chain_id: fork.source_chain_id(),
                 fork_block_number: fork.block_number(),
                 fork_block_hash: fork.block_hash(),
             }),
@@ -2103,17 +2128,21 @@ where
         Ok(())
     }
 
-    /// Returns the largest gas limit a transaction may have: the block gas limit, capped by
-    /// EIP-7825 when the cap is enforced and Osaka is active.
+    /// Returns the largest gas limit a transaction may have: the block gas limit, capped by the
+    /// network's transaction gas cap as the EVM resolves it, such as EIP-7825 from Osaka on or
+    /// Monad's own cap.
     fn fallback_gas_limit(&self) -> RpcResult<u64> {
         let header = self.sealed_header(self.best_block_number()?)?;
-        let mut limit = header.gas_limit();
-        if self.enforce_tx_gas_limit
-            && self.chain_spec.is_osaka_active_at_timestamp(header.timestamp())
-        {
-            limit = limit.min(TX_GAS_LIMIT_CAP);
-        }
-        Ok(limit)
+        let cap = self
+            .eth
+            .provider()
+            .sealed_header(header.number())
+            .ok()
+            .flatten()
+            .and_then(|header| self.eth.evm_config().evm_env(header.header()).ok())
+            .map(|env| Cfg::tx_gas_limit_cap(&env.cfg_env))
+            .unwrap_or(u64::MAX);
+        Ok(header.gas_limit().min(cap))
     }
 
     /// Drops fee fields below the base fee from a call, so the call runs instead of failing
@@ -2524,6 +2553,48 @@ where
             }
             result => result,
         }
+    }
+
+    async fn eth_create_access_list(
+        &self,
+        request: RpcTxReq<Eth::NetworkTypes>,
+        block: Option<BlockId>,
+        state_override: Option<StateOverride>,
+    ) -> RpcResult<AccessListResult> {
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut result = EthApiServer::create_access_list(
+            &self.eth,
+            request.clone(),
+            block,
+            state_override.clone(),
+        )
+        .await?;
+        #[cfg(feature = "monad")]
+        if self.identity.network == Some("monad")
+            && let Some(hardfork) = self.identity.hardfork.as_deref()
+            && let Ok(hardfork) = hardfork.parse::<foundry_evm_hardforks::MonadHardfork>()
+            && foundry_evm_hardforks::MonadHardfork::MonadTen.is_enabled_in(hardfork)
+        {
+            for item in &mut result.access_list.0 {
+                item.storage_keys.sort_unstable();
+                item.storage_keys.dedup_by_key(|slot| {
+                    monad_revm::page::page_index(U256::from_be_slice(slot.as_slice()))
+                });
+            }
+            // The gas follows the list as Monad charges it, as anvil re-executes with it.
+            let mut request = request;
+            request.as_mut().access_list = Some(result.access_list.clone());
+            let executed = <Eth as reth_rpc_eth_api::helpers::Call>::transact_call_at(
+                &self.eth,
+                request,
+                block.unwrap_or_else(BlockId::pending),
+                alloy_rpc_types_eth::state::EvmOverrides::new(state_override, None),
+            )
+            .await
+            .map_err(Into::into)?;
+            result.gas_used = U256::from(executed.result.tx_gas_used());
+        }
+        Ok(result)
     }
 
     async fn eth_fee_history(

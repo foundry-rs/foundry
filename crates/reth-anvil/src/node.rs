@@ -272,7 +272,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// The node runs on a fresh MDBX database in a temporary directory that is removed when the
 /// returned handle and every clone of the returned API drop. The node tasks run on the current
 /// tokio runtime.
-pub async fn try_spawn(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+    config.resolve_networks().await?;
     match config.networks.resolved_network().unwrap_or_default() {
         NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
         #[cfg(feature = "monad")]
@@ -296,8 +297,12 @@ pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(Eth
     let (module, running) =
         launch_node::<Net>(launch_config, prepared, instance_id.clone(), relauncher.clone())
             .await?;
-    // The handle reports the config the node runs with: a fork may have chosen the chain id.
-    let config = relauncher.config.read().clone();
+    // The handle reports the config the node runs with: a fork may have chosen the chain id. A
+    // hardfork the endpoint chose stays out, as anvil keeps it out of the user's settings.
+    let mut config = relauncher.config.read().clone();
+    if config.adopted_hardfork {
+        config.hardfork = None;
+    }
     let module: SharedModule = Arc::new(RwLock::new(module));
     let logging = LoggingState::new(!config.silent);
     let server =
@@ -599,7 +604,6 @@ async fn launch_node<Net: AnvilNetwork>(
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
             let min_priority_fee_enforced = !config.disable_min_priority_fee;
-            let enforce_tx_gas_limit = config.enable_tx_gas_limit;
             let identity = Net::identity(&config)?;
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
@@ -653,7 +657,6 @@ async fn launch_node<Net: AnvilNetwork>(
                     logging,
                     transaction_order,
                     min_priority_fee_enforced,
-                    enforce_tx_gas_limit,
                     fork_info.clone(),
                     ctx.pool().clone(),
                     ctx.provider().clone(),

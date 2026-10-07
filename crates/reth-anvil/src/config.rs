@@ -1,5 +1,5 @@
 use crate::{
-    fork::{ForkGenesisAccount, ForkSettings},
+    fork::{ForkGenesisAccount, ForkSettings, NodeInfoProbe},
     state_dump::{CheckpointForks, SerializableState},
     types::{ForkChoice, ForkUrl, TransactionOrder},
 };
@@ -18,7 +18,7 @@ use foundry_evm_core::{
     utils::get_blob_params_by_hardfork,
 };
 use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use reth_ethereum::{
@@ -205,6 +205,9 @@ pub struct NodeConfig {
     /// Whether a fork endpoint chose the base fee, so the next block keeps the fork block's fee
     /// schedule instead of an explicit base fee.
     pub adopted_base_fee: bool,
+    /// Whether the user selected the network: such a node may fork and reset to an endpoint of
+    /// another network family, as on anvil, where an inferred network may not.
+    pub explicit_network: bool,
     /// The fork endpoints that answered `anvil_nodeInfo` once, after which a failing probe is an
     /// error instead of an unsupported method. Shared by every config of a node, so resets and
     /// relaunches keep it, as anvil keeps an endpoint's identity.
@@ -276,6 +279,7 @@ impl Default for NodeConfig {
             adopted_chain_id: false,
             adopted_hardfork: false,
             adopted_base_fee: false,
+            explicit_network: false,
             anvil_endpoints: Default::default(),
         }
     }
@@ -357,11 +361,8 @@ impl NodeConfig {
     pub fn set_chain_id<U: Into<u64>>(&mut self, chain_id: Option<U>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        // A well-known chain id selects its network, unless one is selected already or a fork
-        // fixed it.
-        if !self.adopted_fork_network {
-            self.networks = self.networks.with_chain_id(chain_id);
-        }
+        // The network a chain id implies is resolved at spawn, see `resolve_networks`: a fork
+        // takes its endpoint's network instead.
         for wallet in self.genesis_accounts.iter_mut().chain(self.signer_accounts.iter_mut()) {
             wallet.set_chain_id(Some(chain_id));
         }
@@ -797,6 +798,61 @@ impl NodeConfig {
             self.hardfork = None;
             self.adopted_hardfork = false;
         }
+    }
+
+    /// Resolves the network of a node without an explicit network selection, as anvil does: a
+    /// fork takes its endpoint's network, from the endpoint's node info or its chain id, and
+    /// other nodes the network their chain id implies.
+    pub async fn resolve_networks(&mut self) -> Result<()> {
+        if self.adopted_fork_network {
+            return Ok(());
+        }
+        if self.networks.has_network_selection() {
+            self.explicit_network = true;
+            return Ok(());
+        }
+        match self.fork_urls.first().map(|fork| fork.url.clone()) {
+            Some(url) => {
+                // A network this node cannot run yet leaves the fork on Ethereum, which serves
+                // the remote chain without its own transaction types.
+                if let Ok(Some(networks)) = self.fork_networks(&url).await
+                    && runs_network(networks.execution_network())
+                {
+                    self.networks = networks;
+                }
+                self.adopted_fork_network = true;
+            }
+            None => self.networks = self.networks.with_chain_id(self.get_chain_id()),
+        }
+        Ok(())
+    }
+
+    /// Returns the network a fork endpoint runs: the one its anvil node info reports, or the one
+    /// its chain id implies.
+    pub async fn fork_networks(&self, url: &str) -> Result<Option<NetworkConfigs>> {
+        let provider =
+            foundry_common::provider::ProviderBuilder::<alloy_network::AnyNetwork>::new(url)
+                .build()
+                .wrap_err("failed to establish provider to fork url")?;
+        let mut probe = NodeInfoProbe::new(self.is_anvil_endpoint(url), self.no_fork_node_info);
+        let info = probe.request(&provider).await?;
+        if info.is_some() {
+            self.mark_anvil_endpoint(url);
+        }
+        let chain_id = match self.fork_chain_id {
+            Some(chain_id) => chain_id,
+            None => alloy_provider::Provider::get_chain_id(&provider)
+                .await
+                .wrap_err("failed to fetch network chain ID")?,
+        };
+        // A network family this build does not include is unknown here, not an error.
+        Ok(NetworkConfigs::from_rpc_identity_profile_with_fallback(
+            chain_id,
+            info.as_ref().map(|info| info.network.as_deref()),
+            None,
+        )
+        .ok()
+        .flatten())
     }
 
     /// Returns whether the endpoint answered `anvil_nodeInfo` before.
@@ -1305,6 +1361,16 @@ impl NodeConfig {
         let builder =
             ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
         Ok(Arc::new(build_chain_spec(builder, hardfork, None)))
+    }
+}
+
+/// Returns whether this build runs the network.
+const fn runs_network(network: NetworkVariant) -> bool {
+    match network {
+        NetworkVariant::Ethereum => true,
+        #[cfg(feature = "monad")]
+        NetworkVariant::Monad => true,
+        _ => false,
     }
 }
 

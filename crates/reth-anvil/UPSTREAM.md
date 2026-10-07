@@ -138,6 +138,13 @@ be free if reth had a dev mode:
 - A call on a Cancun chain whose fork block lost its blob fields fails with reth's `excess blob
   gas missing` error instead of anvil's `Excess blob gas not set`, and such a chain has no
   pending block.
+- Monad: protocol system transactions (the staking syscalls from the system address) are not
+  accepted in `anvil_reorg`, because the pool and reth's payload builder would have to admit
+  zero-gas, zero-price envelopes; foundry's `try_transact_monad_system_replay` already executes
+  them. A Monad fork at a transaction hash keeps one hardfork schedule, where anvil records a
+  hardfork profile per replayed block and restores it on rollback, and state dumps carry no
+  Monad block participants or replay profiles. Anvil's Monad tests that read its pool or
+  backend directly stay in `crates/anvil`.
 - Arbitrum forks number blocks by the L2 block; anvil mirrors Arbitrum's L1 block numbers in
   `NUMBER` and in the blocks' `l1BlockNumber`.
 

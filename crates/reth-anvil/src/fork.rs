@@ -211,6 +211,8 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn url(&self) -> String;
     /// Returns the chain id of the remote chain.
     fn chain_id(&self) -> u64;
+    /// Returns the chain the fork's state comes from.
+    fn source_chain_id(&self) -> u64;
     /// Returns the fork block number.
     fn block_number(&self) -> u64;
     /// Returns the fork block hash.
@@ -265,6 +267,10 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
 
     fn chain_id(&self) -> u64 {
         Self::chain_id(self)
+    }
+
+    fn source_chain_id(&self) -> u64 {
+        Self::source_chain_id(self)
     }
 
     fn block_number(&self) -> u64 {
@@ -533,6 +539,9 @@ pub struct ForkBackend<F: ForkNetwork = EthereumFork> {
     replay: RwLock<Option<ForkReplay<F>>>,
     url: RwLock<String>,
     chain_id: u64,
+    /// The chain the fork's state comes from: the endpoint's chain, or the chain an anvil
+    /// endpoint forks in turn.
+    source_chain_id: u64,
     header: SealedHeader<ForkHeader<F>>,
     gas_price: u128,
     /// The remote state at the fork block.
@@ -745,16 +754,24 @@ impl<F: ForkNetwork> ForkBackend<F> {
             provider.get_gas_price().await.unwrap_or(crate::config::INITIAL_BASE_FEE as u128);
         // An endpoint that identified itself must still answer: a failure now hides a reset.
         let node_info = probe.request(&provider).await?.or(node_info_before);
+        let mut source_chain_id = chain_id;
         if node_info.is_some() {
             config.mark_anvil_endpoint(&url);
-            settings.instance_id = tokio::time::timeout(
+            let metadata = tokio::time::timeout(
                 NODE_INFO_PROBE_TIMEOUT,
                 provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()),
             )
             .await
             .ok()
-            .and_then(Result::ok)
-            .map(|metadata| metadata.instance_id);
+            .and_then(Result::ok);
+            if let Some(metadata) = metadata {
+                settings.instance_id = Some(metadata.instance_id);
+                if config.fork_chain_id.is_none()
+                    && let Some(forked) = metadata.forked_network
+                {
+                    source_chain_id = forked.chain_id;
+                }
+            }
         }
         let replay = match replay_target {
             Some((number, target)) => {
@@ -815,6 +832,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 replay: RwLock::new(replay),
                 url: RwLock::new(url),
                 chain_id,
+                source_chain_id,
                 header,
                 gas_price,
                 state: RwLock::new(state),
@@ -877,6 +895,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             replay: RwLock::new(None),
             url: RwLock::new(String::new()),
             chain_id,
+            source_chain_id: chain_id,
             header: head.clone(),
             gas_price,
             state: RwLock::new(shared),
@@ -1053,6 +1072,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             replay: RwLock::new(None),
             url: self.url,
             chain_id: self.chain_id,
+            source_chain_id: self.source_chain_id,
             header: head.clone(),
             gas_price: self.gas_price,
             state: self.state,
@@ -1143,6 +1163,12 @@ impl<F: ForkNetwork> ForkBackend<F> {
     /// Returns the chain id of the remote chain.
     pub const fn chain_id(&self) -> u64 {
         self.chain_id
+    }
+
+    /// Returns the chain the fork's state comes from, which differs from the endpoint's chain id
+    /// when the endpoint is an anvil fork with another chain id.
+    pub const fn source_chain_id(&self) -> u64 {
+        self.source_chain_id
     }
 
     /// Returns the fork block number.
