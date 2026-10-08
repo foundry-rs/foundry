@@ -637,14 +637,10 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         if self.is_base() {
             return false;
         }
-        if self.as_ref().can_build() || self.complete_tempo().is_ok() {
-            return true;
-        }
+        let can_build = self.as_ref().can_build() || self.complete_tempo().is_ok();
         #[cfg(any(feature = "base", feature = "optimism"))]
-        if self.complete_deposit().is_ok() {
-            return true;
-        }
-        false
+        let can_build = can_build || self.complete_deposit().is_ok();
+        can_build
     }
 
     fn output_tx_type(&self) -> FoundryTxType {
