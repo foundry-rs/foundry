@@ -133,8 +133,6 @@ mod estimate;
 mod help;
 mod logs;
 mod mktx;
-#[cfg(feature = "monad")]
-mod monad;
 mod receipt;
 mod rpc;
 mod run;

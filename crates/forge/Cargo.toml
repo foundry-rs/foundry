@@ -142,7 +142,6 @@ gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 touch-id = ["foundry-wallets/touch-id"]
 monad = [
-    "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",
     "foundry-evm-networks/monad",

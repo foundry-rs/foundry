@@ -121,7 +121,6 @@ required-features = ["base"]
 [features]
 default = ["optimism"]
 monad = [
-    "anvil/monad",
     "dep:alloy-monad-evm",
     "dep:monad-revm",
     "foundry-evm-hardforks/monad",

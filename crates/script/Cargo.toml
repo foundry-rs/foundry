@@ -68,7 +68,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 [features]
 default = ["optimism"]
 monad = [
-    "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",
     "foundry-evm-networks/monad",
