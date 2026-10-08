@@ -585,13 +585,27 @@ impl PropertiesArgs {
                 Some(&selection),
             )?;
             for (before, after) in current_results.iter().zip(&results) {
-                // Kills are inferred from absence, so both runs must name mutants the same way.
-                let population = not_killed_identities(&before.output);
+                // Kills are inferred from absence, so both runs must name source files the same
+                // way.
+                let (before_not_killed, after_not_killed) =
+                    (not_killed_identities(&before.output), not_killed_identities(&after.output));
+                let files = |identities: &BTreeSet<MutationIdentity>| {
+                    identities.iter().map(|identity| identity.0.clone()).collect::<BTreeSet<_>>()
+                };
                 ensure!(
-                    not_killed_identities(&after.output).is_subset(&population),
-                    "mutation results on seed {} name mutants that the baseline does not have",
+                    before_not_killed.is_empty()
+                        || files(&after_not_killed).is_subset(&files(&before_not_killed)),
+                    "mutation results on seed {} name source files that the baseline does not have",
                     before.seed
                 );
+                let revived = after_not_killed.difference(&before_not_killed).count();
+                if revived > 0 {
+                    reasons.push(format!(
+                        "candidate run did not kill {revived} mutant(s) that the baseline killed on seed {}",
+                        before.seed
+                    ));
+                    break;
+                }
                 // Invalid is an execution outcome, not part of the population: a stronger test can
                 // expose a previously skipped mutant that does not compile. Only a survivor that
                 // became invalid would be miscounted as resolved.
