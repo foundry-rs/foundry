@@ -2209,8 +2209,14 @@ where
         // Reth stops once the failing and the passing limit are within the error ratio, so the
         // exact limit is above `low`. Probe the calls between them.
         let mut low = (high as f64 * (1.0 - ESTIMATE_GAS_ERROR_RATIO)) as u64;
+        // Reth's transfer shortcut is exact. Try one gas less first for small estimates, so
+        // transfers need one probe and do not delay the next transaction in an RPC batch.
+        let mut mid = if high <= MIN_TRANSACTION_GAS {
+            high.saturating_sub(1)
+        } else {
+            low + (high - low) / 2
+        };
         while low + 1 < high {
-            let mid = low + (high - low) / 2;
             let mut probe = request.clone();
             probe.as_mut().gas = Some(mid);
             let passes = EthApiServer::call(
@@ -2227,6 +2233,7 @@ where
             } else {
                 low = mid;
             }
+            mid = low + (high - low) / 2;
         }
         // Reth's transfer shortcut can return a limit above the request's allowance.
         if let Some(gas_limit) = request.as_ref().gas
