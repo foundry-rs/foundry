@@ -28,7 +28,7 @@ try {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   delete manifest.scripts["vscode:prepublish"];
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-  await createVSIX({ cwd: staging, packagePath: join(bundle, "forge-lsp.vsix"), useYarn: false });
+  await createVSIX({ cwd: staging, packagePath: join(bundle, "forge.vsix"), useYarn: false });
 } finally {
   await rm(staging, { recursive: true, force: true });
 }
