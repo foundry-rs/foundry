@@ -24,6 +24,7 @@ mod engine;
 mod eth_api;
 mod evm;
 mod fork;
+mod history;
 mod impersonation;
 mod launcher;
 mod logging;

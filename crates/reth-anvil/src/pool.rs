@@ -16,8 +16,9 @@ use reth_ethereum::{
         },
     },
     pool::{
-        EthPooledTransaction, EthTransactionValidator, Pool, PoolTransaction, PriceBumpConfig,
-        Priority, TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
+        EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction,
+        EthTransactionValidator, Pool, PoolTransaction, PriceBumpConfig, Priority,
+        TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
         TransactionValidationTaskExecutor, TransactionValidator,
         blobstore::DiskFileBlobStore,
         error::{InvalidPoolTransactionError, PoolTransactionError},
@@ -70,7 +71,7 @@ impl<V: Debug> Debug for AnvilValidator<V> {
 impl<V> TransactionValidator for AnvilValidator<V>
 where
     V: TransactionValidator,
-    V::Transaction: PoolTransaction<Consensus: TxSignature>,
+    V::Transaction: EthPoolTransaction<Consensus: TxSignature>,
 {
     type Transaction = V::Transaction;
     type Block = V::Block;
@@ -117,49 +118,28 @@ where
                     Ok(rebuilt) => rebuilt,
                     Err(_) => transaction,
                 };
-            return TransactionValidationOutcome::Valid {
-                balance: U256::MAX,
-                state_nonce: transaction.nonce(),
-                bytecode_hash: None,
-                transaction: ValidTransaction::Valid(transaction),
-                propagate: true,
-                authorities: None,
-            };
+            return accepted(transaction);
         }
         if self.state.is_impersonated(&transaction.sender()) {
             self.state.remember_tx_sender(*transaction.hash(), transaction.sender());
-            return TransactionValidationOutcome::Valid {
-                balance: U256::MAX,
-                state_nonce: transaction.nonce(),
-                bytecode_hash: None,
-                transaction: ValidTransaction::Valid(transaction),
-                propagate: true,
-                authorities: None,
-            };
+            return accepted(transaction);
         }
 
-        let outcome = self.inner.validate_transaction(origin, transaction).await;
         // Anvil mines a transaction from a sender with code: EIP-3607 is off for mining, as it is
         // for calls. Reth's validator rejects it, so accept it here as a ready transaction. On
         // Arbitrum, anvil also mines a transaction whose priority fee is above its fee cap.
-        if let TransactionValidationOutcome::Invalid(
-            transaction,
-            InvalidPoolTransactionError::Consensus(error),
-        ) = &outcome
-            && (matches!(error, InvalidTransactionError::SignerAccountHasBytecode)
+        let outcome = match self.inner.validate_transaction(origin, transaction).await {
+            TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::Consensus(error),
+            ) if matches!(error, InvalidTransactionError::SignerAccountHasBytecode)
                 || (self.settings.allow_tip_above_fee_cap
-                    && matches!(error, InvalidTransactionError::TipAboveFeeCap)))
-        {
-            let transaction = transaction.clone();
-            return TransactionValidationOutcome::Valid {
-                balance: U256::MAX,
-                state_nonce: transaction.nonce(),
-                bytecode_hash: None,
-                transaction: ValidTransaction::Valid(transaction),
-                propagate: true,
-                authorities: None,
-            };
-        }
+                    && matches!(error, InvalidTransactionError::TipAboveFeeCap)) =>
+            {
+                return accepted(transaction);
+            }
+            outcome => outcome,
+        };
         let TransactionValidationOutcome::Valid {
             balance,
             state_nonce,
@@ -359,6 +339,26 @@ pub enum BalanceRule {
     GasOnly,
     /// No check.
     None,
+}
+
+/// Accepts a transaction as ready, with an unlimited balance. A blob transaction keeps its
+/// sidecar, which the pool moves to the blob store, so the block builder can include it.
+fn accepted<T: EthPoolTransaction>(mut transaction: T) -> TransactionValidationOutcome<T> {
+    let state_nonce = transaction.nonce();
+    let transaction = match transaction.take_blob() {
+        EthBlobTransactionSidecar::Present(sidecar) => {
+            ValidTransaction::ValidWithSidecar { transaction, sidecar }
+        }
+        _ => ValidTransaction::Valid(transaction),
+    };
+    TransactionValidationOutcome::Valid {
+        balance: U256::MAX,
+        state_nonce,
+        bytecode_hash: None,
+        transaction,
+        propagate: true,
+        authorities: None,
+    }
 }
 
 /// The pool validation knobs anvil exposes.

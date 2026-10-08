@@ -1599,7 +1599,6 @@ async fn blockhash_opcode_consistent_after_loading_older_state() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth keeps the full history on disk; --prune-history has no effect"]
 async fn prune_history_respects_limit_with_configured_interval() {
     for seconds in [1, 2, 3] {
         assert_pruned_interval_history(seconds, true).await;
@@ -1607,7 +1606,6 @@ async fn prune_history_respects_limit_with_configured_interval() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth keeps the full history on disk; --prune-history has no effect"]
 async fn prune_history_respects_limit_with_rpc_interval() {
     for seconds in [1, 2, 3] {
         assert_pruned_interval_history(seconds, false).await;

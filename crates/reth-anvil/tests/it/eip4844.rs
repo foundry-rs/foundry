@@ -114,7 +114,6 @@ async fn can_send_eip4844_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's pool rejects the dev account's mainnet code before Prague; anvil sends from it"]
 async fn can_send_eip4844_transaction_fork() {
     let node_config = NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
@@ -142,7 +141,6 @@ async fn can_send_eip4844_transaction_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's pool rejects the dev account's mainnet code before Prague; anvil sends from it"]
 async fn can_send_eip4844_transaction_eth_send_transaction() {
     let node_config = NodeConfig::test()
         .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))

@@ -7,6 +7,7 @@
 use crate::{
     beacon::BeaconLayer,
     config::NodeConfig,
+    history::PruneHistoryLayer,
     logging::{LoggingState, NodeInfoLayer},
 };
 use eyre::{Result, WrapErr};
@@ -54,6 +55,8 @@ pub struct ServerSettings {
     pub no_cors: bool,
     /// Whether to lift the request body size limit.
     pub no_request_size_limit: bool,
+    /// `--prune-history`: the number of past states kept, if any, when pruning.
+    pub prune_history: Option<Option<usize>>,
 }
 
 impl ServerSettings {
@@ -64,6 +67,7 @@ impl ServerSettings {
             allow_origin: config.allow_origin.clone(),
             no_cors: config.no_cors,
             no_request_size_limit: config.no_request_size_limit,
+            prune_history: config.prune_history,
         }
     }
 
@@ -122,7 +126,11 @@ impl RpcServer {
                     .layer(NotificationLayer)
                     .layer(BeaconLayer::new(shared.clone())),
             )
-            .set_rpc_middleware(RpcServiceBuilder::new().layer(NodeInfoLayer::new(logging.clone())))
+            .set_rpc_middleware(
+                RpcServiceBuilder::new()
+                    .layer(NodeInfoLayer::new(logging.clone()))
+                    .layer(PruneHistoryLayer::new(settings.prune_history, shared.clone())),
+            )
             .build(address)
             .await
             .wrap_err_with(|| format!("failed to bind the rpc server to {address}"))?;
@@ -132,7 +140,9 @@ impl RpcServer {
             Some(path) => Some(
                 IpcServerBuilder::default()
                     .set_rpc_middleware(
-                        IpcRpcServiceBuilder::new().layer(NodeInfoLayer::new(logging)),
+                        IpcRpcServiceBuilder::new()
+                            .layer(NodeInfoLayer::new(logging))
+                            .layer(PruneHistoryLayer::new(settings.prune_history, shared.clone())),
                     )
                     .build(path)
                     .start(methods)
