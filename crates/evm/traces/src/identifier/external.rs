@@ -707,13 +707,17 @@ impl ExternalFetcherT for SourcifyFetcher {
             404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
             // Too many requests.
             429 => return Err(EtherscanError::RateLimitExceeded),
-            // Bad request. A retry gets the same answer, so it is final.
+            // Bad request. Only a recognized error code is final; anything else is not cached.
             400 => {
-                let error = response.json::<SourcifyError>().await.ok();
-                if error.is_some_and(|error| error.custom_code == "unsupported_chain") {
-                    return Err(EtherscanError::ChainNotSupported(self.chain));
-                }
-                return Err(EtherscanError::ContractCodeNotVerified(address));
+                let error = response
+                    .json::<SourcifyError>()
+                    .await
+                    .map_err(|e| EtherscanError::Unknown(e.to_string()))?;
+                return Err(match error.custom_code.as_str() {
+                    "unsupported_chain" => EtherscanError::ChainNotSupported(self.chain),
+                    "invalid_parameter" => EtherscanError::ContractCodeNotVerified(address),
+                    _ => EtherscanError::Unknown(format!("{error:#?}")),
+                });
             }
             _ => {}
         }
@@ -795,6 +799,8 @@ mod tests {
     use std::{
         collections::HashSet as StdHashSet,
         future::pending,
+        io::{Read, Write},
+        net::TcpListener,
         sync::{
             Mutex,
             atomic::{AtomicUsize, Ordering as AtomicOrdering},
@@ -1202,6 +1208,44 @@ mod tests {
 
         assert!(identifier.identify_addresses(&[&nodes[0], &nodes[1]]).is_empty());
         assert_eq!(calls.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    /// Serves one HTTP response with status 400 and `body`, then returns the Sourcify result.
+    async fn sourcify_bad_request(body: &'static str) -> EtherscanError {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 4096]);
+            let response = format!(
+                "HTTP/1.1 400 Bad Request\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let mut fetcher = SourcifyFetcher::new(Chain::mainnet());
+        fetcher.url = format!("http://{addr}");
+        fetcher.fetch(Address::with_last_byte(1)).await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn sourcify_bad_request_is_final_only_when_recognized() {
+        let error =
+            sourcify_bad_request(r#"{"customCode":"unsupported_chain","message":"","errorId":""}"#)
+                .await;
+        assert!(matches!(error, EtherscanError::ChainNotSupported(_)));
+
+        let error =
+            sourcify_bad_request(r#"{"customCode":"invalid_parameter","message":"","errorId":""}"#)
+                .await;
+        assert!(matches!(error, EtherscanError::ContractCodeNotVerified(_)));
+
+        let error =
+            sourcify_bad_request(r#"{"customCode":"other","message":"","errorId":""}"#).await;
+        assert!(matches!(error, EtherscanError::Unknown(_)));
+
+        let error = sourcify_bad_request("<html>bad request</html>").await;
+        assert!(matches!(error, EtherscanError::Unknown(_)));
     }
 
     #[tokio::test]
