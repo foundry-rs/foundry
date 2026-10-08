@@ -263,6 +263,23 @@ impl Cheatcode for expectDelegateCallCall {
     }
 }
 
+impl Cheatcode for expectStaticCallCall {
+    fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
+        let Self { callee, data } = self;
+        expect_call(
+            state,
+            callee,
+            data,
+            None,
+            None,
+            None,
+            Some(ExpectedCallScheme::StaticCall),
+            1,
+            ExpectedCallType::NonCount,
+        )
+    }
+}
+
 impl Cheatcode for expectCallMinGas_0Call {
     fn apply_context(&self, state: &mut CheatcodesCore) -> Result {
         let Self { callee, msgValue, minGas, data } = self;
@@ -1200,6 +1217,31 @@ mod tests {
             ExpectedCallScheme::DelegateCall,
         );
         assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::DelegateCall)), 1);
+
+        let mut t = tracker(
+            calldata.clone(),
+            Some(ExpectedCallScheme::StaticCall),
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, ExpectedCallScheme::Call);
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::DelegateCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::StaticCall)), 0);
+
+        observe_call(
+            t.get_mut(&TARGET).unwrap(),
+            &calldata,
+            None,
+            0,
+            ExpectedCallScheme::StaticCall,
+        );
+        assert_eq!(seen(&t, &calldata, Some(ExpectedCallScheme::StaticCall)), 1);
     }
 
     #[test]
