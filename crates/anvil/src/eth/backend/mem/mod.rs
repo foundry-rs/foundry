@@ -1459,6 +1459,11 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
+    /// Returns whether Celo compatibility is enabled.
+    pub const fn is_celo(&self) -> bool {
+        self.networks.is_celo()
+    }
+
     /// Returns true if Monad network mode is active
     pub const fn is_monad(&self) -> bool {
         self.networks.is_monad()
@@ -1839,6 +1844,16 @@ impl<N: Network> Backend<N> {
             return Ok(());
         }
         Err(BlockchainError::TempoTransactionUnsupported)
+    }
+
+    /// Returns an error unless CIP-64 native-fee compatibility is active.
+    pub fn ensure_cip64_active(&self) -> Result<(), BlockchainError> {
+        if !self.is_celo() {
+            return Err(BlockchainError::InvalidTransactionRequest(
+                "CIP-64 transactions require Celo mode (--celo)".into(),
+            ));
+        }
+        self.ensure_eip1559_active()
     }
 
     /// Builds the [`InspectorTxConfig`] from the backend's current settings.
@@ -3444,6 +3459,13 @@ impl<N: Network> Backend<N> {
             return Err(BlockchainError::ConflictingFeeFields);
         }
         let transaction_type = request.transaction_type;
+        if transaction_type == Some(foundry_primitives::CIP64_TX_TYPE)
+            || request.other.get("feeCurrency").is_some_and(|value| !value.is_null())
+        {
+            self.ensure_cip64_active()?;
+            return FoundryTransactionRequest::new(request)
+                .map_err(|err| BlockchainError::InvalidTransactionRequest(err.to_string()));
+        }
         #[cfg(feature = "base")]
         if self.is_base() {
             let parsed = FoundryTransactionRequest::try_from(request.clone()).map_err(
@@ -3650,7 +3672,11 @@ impl<N: Network> Backend<N> {
                     simulated_envelope,
                 })
             }
-            FoundryTransactionRequest::Ethereum(mut request) => {
+            FoundryTransactionRequest::Ethereum(mut request)
+            | FoundryTransactionRequest::Celo(foundry_primitives::Cip64TransactionRequest {
+                inner: mut request,
+                ..
+            }) => {
                 // Tempo charges the account-creation cost for nonce 0, so an omitted nonce must
                 // not default to it.
                 if self.is_tempo() && request.nonce.is_none() {
@@ -5822,7 +5848,7 @@ where
                 arbitrum_replay_block_number(&replay.source_block),
             )
         });
-        let prepared = prepare_fork_transaction_replay(replay, self.is_monad())?;
+        let prepared = prepare_fork_transaction_replay(replay, self.is_monad(), self.is_celo())?;
         let fallback_execution_chain_id = self
             .get_fork()
             .map(|fork| fork.execution_chain_id())
@@ -8251,6 +8277,12 @@ where
 
         // Include timestamp in receipt to avoid extra block lookups (e.g., in Otterscan API)
         let mut inner = FoundryTxReceipt::with_timestamp(receipt, block.header.timestamp());
+        if let FoundryTxEnvelope::Celo(tx) = &*transaction {
+            inner
+                .0
+                .other
+                .insert("feeCurrency".into(), serde_json::to_value(tx.tx().fee_currency).unwrap());
+        }
         if self.is_tempo() {
             let fee_payer = match &*transaction {
                 FoundryTxEnvelope::Tempo(tx) => match tx.tx().recover_fee_payer(info.from) {
@@ -8521,6 +8553,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
         storage.load_blocks(blocks, fork_block_boundary);
+        if !self.is_celo()
+            && storage.blocks.values().any(|block| {
+                block
+                    .body
+                    .transactions
+                    .iter()
+                    .any(|tx| matches!(tx.as_ref(), FoundryTxEnvelope::Celo(_)))
+            })
+        {
+            self.ensure_cip64_active()?;
+        }
         storage.load_transactions(transactions, fork_block_boundary);
         if let Some(checkpoint) = checkpoint {
             storage.insert_block(checkpoint);
@@ -10434,6 +10477,23 @@ pub fn transaction_build(
         return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
     }
 
+    if let FoundryTxEnvelope::Celo(tx) = eth_transaction.as_ref() {
+        let mut fields =
+            OtherFields::try_from(serde_json::to_value(tx).expect("valid CIP-64 transaction"))
+                .expect("CIP-64 transaction serializes to an object");
+        fields.remove("hash");
+        let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+            hash: tx_hash.unwrap_or_else(|| eth_transaction.hash()),
+            inner: UnknownTypedTransaction {
+                ty: AnyTxType(foundry_primitives::CIP64_TX_TYPE),
+                fields,
+                memo: Default::default(),
+            },
+        });
+        let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
+        let effective_gas_price = block.map(|_| eth_transaction.effective_gas_price(base_fee));
+        return build_rpc_transaction(envelope, from, block, info.as_ref(), effective_gas_price);
+    }
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {
         let from = mined_from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let ser = serde_json::to_value(tempo_tx).expect("could not serialize Tempo transaction");

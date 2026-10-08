@@ -2757,10 +2757,14 @@ impl Config {
         // are still distinguishable.
         let provider = BackwardsCompatTomlProvider(ForcedSnakeCaseData(toml_provider));
         let provider = &provider.strict_select(profiles);
+        // Config files must not move the project root. Only profile merges drop `root`, since
+        // standalone sections may use it as a key, e.g. an `[rpc_endpoints]` alias.
+        let profile_provider = &IgnoreRootProvider(provider);
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
-            figment = figment.merge(provider.rename(Self::DEFAULT_PROFILE, profile.clone()));
+            figment =
+                figment.merge(profile_provider.rename(Self::DEFAULT_PROFILE, profile.clone()));
         }
         // merge special keys into config
         for standalone_key in Self::STANDALONE_SECTIONS {
@@ -2777,7 +2781,7 @@ impl Config {
             }
         }
         // merge the profile
-        figment = figment.merge(provider);
+        figment = figment.merge(profile_provider);
         figment
     }
 
@@ -9575,5 +9579,50 @@ mod tests {
         std::os::unix::fs::symlink(root.join("src"), root.join("cache")).unwrap();
         let config = Config::with_root(root);
         assert!(config.coverage_cache_path().is_none());
+    }
+
+    #[test]
+    fn toml_root_does_not_override_project_root() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                root = "/elsewhere"
+
+                [profile.ci]
+                root = "/elsewhere-ci"
+
+                [profile.fmt]
+
+                [profile.root]
+
+                [fmt]
+                root = "/elsewhere-fmt"
+
+                [rpc_endpoints]
+                root = "https://example.com"
+                "#,
+            )?;
+            let expected = Config::with_root(jail.directory()).root;
+
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(config.root, expected);
+            assert!(
+                config
+                    .warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "root"))
+            );
+            assert!(config.rpc_endpoints.contains_key("root"));
+            assert!(config.profiles.contains(&Profile::new("root")));
+
+            for profile in ["ci", "fmt"] {
+                jail.set_env("FOUNDRY_PROFILE", profile);
+                let config = Config::load_with_root(jail.directory()).unwrap();
+                assert_eq!(config.root, expected);
+            }
+            Ok(())
+        });
     }
 }

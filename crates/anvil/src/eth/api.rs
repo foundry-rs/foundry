@@ -4532,6 +4532,9 @@ impl EthApi<FoundryNetwork> {
                         let mut data = bytes.as_ref();
                         let decoded = FoundryTxEnvelope::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+                        if matches!(&decoded, FoundryTxEnvelope::Celo(_)) {
+                            self.ensure_typed_transaction_supported(&decoded)?;
+                        }
                         let protocol_pending = {
                             #[cfg(feature = "monad")]
                             {
@@ -4550,7 +4553,18 @@ impl EthApi<FoundryNetwork> {
                     }
 
                     TransactionData::JSON(request) => {
-                        let from = request.from.map(Ok).unwrap_or_else(|| {
+                        let request = if request.transaction_type
+                            == Some(foundry_primitives::CIP64_TX_TYPE)
+                            || request
+                                .other
+                                .get("feeCurrency")
+                                .is_some_and(|value| !value.is_null())
+                        {
+                            self.parse_transaction_request(request)?
+                        } else {
+                            request.inner.into()
+                        };
+                        let from = request.from().map(Ok).unwrap_or_else(|| {
                             self.accounts()?
                                 .first()
                                 .copied()
@@ -4568,11 +4582,7 @@ impl EthApi<FoundryNetwork> {
 
                         // Build typed transaction request
                         let typed_tx = self
-                            .build_tx_request_with_fee_defaults(
-                                request.into(),
-                                *curr_nonce,
-                                fee_defaults,
-                            )
+                            .build_tx_request_with_fee_defaults(request, *curr_nonce, fee_defaults)
                             .await?;
 
                         // Increment nonce
@@ -5149,6 +5159,7 @@ impl EthApi<FoundryNetwork> {
                 || tx_type.is_eip4844()
                 || tx_type.is_eip7702()
                 || tx_type.is_tempo()
+                || tx_type.is_celo()
             {
                 request
                     .max_fee_per_gas()
@@ -5441,6 +5452,7 @@ impl EthApi<FoundryNetwork> {
             )),
             #[cfg(feature = "base")]
             FoundryTxEnvelope::Eip8130(_) => self.backend.ensure_base_eip8130_submission_active(),
+            FoundryTxEnvelope::Celo(_) => self.backend.ensure_cip64_active(),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }

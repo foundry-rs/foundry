@@ -644,6 +644,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
     use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
+    use foundry_test_utils::util::SOLC_VERSION;
     use solar::sema::Compiler;
     use std::sync::Mutex;
 
@@ -1003,7 +1004,7 @@ mod tests {
 
         // on some CI targets installing results in weird malformed solc files, we try installing it
         // multiple times
-        let version = "0.8.20";
+        let version = SOLC_VERSION;
         for _ in 0..3 {
             let mut is_preinstalled = PRE_INSTALL_SOLC_LOCK.lock().unwrap();
             if !*is_preinstalled {

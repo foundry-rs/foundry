@@ -1839,6 +1839,23 @@ impl TestResult {
         self.duration = Duration::default();
     }
 
+    /// Marks a campaign stopped early by fail-fast or Ctrl-C as skipped, so a partial run is not
+    /// reported as passing.
+    pub fn interrupt(&mut self) {
+        let reason = Some("interrupted".to_string());
+        self.status = TestStatus::Skipped;
+        for predicate in &mut self.invariant_predicate_results {
+            if predicate.status.is_success() {
+                predicate.status = TestStatus::Skipped;
+                predicate.reason.clone_from(&reason);
+            }
+        }
+        // Multi-predicate campaigns carry reasons per predicate.
+        if self.invariant_count.is_none() {
+            self.reason = reason;
+        }
+    }
+
     /// Formats the test result into a string (for printing), naming invariant campaigns after
     /// the suite's contract.
     pub(crate) fn short_result_with_suite(&self, name: &str, suite_name: &str) -> String {

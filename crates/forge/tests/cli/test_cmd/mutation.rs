@@ -2115,3 +2115,146 @@ contract NestedTest {
     assert_eq!(run("4"), serial);
     assert_eq!(run("8"), serial);
 }
+
+// Mutant paths must be relative to the project root, also if a parent directory of the project
+// has a well-known name such as `src`.
+#[forgetest]
+fn mutation_paths_are_relative_to_project_root(prj: _, cmd: _) {
+    let root = prj.root().join("src/project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(root.join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(
+        root.join("src/Counter.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("test/Counter.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.current_dir(&root)
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":4,"killed":3,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":75.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+
+"#]]);
+}
+
+// A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
+#[forgetest]
+fn mutation_timeout_keeps_invariant_run_limit(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = number + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract Handler {
+    Counter public counter;
+    uint256 public calls;
+
+    constructor(Counter counter_) {
+        counter = counter_;
+    }
+
+    function increment() public {
+        counter.increment();
+        calls++;
+    }
+}
+
+contract CounterInvariantTest {
+    Counter counter;
+    Handler handler;
+
+    function setUp() public {
+        counter = new Counter();
+        handler = new Handler(counter);
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(handler);
+    }
+
+    /// forge-config: default.invariant.runs = 4
+    /// forge-config: default.invariant.depth = 4
+    /// forge-config: default.invariant.shrink_run_limit = 0
+    function invariant_countsCalls() public view {
+        require(counter.number() == handler.calls(), "count mismatch");
+    }
+}
+"#,
+    );
+
+    let mut run = |args: &[&str]| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "4", "--json"])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut summary = mutation_summary(&output);
+        summary.as_object_mut().unwrap().remove("duration_secs");
+        summary
+    };
+    let unbounded = run(&[]);
+    assert_eq!(
+        unbounded,
+        serde_json::json!({
+            "total": 10,
+            "killed": 9,
+            "survived": 1,
+            "invalid": 0,
+            "skipped": 0,
+            "timed_out": 0,
+            "mutation_score": 90.0,
+        })
+    );
+    assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
+}

@@ -1,5 +1,6 @@
 use alloy_primitives::Bytes;
 use alloy_rpc_types::TransactionRequest;
+use alloy_serde::WithOtherFields;
 use serde::Deserialize;
 
 /// Represents the options used in `anvil_reorg`
@@ -15,6 +16,6 @@ pub struct ReorgOptions {
 #[serde(untagged)]
 #[expect(clippy::large_enum_variant)]
 pub enum TransactionData {
-    JSON(TransactionRequest),
+    JSON(WithOtherFields<TransactionRequest>),
     Raw(Bytes),
 }

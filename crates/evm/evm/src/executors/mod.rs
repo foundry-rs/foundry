@@ -1909,6 +1909,11 @@ impl EvmExecutionCancellation {
         }
     }
 
+    /// Returns whether a campaign stop was requested or its deadline was observed.
+    pub(crate) fn stop_requested(&self) -> bool {
+        matches!(self, Self::Campaign { stop, .. } if stop.load(Ordering::Relaxed))
+    }
+
     pub(crate) const fn early_exit_ref(&self) -> &EarlyExit {
         match self {
             Self::EarlyExit(early_exit) | Self::Campaign { early_exit, .. } => early_exit,

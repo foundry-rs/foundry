@@ -6,6 +6,7 @@ mod api;
 mod base;
 mod beacon_api;
 mod block_index;
+mod celo;
 mod eip2935;
 mod eip4844;
 mod eip6110;

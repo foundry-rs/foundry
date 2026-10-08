@@ -3745,6 +3745,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         for i in 0..fixtures_len {
             if self.tcfg.early_exit.should_stop() {
+                self.result.table_result(result);
+                self.result.interrupt();
                 return self.result;
             }
 
@@ -4906,6 +4908,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             })
             .collect::<Vec<_>>();
 
+        let interrupted = success && invariant_result.interrupted;
         self.result.invariant_result(
             TestKind::Invariant {
                 runs: invariant_result.runs,
@@ -4928,6 +4931,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 gas_report_traces: invariant_result.gas_report_traces,
             },
         );
+        if interrupted {
+            self.result.interrupt();
+        }
         self.result
     }
 

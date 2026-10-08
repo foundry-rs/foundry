@@ -4,7 +4,7 @@
 //! from the emitted MDX pages.
 
 use crate::{
-    render::{code_regions, neutralize_esm, region_contains},
+    markdown::{code_regions, neutralize_esm, region_contains},
     utils::{git_raw_url, git_source_url},
 };
 use foundry_common::fs::normalize_path;
