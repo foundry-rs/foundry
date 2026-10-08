@@ -68,6 +68,7 @@ about 21k lines plus 40k of tests, and the `anvil` binary builds from it.
 | Replaces `ots_getInternalOperations` to include the top-level operation, `ots_getBlockTransactions` to page from the first transaction, and implements `ots_searchTransactionsBefore` and `ots_searchTransactionsAfter`, which reth leaves unimplemented, over the node's own `trace_block` and `eth_*` methods | `src/otterscan.rs` | ~300 | The same in reth's Otterscan module |
 | Runs a blob call without a blob fee cap at a zero blob base fee in `eth_call` and `trace_call`, as geth and anvil do, through a block override | `src/simulate.rs` (`with_zero_blob_base_fee`), `src/debug.rs` | ~30 | The same rule in reth's call path |
 | Accepts a transaction whose priority fee is above its fee cap on Arbitrum chains, in the pool and in the EVM, as anvil does: Arbitrum does not enforce the EIP-1559 ordering | `src/pool.rs`, `src/evm.rs` (`EvmSettings`) | ~15 | A chain-aware fee rule in reth's pool validator |
+| Answers a state read at a block below the `--prune-history` window with anvil's `BlockOutOfRangeError`, from an RPC middleware: reth keeps every state | `src/history.rs` | ~150 | A history pruning mode in reth with anvil's error |
 | Leaves the console precompile out of `eth_config` | `src/node.rs` | ~15 | An `eth_config` hook for node-specific precompiles |
 
 ## Gaps that are not hooks
@@ -79,9 +80,10 @@ be free if reth had a dev mode:
   check, because reth's payload builder and pool enforce the header's limit.
 - `--disable-min-priority-fee` leaves `eth_maxPriorityFeePerGas` and `eth_feeHistory` to reth's
   gas price oracle; only `eth_gasPrice` drops the tip, as in anvil.
-- `--prune-history`, `--max-persisted-states`, and `--transaction-block-keeper` are accepted and have
-  no effect: reth keeps the full history on disk, which is what these flags bound in anvil's
-  memory.
+- `--max-persisted-states` and `--transaction-block-keeper` are accepted and have no effect: reth
+  keeps the full history on disk, which is what these flags bound in anvil's memory.
+  `--prune-history` keeps the full history too, but rejects state reads below its window, as anvil
+  does.
 - `eth_getFilterChanges` does not report the logs a reorg or a snapshot revert removed with
   `removed: true`; anvil and geth do.
 - A `genesis.json` header carries the forks the node runs and the root of the whole genesis
