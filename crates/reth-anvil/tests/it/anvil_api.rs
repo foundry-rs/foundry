@@ -1961,7 +1961,6 @@ async fn test_anvil_reset_fork_to_non_fork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "optimism")]
 async fn can_get_node_info_optimism() {
     let (api, _) = spawn(NodeConfig::test().with_optimism()).await;
