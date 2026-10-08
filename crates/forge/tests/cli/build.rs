@@ -1,12 +1,7 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
-use foundry_test_utils::{
-    forgetest, forgetest_init,
-    snapbox::IntoData,
-    str,
-    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
-};
+use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::{
     collections::BTreeMap,
@@ -423,7 +418,6 @@ fn project_dotenv_loads_without_warning(prj: _, cmd: _) {
 #[forgetest]
 #[cfg(unix)]
 fn can_build_physical_and_symlinked_dependency_configs(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let external = tempfile::tempdir().unwrap();
     let physical = prj.root().join("lib/linked");
     let linked = external.path().join("cache/actual-package");
@@ -505,7 +499,6 @@ special-alias/=lib/linked/vendor/inner/src/
 #[forgetest]
 #[cfg(unix)]
 fn can_build_symlinked_dependency_with_existing_standard_source(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let external = tempfile::tempdir().unwrap();
     let dependency = external.path().join("dependency");
     fs::create_dir_all(dependency.join("src")).unwrap();
@@ -536,7 +529,6 @@ linked/=node_modules/linked/
 #[forgetest]
 #[cfg(unix)]
 fn can_build_multiple_aliases_to_symlinked_dependency_config(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     let external = tempfile::tempdir().unwrap();
     let dependency = external.path().join("dependency");
     fs::create_dir_all(dependency.join("custom-source")).unwrap();
@@ -895,7 +887,7 @@ Compiler settings (profile: no-metadata): optimizer=true, optimizer_runs=777, vi
 fn build_sizes_no_forge_std(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
-        config.solc = Some(OTHER_SOLC_VERSION.into());
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
     });
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
@@ -1552,9 +1544,7 @@ fn build_locked_supports_projects_nested_in_parent_repository(prj: _, cmd: _) {
     }
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
-    cmd.forge_fuse()
-        .args(["build", "--locked", "--no-lint", "--root", "nested", "--use", SOLC_VERSION])
-        .assert_success();
+    cmd.forge_fuse().args(["build", "--locked", "--no-lint", "--root", "nested"]).assert_success();
 }
 
 #[forgetest_init]
@@ -1673,7 +1663,6 @@ Error: foundry.lock does not match installed dependencies:
 
 #[forgetest]
 fn deny_warnings_checks_warm_cache(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source(
         "Warn.sol",
         r#"// SPDX-License-Identifier: MIT

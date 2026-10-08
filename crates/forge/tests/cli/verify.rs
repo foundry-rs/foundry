@@ -429,7 +429,6 @@ async fn spawn_full_mock_verifier() -> (String, &'static str, tokio::task::JoinH
 // stderr. <https://github.com/foundry-rs/foundry/issues/1976>
 #[forgetest]
 async fn create_verify_json_keeps_stdout_clean(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -850,7 +849,6 @@ contract Deploy is Script {{
 // with ContractCodeNotVerified (the normal "valid key, unknown address" response).
 #[forgetest]
 async fn create_preflight_passes_on_contract_not_verified(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -894,7 +892,6 @@ async fn create_preflight_passes_on_contract_not_verified(prj: _, cmd: _) {
 // rejects the API key with an InvalidApiKey response.
 #[forgetest]
 async fn create_preflight_fails_on_invalid_api_key(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -940,7 +937,6 @@ async fn create_preflight_fails_on_invalid_api_key(prj: _, cmd: _) {
 // with a rate-limit error (transient, not an auth failure).
 #[forgetest]
 async fn create_preflight_warns_on_rate_limit(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();

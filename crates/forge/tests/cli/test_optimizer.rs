@@ -2,7 +2,6 @@
 
 use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
-use foundry_test_utils::util::{OTHER_SOLC_VERSION, SOLC_VERSION};
 
 #[cfg(unix)]
 use foundry_compilers::artifacts::{SolcInput, output_selection::OutputSelection};
@@ -201,7 +200,6 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 #[forgetest]
 fn preprocess_external_bytecode_dependencies(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.dynamic_test_linking = true;
         config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
     });
@@ -249,7 +247,6 @@ Compiler run successful!
 #[forgetest]
 fn preprocess_external_dependencies_invalidate_independently(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.dynamic_test_linking = true;
         config.remappings = vec!["@dep/=lib/dep/src/".parse::<Remapping>().unwrap().into()];
     });
@@ -307,10 +304,7 @@ contract RelativeTest {
 
 #[forgetest]
 fn preprocess_native_bytecode_forms(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl {
@@ -352,10 +346,7 @@ contract NativeTest {
 
 #[forgetest]
 fn preprocess_same_file_free_function_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -386,10 +377,7 @@ contract FreeFunctionTest {
 
 #[forgetest]
 fn preprocess_script_native_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -415,10 +403,7 @@ contract NativeScript {
 
 #[forgetest]
 fn preprocess_imported_free_function_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -464,10 +449,7 @@ contract FreeFunctionTest {
 
 #[forgetest]
 fn preprocess_function_reference_dependencies(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -559,10 +541,7 @@ contract TryCallOptionTest {
 
 #[forgetest]
 fn preprocess_internal_library_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -602,10 +581,7 @@ contract LibraryTest {
 
 #[forgetest]
 fn preprocess_namespace_library_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -648,10 +624,7 @@ contract NamespaceLibraryTest {
 
 #[forgetest]
 fn preprocess_using_library_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -692,10 +665,7 @@ contract UsingLibraryTest {
 
 #[forgetest]
 fn preprocess_try_constructor_argument_dependencies(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -765,10 +735,7 @@ contract TryNamespaceLibraryTest {
 
 #[forgetest]
 fn preprocess_external_inheritance_dependency(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Base { function v() public pure returns (uint256) { return 111; } }
@@ -798,10 +765,7 @@ contract InheritanceTest is Base {
 
 #[forgetest]
 fn preprocess_expanded_source_context_invalidates_prior_artifacts(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -843,7 +807,6 @@ contract BTest { function test_b() public { new Impl(); } }
 #[forgetest]
 fn preprocess_nested_absolute_imports(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.dynamic_test_linking = true;
         config.remappings = vec!["dep/=lib/dep/".parse::<Remapping>().unwrap().into()];
     });
@@ -876,10 +839,7 @@ contract NestedTest { function test_nested() public { new Base(); } }
 
 #[forgetest]
 fn preprocess_analysis_failure_is_conservative(prj: _, cmd: _) {
-    prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
-        config.dynamic_test_linking = true;
-    });
+    prj.update_config(|config| config.dynamic_test_linking = true);
     let source = r#"
 pragma solidity ^0.8.0;
 contract Impl { function v() external pure returns (uint256) { return 111; } }
@@ -4720,7 +4680,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 fn preprocess_constructor_evm_version_validation(prj: _, cmd: _) {
     // The compilation target controls CREATE2 validation, independently of runtime settings.
     prj.update_config(|config| {
-        config.solc = Some(OTHER_SOLC_VERSION.into());
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
     });
     prj.add_source("Target.sol", "pragma solidity ^0.8.0; contract Target {}");
     for (evm_version, salt, valid) in [
@@ -5059,7 +5019,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 #[forgetest]
 fn filtered_tests_preserve_cyclic_import_order(prj: _, cmd: _) {
     prj.update_config(|config| {
-        config.solc = Some(OTHER_SOLC_VERSION.into());
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
         config.evm_version = EvmVersion::Cancun;
     });
     prj.add_test(

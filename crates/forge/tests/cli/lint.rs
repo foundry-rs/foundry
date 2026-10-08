@@ -5,7 +5,6 @@ use forge_lint::{
 use foundry_config::{
     DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode, lint::LintSpecificConfig,
 };
-use foundry_test_utils::util::SOLC_VERSION;
 
 mod geiger;
 
@@ -1271,7 +1270,6 @@ fn build_runs_linter_by_default(prj: _, cmd: _) {
 
     // Configure linter to show only medium severity lints
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1327,7 +1325,6 @@ fn build_respects_quiet_flag_for_linting(prj: _, cmd: _) {
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1347,7 +1344,6 @@ fn build_with_json_uses_json_linter_output(prj: _, cmd: _) {
 
     // Configure linter to show medium severity lints
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1377,7 +1373,6 @@ fn build_respects_lint_on_build_false(prj: _, cmd: _) {
 
     // Configure linter with medium severity lints but disable lint_on_build
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1421,7 +1416,6 @@ fn build_emits_lint_diagnostics(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint.severity = vec![LintSeverity::Info];
     });
 
@@ -1472,7 +1466,6 @@ fn build_no_lint_flag_skips_lint(prj: _, cmd: _) {
     // Configure linter with medium severity lints and ensure lint_on_build is enabled
     // so the only thing skipping the lint step is the `--no-lint` flag.
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint = LinterConfig {
             severity: vec![LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
@@ -1516,7 +1509,6 @@ fn build_denied_lints_do_not_emit_internal_failure_notice(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint.severity = vec![LintSeverity::Info];
         config.deny = DenyLevel::Notes;
     });
@@ -1590,7 +1582,6 @@ fn build_no_lint_flag_does_not_emit_lint_failure_notice(prj: _, cmd: _) {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
-        config.solc = Some(SOLC_VERSION.into());
         config.lint.severity = vec![LintSeverity::Info];
         config.deny = DenyLevel::Notes;
     });
@@ -1630,7 +1621,6 @@ note[unused-import]: unused import
 // <https://github.com/foundry-rs/foundry/issues/11234>
 #[forgetest]
 fn can_lint_only_built_files(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("CounterAWithLints", COUNTER_A);
     prj.add_source("CounterBWithLints", COUNTER_B);
 
@@ -1664,7 +1654,6 @@ note[mixed-case-variable]: mutable variable name is not `mixedCase`
 // <https://github.com/foundry-rs/foundry/issues/11392>
 #[forgetest]
 fn can_lint_param_constants(prj: _, cmd: _) {
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
     prj.add_source("Counter", COUNTER_WITH_CONST);
     prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 

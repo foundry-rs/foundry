@@ -1217,17 +1217,15 @@ fn links_library_artifacts_across_versions(prj: _, cmd: _) {
 
     prj.add_source(
         "Lib.sol",
-        &format!(
-            r#"
-pragma solidity >=0.8.0 <={SOLC_VERSION};
+        r#"
+pragma solidity >=0.8.0;
 
-library Lib {{
-    function identity(uint256 value) external pure returns (uint256) {{
+library Lib {
+    function identity(uint256 value) external pure returns (uint256) {
         return value;
-    }}
-}}
-"#
-        ),
+    }
+}
+"#,
     );
     prj.add_test(
         "New.t.sol",
@@ -1375,17 +1373,14 @@ fn links_libraries_through_workspace_symlinks(prj: _, cmd: _) {
 
     fs::write(
         airdrops.join("foundry.toml"),
-        format!(
-            r#"
+        r#"
 [profile.default]
-solc = "{SOLC_VERSION}"
 allow_paths = ["../"]
 src = "src"
 test = "test"
 out = "out"
 remappings = ["@workspace/=../node_modules/@workspace/"]
-"#
-        ),
+"#,
     )
     .unwrap();
     fs::write(

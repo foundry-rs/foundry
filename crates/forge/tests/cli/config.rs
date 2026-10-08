@@ -1615,7 +1615,6 @@ shared/=lib/a/lib/shared/src/
 
 #[forgetest]
 fn external_dependency_uses_contextual_remapping(prj: _, cmd: _) {
-    cmd.env("FOUNDRY_SOLC_VERSION", SOLC_VERSION);
     let project = prj.root().join("utils");
     let dependency = prj.root().join("node_modules/dependency");
     let library = prj.root().join("node_modules/library/src");

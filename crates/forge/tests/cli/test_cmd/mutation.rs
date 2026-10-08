@@ -3,11 +3,7 @@
 use alloy_primitives::{U256, address};
 use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::Remapping;
-use foundry_test_utils::{
-    rpc::spawn_rpc_proxy_recording_method,
-    str,
-    util::{OutputExt, SOLC_VERSION},
-};
+use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, str, util::OutputExt};
 use std::{fs, str::FromStr};
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
@@ -230,7 +226,6 @@ exclude_operators = [
 "#,
     )
     .unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     cmd.args(["test", "--mutate", "src/Boundary.sol", "--mutation-jobs", "1", "--json"])
         .assert_success()
@@ -293,7 +288,6 @@ exclude_operators = [
 "#,
     )
     .unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     let output = cmd
         .args(["test", "--mutate", "src/StoragePush.sol", "--mutation-jobs", "1", "--json"])
@@ -383,7 +377,6 @@ exclude_operators = [
 "#,
     )
     .unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     let output = cmd
         .args(["test", "--mutate", "src/CompoundAssignments.sol", "--mutation-jobs", "1", "--json"])
@@ -452,7 +445,6 @@ exclude_operators = [
 "#,
     )
     .unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     let output = cmd
         .args(["test", "--mutate", "src/TypedUnary.sol", "--mutation-jobs", "1", "--json"])
@@ -537,7 +529,6 @@ exclude_operators = [
 "#,
     )
     .unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     let output = cmd
         .args(["test", "--mutate", "src/Comparisons.sol", "--mutation-jobs", "1", "--json"])
@@ -631,7 +622,6 @@ contract CounterTest is Test {
 #[forgetest_init]
 fn mutation_testing_validates_mutation_compiler_profile(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = true\n").unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     prj.add_source(
         "StackTooDeep.sol",
@@ -704,7 +694,6 @@ contract StackTooDeepTest {
 #[forgetest_init]
 fn mutation_testing_uses_mutation_profile_for_initial_compile(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.toml"), "[profile.default]\nvia_ir = false\n").unwrap();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     prj.add_source(
         "StackTooDeep.sol",

@@ -1,7 +1,4 @@
-use crate::{
-    TestCommand, init_tracing,
-    util::{SOLC_VERSION, lossy_string},
-};
+use crate::{TestCommand, init_tracing, util::lossy_string};
 use alloy_primitives::{Address, address};
 use alloy_provider::Provider;
 use eyre::Result;
@@ -24,15 +21,7 @@ fn init_script_cmd(
     cmd.forge_fuse();
     cmd.set_current_dir(project_root);
 
-    cmd.args([
-        "script",
-        target_contract,
-        "--root",
-        project_root.to_str().unwrap(),
-        "-vvvvv",
-        "--use",
-        SOLC_VERSION,
-    ]);
+    cmd.args(["script", target_contract, "--root", project_root.to_str().unwrap(), "-vvvvv"]);
 
     if let Some(rpc_url) = endpoint {
         cmd.args(["--fork-url", rpc_url]);

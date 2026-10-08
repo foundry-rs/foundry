@@ -6067,7 +6067,6 @@ fn can_execute_script_command_with_tempo(prj: _, cmd: _) {
 
     // Initialize a Tempo project (installs forge-std, tempo-std, generates Mail template).
     cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
-    prj.update_config(|config| config.solc = Some(SOLC_VERSION.into()));
 
     // Run the generated Mail.s.sol script with a salt argument.
     cmd.forge_fuse()

@@ -1103,7 +1103,7 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, hex};
     use foundry_compilers::CompilerContract;
-    use foundry_test_utils::{rpc::next_etherscan_api_key, util::SOLC_VERSION};
+    use foundry_test_utils::rpc::next_etherscan_api_key;
 
     #[expect(clippy::disallowed_macros)]
     fn assert_successful_compilation(root: &PathBuf) -> ProjectCompileOutput {
@@ -1333,9 +1333,7 @@ mod tests {
         std::fs::write(forge_std.join("Test.sol"), "contract Test {}").unwrap();
         std::fs::write(
             temp.path().join("foundry.toml"),
-            format!(
-                "[profile.default]\nsrc = \"src\"\nlibs = [\"lib\"]\nsolc = \"{SOLC_VERSION}\"\n"
-            ),
+            "[profile.default]\nsrc = \"src\"\nlibs = [\"lib\"]\n",
         )
         .unwrap();
 
