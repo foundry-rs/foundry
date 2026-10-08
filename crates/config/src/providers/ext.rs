@@ -489,6 +489,32 @@ fn rewrite_legacy_profile_keys(dict: &mut Dict, solc_env: Option<&Value>) {
     }
 }
 
+/// Drops the top-level `root` key from config file profiles.
+///
+/// The project root is selected by the caller, not by config files.
+pub(crate) struct IgnoreRootProvider<P>(pub(crate) P);
+
+impl<P: Provider> Provider for IgnoreRootProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = self.0.data()?;
+        for (profile, dict) in &mut map {
+            // `[profile]` keys are profile names, so `[profile.root]` must be kept.
+            if profile.as_str().as_str() != Config::PROFILE_SECTION {
+                dict.remove("root");
+            }
+        }
+        Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
+    }
+}
+
 /// Adapts deprecated labels from arbitrary external providers.
 pub(crate) struct LegacyLabelsProvider<P>(pub(crate) P);
 
