@@ -70,6 +70,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
         }
+        ForgeSubcommand::Properties(cmd) => cmd.run(),
         ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {

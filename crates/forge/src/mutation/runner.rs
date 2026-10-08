@@ -375,6 +375,13 @@ fn test_single_mutant_isolated<FEN: FoundryEvmNetwork>(
         return MutantTestResult { mutant, result: MutationResult::Invalid };
     }
 
+    // `copy_project` links dependency directories; a mutant written through such a link would
+    // change the real dependency source.
+    if let Err(e) = workspace::unshare_path(temp_dir.path(), source_relative) {
+        let _ = sh_eprintln!("Failed to isolate mutated source: {}", e);
+        return MutantTestResult { mutant, result: MutationResult::Invalid };
+    }
+
     // Apply mutation - source_relative is guaranteed to be relative at this point
     let mutated_source_path = temp_dir.path().join(source_relative);
     if let Err(e) = apply_mutation(&mutant, original_source, &mutated_source_path) {
