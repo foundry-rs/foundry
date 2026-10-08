@@ -857,6 +857,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Whether the next snapshot restoration is the first one since its calling frame started,
     /// and so must be recorded in `isolated_snapshot_restores`.
     pub capture_isolated_snapshot_restore: bool,
+
+    /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
+    pub deploy_code_depth: Option<usize>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -944,6 +947,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             track_isolated_snapshots: false,
             isolated_snapshot_restores: Vec::new(),
             capture_isolated_snapshot_restore: false,
+            deploy_code_depth: None,
         }
     }
 
@@ -2926,16 +2930,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
 impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
+        // `deployCode` executes its create frame in a nested EVM one level deeper, so match it
+        // at the depth of the cheatcode call, as for native creates.
+        let depth =
+            if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth };
         let target_depth = if let Some(prank) = &self.get_prank(depth) {
             prank.depth
         } else if let Some(broadcast) = &self.broadcast {
-            // `deployCode` executes its create frame in a nested EVM one level deeper, so match
-            // it by caller rather than by the broadcast depth.
-            if broadcast.deploy_from_code && inputs.caller() == broadcast.original_caller {
-                depth
-            } else {
-                broadcast.depth
-            }
+            broadcast.depth
         } else {
             1
         };
