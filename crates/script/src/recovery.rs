@@ -1387,6 +1387,60 @@ mod tests {
     }
 
     #[test]
+    fn delegated_tempo_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TempoTxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 4217,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request = <TempoTransactionRequest as From<_>>::from(transaction(to));
+            request.inner.from = Some(from);
+            serde_json::from_value::<TempoTransactionRequest>(
+                serde_json::to_value(request).unwrap(),
+            )
+            .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction<TempoTxEnvelope>,
+                        planned: &TempoTransactionRequest| {
+            validate_delegated_transaction::<TempoNetwork>(
+                transaction,
+                planned,
+                4217,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).inner.to, None);
+        assert!(!planned(TxKind::Create).is_tempo_aa());
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
+    }
+
+    #[test]
     fn delegated_tempo_resolution_checks_nonce_domain_and_calls() {
         let from = Address::repeat_byte(0x11);
         let resolved = TempoTransactionRequest {
