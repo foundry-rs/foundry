@@ -5953,6 +5953,26 @@
     },
     {
       "func": {
+        "id": "expectRegularCall",
+        "description": "Expects a regular call (`CALL` opcode) to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectRegularCall(address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRegularCall(address,bytes)",
+        "selector": "0xbd79af28",
+        "selectorBytes": [
+          189,
+          121,
+          175,
+          40
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectRevert_0",
         "description": "Expects an error on next call with any revert data.",
         "declaration": "function expectRevert() external;",

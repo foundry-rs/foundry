@@ -289,6 +289,7 @@ interface Vm {
     function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
+    function expectRegularCall(address callee, bytes calldata data) external;
     function expectRevert() external;
     function expectRevert(bytes4 revertData) external;
     function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
