@@ -5498,6 +5498,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
+ "tempfile",
  "tracing",
 ]
 
