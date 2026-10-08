@@ -24,8 +24,8 @@ use foundry_evm_networks::apply_bsc_p256_precompile;
 use reth_ethereum::{
     chainspec::EthereumHardforks,
     evm::primitives::{
-        ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-        NextBlockEnvAttributes, SenderRecoveryCache,
+        ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, EvmFor, ExecutableTxIterator, ExecutionCtxFor,
+        InspectorFor, NextBlockEnvAttributes, SenderRecoveryCache,
         execute::{BlockAssembler, BlockAssemblerInput},
     },
     node::{
@@ -214,16 +214,7 @@ impl<F> AnvilEvmFactory<F> {
         // A fork keeps the precompiles of the chain it forks, whatever chain id the node reports.
         let chain_id = self.fork.as_ref().map_or(chain_id, |fork| fork.chain_id());
         apply_bsc_p256_precompile(precompiles, chain_id, timestamp);
-        if self.impersonation.has_signature_overrides() {
-            let impersonation = self.impersonation.clone();
-            precompiles.apply_precompile(&EC_RECOVER_ADDRESS, |ecrecover| {
-                let ecrecover = ecrecover?;
-                let id = ecrecover.precompile_id().clone();
-                Some(DynPrecompile::new_stateful(id, move |input| {
-                    cheat_ecrecover(&impersonation, &ecrecover, input)
-                }))
-            });
-        }
+        install_ecrecover_override(precompiles, &self.impersonation);
         let console = self.console.then(ConsoleBuffer::default)?;
         precompiles.apply_precompile(&HARDHAT_CONSOLE_ADDRESS, |_| Some(console.precompile()));
         Some(console)
@@ -285,6 +276,24 @@ fn block_context<Spec, BlockEnv: Block>(input: &EvmEnv<Spec, BlockEnv>) -> (u64,
         input.cfg_env.chain_id,
         input.block_env.timestamp().saturating_to(),
     )
+}
+
+/// Overrides `ecrecover` for the signatures `anvil_impersonateSignature` registered, if any.
+fn install_ecrecover_override(
+    precompiles: &mut PrecompilesMap,
+    impersonation: &ImpersonationState,
+) {
+    if !impersonation.has_signature_overrides() {
+        return;
+    }
+    let impersonation = impersonation.clone();
+    precompiles.apply_precompile(&EC_RECOVER_ADDRESS, |ecrecover| {
+        let ecrecover = ecrecover?;
+        let id = ecrecover.precompile_id().clone();
+        Some(DynPrecompile::new_stateful(id, move |input| {
+            cheat_ecrecover(&impersonation, &ecrecover, input)
+        }))
+    });
 }
 
 /// `ecrecover` with anvil's signature overrides: a signature `anvil_impersonateSignature`
@@ -386,6 +395,11 @@ impl<E, DB> AnvilEvm<E, DB> {
 /// An EVM factory whose EVMs may collect the `console.log` calls of the transaction they
 /// execute. A network whose EVM factory cannot be wrapped in [`AnvilEvmFactory`] collects none.
 pub trait ConsoleEvmFactory: EvmFactory {
+    /// Whether the factory installs anvil's precompiles, as [`AnvilEvmFactory`] does. For a
+    /// factory that does not, [`AnvilEvmConfig`] installs the `ecrecover` override on the EVMs it
+    /// creates.
+    const INSTALLS_PRECOMPILES: bool = false;
+
     /// Returns the `console.log` buffer of the EVM, when it collects.
     fn console<DB: Database, I: Inspector<Self::Context<DB>>>(
         evm: &Self::Evm<DB, I>,
@@ -396,6 +410,8 @@ impl<F> ConsoleEvmFactory for AnvilEvmFactory<F>
 where
     F: EvmFactory<Precompiles = PrecompilesMap>,
 {
+    const INSTALLS_PRECOMPILES: bool = true;
+
     fn console<DB: Database, I: Inspector<Self::Context<DB>>>(
         evm: &Self::Evm<DB, I>,
     ) -> Option<&ConsoleBuffer> {
@@ -604,6 +620,30 @@ where
         attributes: Self::NextBlockEnvCtx,
     ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
         self.inner.context_for_next_block(parent, self.next_block_attributes(attributes))
+    }
+    fn evm_with_env<DB: Database>(&self, db: DB, evm_env: EvmEnvFor<Self>) -> EvmFor<Self, DB> {
+        let mut evm = self.evm_factory().create_evm(db, evm_env);
+        if !Factory::INSTALLS_PRECOMPILES {
+            install_ecrecover_override(evm.precompiles_mut(), &self.state);
+        }
+        evm
+    }
+
+    fn evm_with_env_and_inspector<DB, I>(
+        &self,
+        db: DB,
+        evm_env: EvmEnvFor<Self>,
+        inspector: I,
+    ) -> EvmFor<Self, DB, I>
+    where
+        DB: Database,
+        I: InspectorFor<Self, DB>,
+    {
+        let mut evm = self.evm_factory().create_evm_with_inspector(db, evm_env, inspector);
+        if !Factory::INSTALLS_PRECOMPILES {
+            install_ecrecover_override(evm.precompiles_mut(), &self.state);
+        }
+        evm
     }
 }
 

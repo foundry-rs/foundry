@@ -2138,7 +2138,44 @@ async fn test_tempo_standard_envelope_replay() {
 
 /// Standard EIP-7702 replay honors the same local signature overrides as mining.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "signature overrides reach recovery through anvil's EVM factory, which Tempo's EVM config cannot take; see UPSTREAM.md"]
+async fn test_tempo_ecrecover_signature_override() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    sol! {
+        #[sol(rpc)]
+        contract TestRecover {
+            function testRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s, address expected) external pure {
+                address recovered = ecrecover(hash, v, r, s);
+                require(recovered == expected, "ecrecover failed: address mismatch");
+            }
+        }
+    }
+    let bytecode = alloy_primitives::hex::decode(
+        "0x60808060405234601557610125908161001a8239f35b5f80fdfe60808060405260043610156011575f80fd5b5f3560e01c63bff0b743146023575f80fd5b3460eb5760a036600319011260eb5760243560ff811680910360eb576084356001600160a01b038116929083900360eb5760805f916020936004358252848201526044356040820152606435606082015282805260015afa1560e0575f516001600160a01b031603609057005b60405162461bcd60e51b815260206004820152602260248201527f65637265636f766572206661696c65643a2061646472657373206d69736d61746044820152610c6d60f31b6064820152608490fd5b6040513d5f823e3d90fd5b5f80fdfea264697066735822122006368b42bca31c97f2c409a1cc5186dc899d4255ecc28db7bbb0ad285dc82ae464736f6c634300081c0033",
+    ).unwrap();
+
+    let tx = TransactionRequest::default().from(from).with_deploy_code(bytecode);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract = TestRecover::new(receipt.contract_address().unwrap(), &provider);
+
+    let signature = [0x11u8; 65];
+    let r = B256::from_slice(&signature[..32]);
+    let s = B256::from_slice(&signature[32..64]);
+    let expected = Address::random();
+    api.anvil_impersonate_signature(signature.into(), expected).await.unwrap();
+    let result =
+        contract.testRecover(B256::random(), signature[64], r, s, expected).from(from).call().await;
+    assert!(result.is_ok(), "ecrecover failed: {:?}", result.err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_eip7702_replay_signature_override() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
@@ -4638,6 +4675,8 @@ async fn test_tempo_aa_valid_after_future() {
     let pending = provider.send_raw_transaction(&encoded).await.unwrap();
     let tx_hash = *pending.tx_hash();
 
+    // Pin the block time, so a slow run does not pass `valid_after` on the wall clock.
+    api.evm_set_next_block_timestamp(current_time + 1).await.unwrap();
     api.mine_one().await.unwrap();
     let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap();
     assert!(receipt.is_none(), "Transaction should not be mined before valid_after");

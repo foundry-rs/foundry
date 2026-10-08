@@ -49,6 +49,7 @@ about 21k lines plus 40k of tests, and the `anvil` binary builds from it.
 | `anvil_dropTransaction` removes the sender's later transactions, `anvil_setNonce` and `anvil_setBalance` tell the pool the new values, and a snapshot revert brings the pool back to the snapshot: the transactions mined since return, the ones sent since go | `src/api.rs` (`anvil_revert`, `restore_pool`, `sync_pool_account`) | ~110 | Pool hooks for dropping dependents and for a pool snapshot |
 | Serves anvil's Beacon API routes (`/eth/v1/beacon/blobs/{block_id}`, `/eth/v1/beacon/genesis`) from a tower layer in front of the JSON-RPC server | `src/beacon.rs` | ~250 | Reth has no Beacon API; a blob route on the RPC server would do |
 | Installs BSC's P256 verifier when Haber is active and overrides `ecrecover` for the signatures `anvil_impersonateSignature` registers, from the EVM factory | `src/evm.rs` (`install`, `cheat_ecrecover`) | ~60 | A chain-aware precompile hook on `EvmFactory` |
+| Installs an alloy `CryptoProvider` when a node first sets a signature override, so EIP-7702 authorities with an overridden signature recover to the override's address on every path, as anvil does: alloy-evm recovers authorities when it builds the transaction environment, before any anvil hook sees them. The provider is process-wide, so in one process the overrides of every node apply | `src/impersonation.rs` (`OverrideCryptoProvider`) | ~90 | A recovery hook in alloy-evm's `FromRecoveredTx`, or signed authorities in the transaction environment |
 | Sends a blob transaction from a dev account by signing it through reth and attaching the sidecar as a pooled transaction, and fills `maxFeePerBlobGas`; reth's `eth_sendTransaction` signs without the sidecar and the pool rejects the result | `src/api.rs` (`send`) | ~30 | Keep the sidecar through `send_transaction_request` |
 | Resolves `earliest` to the genesis block and anchors `safe` and `finalized` at it, as anvil does, for a chain whose genesis number is not zero | `src/provider.rs`, `src/miner.rs` | ~10 | `earliest_block_number` from the chain spec |
 | Stops the RPC servers when the node handle drops while an in-process API keeps the node, as anvil does | `src/node.rs` (`Supervisor`) | ~20 | None; node behaviour |
@@ -90,8 +91,6 @@ be free if reth had a dev mode:
   so `anvil_setStorageAt` on such an account does not stick; anvil keeps the storage.
 - `eth_getProof` proves the state of the latest block; anvil's proofs include the state writes it
   has not mined yet.
-- Reth recovers EIP-7702 authorities from their signatures; anvil's signature overrides also
-  apply to authorizations.
 - Reth builds the pending block without anvil's check of the deposit contract's logs, so a
   malformed deposit log does not fail `eth_getBlockByNumber("pending")`.
 - Anvil's precompile factory (`NodeConfig::with_precompile_factory`) is not served.
@@ -122,7 +121,7 @@ be free if reth had a dev mode:
   `docs/networks.md`. Tempo runs (`src/network/tempo.rs`); see "What Tempo needs". Monad runs
   (`src/network/monad.rs`) with its own `ConfigureEvm` on `monad-revm`; still missing are the
   protocol system envelopes anvil replays on reorgs and transaction-hash forks, the per-block
-  hardfork profiles of a Monad fork, and signature overrides for EIP-7702 authorities.
+  hardfork profiles of a Monad fork.
 - Monad reserve balances depend on the senders of the two ancestor blocks. Block execution gets them
   from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
   on top of it, like anvil's pending block, and a call at an older block replays that block.
@@ -209,7 +208,7 @@ each.
 | A dev block builder (`tempo_payload.rs`): sequential, without prewarming, parallel replay, or build budgets. `TempoPayloadBuilderBuilder` takes `TempoEvmConfig` as a concrete type (`crates/node/src/node.rs:885`). | Builders generic over the EVM config, as reth's `EthereumPayloadBuilder` is. |
 | A pool builder that repeats `TempoPoolBuilder::build_pool` (`node.rs:772`) for the wrapped config. | The same. |
 | An assembler adapter around `TempoBlockAssembler`, which implements only `BlockAssembler<TempoEvmConfig>` (`crates/evm/src/assemble.rs:86`). | An assembler over any config whose block executor factory is Tempo's. |
-| No `console.log`, no `anvil_impersonateSignature` in `ecrecover` or EIP-7702 authorities, and no fork block hashes below the fork block: `TempoEvmConfig::new` builds `TempoEvmFactory::default()`, so the anvil EVM factory cannot wrap it. One test is ignored for this. | A constructor that takes an EVM factory. |
+| No `console.log` and no fork block hashes below the fork block: `TempoEvmConfig::new` builds `TempoEvmFactory::default()`, so the anvil EVM factory cannot wrap it. The `ecrecover` override goes in through `AnvilEvmConfig::evm_with_env` instead, on the EVM the factory created. | A constructor that takes an EVM factory. |
 | A copy of `TempoEthApi` (`tempo_eth.rs`, about 300 lines): Tempo's returns `PendingBlockKind::None`, reports `NATIVE_BALANCE_PLACEHOLDER` for native balances (`crates/node/src/rpc/mod.rs:351`), and simulates every AA call with a zero hash and one shared identifier (`crates/alloy/src/rpc/revm_compat.rs:68,94`), so two expiring nonce calls in one bundle collide. The copy builds pending blocks, reports balances, and hashes each simulated expiring nonce call by its request. A fork reads accounts with `eth_getAccountInfo`, as anvil does. | A pending block kind and a balance policy on `TempoEthApi`, and a unique identifier per simulated call. |
 | A pool-only EVM config (`TempoPoolEvmConfig`): the pool validates against the block anvil mines next, at anvil's clock, and skips the fee balance check when pool balance checks are off. The validator still bounds `valid_before` by the tip timestamp (`crates/transaction-pool/src/validator.rs:210`), and `valid_after` by the wall clock, which reth-anvil lifts and checks against anvil's clock at its API instead. | A clock the node can give the validator. |
 | A pool refresh after anvil state writes: the validator keeps the state it read at the tip until the next block (`validator.rs:399`), so reth-anvil replays the tip to the pool. The 2D nonce pool still learns lane changes only from blocks. | A way to drop the validator's read cache. |

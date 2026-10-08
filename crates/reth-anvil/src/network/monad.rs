@@ -18,7 +18,7 @@ use crate::{
     pending::AnvilEthApiBuilder,
     pool::{AnvilPoolBuilder, BalanceRule, PoolSettings},
 };
-use alloy_consensus::Transaction as ConsensusTransaction;
+use alloy_consensus::{Transaction as ConsensusTransaction, crypto::secp256k1::recover_signer};
 use alloy_eips::{BlockHashOrNumber, Decodable2718, eip2930::AccessList};
 use alloy_evm::{
     Database, Evm, EvmEnv, EvmFactory,
@@ -233,7 +233,11 @@ where
             ConsensusTransaction::authorization_list(tx)
                 .into_iter()
                 .flatten()
-                .filter_map(|authorization| authorization.recover_authority().ok())
+                // Through alloy's crypto functions, which apply anvil's signature overrides.
+                .filter_map(|authorization| {
+                    recover_signer(&authorization.signature().ok()?, authorization.signature_hash())
+                        .ok()
+                })
         });
         Some(AncestorBlock {
             parent_hash: block.header().parent_hash,

@@ -11592,6 +11592,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "jsonrpsee",
+ "k256",
  "monad-revm",
  "op-alloy-consensus",
  "op-alloy-rpc-types",

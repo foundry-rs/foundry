@@ -45,7 +45,7 @@ reth-storage-overlay.workspace = true
 reth-tokio-util.workspace = true
 
 # alloy
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["crypto-backend"] }
 alloy-dyn-abi.workspace = true
 alloy-eips.workspace = true
 alloy-evm.workspace = true
@@ -105,6 +105,7 @@ fdlimit = "0.3"
 flate2.workspace = true
 futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+k256.workspace = true
 parking_lot.workspace = true
 rand_08.workspace = true
 rocksdb.workspace = true

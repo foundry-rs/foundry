@@ -1,16 +1,26 @@
-use alloy_consensus::{SignableTransaction, transaction::TxHashRef};
+use alloy_consensus::{
+    SignableTransaction,
+    crypto::{
+        RecoveryError,
+        backend::{CryptoProvider, install_default_provider},
+    },
+    transaction::TxHashRef,
+};
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use alloy_signer::Result as SignerResult;
 use jsonrpsee::core::async_trait;
+use k256::ecdsa::{
+    RecoveryId, Signature as EcdsaSignature, VerifyingKey, signature::hazmat::PrehashVerifier,
+};
 use parking_lot::RwLock;
 use reth_ethereum::rpc::eth::SignError;
 use reth_rpc_eth_api::{SignableTxRequest, helpers::EthSigner};
 use std::{
     collections::{HashMap, HashSet},
     marker::PhantomData,
-    sync::Arc,
+    sync::{Arc, LazyLock, Once, Weak},
 };
 
 /// Shared impersonation state, accessible from the pool validator, the engine EVM config, and the
@@ -38,6 +48,7 @@ impl ImpersonationState {
     /// Makes every transaction carrying `signature` recover to `address`.
     pub fn add_signature_override(&self, signature: Bytes, address: Address) {
         self.inner.write().signature_overrides.insert(signature, address);
+        register_signature_overrides(&self.inner);
     }
 
     /// Returns whether any signature overrides are set.
@@ -122,6 +133,93 @@ impl ImpersonationState {
     pub fn tx_sender(&self, hash: &B256) -> Option<Address> {
         self.inner.read().tx_senders.get(hash).copied()
     }
+}
+
+/// The impersonation states of the nodes in the process that set a signature override.
+static OVERRIDE_STATES: LazyLock<RwLock<Vec<Weak<RwLock<Inner>>>>> =
+    LazyLock::new(Default::default);
+
+/// Makes alloy's signer recovery apply the signature overrides of `inner`.
+///
+/// Reth and alloy-evm recover transaction senders and EIP-7702 authorities through alloy's crypto
+/// functions. These read the overrides through [`OverrideCryptoProvider`], so an override applies
+/// on every path: block execution, calls, traces, and replays. The provider is global, so a
+/// signature override of one node applies to every node in the process.
+fn register_signature_overrides(inner: &Arc<RwLock<Inner>>) {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        if install_default_provider(Arc::new(OverrideCryptoProvider)).is_err() {
+            tracing::warn!(
+                target: "node",
+                "another crypto provider is installed; signature overrides do not apply to \
+                 EIP-7702 authorities"
+            );
+        }
+    });
+    let mut states = OVERRIDE_STATES.write();
+    states.retain(|state| state.strong_count() > 0);
+    if !states.iter().any(|state| state.as_ptr() == Arc::as_ptr(inner)) {
+        states.push(Arc::downgrade(inner));
+    }
+}
+
+/// An alloy crypto provider that recovers a signature with an override to its address, and every
+/// other signature as alloy's default does.
+struct OverrideCryptoProvider;
+
+impl OverrideCryptoProvider {
+    /// Returns the address an override assigns to the signature, with its parity as 0 or 1.
+    fn signature_override(sig: &[u8; 65]) -> Option<Address> {
+        // Overrides are keyed by the signature as `anvil_impersonateSignature` got it, with `v`
+        // as 27 or 28, or as the parity.
+        let states = OVERRIDE_STATES.read();
+        if states.is_empty() {
+            return None;
+        }
+        let mut legacy = *sig;
+        legacy[64] = legacy[64].wrapping_add(27);
+        states.iter().filter_map(Weak::upgrade).find_map(|state| {
+            let state = state.read();
+            [&legacy[..], &sig[..]]
+                .into_iter()
+                .find_map(|key| state.signature_overrides.get(key).copied())
+        })
+    }
+}
+
+impl CryptoProvider for OverrideCryptoProvider {
+    fn recover_signer_unchecked(
+        &self,
+        sig: &[u8; 65],
+        msg: &[u8; 32],
+    ) -> Result<Address, RecoveryError> {
+        if let Some(address) = Self::signature_override(sig) {
+            return Ok(address);
+        }
+        let signature =
+            EcdsaSignature::from_slice(&sig[..64]).map_err(RecoveryError::from_source)?;
+        let id = RecoveryId::from_byte(sig[64]).ok_or_else(RecoveryError::new)?;
+        let key = VerifyingKey::recover_from_prehash(msg, &signature, id)
+            .map_err(RecoveryError::from_source)?;
+        Ok(public_key_address(&key))
+    }
+
+    fn verify_and_compute_signer_unchecked(
+        &self,
+        pubkey: &[u8; 65],
+        sig: &[u8; 64],
+        msg: &[u8; 32],
+    ) -> Result<Address, RecoveryError> {
+        let key = VerifyingKey::from_sec1_bytes(pubkey).map_err(RecoveryError::from_source)?;
+        let signature = EcdsaSignature::from_slice(sig).map_err(RecoveryError::from_source)?;
+        key.verify_prehash(msg, &signature).map_err(RecoveryError::from_source)?;
+        Ok(public_key_address(&key))
+    }
+}
+
+/// Returns the address of a public key.
+fn public_key_address(key: &VerifyingKey) -> Address {
+    Address::from_raw_public_key(&key.to_encoded_point(false).as_bytes()[1..])
 }
 
 /// Signs transaction requests with a placeholder signature while preserving the requested sender

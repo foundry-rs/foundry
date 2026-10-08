@@ -155,7 +155,6 @@ async fn can_send_eip7702_request() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth recovers authorities from their signatures; anvil's signature overrides also apply to authorizations"]
 async fn eip7702_authorization_bypass() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (api, handle) = spawn(node_config).await;
