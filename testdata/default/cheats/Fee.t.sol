@@ -68,6 +68,9 @@ contract FeeSnapshotRevertTest is Test {
     }
 }
 
+/// forge-config: default.isolate = false
+contract FeeSnapshotRevertNonIsolatedTest is FeeSnapshotRevertTest {}
+
 /// `vm.fee` overrides must be scoped to the fork on which they were set and must
 /// not bleed into other forks when `vm.selectFork` / `vm.createSelectFork`
 /// switches the active fork.
@@ -90,6 +93,9 @@ contract MultiForkFeeIsolationTest is Test {
         assertEq(block.basefee, SENTINEL_FEE, "forkA override lost after switching back");
     }
 }
+
+/// forge-config: default.isolate = false
+contract MultiForkFeeIsolationNonIsolatedTest is MultiForkFeeIsolationTest {}
 
 /// Same regression as `FeeSnapshotRevertTest`, but exercised under `--isolate`
 /// where `vm.fee` only writes the override (the real `block.basefee` is left
