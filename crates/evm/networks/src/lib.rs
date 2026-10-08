@@ -938,7 +938,7 @@ pub fn apply_bsc_p256_precompile(
     precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
         p256verify.map(|p256verify| {
             DynPrecompile::new(p256verify.id().clone(), move |input| {
-                p256verify.execute(input.data, input.gas, input.reservoir)
+                p256verify.execute(input.data, input.gas(), input.reservoir)
             })
         })
     });

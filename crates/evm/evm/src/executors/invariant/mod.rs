@@ -383,7 +383,7 @@ fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
         seed
     } else {
         let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        U256::from_be_bytes(keccak256(seed_data).0)
+        keccak256(seed_data).into()
     }
 }
 
@@ -1081,11 +1081,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for (worker_output, _) in worker_outputs {
             aggregator.push(worker_output);
         }
-        let result = if campaign_state.is_timed_campaign() {
+        let mut result = if campaign_state.is_timed_campaign() {
             aggregator.finish_partial()?
         } else {
             aggregator.finish_campaign()?
         };
+        result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
         persist_campaign_optimization(
             &self.config.corpus,
             result.optimization_best_value,

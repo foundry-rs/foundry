@@ -647,9 +647,9 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
             FoundryTxEnvelope::Eip4844(signed_tx) => Self::Eip4844(signed_tx.strip_signature()),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::Eip7702(signed_tx.strip_signature()),
             #[cfg(any(feature = "base", feature = "optimism"))]
-            FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.into_inner()),
+            FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.unseal()),
             #[cfg(feature = "optimism")]
-            FoundryTxEnvelope::PostExec(sealed_tx) => Self::PostExec(sealed_tx.into_inner()),
+            FoundryTxEnvelope::PostExec(sealed_tx) => Self::PostExec(sealed_tx.unseal()),
             #[cfg(feature = "base")]
             FoundryTxEnvelope::Eip8130(signed_tx) => Self::Eip8130(signed_tx.into_tx()),
             FoundryTxEnvelope::Tempo(signed_tx) => Self::Tempo(signed_tx.strip_signature()),

@@ -105,6 +105,11 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    /// Time in milliseconds to group ready transactions into one auto-mined block.
+    /// Set to 0 to disable the coalescing delay.
+    #[arg(long, value_name = "MILLISECONDS", default_value = "5")]
+    pub transaction_coalescing_window: u64,
+
     /// Enable mixed mining mode. Blocks are mined on a timer (set by `--block-time`),
     /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
@@ -272,6 +277,9 @@ impl NodeArgs {
             .with_networks(networks)
             .with_blocktime(self.block_time)
             .with_no_mining(self.no_mining)
+            .with_transaction_coalescing_window(Duration::from_millis(
+                self.transaction_coalescing_window,
+            ))
             .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())?
             .with_genesis_balance(genesis_balance)
@@ -708,4 +716,24 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
         return Err("Duration must be greater than 0".to_string());
     }
     Duration::try_from_secs_f64(s).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transaction_coalescing_window_cli() {
+        for (args, expected) in [
+            (vec!["anvil"], 5),
+            (vec!["anvil", "--transaction-coalescing-window", "0"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "20"], 20),
+        ] {
+            let config = NodeArgs::parse_from(args).into_node_config().unwrap();
+            assert_eq!(config.transaction_coalescing_window, Duration::from_millis(expected));
+        }
+        assert!(
+            NodeArgs::try_parse_from(["anvil", "--transaction-coalescing-window", "-1"]).is_err()
+        );
+    }
 }

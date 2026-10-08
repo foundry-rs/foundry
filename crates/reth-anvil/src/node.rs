@@ -856,7 +856,7 @@ async fn launch_node<Net: AnvilNetwork>(
     node.task_executor.spawn_critical_task("reth-anvil miner", miner.run());
     node.task_executor.spawn_critical_task(
         "reth-anvil automine",
-        run_automine_task(node.pool.clone(), mining.clone()),
+        run_automine_task(node.pool.clone(), mining.clone(), config.transaction_coalescing_window),
     );
     node.task_executor.spawn_critical_task(
         "reth-anvil interval mining",

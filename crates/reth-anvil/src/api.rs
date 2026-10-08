@@ -40,7 +40,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_signer_local::PrivateKeySigner;
 use foundry_common::{
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, redact_url},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 use foundry_evm_core::{decode::RevertDecoder, utils::block_env_from_header};
@@ -429,7 +429,7 @@ pub trait EthExtApi<
 
     /// Estimates the gas of a call down to the exact limit, as anvil does; reth stops its search
     /// within 1.5% above it. A request without `from` is not capped by the zero address's
-    /// balance, and fee fields below the base fee do not fail the call.
+    /// balance, and a free call runs at any base fee.
     #[method(name = "estimateGas")]
     async fn eth_estimate_gas(
         &self,
@@ -439,7 +439,8 @@ pub trait EthExtApi<
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
 
-    /// Runs a call. Fee fields below the base fee do not fail the call, as on anvil.
+    /// Runs a call. A free call runs at any base fee; a priced call below the base fee fails, as on
+    /// anvil.
     #[method(name = "call")]
     async fn eth_call(
         &self,
@@ -1734,7 +1735,7 @@ where
             fork_config: self.fork.as_ref().filter(|fork| !fork.url().is_empty()).map_or_else(
                 NodeForkConfig::default,
                 |fork| NodeForkConfig {
-                    fork_url: Some(fork.url()),
+                    fork_url: Some(redact_url(&fork.url())),
                     fork_block_number: Some(fork.block_number()),
                     fork_retry_backoff: Some(fork.retry_backoff().as_millis()),
                 },
@@ -2607,8 +2608,8 @@ where
         Ok(header.gas_limit().min(cap))
     }
 
-    /// Drops fee fields below the base fee from a call, so the call runs instead of failing
-    /// the fee check; anvil runs calls with the base fee check off.
+    /// Drops zero fee fields from a call, so a free call runs at any base fee, as on anvil. A
+    /// priced call below the base fee fails the fee check, as a transaction does.
     fn with_call_fees(
         &self,
         mut request: RpcTxReq<Eth::NetworkTypes>,
@@ -2619,8 +2620,8 @@ where
             return Ok(request);
         };
         let fees = request.as_mut();
-        let below = |fee: Option<u128>| fee.is_some_and(|fee| fee < u128::from(base_fee));
-        if below(fees.gas_price) || below(fees.max_fee_per_gas) {
+        let free = |fee: Option<u128>| fee == Some(0) && base_fee > 0;
+        if free(fees.gas_price) || free(fees.max_fee_per_gas) {
             fees.gas_price = None;
             fees.max_fee_per_gas = None;
             fees.max_priority_fee_per_gas = None;

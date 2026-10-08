@@ -285,7 +285,7 @@ async fn can_resend_transaction() {
         provider.get_transaction_by_hash(replacement_hash).await.unwrap().unwrap();
     assert_eq!(replacement_tx.inner.tx_hash(), replacement_hash);
     assert_eq!(replacement_tx.inner.gas_limit(), replacement_gas_limit);
-    assert_eq!(Transaction::max_fee_per_gas(&replacement_tx.inner), replacement_gas_price);
+    assert_eq!(Transaction::max_fee_per_gas(replacement_tx.inner()), replacement_gas_price);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2425,4 +2425,38 @@ async fn instant_mine_drains_concurrent_burst_on_local_fork() {
         assert_eq!(provider.get_transaction_count(*from).await.unwrap(), 4);
     }
     assert_eq!(api.txpool_status().await.unwrap().pending, 0);
+}
+
+/// A configured window applies both at startup and after automining is re-enabled.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_configured_coalescing_window_survives_toggle() {
+    for window in [Duration::ZERO, Duration::from_secs(60)] {
+        let (api, handle) =
+            spawn(NodeConfig::test().with_transaction_coalescing_window(window)).await;
+        let provider = handle.http_provider();
+        let accounts = handle.dev_wallets().collect::<Vec<_>>();
+        for toggle in [false, true] {
+            if toggle {
+                api.anvil_set_auto_mine(false).await.unwrap();
+                api.anvil_set_auto_mine(true).await.unwrap();
+            }
+            let tx = TransactionRequest::default()
+                .from(accounts[0].address())
+                .to(accounts[1].address())
+                .value(U256::ONE);
+            let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+            if window.is_zero() {
+                timeout(Duration::from_secs(5), pending.get_receipt()).await.unwrap().unwrap();
+            } else {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                assert!(
+                    provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_none()
+                );
+                api.mine_one().await.unwrap();
+                assert!(
+                    provider.get_transaction_receipt(*pending.tx_hash()).await.unwrap().is_some()
+                );
+            }
+        }
+    }
 }

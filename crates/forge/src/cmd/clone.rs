@@ -14,7 +14,7 @@ use foundry_cli::{
     opts::EtherscanOpts,
     utils::{Git, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, fs};
+use foundry_common::{compile::ProjectCompiler, fs, fs::canonicalize_path};
 use foundry_compilers::{
     ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
@@ -189,7 +189,7 @@ impl CloneArgs {
         Self::init_an_empty_project(&root, install).await?;
         // canonicalize the root path
         // note that at this point, the root directory must have been created
-        let root = dunce::canonicalize(&root)?;
+        let root = canonicalize_path(&root)?;
 
         // step 3. parse the metadata
         Self::parse_metadata(&meta, chain, &root, no_remappings_txt, keep_directory_structure)
@@ -1415,7 +1415,7 @@ mod tests {
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
             .await
             .unwrap();
-        project_root = dunce::canonicalize(&project_root).unwrap();
+        project_root = canonicalize_path(&project_root).unwrap();
         CloneArgs::parse_metadata(&meta, Chain::mainnet(), &project_root, false, false)
             .await
             .unwrap();

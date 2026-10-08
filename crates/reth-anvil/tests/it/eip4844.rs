@@ -1118,6 +1118,20 @@ async fn estimate_gas_reserves_blob_fee() {
         assert!(gas >= 21_000);
     }
 
+    // A sidecar-only request reserves the blob fee for the hashes its sidecar commits to. Input
+    // data keeps it off the plain transfer path, so the balance caps the estimate.
+    let sidecar: BlobTransactionSidecar =
+        SidecarBuilder::<SimpleCoder>::from_slice(b"Hello World").build().unwrap();
+    let tx = TransactionRequest {
+        max_fee_per_blob_gas: Some(2_000_000_000),
+        blob_versioned_hashes: None,
+        sidecar: Some(sidecar.into()),
+        input: Bytes::from_static(&[1]).into(),
+        ..blob_request.clone()
+    };
+    let gas = provider.estimate_gas(WithOtherFields::new(tx)).await.unwrap();
+    assert!(gas >= 21_000);
+
     // An authorization list makes the request execute as EIP-7702, which pays no blob fee.
     let authorization =
         Authorization { chain_id: U256::from(31337), address: accounts[2], nonce: 0 };

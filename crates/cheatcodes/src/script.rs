@@ -107,12 +107,7 @@ fn attach_delegation<FEN: FoundryEvmNetwork>(
     let chain_id = if cross_chain { U256::ZERO } else { U256::from(ccx.chain_id()) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
-    let signed_auth = SignedAuthorization::new_unchecked(
-        auth,
-        *v,
-        U256::from_be_bytes(r.0),
-        U256::from_be_bytes(s.0),
-    );
+    let signed_auth = SignedAuthorization::new_unchecked(auth, *v, (*r).into(), (*s).into());
     write_delegation(ccx, signed_auth.clone())?;
     ccx.state.add_delegation(signed_auth);
     Ok(Default::default())
@@ -177,7 +172,7 @@ fn next_delegation_nonce(
     {
         Some(auth) => {
             // Increment nonce of last recorded delegation.
-            auth.nonce + 1
+            auth.nonce() + 1
         }
         None => {
             // First time a delegation is added for this authority.
@@ -210,10 +205,10 @@ fn write_delegation<FEN: FoundryEvmNetwork>(
         account_nonce,
     );
 
-    if expected_nonce != auth.nonce {
+    if expected_nonce != auth.nonce() {
         return Err(format!(
             "invalid nonce for {authority:?}: expected {expected_nonce}, got {}",
-            auth.nonce
+            auth.nonce()
         )
         .into());
     }

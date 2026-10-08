@@ -556,18 +556,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         for (address, account_state) in prestate {
             let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
-            let info = revm::state::AccountInfo {
-                nonce: account_state.nonce.unwrap_or_default(),
-                balance: account_state.balance.unwrap_or_default(),
-                code_hash: code.hash_slow(),
-                code: Some(code),
-                account_id: Default::default(),
-            };
+            let info = revm::state::AccountInfo::default()
+                .with_balance(account_state.balance.unwrap_or_default())
+                .with_nonce(account_state.nonce.unwrap_or_default())
+                .with_code(code);
             backend.insert_account_info(address, info);
 
             for (slot, value) in account_state.storage {
-                let slot = U256::from_be_bytes(slot.0);
-                let value = U256::from_be_bytes(value.0);
+                let slot = slot.into();
+                let value = value.into();
                 backend.insert_account_storage(address, slot, value)?;
             }
         }
@@ -805,7 +802,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         parent_beacon_block_root: alloy_primitives::B256,
     ) -> eyre::Result<()> {
-        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let calldata = Bytes::from(parent_beacon_block_root);
         let mut evm_env = self.evm_env.clone();
         let inspector = self.inspector().clone();
         let mut state = {
@@ -1713,7 +1710,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let stipend = calculate_stipend(&tx_env, &evm_env.cfg_env);
+    let stipend = calculate_stipend(&tx_env, evm_env.cfg_env());
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),
@@ -1910,6 +1907,11 @@ impl EvmExecutionCancellation {
         if let Self::Campaign { stop, .. } = self {
             stop.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Returns whether a campaign stop was requested or its deadline was observed.
+    pub(crate) fn stop_requested(&self) -> bool {
+        matches!(self, Self::Campaign { stop, .. } if stop.load(Ordering::Relaxed))
     }
 
     pub(crate) const fn early_exit_ref(&self) -> &EarlyExit {

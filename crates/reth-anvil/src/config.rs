@@ -1,5 +1,6 @@
 use crate::{
     fork::{ForkGenesisAccount, ForkSettings, NodeInfoProbe},
+    mining::INSTANT_COALESCE_WINDOW,
     state_dump::{CheckpointForks, SerializableState},
     types::{ForkChoice, ForkUrl, TransactionOrder},
 };
@@ -106,6 +107,8 @@ pub struct NodeConfig {
     pub block_time: Option<Duration>,
     /// Mine only on request.
     pub no_mining: bool,
+    /// How long automine waits to group ready transactions into one block. Zero mines at once.
+    pub transaction_coalescing_window: Duration,
     /// Mine both per transaction and at the interval.
     pub mixed_mining: bool,
     /// Port of the RPC server. Zero picks a free port.
@@ -244,6 +247,7 @@ impl Default for NodeConfig {
             base_fee: None,
             block_time: None,
             no_mining: false,
+            transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
             mixed_mining: false,
             port: NODE_PORT,
             host: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
@@ -1111,6 +1115,14 @@ impl NodeConfig {
     /// Disables automatic mining.
     pub const fn with_no_mining(mut self, no_mining: bool) -> Self {
         self.no_mining = no_mining;
+        self
+    }
+
+    /// Sets how long automine waits to group ready transactions into one block. Zero disables
+    /// the wait.
+    #[must_use]
+    pub const fn with_transaction_coalescing_window(mut self, window: Duration) -> Self {
+        self.transaction_coalescing_window = window;
         self
     }
 

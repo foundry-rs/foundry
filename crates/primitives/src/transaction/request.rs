@@ -297,8 +297,7 @@ impl<'de> Deserialize<'de> for FoundryTransactionRequest {
     where
         D: serde::Deserializer<'de>,
     {
-        WithOtherFields::<TransactionRequest>::deserialize(deserializer)?
-            .try_into()
+        Self::new(WithOtherFields::<TransactionRequest>::deserialize(deserializer)?)
             .map_err(serde::de::Error::custom)
     }
 }
@@ -467,11 +466,10 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                     .expect("valid deposit transaction request")
             }
             #[cfg(feature = "optimism")]
-            FoundryTypedTx::PostExec(tx) => WithOtherFields {
+            FoundryTypedTx::PostExec(tx) => Self::new(WithOtherFields {
                 inner: Into::<TransactionRequest>::into(tx),
                 other: OtherFields::default(),
-            }
-            .try_into()
+            })
             .expect("valid OP post-exec transaction request"),
             #[cfg(feature = "base")]
             FoundryTypedTx::Eip8130(tx) => {
@@ -795,7 +793,7 @@ mod tests {
         other.insert("feeToken".to_string(), serde_json::to_value(Address::random()).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_tempo());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
@@ -867,7 +865,7 @@ mod tests {
         other.insert("isSystemTx".to_string(), serde_json::to_value(false).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_op());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Deposit(_))));
@@ -882,7 +880,7 @@ mod tests {
         other.insert("mint".to_string(), serde_json::to_value(U256::from(1000)).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
@@ -895,7 +893,7 @@ mod tests {
         other.insert("anotherField".to_string(), serde_json::to_value(123).unwrap());
 
         let req: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         assert!(req.is_ethereum());
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
@@ -922,7 +920,7 @@ mod tests {
         other.insert("isSystemTx".to_string(), serde_json::to_value(false).unwrap());
 
         let original: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
@@ -938,7 +936,7 @@ mod tests {
         other.insert("nonceKey".to_string(), serde_json::to_value(U256::from(42)).unwrap());
 
         let original: FoundryTransactionRequest =
-            WithOtherFields { inner: tx, other }.try_into().unwrap();
+            FoundryTransactionRequest::new(WithOtherFields { inner: tx, other }).unwrap();
 
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();

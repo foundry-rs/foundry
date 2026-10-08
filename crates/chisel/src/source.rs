@@ -18,7 +18,6 @@ use foundry_evm::{
     backend::Backend,
     core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
     opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -41,13 +40,6 @@ pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/utils/Vm.sol");
-
-/// In-memory backend and the exact fork identity from which it was constructed.
-#[derive(Clone, Debug)]
-pub(crate) struct CachedBackend<FEN: FoundryEvmNetwork> {
-    pub(crate) backend: Backend<FEN>,
-    pub(crate) resolved_fork: Option<ResolvedFork>,
-}
 
 /// [`SessionSource`] build output.
 pub struct GeneratedOutput {
@@ -100,7 +92,10 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         let c = self.repl_contract_hir().expect("REPL contract not found in HIR");
         let f = c
             .functions()
-            .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))
+            .find(|&f| {
+                let f = hir.function(f);
+                f.name.is_some_and(|n| n.as_str() == "run") && f.parameters.is_empty()
+            })
             .expect("`run()` function not found in REPL contract");
         hir.function(f).body.expect("`run()` function does not have a body")
     }
@@ -241,7 +236,10 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
             _ => None,
         })?;
         contract_ast.body.iter().find_map(|i| match &i.kind {
-            ItemKind::Function(f) if f.header.name.is_some_and(|n| n.as_str() == "run") => {
+            ItemKind::Function(f)
+                if f.header.name.is_some_and(|n| n.as_str() == "run")
+                    && f.header.parameters.is_empty() =>
+            {
                 f.body.as_ref()
             }
             _ => None,
@@ -321,7 +319,7 @@ pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     pub no_vm: bool,
     /// Cached execution backend and its fork identity.
     #[serde(skip)]
-    pub(crate) cached_backend: Option<CachedBackend<FEN>>,
+    pub(crate) cached_backend: Option<Backend<FEN>>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution

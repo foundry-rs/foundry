@@ -127,9 +127,9 @@ impl<H> MiningController<H> {
     }
 }
 
-/// How long the instant miner waits for more transactions after one arrives, so transactions
-/// sent together, in one JSON-RPC batch or in parallel, land in one block.
-const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
+/// How long the instant miner waits by default for more transactions after one arrives, so
+/// transactions sent together, in one JSON-RPC batch or in parallel, land in one block.
+pub const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
 
 /// How long the instant miner waits for the pool to see a mined block before it reads the pool
 /// anyway.
@@ -138,14 +138,19 @@ const POOL_SYNC_TIMEOUT: Duration = Duration::from_secs(10);
 /// Requests a block for every transaction that enters the pool while automine is enabled. Only
 /// new transactions request blocks: a transaction a block left behind is picked up by the
 /// follow-up blocks, or by the next new transaction.
-pub async fn run_automine_task<Pool, H>(pool: Pool, mining: MiningController<H>)
-where
+pub async fn run_automine_task<Pool, H>(
+    pool: Pool,
+    mining: MiningController<H>,
+    coalescing_window: Duration,
+) where
     Pool: TransactionPool + Clone + Unpin + Send + Sync + 'static,
 {
     let mut new_txs = pool.new_transactions_listener();
 
     while new_txs.recv().await.is_some() {
-        sleep(INSTANT_COALESCE_WINDOW).await;
+        if !coalescing_window.is_zero() {
+            sleep(coalescing_window).await;
+        }
         while new_txs.try_recv().is_ok() {}
         if mining.is_automine() {
             mining.trigger_if_pending();

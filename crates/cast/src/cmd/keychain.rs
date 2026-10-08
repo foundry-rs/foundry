@@ -25,7 +25,7 @@ use eyre::Result;
 use foundry_cli::{
     json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, now, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, now, parse_fee_token_address, parse_json, resolve_lane},
 };
 use foundry_common::{
     provider::ProviderBuilder,
@@ -664,7 +664,7 @@ struct JsonSelectorWithRecipients {
 /// Parse `--scopes` JSON flag value.
 fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     let entries: Vec<JsonCallScope> =
-        serde_json::from_str(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
+        parse_json(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
     entries
         .into_iter()
         .map(|entry| {

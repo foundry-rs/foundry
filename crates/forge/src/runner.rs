@@ -3745,6 +3745,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         for i in 0..fixtures_len {
             if self.tcfg.early_exit.should_stop() {
+                self.result.table_result(result);
+                self.result.interrupt();
                 return self.result;
             }
 
@@ -4906,6 +4908,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             })
             .collect::<Vec<_>>();
 
+        let interrupted = success && invariant_result.interrupted;
         self.result.invariant_result(
             TestKind::Invariant {
                 runs: invariant_result.runs,
@@ -4928,6 +4931,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 gas_report_traces: invariant_result.gas_report_traces,
             },
         );
+        if interrupted {
+            self.result.interrupt();
+        }
         self.result
     }
 
@@ -5560,7 +5566,7 @@ fn parse_frontier_selectors(selectors: &[String], signature: &str) -> Vec<Select
     selectors
         .iter()
         .filter_map(|selector| {
-            let parsed = hex::decode(selector.strip_prefix("0x").unwrap_or(selector))
+            let parsed = hex::decode(selector)
                 .ok()
                 .filter(|bytes| bytes.len() == 4)
                 .map(|bytes| Selector::from_slice(&bytes));

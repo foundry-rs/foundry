@@ -32,6 +32,7 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use axum::{Json, Router, routing::post};
+use foundry_common::provider::redact_url;
 use foundry_config::Config;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_test_utils::rpc::{
@@ -101,7 +102,7 @@ async fn is_fork(api: &EthApi) -> bool {
     api.anvil_node_info().await.unwrap().fork_config.fork_url.is_some()
 }
 
-/// The fork endpoint the node reports.
+/// The fork endpoint the node reports, redacted as anvil redacts it.
 async fn fork_url(api: &EthApi) -> String {
     api.anvil_node_info().await.unwrap().fork_config.fork_url.expect("the node forks an endpoint")
 }
@@ -4290,7 +4291,7 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
 
     // Verify initial fork URL
-    assert_eq!(vec![fork_url(&api).await], vec![origin_url.clone()]);
+    assert_eq!(vec![fork_url(&api).await], vec![redact_url(&origin_url)]);
     let metadata_before = api.anvil_metadata().await.unwrap();
 
     // Spawn a second origin to use as the new URL
@@ -4310,14 +4311,14 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
     // Verify ClientForkConfig is updated
     assert_eq!(
         vec![fork_url(&api).await],
-        vec![new_url.clone()],
+        vec![redact_url(&new_url)],
         "ClientForkConfig.fork_urls should be updated after anvil_setRpcUrl"
     );
     assert_eq!(api.anvil_metadata().await.unwrap(), metadata_before);
     api.anvil_reset(Some(Forking::default())).await.unwrap();
     assert_eq!(
         vec![fork_url(&api).await],
-        vec![new_url],
+        vec![redact_url(&new_url)],
         "URL-less reset should keep the URL selected by anvil_setRpcUrl"
     );
 }
@@ -4340,7 +4341,7 @@ async fn test_anvil_reset_rejects_self_reference_without_mutation() {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("own RPC endpoint"), "{err}");
-        assert_eq!(vec![fork_url(&api).await], vec![origin_url.clone()]);
+        assert_eq!(vec![fork_url(&api).await], vec![redact_url(&origin_url)]);
         assert_eq!(api.anvil_metadata().await.unwrap(), metadata_before);
         assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
         assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
@@ -4364,7 +4365,7 @@ async fn test_anvil_set_rpc_url_rejects_self_reference_without_mutation() {
     assert!(error.to_string().contains("own RPC endpoint"), "{error}");
     assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
     api.anvil_reset(Some(Forking::default())).await.unwrap();
-    assert_eq!(fork_url(&api).await, origin_url);
+    assert_eq!(fork_url(&api).await, redact_url(&origin_url));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4389,7 +4390,7 @@ async fn test_anvil_set_rpc_url_rejects_zksync_source_atomically() {
     assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
 
     api.anvil_reset(Some(Forking::default())).await.unwrap();
-    assert_eq!(fork_url(&api).await, origin_url);
+    assert_eq!(fork_url(&api).await, redact_url(&origin_url));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4411,7 +4412,7 @@ async fn test_anvil_set_rpc_url_rejects_different_chain_atomically() {
 
     assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
     api.anvil_reset(Some(Forking::default())).await.unwrap();
-    assert_eq!(fork_url(&api).await, origin_url);
+    assert_eq!(fork_url(&api).await, redact_url(&origin_url));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4434,7 +4435,7 @@ async fn test_anvil_set_rpc_url_rejects_mismatched_pinned_block_atomically() {
 
     assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
     api.anvil_reset(Some(Forking::default())).await.unwrap();
-    assert_eq!(fork_url(&api).await, origin_url);
+    assert_eq!(fork_url(&api).await, redact_url(&origin_url));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4458,7 +4459,7 @@ async fn test_anvil_set_rpc_url_keeps_node_info_strict_without_mutation() {
     assert!(error.to_string().contains("failed to determine network family"), "{error}");
     assert_eq!(api.anvil_node_info().await.unwrap(), info_before);
     api.anvil_reset(Some(Forking::default())).await.unwrap();
-    assert_eq!(fork_url(&api).await, origin_url);
+    assert_eq!(fork_url(&api).await, redact_url(&origin_url));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4481,7 +4482,7 @@ async fn test_anvil_reset_with_url_updates_fork_urls() {
     // Verify the fork config uses the new URL, not the old one
     assert_eq!(
         vec![fork_url(&api).await],
-        vec![new_url.clone()],
+        vec![redact_url(&new_url)],
         "ClientForkConfig.fork_urls should reflect the new URL after anvil_reset"
     );
 }
@@ -4574,7 +4575,7 @@ async fn test_anvil_reset_rejects_zksync_source_atomically() {
         .unwrap_err();
 
     assert!(error.to_string().contains("cannot execute native EraVM bytecode"));
-    assert_eq!(fork_url(&api).await, origin_url);
+    assert_eq!(fork_url(&api).await, redact_url(&origin_url));
     assert_eq!(api.chain_id().await.unwrap(), NamedChain::Mainnet as u64);
     assert_eq!(handle.http_provider().get_block_number().await.unwrap(), original_block);
     assert_eq!(api.instance_id(), original_instance_id);
