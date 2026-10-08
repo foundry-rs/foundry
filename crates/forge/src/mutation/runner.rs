@@ -377,7 +377,7 @@ fn test_single_mutant_isolated<FEN: FoundryEvmNetwork>(
 
     // `copy_project` links dependency directories; a mutant written through such a link would
     // change the real dependency source.
-    if let Err(e) = workspace::unshare_path(temp_dir.path(), source_relative) {
+    if let Err(e) = workspace::unshare_path(&config.root, temp_dir.path(), source_relative) {
         let _ = sh_eprintln!("Failed to isolate mutated source: {}", e);
         return MutantTestResult { mutant, result: MutationResult::Invalid };
     }
