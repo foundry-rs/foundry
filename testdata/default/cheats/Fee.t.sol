@@ -58,13 +58,14 @@ contract FeeSnapshotRevertTest is Test {
     }
 
     function test_fee_revert_to_state_restores_prior_override() public {
+        uint256 initialFee = block.basefee;
         uint256 id = vm.snapshotState();
         vm.fee(2000);
         assertEq(block.basefee, 2000, "override not applied before revert");
         assertTrue(vm.revertToState(id), "revertToState failed");
         // Before the snapshot no override was set, so BASEFEE should fall
         // back to the underlying env value (which `revert_state` restores).
-        assertTrue(block.basefee != 2000, "override leaked past revertToState");
+        assertEq(block.basefee, initialFee, "override leaked past revertToState");
     }
 }
 
@@ -97,10 +98,7 @@ contract MultiForkFeeIsolationTest is Test {
 /// forge-config: default.isolate = false
 contract MultiForkFeeIsolationNonIsolatedTest is MultiForkFeeIsolationTest {}
 
-/// Same regression as `FeeSnapshotRevertTest`, but exercised under `--isolate`
-/// where `vm.fee` only writes the override (the real `block.basefee` is left
-/// untouched), so the snapshot/revert path is the only thing that can roll
-/// the override back.
+/// A snapshot restore must also update the basefee observed by later isolated calls.
 /// forge-config: default.isolate = true
 contract IsolatedFeeSnapshotRevertTest is Test {
     BaseFeeRecorder internal recorder;
@@ -120,3 +118,26 @@ contract IsolatedFeeSnapshotRevertTest is Test {
         assertEq(recorder.lastBaseFee(), 1000, "override leaked past revertToState");
     }
 }
+
+contract FeeSnapshotHelper is Test {
+    function restoreFee() external {
+        vm.fee(1000);
+        uint256 snapshot = vm.snapshotState();
+        vm.fee(2000);
+        assertEq(block.basefee, 2000);
+        assertTrue(vm.revertToState(snapshot));
+        assertEq(block.basefee, 1000);
+    }
+}
+
+/// forge-config: default.isolate = true
+contract NestedFeeSnapshotRevertTest is Test {
+    function test_fee_snapshot_inside_called_contract() public {
+        FeeSnapshotHelper helper = new FeeSnapshotHelper();
+        helper.restoreFee();
+        assertEq(block.basefee, 1000);
+    }
+}
+
+/// forge-config: default.isolate = false
+contract NestedFeeSnapshotRevertNonIsolatedTest is NestedFeeSnapshotRevertTest {}
