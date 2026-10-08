@@ -43,7 +43,7 @@ jobs:
           cache: npm
           cache-dependency-path: editors/vscode/package-lock.json
       - run: npm ci
-      - run: npm run check && npm test && npm run package
+      - run: npm run check && npm test && npm run package -- ${PRE_RELEASE:+"$PRE_RELEASE"}
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -57,4 +57,4 @@ jobs:
         run: npx vsce publish --packagePath bundle/forge.vsix --azure-credential ${PRE_RELEASE:+"$PRE_RELEASE"}
       - name: Publish to Open VSX
         if: ${{ !inputs.dry-run && vars.OPEN_VSX_PUBLISH == 'true' }}
-        run: npx ovsx publish bundle/forge.vsix --trusted-publishing ${PRE_RELEASE:+"$PRE_RELEASE"}
+        run: npx ovsx publish bundle/forge.vsix --trusted-publishing

@@ -3,11 +3,9 @@ import { createVSIX, listFiles } from "@vscode/vsce";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
-const args = process.argv.slice(2);
-if (args.length > 0) {
-  throw new Error(`package.mjs does not accept arguments: ${args.join(" ")}`);
-}
+const { values } = parseArgs({ options: { "pre-release": { type: "boolean" } } });
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bundle = join(root, "bundle");
@@ -28,7 +26,7 @@ try {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   delete manifest.scripts["vscode:prepublish"];
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-  await createVSIX({ cwd: staging, packagePath: join(bundle, "forge.vsix"), useYarn: false });
+  await createVSIX({ cwd: staging, packagePath: join(bundle, "forge.vsix"), useYarn: false, preRelease: values["pre-release"] });
 } finally {
   await rm(staging, { recursive: true, force: true });
 }
