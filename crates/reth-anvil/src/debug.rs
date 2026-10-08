@@ -3,7 +3,11 @@
 //! The fork block and the blocks before it are not stored locally, so their traces come from the
 //! fork endpoint, as on anvil. The other differences are error codes and parameter checks.
 
-use crate::{fork::ForkInfo, simulate::with_zero_blob_base_fee};
+use crate::{
+    api::ensure_call_fee_cap,
+    fork::ForkInfo,
+    simulate::{validate_request, with_zero_blob_base_fee},
+};
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcObject;
@@ -104,6 +108,14 @@ pub trait AnvilTraceApi<TxReq: RpcObject> {
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<TraceResults>;
+
+    /// Traces calls in sequence and rejects the batch if any priced call is below the base fee.
+    #[method(name = "callMany")]
+    async fn trace_call_many(
+        &self,
+        calls: Vec<(TxReq, HashSet<TraceType>)>,
+        block_id: Option<BlockId>,
+    ) -> RpcResult<Vec<TraceResults>>;
 
     /// Returns the traces of the block's transactions. The pending block is rejected, as in anvil.
     #[method(name = "block")]
@@ -382,6 +394,14 @@ where
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<TraceResults> {
+        validate_request(call.as_ref())?;
+        ensure_call_fee_cap(
+            self.inner.eth_api(),
+            call.as_ref(),
+            block_id,
+            block_overrides.as_deref(),
+        )
+        .await?;
         let block_overrides = with_zero_blob_base_fee(call.as_ref(), block_overrides);
         <TraceApi<Eth> as TraceApiServer<RpcTxReq<Eth::NetworkTypes>>>::trace_call(
             &self.inner,
@@ -390,6 +410,23 @@ where
             block_id,
             state_overrides,
             block_overrides,
+        )
+        .await
+    }
+
+    async fn trace_call_many(
+        &self,
+        calls: Vec<(RpcTxReq<Eth::NetworkTypes>, HashSet<TraceType>)>,
+        block_id: Option<BlockId>,
+    ) -> RpcResult<Vec<TraceResults>> {
+        for (call, _) in &calls {
+            validate_request(call.as_ref())?;
+            ensure_call_fee_cap(self.inner.eth_api(), call.as_ref(), block_id, None).await?;
+        }
+        <TraceApi<Eth> as TraceApiServer<RpcTxReq<Eth::NetworkTypes>>>::trace_call_many(
+            &self.inner,
+            calls,
+            block_id,
         )
         .await
     }

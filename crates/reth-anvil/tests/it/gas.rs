@@ -768,6 +768,59 @@ async fn priced_calls_skip_base_fee_check_before_london() {
     assert_eq!(gas, U256::from(21_000));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn priced_calls_use_the_execution_block_base_fee() {
+    let (api, handle) = spawn(NodeConfig::test().with_base_fee(Some(100))).await;
+    let from = handle.dev_accounts().next().unwrap();
+    let to = handle.dev_accounts().nth(1).unwrap();
+    let genesis = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(200)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(300)).await.unwrap();
+
+    for (block, base_fee) in [
+        (BlockId::number(0), 100),
+        (BlockId::hash(genesis.header.hash), 100),
+        (BlockId::latest(), 200),
+        (BlockId::pending(), 300),
+    ] {
+        for price in [0, base_fee - 1, base_fee] {
+            for typed in [false, true] {
+                let mut request = TransactionRequest::default().from(from).to(to);
+                if typed {
+                    request.max_fee_per_gas = Some(price);
+                    request.max_priority_fee_per_gas = Some(u128::from(price > 0));
+                } else {
+                    request.gas_price = Some(price);
+                }
+                let request = WithOtherFields::new(request);
+                let trace = || [TraceType::Trace].into_iter().collect();
+                let results = [
+                    api.call(request.clone(), Some(block), Default::default()).await.map(|_| ()),
+                    api.estimate_gas(request.clone(), Some(block), Default::default())
+                        .await
+                        .map(|_| ()),
+                    api.trace_call(request.clone(), trace(), Some(block)).await.map(|_| ()),
+                    api.trace_call_many(vec![(request, trace())], Some(block)).await.map(|_| ()),
+                ];
+                for result in results {
+                    if price > 0 && price < base_fee {
+                        assert!(is_fee_cap_too_low(result.unwrap_err()));
+                    } else {
+                        result.unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    // Estimates without an explicit block use the pending base fee.
+    let request =
+        WithOtherFields::new(TransactionRequest::default().from(from).to(to).gas_price(299));
+    let err = api.estimate_gas(request, None, Default::default()).await.unwrap_err();
+    assert!(is_fee_cap_too_low(err));
+}
+
 // <https://github.com/foundry-rs/foundry/issues/17428>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_transfers_across_hardforks() {

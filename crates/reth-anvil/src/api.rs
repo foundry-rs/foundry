@@ -68,10 +68,13 @@ use reth_ethereum::{
 use reth_execution_types::ChangedAccount;
 use reth_rpc_eth_api::{
     EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTransaction, RpcTxReq, RpcTypes,
-    helpers::LoadPendingBlock,
+    helpers::{LoadPendingBlock, LoadState, SpawnBlocking},
 };
 use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
-use revm::context::{BlockEnv, Cfg};
+use revm::{
+    context::{Block as _, BlockEnv, Cfg},
+    primitives::hardfork::SpecId,
+};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -2180,6 +2183,7 @@ where
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
+        ensure_call_fee_cap(&self.eth, request.as_ref(), block, block_overrides.as_deref()).await?;
         let request = self.with_call_fees(request)?;
         let state_overrides = self.with_request_nonce(&request, state_overrides);
         // Anvil checks the value against the balance before it runs the call.
@@ -2202,9 +2206,6 @@ where
         )
         .await?;
         let mut high = estimate.saturating_to::<u64>();
-        if high <= MIN_TRANSACTION_GAS {
-            return Ok(estimate);
-        }
         // Reth stops once the failing and the passing limit are within the error ratio, so the
         // exact limit is above `low`. Probe the calls between them.
         let mut low = (high as f64 * (1.0 - ESTIMATE_GAS_ERROR_RATIO)) as u64;
@@ -2226,6 +2227,15 @@ where
             } else {
                 low = mid;
             }
+        }
+        // Reth's transfer shortcut can return a limit above the request's allowance.
+        if let Some(gas_limit) = request.as_ref().gas
+            && high > gas_limit
+        {
+            return Err(EthApiError::InvalidTransaction(
+                RpcInvalidTransactionError::GasRequiredExceedsAllowance { gas_limit },
+            )
+            .into());
         }
         Ok(U256::from(high))
     }
@@ -2615,6 +2625,7 @@ where
         mut request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
         self.ensure_network_supports(request.as_ref())?;
+        request.as_mut().populate_blob_hashes();
         let Some(base_fee) = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas()
         else {
             return Ok(request);
@@ -2781,6 +2792,7 @@ where
         simulate::validate_request(request.as_ref())?;
         ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
         let state_overrides = self.with_pending_state(block, state_overrides).await?;
+        ensure_call_fee_cap(&self.eth, request.as_ref(), block, block_overrides.as_deref()).await?;
         self.ensure_call_funds(&request, block, state_overrides.as_ref())?;
         let request = self.with_call_fees(request)?;
         let state_overrides = self.with_request_nonce(&request, state_overrides);
@@ -3145,6 +3157,36 @@ where
     async fn personal_sign(&self, message: Bytes, address: Address) -> RpcResult<Bytes> {
         EthApiServer::sign(&self.eth, address, message).await
     }
+}
+
+/// Rejects a priced call below the base fee of its execution block. Reth disables this check
+/// for calls, including estimates and traces. Free calls and blocks before London skip it.
+pub(crate) async fn ensure_call_fee_cap<Eth: LoadState + SpawnBlocking>(
+    eth: &Eth,
+    request: &TransactionRequest,
+    block: Option<BlockId>,
+    block_overrides: Option<&BlockOverrides>,
+) -> RpcResult<()> {
+    let Some(price) = request.gas_price.or(request.max_fee_per_gas).filter(|price| *price > 0)
+    else {
+        return Ok(());
+    };
+    let (env, _) = eth.evm_env_at(block.unwrap_or_default()).await.map_err(Into::into)?;
+    if Into::<SpecId>::into(Cfg::spec(&env.cfg_env)).is_enabled_in(SpecId::LONDON) {
+        let base_fee = block_overrides
+            .and_then(|overrides| overrides.base_fee)
+            .unwrap_or_else(|| U256::from(env.block_env.basefee()));
+        if U256::from(price) < base_fee {
+            let error = EthApiError::InvalidTransaction(RpcInvalidTransactionError::FeeCapTooLow);
+            // Reth maps this error to -32000; anvil reports a rejected transaction.
+            return Err(ErrorObjectOwned::owned(
+                TRANSACTION_REJECTED_CODE,
+                error.to_string(),
+                None::<()>,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn internal_error(message: impl Into<String>) -> ErrorObjectOwned {
