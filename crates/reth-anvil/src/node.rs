@@ -283,8 +283,6 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     config.resolve_networks().await?;
     match config.networks.resolved_network().unwrap_or_default() {
         NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
-        #[cfg(feature = "monad")]
-        NetworkVariant::Monad => launch::<crate::network::monad::Monad>(config).await,
         #[cfg(feature = "tempo")]
         NetworkVariant::Tempo => launch::<crate::network::tempo::Tempo>(config).await,
         // Other crates may enable more variants than this crate runs.

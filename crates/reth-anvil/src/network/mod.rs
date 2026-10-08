@@ -39,8 +39,6 @@ use reth_rpc_eth_api::{FullEthApiServer, RpcTypes, helpers::EthTransactions};
 use std::sync::Arc;
 
 pub mod ethereum;
-#[cfg(feature = "monad")]
-pub mod monad;
 #[cfg(feature = "tempo")]
 pub mod tempo;
 #[cfg(feature = "tempo")]

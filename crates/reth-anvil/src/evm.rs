@@ -196,12 +196,6 @@ impl<F> AnvilEvmFactory<F> {
         Self { inner, precompiles: Arc::new(precompiles), impersonation, fork, console }
     }
 
-    /// Returns the wrapped factory.
-    #[cfg(feature = "monad")]
-    pub const fn inner(&self) -> &F {
-        &self.inner
-    }
-
     /// Installs the precompiles for the block and returns the `console.log` buffer, when
     /// collecting: the network's, BSC's P256 verifier when Haber is active, and the `ecrecover`
     /// override for impersonated signatures.
@@ -387,12 +381,6 @@ impl<E, DB> AnvilEvm<E, DB> {
     /// Returns the `console.log` buffer, when collecting.
     pub const fn console(&self) -> Option<&ConsoleBuffer> {
         self.console.as_ref()
-    }
-
-    /// Returns the wrapped EVM mutably.
-    #[cfg(feature = "monad")]
-    pub const fn inner_mut(&mut self) -> &mut E {
-        &mut self.inner
     }
 }
 

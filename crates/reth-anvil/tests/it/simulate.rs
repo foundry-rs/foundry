@@ -346,7 +346,7 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth keeps the block's blob base fee in a call with a zero blob fee cap"]
+#[ignore = "without validation, a blob call with a zero cap runs at the blob base fee and pays it; anvil charges no blob fee"]
 async fn test_simulate_v1_preserves_precompile_warming_for_blob_calls_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let source = "0x0000000000000000000000000000000000000004";

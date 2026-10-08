@@ -1,7 +1,5 @@
 use crate::{config::NodeConfig, impersonation::ImpersonationState, types::TransactionOrder};
-use alloy_consensus::{
-    BlockHeader, Transaction, Typed2718, constants::EIP4844_TX_TYPE_ID, transaction::TxHashRef,
-};
+use alloy_consensus::{BlockHeader, transaction::TxHashRef};
 use alloy_primitives::{B256, Signature, U256};
 use eyre::Result;
 use parking_lot::{Mutex, RwLock};
@@ -24,9 +22,7 @@ use reth_ethereum::{
         error::{InvalidPoolTransactionError, PoolTransactionError},
         validate::ValidTransaction,
     },
-    primitives::{
-        BlockBody, GotExpected, Recovered, SealedBlock, transaction::error::InvalidTransactionError,
-    },
+    primitives::{BlockBody, Recovered, SealedBlock, transaction::error::InvalidTransactionError},
     storage::BlockReaderIdExt,
 };
 use std::{
@@ -92,12 +88,6 @@ where
             }
             self.state.undrop_tx(transaction.hash());
         }
-        if self.settings.reject_blob_transactions && transaction.ty() == EIP4844_TX_TYPE_ID {
-            return TransactionValidationOutcome::Invalid(
-                transaction,
-                InvalidPoolTransactionError::Other(Box::new(BlobTransactionsUnsupported)),
-            );
-        }
         // A signature override attributes the transaction to the chosen sender. The pool keeps
         // the recovered sender for ordering; execution and lookups use the override.
         let signature_sender = if self.state.has_signature_overrides() {
@@ -156,22 +146,6 @@ where
             // The pool parks transactions the sender cannot afford. Report an unlimited balance,
             // so a transaction funded earlier in the same block is mined.
             BalanceRule::None => U256::MAX,
-            BalanceRule::GasOnly => {
-                let tx = transaction.transaction();
-                let base_fee = self.base_fee.load(Ordering::Relaxed);
-                let price = tx.clone_into_consensus().effective_gas_price(Some(base_fee));
-                let required = U256::from(tx.gas_limit()).saturating_mul(U256::from(price));
-                if balance < required {
-                    return TransactionValidationOutcome::Invalid(
-                        transaction.into_transaction(),
-                        InvalidTransactionError::InsufficientFunds(
-                            GotExpected { got: balance, expected: required }.into(),
-                        )
-                        .into(),
-                    );
-                }
-                U256::MAX
-            }
         };
         TransactionValidationOutcome::Valid {
             balance,
@@ -209,28 +183,6 @@ impl std::error::Error for RevertedTransaction {}
 impl PoolTransactionError for RevertedTransaction {
     fn is_bad_transaction(&self) -> bool {
         false
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// The pool error for a blob transaction on a network without blobs.
-#[derive(Debug)]
-struct BlobTransactionsUnsupported;
-
-impl Display for BlobTransactionsUnsupported {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("EIP-4844 blob transactions are not supported on Monad")
-    }
-}
-
-impl std::error::Error for BlobTransactionsUnsupported {}
-
-impl PoolTransactionError for BlobTransactionsUnsupported {
-    fn is_bad_transaction(&self) -> bool {
-        true
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -333,10 +285,6 @@ pub enum BalanceRule {
     /// The value plus the gas limit at the maximum fee, as Ethereum does.
     #[default]
     Full,
-    /// Only the gas limit at the effective gas price, as Monad does. The value is charged, or the
-    /// transaction fails, when it executes.
-    #[cfg_attr(not(feature = "monad"), expect(dead_code))]
-    GasOnly,
     /// No check.
     None,
 }
@@ -370,8 +318,6 @@ pub struct PoolSettings {
     pub balance_rule: BalanceRule,
     /// Whether the pool enforces no minimum priority fee.
     pub disable_min_priority_fee: bool,
-    /// Whether the pool rejects EIP-4844 blob transactions.
-    pub reject_blob_transactions: bool,
     /// Whether a priority fee above the fee cap is allowed, as on Arbitrum.
     pub allow_tip_above_fee_cap: bool,
 }
@@ -387,7 +333,6 @@ impl PoolSettings {
                 BalanceRule::Full
             },
             disable_min_priority_fee: config.disable_min_priority_fee,
-            reject_blob_transactions: false,
             allow_tip_above_fee_cap: config.is_arbitrum(),
         }
     }

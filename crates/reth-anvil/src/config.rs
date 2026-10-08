@@ -38,14 +38,10 @@ use std::{
 };
 use yansi::Paint;
 
-#[cfg(feature = "monad")]
-use foundry_evm_hardforks::MonadHardfork;
 #[cfg(feature = "tempo")]
 use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
 #[cfg(feature = "optimism")]
 use reth_ethereum::chainspec::NamedChain;
-#[cfg(feature = "monad")]
-use revm::primitives::hardfork::SpecId;
 #[cfg(feature = "tempo")]
 use tempo_hardfork::constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE};
 
@@ -332,13 +328,6 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_tempo(), ..Self::test() }
     }
 
-    /// Returns a test config for the Monad network.
-    #[cfg(feature = "monad")]
-    #[doc(hidden)]
-    pub fn test_monad() -> Self {
-        Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
-    }
-
     /// Returns a test config for the Base network.
     #[cfg(feature = "base")]
     #[doc(hidden)]
@@ -372,13 +361,6 @@ impl NodeConfig {
             return None;
         }
         self.tempo_fee_payer.or_else(|| self.genesis_accounts.last().map(|wallet| wallet.address()))
-    }
-
-    /// Runs the Monad network.
-    #[cfg(feature = "monad")]
-    pub fn with_monad(mut self) -> Self {
-        self.networks = NetworkConfigs::with_monad();
-        self
     }
 
     /// Runs the Optimism network.
@@ -485,13 +467,7 @@ impl NodeConfig {
     }
 
     /// Returns the configured Ethereum hardfork, or the one active on `chain` at `timestamp`.
-    ///
-    /// On Monad, this is the Ethereum hardfork the Monad hardfork is based on.
     fn ethereum_hardfork_at(&self, chain: Chain, timestamp: u64) -> Result<EthereumHardfork> {
-        #[cfg(feature = "monad")]
-        if self.networks.is_monad() {
-            return Ok(ethereum_hardfork_of_monad(self.monad_hardfork_at(timestamp)?));
-        }
         // Every Tempo hardfork runs on Osaka.
         #[cfg(feature = "tempo")]
         if self.networks.is_tempo() {
@@ -504,23 +480,6 @@ impl NodeConfig {
             }
             Some(FoundryHardfork::Ethereum(hardfork)) => Ok(hardfork),
             Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not supported yet"),
-        }
-    }
-
-    /// Returns the Monad hardfork active from genesis.
-    #[cfg(feature = "monad")]
-    pub fn get_monad_hardfork(&self) -> Result<MonadHardfork> {
-        self.monad_hardfork_at(self.get_genesis_timestamp())
-    }
-
-    /// Returns the configured Monad hardfork, or the one active on the chain at `timestamp`.
-    #[cfg(feature = "monad")]
-    fn monad_hardfork_at(&self, timestamp: u64) -> Result<MonadHardfork> {
-        match self.hardfork {
-            None => Ok(MonadHardfork::from_chain_and_timestamp(self.get_chain_id(), timestamp)
-                .unwrap_or_default()),
-            Some(FoundryHardfork::Monad(hardfork)) => Ok(hardfork),
-            Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not a Monad hardfork"),
         }
     }
 
@@ -1492,8 +1451,6 @@ impl NodeConfig {
 const fn runs_network(network: NetworkVariant) -> bool {
     match network {
         NetworkVariant::Ethereum => true,
-        #[cfg(feature = "monad")]
-        NetworkVariant::Monad => true,
         #[cfg(feature = "tempo")]
         NetworkVariant::Tempo => true,
         // Other crates may enable more variants than this crate runs.
@@ -1511,15 +1468,6 @@ pub struct ForkSource<'a> {
     pub node_info: Option<&'a NodeInfo>,
     /// The timestamp of the block a fork at a transaction hash replays, if any.
     pub replay_timestamp: Option<u64>,
-}
-
-/// Returns the Ethereum hardfork a Monad hardfork is based on.
-#[cfg(feature = "monad")]
-const fn ethereum_hardfork_of_monad(hardfork: MonadHardfork) -> EthereumHardfork {
-    match hardfork.into_eth_spec() {
-        SpecId::PRAGUE => EthereumHardfork::Prague,
-        _ => EthereumHardfork::Osaka,
-    }
 }
 
 /// Builds a chain spec with every hardfork up to and including `hardfork` active at genesis, and

@@ -475,8 +475,8 @@ pub trait EthExtApi<
         reward_percentiles: Option<Vec<f64>>,
     ) -> RpcResult<FeeHistory>;
 
-    /// Creates an access list for a request. From MonadTen on, Monad lists one storage key per
-    /// storage page, as anvil does.
+    /// Creates an access list for a request: at `pending`, on the pending block's state, and on
+    /// Tempo, with the request's nonce.
     #[method(name = "createAccessList")]
     async fn eth_create_access_list(
         &self,
@@ -2592,8 +2592,7 @@ where
     }
 
     /// Returns the largest gas limit a transaction may have: the block gas limit, capped by the
-    /// network's transaction gas cap as the EVM resolves it, such as EIP-7825 from Osaka on or
-    /// Monad's own cap.
+    /// network's transaction gas cap as the EVM resolves it, such as EIP-7825 from Osaka on.
     fn fallback_gas_limit(&self) -> RpcResult<u64> {
         let header = self.sealed_header(self.best_block_number()?)?;
         let cap = self
@@ -2854,7 +2853,7 @@ where
         for call in payload.block_state_calls.iter_mut().flat_map(|block| block.calls.iter_mut()) {
             let tx = call.as_mut();
             if let Some(sidecar) = tx.sidecar.take()
-                && tx.blob_versioned_hashes.is_none()
+                && tx.blob_versioned_hashes.as_ref().is_none_or(Vec::is_empty)
             {
                 tx.blob_versioned_hashes = Some(sidecar.versioned_hashes().collect());
             }
@@ -3057,40 +3056,7 @@ where
     ) -> RpcResult<AccessListResult> {
         let state_override = self.with_pending_state(block, state_override).await?;
         let state_override = self.with_request_nonce(&request, state_override);
-        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
-        let mut result = EthApiServer::create_access_list(
-            &self.eth,
-            request.clone(),
-            block,
-            state_override.clone(),
-        )
-        .await?;
-        #[cfg(feature = "monad")]
-        if self.identity.network == Some("monad")
-            && let Some(hardfork) = self.identity.hardfork.as_deref()
-            && let Ok(hardfork) = hardfork.parse::<foundry_evm_hardforks::MonadHardfork>()
-            && foundry_evm_hardforks::MonadHardfork::MonadTen.is_enabled_in(hardfork)
-        {
-            for item in &mut result.access_list.0 {
-                item.storage_keys.sort_unstable();
-                item.storage_keys.dedup_by_key(|slot| {
-                    monad_revm::page::page_index(U256::from_be_slice(slot.as_slice()))
-                });
-            }
-            // The gas follows the list as Monad charges it, as anvil re-executes with it.
-            let mut request = request;
-            request.as_mut().access_list = Some(result.access_list.clone());
-            let executed = <Eth as reth_rpc_eth_api::helpers::Call>::transact_call_at(
-                &self.eth,
-                request,
-                block.unwrap_or_else(BlockId::pending),
-                alloy_rpc_types_eth::state::EvmOverrides::new(state_override, None),
-            )
-            .await
-            .map_err(Into::into)?;
-            result.gas_used = U256::from(executed.result.tx_gas_used());
-        }
-        Ok(result)
+        EthApiServer::create_access_list(&self.eth, request, block, state_override).await
     }
 
     async fn eth_fee_history(

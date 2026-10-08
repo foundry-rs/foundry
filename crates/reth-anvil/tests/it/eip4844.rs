@@ -611,7 +611,6 @@ async fn can_get_blobs_by_tx_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's eth_simulateV1 does not build blob transactions"]
 async fn simulate_v1_derives_blob_hashes_from_sidecars() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;
@@ -717,7 +716,7 @@ async fn call_defaults_blob_fee_cap_to_zero() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's eth_simulateV1 does not build blob transactions"]
+#[ignore = "without validation, a blob call with a zero cap runs at the blob base fee and pays it; anvil charges no blob fee"]
 async fn simulate_v1_defaults_blob_fee_cap_to_zero() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;
@@ -920,7 +919,6 @@ async fn simulate_v1_uses_canonical_blob_transaction_root() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's eth_simulateV1 does not build blob transactions"]
 async fn simulate_v1_rejects_cumulative_blob_gas_overflow() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;
@@ -959,7 +957,6 @@ async fn simulate_v1_rejects_cumulative_blob_gas_overflow() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's eth_simulateV1 does not build blob transactions"]
 async fn simulate_v1_uses_bpo_blob_gas_limits() {
     for (hardfork, blob_params) in
         [(EthereumHardfork::Bpo1, BlobParams::bpo1()), (EthereumHardfork::Bpo2, BlobParams::bpo2())]
@@ -1019,7 +1016,7 @@ async fn simulate_v1_uses_bpo_blob_gas_limits() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's eth_simulateV1 does not build blob transactions"]
+#[ignore = "reth-anvil schedules no hardfork after the configured one, so an Osaka node keeps Osaka's blob limits at the BPO1 timestamp"]
 async fn simulate_v1_updates_blob_schedule_at_bpo_timestamp() {
     let bpo1_timestamp = EthereumHardfork::Bpo1.mainnet_activation_timestamp().unwrap();
     let node_config = NodeConfig::test()
@@ -1059,7 +1056,6 @@ async fn simulate_v1_updates_blob_schedule_at_bpo_timestamp() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's eth_simulateV1 does not build blob transactions"]
 async fn simulate_v1_advances_excess_blob_gas() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;

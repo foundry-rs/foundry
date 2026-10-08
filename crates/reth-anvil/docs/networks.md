@@ -4,9 +4,8 @@ reth-anvil runs a reth node and adds anvil's controls on top: mining, time, stat
 impersonation, snapshots, forks, and the `anvil_*` namespace. A network supplies the reth node
 types and the components that differ from Ethereum. Everything else is shared.
 
-This guide is for the teams that own a network, for example Optimism and Base. Ethereum
-(`src/network/ethereum.rs`), Monad (`src/network/monad.rs`), and Tempo (`src/network/tempo.rs`)
-are the worked examples. Monad shows a network on Ethereum's node types with its own EVM. Tempo
+This guide is for the teams that own a network, for example Optimism, Base, and Monad. Ethereum
+(`src/network/ethereum.rs`) and Tempo (`src/network/tempo.rs`) are the worked examples. Tempo
 shows a network with its own node types, pool, and RPC.
 
 ## What a network implements
@@ -63,8 +62,7 @@ lists the hooks that would remove that code. Prefer to add the hook to the netwo
 3. Dispatch to the network in `try_spawn` (`src/node.rs`), and return `true` for it in
    `runs_network` (`src/config.rs`). The network selection, the hardfork parsing, and the fork
    endpoint discovery are in `foundry-evm-networks` and `foundry-evm-hardforks` already.
-4. Add the network's hardfork to `NodeConfig`, as `get_tempo_hardfork` and `get_monad_hardfork`
-   do, and map it to the Ethereum hardfork it runs on in `ethereum_hardfork_at`.
+4. Add the network's hardfork to `NodeConfig`, as `get_tempo_hardfork` does, and map it to the Ethereum hardfork it runs on in `ethereum_hardfork_at`.
 5. Add the network's anvil methods to the `anvil_*` namespace (`src/api.rs`), and fail them with
    `Not implemented` on other networks, as the Tempo methods do.
 6. Port anvil's tests for the network to `tests/it/<name>.rs` behind the feature. Make the calls

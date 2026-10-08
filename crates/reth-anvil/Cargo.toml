@@ -69,10 +69,6 @@ ethereum_ssz.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 
-# monad
-alloy-monad-evm = { workspace = true, optional = true }
-monad-revm = { workspace = true, optional = true }
-
 # base
 base-common-consensus = { workspace = true, optional = true, features = ["evm", "k256", "serde", "std"] }
 base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
@@ -128,12 +124,6 @@ jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
 js-tracer = ["reth-ethereum/js-tracer"]
-monad = [
-    "foundry-evm-networks/monad",
-    "foundry-evm-hardforks/monad",
-    "dep:alloy-monad-evm",
-    "dep:monad-revm",
-]
 tempo = [
     "dep:alloy-rlp",
     "dep:reth-basic-payload-builder",

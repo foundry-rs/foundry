@@ -117,13 +117,9 @@ be free if reth had a dev mode:
   every mined transaction needs an inspector during block building, or a replay of every block.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
   `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; see
-  `docs/networks.md`. Tempo runs (`src/network/tempo.rs`); see "What Tempo needs". Monad runs
-  (`src/network/monad.rs`) with its own `ConfigureEvm` on `monad-revm`; still missing are the
-  protocol system envelopes anvil replays on reorgs and transaction-hash forks, the per-block
-  hardfork profiles of a Monad fork.
-- Monad reserve balances depend on the senders of the two ancestor blocks. Block execution gets them
-  from the parent hash. An RPC call only carries a block number, so a call at the latest block runs
-  on top of it, like anvil's pending block, and a call at an older block replays that block.
+  `docs/networks.md`. Tempo runs (`src/network/tempo.rs`); see "What Tempo needs". Monad is not
+  run: networks other than Ethereum belong in extensions their teams own, on the `AnvilNetwork`
+  API.
 
 - Remote blocks keep only the transactions the EVM can execute: an Arbitrum system transaction,
   an OP-stack deposit, or another chain-specific type is left out of the blocks, receipts, and
@@ -135,13 +131,6 @@ be free if reth had a dev mode:
 - A call on a Cancun chain whose fork block lost its blob fields fails with reth's `excess blob
   gas missing` error instead of anvil's `Excess blob gas not set`, and such a chain has no
   pending block.
-- Monad: protocol system transactions (the staking syscalls from the system address) are not
-  accepted in `anvil_reorg`, because the pool and reth's payload builder would have to admit
-  zero-gas, zero-price envelopes; foundry's `try_transact_monad_system_replay` already executes
-  them. A Monad fork at a transaction hash keeps one hardfork schedule, where anvil records a
-  hardfork profile per replayed block and restores it on rollback, and state dumps carry no
-  Monad block participants or replay profiles. Anvil's Monad tests that read its pool or
-  backend directly went with the old crate.
 - Arbitrum forks number blocks by the L2 block; anvil mirrors Arbitrum's L1 block numbers in
   `NUMBER` and in the blocks' `l1BlockNumber`.
 

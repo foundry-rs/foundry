@@ -11,10 +11,10 @@ use crate::{
     fork::ForkInfo,
 };
 use alloy_consensus::{BlockHeader, transaction::TxHashRef};
-use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded};
+use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::WithEncoded, eip4844::DATA_GAS_PER_BLOB};
 use alloy_evm::{
     Evm,
-    block::{BlockExecutor, TxResult},
+    block::{BlockExecutionError, BlockExecutor, BlockValidationError, TxResult},
     env::BlockEnvironment,
     overrides::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides},
     precompiles::{MovePrecompileError, PrecompilesMap},
@@ -51,7 +51,10 @@ use reth_rpc_eth_api::{
 };
 use revm::{
     Database, DatabaseCommit, DatabaseRef, Inspector,
-    context::{Block, ContextTr, JournalTr, result::ExecutionResult},
+    context::{
+        Block, ContextTr, JournalTr,
+        result::{ExecutionResult, InvalidTransaction},
+    },
     context_interface::Cfg,
     interpreter::{
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme, Interpreter,
@@ -100,6 +103,22 @@ impl ToRpcError for SimulateRpcError {
 /// Builds an `eth_simulateV1` error with the given code and message.
 fn simulate_error(code: i32, message: impl Into<String>) -> EthApiError {
     EthApiError::other(SimulateRpcError { code, message: message.into() })
+}
+
+/// Reports a blob fee cap below the block's blob base fee with revm's message, as anvil does.
+fn blob_fee_error(error: BlockExecutionError) -> EthApiError {
+    if let BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+        error: invalid, ..
+    }) = &error
+        && let Some(invalid) = invalid.as_invalid_tx_err()
+        && matches!(invalid, InvalidTransaction::BlobGasPriceGreaterThanMax { .. })
+    {
+        return simulate_error(
+            -32003,
+            "Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`",
+        );
+    }
+    error.into()
 }
 
 /// The error anvil reports for a base block that does not exist.
@@ -312,6 +331,9 @@ where
                 &mut budget,
                 chain_id,
                 validation,
+                chain_spec
+                    .blob_params_at_timestamp(time)
+                    .map_or(u64::MAX, |params| params.max_blob_gas_per_block()),
                 compute_state_root,
                 this.converter(),
             )
@@ -527,6 +549,8 @@ struct SimulatedCall<Halt> {
     attempted_logs: u64,
     /// Whether the call ran with the maximum nonce and no validation.
     max_nonce: bool,
+    /// The zero blob fee cap the call asked for, when it ran with the block's blob base fee.
+    asked_blob_cap: Option<u128>,
 }
 
 /// Executes the calls of one simulated block, with anvil's gas rules, and builds the block.
@@ -538,6 +562,7 @@ fn execute_calls<S, T>(
     budget: &mut u64,
     chain_id: u64,
     validation: bool,
+    max_blob_gas: u64,
     compute_state_root: bool,
     converter: &T,
 ) -> Result<
@@ -568,6 +593,7 @@ where
     let mut cumulative_gas_used = 0u64;
     let mut regular_gas_used = 0u64;
     let mut state_gas_used = 0u64;
+    let mut blob_gas_used = 0u64;
 
     for mut call in calls {
         let remaining_regular_gas = block_gas_limit.saturating_sub(regular_gas_used);
@@ -601,6 +627,25 @@ where
         // A call bumps the caller's nonce at the protocol level; a create bumps it in its frame,
         // which fails at the maximum nonce and leaves it in place.
         let wraps_nonce = max_nonce && call.as_ref().to.is_some_and(|to| to.is_call());
+        // A blob call without a blob fee cap has a zero cap. Without validation, a zero cap runs
+        // at the block's blob base fee, which revm checks against the cap, and the response
+        // shows the zero cap, as anvil does.
+        let mut asked_blob_cap = None;
+        let blob_count = call.as_ref().blob_versioned_hashes.as_ref().map_or(0, Vec::len) as u64;
+        if blob_count > 0 {
+            blob_gas_used = blob_gas_used.saturating_add(blob_count * DATA_GAS_PER_BLOB);
+            if blob_gas_used > max_blob_gas {
+                return Err(EthApiError::InvalidParams(format!(
+                    "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
+                )));
+            }
+            let cap = *call.as_mut().max_fee_per_blob_gas.get_or_insert(0);
+            let blob_fee = builder.evm().block().blob_gasprice().unwrap_or_default();
+            if !validation && cap == 0 && blob_fee > 0 {
+                call.as_mut().max_fee_per_blob_gas = Some(blob_fee);
+                asked_blob_cap = Some(cap);
+            }
+        }
         let basefee = builder.evm().block().basefee();
         let tx = resolve_transaction(
             call,
@@ -616,9 +661,11 @@ where
 
         builder.evm_mut().inspector_mut().begin_transaction();
         let mut result = None;
-        let gas_output = builder.execute_transaction_with_result_closure(tx, |executed| {
-            result = Some(executed.result().result.clone());
-        })?;
+        let gas_output = builder
+            .execute_transaction_with_result_closure(tx, |executed| {
+                result = Some(executed.result().result.clone());
+            })
+            .map_err(blob_fee_error)?;
         let result = result.expect("the committed transaction has a result");
         let (logs, attempted_logs) = builder
             .evm_mut()
@@ -639,7 +686,7 @@ where
         cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
         regular_gas_used = regular_gas_used.saturating_add(result.gas().block_regular_gas_used());
         state_gas_used = state_gas_used.saturating_add(gas_output.state_gas_used());
-        results.push(SimulatedCall { result, logs, attempted_logs, max_nonce });
+        results.push(SimulatedCall { result, logs, attempted_logs, max_nonce, asked_blob_cap });
     }
 
     let outcome = if compute_state_root {
@@ -678,7 +725,7 @@ where
     )?;
 
     let mut log_index = 0;
-    let mut max_nonces = Vec::new();
+    let mut restored = Vec::new();
     for (index, (call, response)) in calls.into_iter().zip(&mut simulated.calls).enumerate() {
         response.logs = call
             .logs
@@ -701,11 +748,14 @@ where
             error.message = halt_message(reason);
         }
         if call.max_nonce {
-            max_nonces.push(index);
+            restored.push((index, "nonce", u128::from(u64::MAX)));
+        }
+        if let Some(cap) = call.asked_blob_cap {
+            restored.push((index, "maxFeePerBlobGas", cap));
         }
     }
-    if return_full_transactions && !max_nonces.is_empty() {
-        restore_max_nonces(&mut simulated.inner, &max_nonces).map_err(Err::from_eth_err)?;
+    if return_full_transactions && !restored.is_empty() {
+        restore_fields(&mut simulated.inner, &restored).map_err(Err::from_eth_err)?;
     }
 
     Ok(simulated)
@@ -721,18 +771,19 @@ fn halt_message(reason: &impl fmt::Debug) -> String {
     }
 }
 
-/// Shows the maximum nonce on the transactions that ran with it and no validation, as anvil does;
-/// revm cannot execute that nonce, so the transactions ran with nonce zero.
-fn restore_max_nonces<B: Serialize + DeserializeOwned>(
+/// Shows the values the calls asked for on the transactions that ran with others, as anvil does:
+/// the maximum nonce, which revm cannot execute, so the transaction ran with nonce zero, and a
+/// blob fee cap below the block's blob base fee without validation.
+fn restore_fields<B: Serialize + DeserializeOwned>(
     block: &mut B,
-    indices: &[usize],
+    fields: &[(usize, &str, u128)],
 ) -> Result<(), EthApiError> {
     let mut value =
         serde_json::to_value(&*block).map_err(|error| EthApiError::EvmCustom(error.to_string()))?;
     if let Some(transactions) = value.get_mut("transactions").and_then(Value::as_array_mut) {
-        for index in indices {
+        for (index, field, value) in fields {
             if let Some(transaction) = transactions.get_mut(*index) {
-                transaction["nonce"] = json!(format!("{:#x}", u64::MAX));
+                transaction[*field] = json!(format!("{value:#x}"));
             }
         }
     }

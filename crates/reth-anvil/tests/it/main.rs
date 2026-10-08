@@ -43,10 +43,6 @@ mod gas;
 mod genesis;
 mod ipc;
 mod logs;
-#[cfg(feature = "monad")]
-mod monad;
-#[cfg(feature = "monad")]
-mod monad_rpc;
 #[cfg(feature = "optimism")]
 mod optimism;
 mod otterscan;
