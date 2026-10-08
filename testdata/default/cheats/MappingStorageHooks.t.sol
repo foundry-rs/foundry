@@ -213,7 +213,15 @@ contract MappingStorageHooksTest is Test {
         (success, data) = address(target).call(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
         vm.assertFalse(success);
         assertEq(data, abi.encodeWithSignature("Error(string)", "hook revert"));
+        assertEq(calls, 0);
+        assertEq(ghost[1], 0);
         assertEq(target.balances(address(0xA11CE)), 0);
+
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
+        target.setBalance(address(0xA11CE), 4);
+        assertEq(calls, 1);
+        assertEq(ghost[1], 4);
+        assertEq(target.balances(address(0xA11CE)), 4);
     }
 
     function testCallbackInvalidPropagates() public {
@@ -223,7 +231,15 @@ contract MappingStorageHooksTest is Test {
         (success, data) = address(target).call(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
         vm.assertFalse(success);
         assertEq(data, "");
+        assertEq(calls, 0);
+        assertEq(ghost[1], 0);
         assertEq(target.balances(address(0xA11CE)), 0);
+
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
+        target.setBalance(address(0xA11CE), 4);
+        assertEq(calls, 1);
+        assertEq(ghost[1], 4);
+        assertEq(target.balances(address(0xA11CE)), 4);
     }
 
     function testCallbackOutOfGasPropagates() public {
@@ -233,7 +249,15 @@ contract MappingStorageHooksTest is Test {
         (success, data) = address(target).call{gas: 1_000_000}(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
         vm.assertFalse(success);
         assertEq(data, "");
+        assertEq(calls, 0);
+        assertEq(ghost[1], 0);
         assertEq(target.balances(address(0xA11CE)), 0);
+
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
+        target.setBalance(address(0xA11CE), 4);
+        assertEq(calls, 1);
+        assertEq(ghost[1], 4);
+        assertEq(target.balances(address(0xA11CE)), 4);
     }
 
     function testCallbackRejectsExternalSpoofing() public {
@@ -306,16 +330,22 @@ contract MappingStorageHooksTest is Test {
     }
 
     function onRevert(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        calls = 99;
+        ghost[1] = 99;
         revert("hook revert");
     }
 
     function onInvalid(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        calls = 99;
+        ghost[1] = 99;
         assembly {
             invalid()
         }
     }
 
     function onOutOfGas(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        calls = 99;
+        ghost[1] = 99;
         while (true) {}
     }
 
