@@ -48,4 +48,5 @@ jobs:
       - name: Publish to the Visual Studio Marketplace
         run: npx vsce publish --packagePath bundle/forge.vsix --azure-credential ${PRE_RELEASE:+"$PRE_RELEASE"}
       - name: Publish to Open VSX
+        if: vars.OPEN_VSX_PUBLISH == 'true'
         run: npx ovsx publish bundle/forge.vsix --trusted-publishing ${PRE_RELEASE:+"$PRE_RELEASE"}

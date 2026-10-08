@@ -9,9 +9,7 @@ needed or searched for.
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
 [Foundry](https://getfoundry.sh), then install `paradigm.forge` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge)
-or, for Cursor, VSCodium and other VS Code forks,
-[Open VSX](https://open-vsx.org/extension/paradigm/forge).
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
@@ -188,17 +186,18 @@ VS Code.
 ### Publishing
 
 The manual `Publish VS Code extension` workflow packages the VSIX and publishes
-it to the Visual Studio Marketplace and Open VSX. Bump `version` in
-`package.json` first; neither registry accepts a version twice. The Marketplace
-step signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credential`,
+it to the Visual Studio Marketplace. Bump `version` in `package.json` first; the
+Marketplace does not accept a version twice. The workflow signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credential`,
 so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
 variables for a federated identity that trusts
 `repo:foundry-rs/foundry:environment:release` and is a member of the
-`paradigm` publisher. The Open VSX step uses trusted publishing, so the
-`paradigm` namespace needs a trusted publisher for this workflow and the
-`release` environment in `foundry-rs/foundry`, registered at
-<https://open-vsx.org/user-settings/trusted-publishers>. Select `pre-release` to
-publish a pre-release version.
+`paradigm` publisher. Select `pre-release` to publish a pre-release version.
+
+The workflow also publishes to Open VSX with trusted publishing when the
+`release` environment sets `OPEN_VSX_PUBLISH` to `true`. Before enabling it,
+register a trusted publisher for this workflow and the `release` environment in
+`foundry-rs/foundry` on the `paradigm` namespace at
+<https://open-vsx.org/user-settings/trusted-publishers>.
 
 ## Protocol tracing and CodeLens
 
