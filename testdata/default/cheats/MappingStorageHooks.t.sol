@@ -177,6 +177,7 @@ contract MappingStorageHooksTest is Test {
         (success,) = address(this).call(abi.encodeCall(this.storeThenRevert, (address(0xBEEF), 9)));
         vm.assertFalse(success);
         assertEq(calls, 0);
+        assertEq(ghost[1], 0);
         assertEq(target.balances(address(0xBEEF)), 0);
     }
 
@@ -220,6 +221,7 @@ contract MappingStorageHooksTest is Test {
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
         target.setBalance(address(0xA11CE), 4);
         assertEq(calls, 1);
+        assertEq(seenOld, bytes32(0));
         assertEq(ghost[1], 4);
         assertEq(target.balances(address(0xA11CE)), 4);
     }
@@ -238,6 +240,7 @@ contract MappingStorageHooksTest is Test {
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
         target.setBalance(address(0xA11CE), 4);
         assertEq(calls, 1);
+        assertEq(seenOld, bytes32(0));
         assertEq(ghost[1], 4);
         assertEq(target.balances(address(0xA11CE)), 4);
     }
@@ -256,6 +259,7 @@ contract MappingStorageHooksTest is Test {
         vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onBalance.selector);
         target.setBalance(address(0xA11CE), 4);
         assertEq(calls, 1);
+        assertEq(seenOld, bytes32(0));
         assertEq(ghost[1], 4);
         assertEq(target.balances(address(0xA11CE)), 4);
     }

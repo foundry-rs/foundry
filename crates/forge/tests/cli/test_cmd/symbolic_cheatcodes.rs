@@ -4805,6 +4805,7 @@ contract StorageHooksTest is Test {
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (1)));
 
         assertFalse(ok);
+        assertEq(ghostValue, 0);
         assertEq(target.value(), 0);
     }
 
@@ -4916,17 +4917,17 @@ contract StorageHooksTest is Test {
 
     function revertingStoreHook(address, bytes32, bytes32, bytes32)
         external
-        view
         onlyStorageHook
     {
+        ghostValue = 99;
         revert("replacement hook");
     }
 
     function panickingStoreHook(address, bytes32, bytes32, bytes32)
         external
-        view
         onlyStorageHook
     {
+        ghostValue = 99;
         assert(false);
     }
 
@@ -5017,6 +5018,7 @@ contract StorageHooksTest is Test {
         hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
         assertFalse(ok);
+        assertEq(ghostValue, 0);
         assertEq(target.value(), 0);
     }
 
