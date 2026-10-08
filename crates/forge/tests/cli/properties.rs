@@ -645,6 +645,7 @@ fn properties_check_reports_candidate_result(prj: _, cmd: _) {
     // keep resolving in the copy.
     prj.update_config(|config| {
         config.src = "contracts".into();
+        config.test = prj.root().join("test");
         config.test_pattern_inverse = Some(regex::Regex::new(r"^testHidden\w*").unwrap().into());
     });
     let foundry_toml = prj.root().join("foundry.toml");
@@ -723,6 +724,19 @@ library Fee {
     )
     .unwrap();
 
+    cmd.args(["properties", "--check", "passing.json", "--seed", "1", "--seed", "2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "passed": true,
+  "reasons": [],
+  "possible_bugs": []
+}
+
+"#]]);
+    // A config file chosen with `FOUNDRY_CONFIG` is resolved in the project, not in the copy.
+    fs::copy(prj.root().join("foundry.toml"), prj.root().join("custom.toml")).unwrap();
+    cmd.forge_fuse().env("FOUNDRY_CONFIG", "custom.toml");
     cmd.args(["properties", "--check", "passing.json", "--seed", "1", "--seed", "2"])
         .assert_success()
         .stdout_eq(str![[r#"

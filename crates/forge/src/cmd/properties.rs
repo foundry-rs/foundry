@@ -710,7 +710,6 @@ impl PropertiesArgs {
             // Configured test filters must not hide generated tests.
             command.args(["test", "--json", "--match-path", &format!("{{{paths}}}")]);
             command.args(SELECT_ALL_TESTS);
-            add_dependency_args(&mut command, config, workspace);
             let output = command.output().wrap_err("failed to run candidate tests")?;
             if !output.status.success() && output.stdout.is_empty() {
                 reasons.push(format!("candidate tests failed on seed {seed}: {}", stderr(&output)));
@@ -840,10 +839,6 @@ impl PropertiesArgs {
             .map_or(1, |cores| (cores.get() / self.seed.len()).max(1));
         command.args(["--mutation-jobs", &jobs.to_string()]);
         command.args(filter_args);
-        // Candidate workspaces materialize the project's libraries; point remappings at them.
-        if workspace != config.root {
-            add_dependency_args(&mut command, config, workspace);
-        }
         let output = command.output().wrap_err("failed to run mutation testing")?;
         ensure!(
             output.status.success(),
@@ -866,7 +861,7 @@ fn candidate_workspace(
 ) -> Result<TempDir> {
     let candidate_workspace = tempfile::Builder::new().prefix("forge-properties-").tempdir()?;
     workspace::copy_project(config, candidate_workspace.path())?;
-    point_extends_at_project(config, candidate_workspace.path())?;
+    write_workspace_config(config, candidate_workspace.path())?;
     // Mutation testing copies this workspace again. Materialize project-local library and
     // dependency symlinks (`copy_project` links `node_modules` and `dependencies` even when
     // they are not in `libs`) so that nested copy cannot escape back to the source project.
@@ -917,41 +912,15 @@ fn candidate_workspace(
     Ok(candidate_workspace)
 }
 
-/// Makes `extends` in the workspace's `foundry.toml` point at the project's base files.
+/// Writes the project's resolved config, rebased onto the workspace, as its `foundry.toml`.
 ///
-/// `extends` resolves next to `foundry.toml`, and `copy_project` copies only that file.
-fn point_extends_at_project(config: &Config, workspace: &Path) -> Result<()> {
-    let path = workspace.join(Config::FILE_NAME);
-    let Ok(source) = fs::read_to_string(&path) else { return Ok(()) };
-    let mut document = source.parse::<toml_edit::DocumentMut>()?;
-    let mut changed = false;
-    let profiles = document.get_mut("profile").and_then(|profiles| profiles.as_table_like_mut());
-    for (_, profile) in profiles.into_iter().flat_map(|profiles| profiles.iter_mut()) {
-        let Some(extends) =
-            profile.as_table_like_mut().and_then(|profile| profile.get_mut("extends"))
-        else {
-            continue;
-        };
-        let base = extends.as_str().or_else(|| {
-            extends
-                .as_table_like()
-                .and_then(|table| table.get("path"))
-                .and_then(|path| path.as_str())
-        });
-        let Some(base) = base.map(|base| config.root.join(base).to_string_lossy().into_owned())
-        else {
-            continue;
-        };
-        if extends.is_str() {
-            *extends = toml_edit::value(base);
-        } else if let Some(table) = extends.as_table_like_mut() {
-            table.insert("path", toml_edit::value(base));
-        }
-        changed = true;
-    }
-    if changed {
-        fs::write(&path, document.to_string())?;
-    }
+/// Internal runs then see the same settings as the project, including inherited `extends` values,
+/// absolute paths, and environment overrides, without reading files outside the workspace.
+fn write_workspace_config(config: &Config, workspace: &Path) -> Result<()> {
+    let mut rebased = workspace::rebase_config_paths(config, workspace);
+    // `extends` values are already merged into the resolved config.
+    rebased.extends = None;
+    fs::write(workspace.join(Config::FILE_NAME), rebased.to_string_pretty()?)?;
     Ok(())
 }
 
@@ -1430,6 +1399,10 @@ fn forge_command(forge: &Path, config: &Config, workspace: &Path, seed: &U256) -
         .env("FOUNDRY_INVARIANT_FAILURE_PERSIST_DIR", seed_dir.join("invariant"))
         // Internal runs must not replace the project's own `--rerun` state.
         .env("FOUNDRY_TEST_FAILURES_FILE", seed_dir.join("test-failures"));
+    // A workspace has its own resolved `foundry.toml`.
+    if workspace != config.root {
+        command.env_remove("FOUNDRY_CONFIG");
+    }
     command
 }
 
@@ -1439,16 +1412,6 @@ fn seed_dir(config: &Config, workspace: &Path, seed: &U256) -> PathBuf {
         .join(workspace::relative_to_root(&config.root, &config.cache_path))
         .join("properties/seeds")
         .join(format!("{seed:#x}"))
-}
-
-fn add_dependency_args(command: &mut Command, config: &Config, workspace: &Path) {
-    for lib in &config.libs {
-        let lib = if lib.is_absolute() { lib.clone() } else { config.root.join(lib) };
-        let lib =
-            lib.strip_prefix(&config.root).map_or(lib.clone(), |relative| workspace.join(relative));
-        command.arg("--lib-paths");
-        command.arg(lib);
-    }
 }
 
 /// Returns stderr without compiler warning blocks and keeps both ends when it is still long.
