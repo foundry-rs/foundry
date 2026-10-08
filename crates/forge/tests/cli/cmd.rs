@@ -119,7 +119,7 @@ contract Simple {
         r#"
 [default]
 evm_version = "cancun"
-solc = "0.8.5"
+solc = "0.8.35"
 "#,
     );
     // `forge build` warns
