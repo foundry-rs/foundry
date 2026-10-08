@@ -2,6 +2,16 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+// Anvil's Optimism and Base tests use these until the networks run.
+#[cfg(feature = "base")]
+use base_common_consensus as _;
+#[cfg(feature = "base")]
+use base_common_precompiles as _;
+#[cfg(any(feature = "optimism", feature = "base"))]
+use op_alloy_consensus as _;
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 mod api;
 pub mod args;
 mod beacon;

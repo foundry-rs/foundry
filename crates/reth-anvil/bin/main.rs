@@ -1,4 +1,4 @@
-//! The `reth-anvil` CLI: a local Ethereum development node built on the reth SDK.
+//! The `anvil` CLI: a local Ethereum development node built on the reth SDK.
 
 use reth_anvil::args::run;
 

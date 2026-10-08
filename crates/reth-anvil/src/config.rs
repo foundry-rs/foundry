@@ -227,6 +227,9 @@ pub struct NodeConfig {
     /// error instead of an unsupported method. Shared by every config of a node, so resets and
     /// relaunches keep it, as anvil keeps an endpoint's identity.
     pub anvil_endpoints: Arc<RwLock<HashSet<String>>>,
+    /// The fork endpoints whose `anvil_nodeInfo` probe stalled during this launch; later probes
+    /// skip them, so a stalling endpoint delays the startup once.
+    pub stalled_endpoints: Arc<RwLock<HashSet<String>>>,
 }
 
 impl Default for NodeConfig {
@@ -300,6 +303,7 @@ impl Default for NodeConfig {
             adopted_base_fee: false,
             explicit_network: false,
             anvil_endpoints: Default::default(),
+            stalled_endpoints: Default::default(),
         }
     }
 }
@@ -451,6 +455,7 @@ impl NodeConfig {
 
     /// Returns the base fee the network starts with: Tempo's fixed fee on Tempo, and the
     /// Ethereum default otherwise.
+    #[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
     fn default_base_fee(&self) -> u64 {
         #[cfg(feature = "tempo")]
         if self.networks.is_tempo()
@@ -912,8 +917,14 @@ impl NodeConfig {
             foundry_common::provider::ProviderBuilder::<alloy_network::AnyNetwork>::new(url)
                 .build()
                 .wrap_err("failed to establish provider to fork url")?;
-        let mut probe = NodeInfoProbe::new(self.is_anvil_endpoint(url), self.no_fork_node_info);
+        let mut probe = NodeInfoProbe::new(
+            self.is_anvil_endpoint(url),
+            self.no_fork_node_info || self.is_stalled_endpoint(url),
+        );
         let info = probe.request(&provider).await?;
+        if probe.timed_out() {
+            self.stalled_endpoints.write().insert(url.to_string());
+        }
         if info.is_some() {
             self.mark_anvil_endpoint(url);
         }
@@ -936,6 +947,11 @@ impl NodeConfig {
     /// Returns whether the endpoint answered `anvil_nodeInfo` before.
     pub fn is_anvil_endpoint(&self, url: &str) -> bool {
         self.anvil_endpoints.read().contains(url)
+    }
+
+    /// Returns whether the endpoint's `anvil_nodeInfo` probe stalled during this launch.
+    pub fn is_stalled_endpoint(&self, url: &str) -> bool {
+        self.stalled_endpoints.read().contains(url)
     }
 
     /// Records that the endpoint answered `anvil_nodeInfo`.
@@ -1467,7 +1483,8 @@ const fn runs_network(network: NetworkVariant) -> bool {
         NetworkVariant::Monad => true,
         #[cfg(feature = "tempo")]
         NetworkVariant::Tempo => true,
-        #[cfg(any(not(feature = "tempo"), feature = "optimism", feature = "base"))]
+        // Other crates may enable more variants than this crate runs.
+        #[allow(unreachable_patterns)]
         _ => false,
     }
 }

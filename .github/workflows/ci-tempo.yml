@@ -81,7 +81,7 @@ jobs:
           TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
           TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
         run: |
-          cargo test --locked -p anvil --test it tempo_canary:: -- --test-threads=1
+          cargo test --locked -p reth-anvil --test it tempo_canary:: -- --test-threads=1
 
       - name: Check Tempo fork schedule compatibility
         env:

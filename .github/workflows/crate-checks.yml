@@ -66,7 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: >-
           cargo nextest run --locked --lib
-          -p anvil -p cast -p chisel -p foundry-config
+          -p reth-anvil -p cast -p chisel -p foundry-config
           -p foundry-evm-core -p foundry-evm-hardforks -p foundry-evm-networks
 
   issue:

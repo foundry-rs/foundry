@@ -168,7 +168,7 @@ impl Drop for ChildGuard {
 }
 
 fn anvil_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_reth-anvil"))
+    PathBuf::from(env!("CARGO_BIN_EXE_anvil"))
 }
 
 #[tokio::test(flavor = "multi_thread")]

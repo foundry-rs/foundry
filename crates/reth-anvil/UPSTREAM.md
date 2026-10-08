@@ -6,9 +6,8 @@ hook for a piece of that behaviour, this crate carries a copy or a workaround. T
 one, the reth change that would replace it, and what it costs here, so the upstream work has a
 ready list and the crate shrinks as hooks land.
 
-Size today: `crates/anvil` is about 84k lines of Rust; `crates/reth-anvil` is about 17k plus
-23k of tests, with about 6k of the 17k in the items below. The target is to delete
-`crates/anvil` and end up net negative.
+Size: the old anvil crates (`crates/anvil`, about 84k lines of Rust) are gone; this crate is
+about 21k lines plus 40k of tests, and the `anvil` binary builds from it.
 
 ## Workarounds and the hooks that remove them
 
@@ -144,7 +143,7 @@ be free if reth had a dev mode:
   them. A Monad fork at a transaction hash keeps one hardfork schedule, where anvil records a
   hardfork profile per replayed block and restores it on rollback, and state dumps carry no
   Monad block participants or replay profiles. Anvil's Monad tests that read its pool or
-  backend directly stay in `crates/anvil`.
+  backend directly went with the old crate.
 - Arbitrum forks number blocks by the L2 block; anvil mirrors Arbitrum's L1 block numbers in
   `NUMBER` and in the blocks' `l1BlockNumber`.
 

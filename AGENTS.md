@@ -35,7 +35,7 @@ Rust formatting uses nightly.
 
 - `crates/forge`: Forge CLI and test/build workflows
 - `crates/cast`: Cast CLI commands
-- `crates/anvil`: local Ethereum node
+- `crates/reth-anvil`: local Ethereum node (`anvil`), built on the reth SDK
 - `crates/chisel`: Solidity REPL
 - `crates/cheatcodes`: Forge cheatcode definitions and implementations
 - `crates/common`: shared CLI, shell, compile, and terminal utilities

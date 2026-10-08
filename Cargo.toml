@@ -1,10 +1,6 @@
 [workspace]
 members = [
     "benches/",
-    "crates/anvil/",
-    "crates/anvil/core/",
-    "crates/anvil/rpc/",
-    "crates/anvil/server/",
     "crates/reth-anvil/",
     "crates/cast/",
     "crates/cheatcodes/",
@@ -303,7 +299,9 @@ crossterm.opt-level = "s"
 alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
-anvil = { package = "reth-anvil", path = "crates/reth-anvil", default-features = false }
+anvil = { package = "reth-anvil", path = "crates/reth-anvil", default-features = false, features = [
+    "tempo",
+] }
 
 forge-doc = { path = "crates/doc", default-features = false }
 forge-fmt = { path = "crates/fmt", default-features = false }
@@ -345,7 +343,6 @@ foundry-compilers = { version = "0.21.0", default-features = false, features = [
     "svm-solc",
 ] }
 foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
-imbl = "7"
 solar = { package = "solar-compiler", version = "=0.2.0", default-features = false }
 solar-cli = { version = "=0.2.0", default-features = false }
 solar-lsp = { version = "=0.2.0", default-features = false }
@@ -358,7 +355,6 @@ svm = { package = "svm-rs", version = "0.5.28", default-features = false, featur
 alloy-consensus = { version = "2.5.0", default-features = false }
 alloy-contract = { version = "2.5.0", default-features = false }
 alloy-eips = { version = "2.5.0", default-features = false }
-alloy-eip5792 = { version = "2.5.0", default-features = false }
 alloy-ens = { version = "2.5.0", default-features = false }
 alloy-genesis = { version = "2.5.0", default-features = false }
 alloy-json-rpc = { version = "2.5.0", default-features = false }
@@ -370,7 +366,6 @@ alloy-rpc-types = { version = "2.5.0", default-features = true }
 alloy-rpc-types-beacon = { version = "2.5.0", default-features = true }
 alloy-rpc-types-engine = { version = "2.5.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.5.0", default-features = false }
-alloy-rpc-types-mev = { version = "2.5.0", default-features = false }
 alloy-serde = { version = "2.5.0", default-features = false }
 alloy-signer = { version = "2.5.0", default-features = false }
 alloy-signer-local = { version = "2.5.0", default-features = false }
@@ -438,7 +433,6 @@ tikv-jemallocator = "0.7"
 
 # misc
 auto_impl = "1"
-bytes = "1.11"
 walkdir = "2"
 which = "8"
 wait-timeout = "0.2"
@@ -545,9 +539,7 @@ tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
-tempo-consensus = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-node = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
-tempo-payload-builder = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-payload-types = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 tempo-transaction-pool = { git = "https://github.com/tempoxyz/tempo", rev = "6ef1f812c9ddcbe90a88ada73944012520942d26" }
 
@@ -570,7 +562,6 @@ base-common-genesis = { git = "https://github.com/foundry-rs/base", rev = "2aa8b
 base-common-network = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-common-precompiles = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 base-common-rpc-types = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
-base-execution-eip8130 = { git = "https://github.com/foundry-rs/base", rev = "2aa8bc46e6b4272ef3bf0905e1a5660ee2525e72", default-features = false }
 
 # reth
 # Keep the rev string identical to the one the tempo crates pin, so Cargo resolves one reth.

@@ -4,7 +4,7 @@
 
 use super::tempo_storage::TempoStorage;
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, Bytes, U256, address};
+use alloy_primitives::{Address, B256, U256, address};
 use foundry_evm_core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     initialize_tempo_genesis_at_hardfork,
@@ -105,7 +105,7 @@ pub fn tempo_genesis_alloc(
         .into_writes()
         .into_iter()
         .map(|(address, writes)| {
-            let code = writes.code.map(|code| Bytes::from(code.original_bytes()));
+            let code = writes.code.map(|code| code.original_bytes());
             let storage: BTreeMap<_, _> = writes
                 .storage
                 .into_iter()

@@ -14,7 +14,7 @@ repository.workspace = true
 workspace = true
 
 [[bin]]
-name = "reth-anvil"
+name = "anvil"
 path = "bin/main.rs"
 
 [dependencies]
@@ -117,7 +117,14 @@ tracing.workspace = true
 yansi.workspace = true
 
 [features]
-default = []
+default = ["asm-keccak", "jemalloc", "js-tracer", "tempo"]
+# The binary always builds; the feature stays for release feature lists.
+cli = []
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
+jemalloc = ["foundry-cli/jemalloc"]
+mimalloc = ["foundry-cli/mimalloc"]
+tracy-allocator = ["foundry-cli/tracy-allocator"]
+js-tracer = ["reth-ethereum/js-tracer"]
 monad = [
     "foundry-evm-networks/monad",
     "foundry-evm-hardforks/monad",

@@ -906,63 +906,6 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use revm::context::result::{HaltReason, OutOfGasError};
-
-    fn block_at(number: Option<u64>, time: Option<u64>) -> SimBlock {
-        SimBlock {
-            block_overrides: Some(BlockOverrides {
-                number: number.map(U256::from),
-                time,
-                ..Default::default()
-            }),
-            ..Default::default()
-        }
-    }
-
-    fn numbers_and_times(blocks: &[SimBlock]) -> Vec<(u64, u64)> {
-        blocks
-            .iter()
-            .map(|block| {
-                let overrides = block.block_overrides.as_ref().unwrap();
-                (overrides.number.unwrap().to::<u64>(), overrides.time.unwrap())
-            })
-            .collect()
-    }
-
-    #[test]
-    fn sanitize_fills_gaps_with_the_interval() {
-        let blocks = vec![block_at(Some(13), Some(1100)), SimBlock::default()];
-        let sanitized = sanitize_blocks(blocks, 10, 1000, 12).unwrap();
-        assert_eq!(numbers_and_times(&sanitized), [(11, 1012), (12, 1024), (13, 1100), (14, 1112)]);
-    }
-
-    fn code(error: EthApiError) -> i32 {
-        ErrorObject::from(error).code()
-    }
-
-    #[test]
-    fn sanitize_rejects_out_of_order_blocks() {
-        let error = sanitize_blocks(vec![block_at(Some(10), None)], 10, 1000, 12).unwrap_err();
-        assert_eq!(code(error), -38020);
-        let error = sanitize_blocks(vec![block_at(None, Some(1000))], 10, 1000, 12).unwrap_err();
-        assert_eq!(code(error), -38021);
-        let error = sanitize_blocks(vec![block_at(Some(267), None)], 10, 1000, 12).unwrap_err();
-        assert_eq!(code(error), -38026);
-    }
-
-    #[test]
-    fn halt_messages_follow_anvil() {
-        assert_eq!(halt_message(&HaltReason::OutOfGas(OutOfGasError::Basic)), "out of gas");
-        assert_eq!(
-            halt_message(&HaltReason::InvalidFEOpcode),
-            "vm execution error: InvalidFEOpcode"
-        );
-    }
-}
-
 /// Fills the missing fields of a simulated call, as reth's `resolve_transaction` does, except
 /// that a call batch without `to` stays a batch instead of becoming a contract creation.
 fn resolve_transaction<DB, T>(
@@ -1019,4 +962,61 @@ where
         db,
         converter,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use revm::context::result::{HaltReason, OutOfGasError};
+
+    fn block_at(number: Option<u64>, time: Option<u64>) -> SimBlock {
+        SimBlock {
+            block_overrides: Some(BlockOverrides {
+                number: number.map(U256::from),
+                time,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn numbers_and_times(blocks: &[SimBlock]) -> Vec<(u64, u64)> {
+        blocks
+            .iter()
+            .map(|block| {
+                let overrides = block.block_overrides.as_ref().unwrap();
+                (overrides.number.unwrap().to::<u64>(), overrides.time.unwrap())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sanitize_fills_gaps_with_the_interval() {
+        let blocks = vec![block_at(Some(13), Some(1100)), SimBlock::default()];
+        let sanitized = sanitize_blocks(blocks, 10, 1000, 12).unwrap();
+        assert_eq!(numbers_and_times(&sanitized), [(11, 1012), (12, 1024), (13, 1100), (14, 1112)]);
+    }
+
+    fn code(error: EthApiError) -> i32 {
+        ErrorObject::from(error).code()
+    }
+
+    #[test]
+    fn sanitize_rejects_out_of_order_blocks() {
+        let error = sanitize_blocks(vec![block_at(Some(10), None)], 10, 1000, 12).unwrap_err();
+        assert_eq!(code(error), -38020);
+        let error = sanitize_blocks(vec![block_at(None, Some(1000))], 10, 1000, 12).unwrap_err();
+        assert_eq!(code(error), -38021);
+        let error = sanitize_blocks(vec![block_at(Some(267), None)], 10, 1000, 12).unwrap_err();
+        assert_eq!(code(error), -38026);
+    }
+
+    #[test]
+    fn halt_messages_follow_anvil() {
+        assert_eq!(halt_message(&HaltReason::OutOfGas(OutOfGasError::Basic)), "out of gas");
+        assert_eq!(
+            halt_message(&HaltReason::InvalidFEOpcode),
+            "vm execution error: InvalidFEOpcode"
+        );
+    }
 }

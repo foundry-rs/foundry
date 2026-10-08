@@ -285,7 +285,8 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
         NetworkVariant::Monad => launch::<crate::network::monad::Monad>(config).await,
         #[cfg(feature = "tempo")]
         NetworkVariant::Tempo => launch::<crate::network::tempo::Tempo>(config).await,
-        #[cfg(any(not(feature = "tempo"), feature = "optimism", feature = "base"))]
+        // Other crates may enable more variants than this crate runs.
+        #[allow(unreachable_patterns)]
         network => eyre::bail!("the {network:?} network is not supported yet"),
     }
 }
@@ -406,6 +407,8 @@ async fn relaunch<Net: AnvilNetwork>(
     supervisor: &mut Supervisor,
     mut config: NodeConfig,
 ) -> Result<()> {
+    // An endpoint that stalled on an earlier launch may answer now.
+    config.stalled_endpoints = Default::default();
     let prepared = Net::prepare(&mut config).await?;
     if let Some(running) = supervisor.running.take() {
         running.stop().await;
@@ -966,6 +969,7 @@ async fn clear_applied_state_writes<N: NodePrimitives>(
 
 /// Returns the precompiles of the network that the EVM does not list: Tempo's, which Tempo
 /// installs per call.
+#[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
 fn network_precompiles(config: &NodeConfig) -> BTreeMap<String, Address> {
     #[cfg(feature = "tempo")]
     if config.networks.is_tempo() {

@@ -151,7 +151,9 @@ async fn fetch_uncles<F: ForkNetwork>(
 pub type TxPosition = (B256, u64, u64);
 
 /// How long an `anvil_nodeInfo` probe waits before the endpoint counts as not an anvil node.
-const NODE_INFO_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+/// Anvil waits 500ms; a busy reth-anvil endpoint can take longer to answer, and a fork of it
+/// that gives up early runs on the wrong network.
+const NODE_INFO_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The chain ids of zkSync Era and its testnet, whose EraVM bytecode the EVM cannot run.
 const ZKSYNC_CHAIN_IDS: [u64; 2] = [324, 300];
@@ -173,11 +175,18 @@ pub(crate) fn ensure_fork_network_supported(chain_id: u64) -> Result<()> {
 pub(crate) struct NodeInfoProbe {
     identified: bool,
     skip: bool,
+    timed_out: bool,
 }
 
 impl NodeInfoProbe {
     pub(crate) const fn new(identified: bool, skip: bool) -> Self {
-        Self { identified, skip }
+        Self { identified, skip, timed_out: false }
+    }
+
+    /// Returns whether a probe stalled. Later probes of the endpoint skip it, so a stalling
+    /// endpoint delays the startup once.
+    pub(crate) const fn timed_out(&self) -> bool {
+        self.timed_out
     }
 
     pub(crate) async fn request<N: Network>(
@@ -193,7 +202,11 @@ impl NodeInfoProbe {
         )
         .await;
         match response {
-            Err(_) => Ok(None),
+            Err(_) => {
+                self.timed_out = true;
+                self.skip = true;
+                Ok(None)
+            }
             Ok(Ok(info)) => {
                 self.identified = true;
                 Ok(Some(info))
@@ -669,8 +682,10 @@ impl<F: ForkNetwork> ForkBackend<F> {
         let provider = settings.provider::<alloy_network::AnyNetwork>(&url)?;
         let chain = settings.provider::<F::Network>(&url)?;
 
-        let mut probe =
-            NodeInfoProbe::new(config.is_anvil_endpoint(&url), config.no_fork_node_info);
+        let mut probe = NodeInfoProbe::new(
+            config.is_anvil_endpoint(&url),
+            config.no_fork_node_info || config.is_stalled_endpoint(&url),
+        );
         let node_info_before = probe.request(&provider).await?;
         let chain_id = match config.fork_chain_id {
             Some(chain_id) => chain_id,

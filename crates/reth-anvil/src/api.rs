@@ -839,7 +839,10 @@ impl fmt::Debug for PoolRefresh {
 /// The base fee of the block after a header at a timestamp, by the chain spec's rule: EIP-1559,
 /// or Tempo's fixed fee and its T7 controller.
 #[derive(Clone)]
-struct NextBlockBaseFee<H>(Arc<dyn Fn(&H, u64) -> Option<u64> + Send + Sync>);
+struct NextBlockBaseFee<H>(NextBlockBaseFeeFn<H>);
+
+/// The base fee rule of a chain spec, over its header type.
+type NextBlockBaseFeeFn<H> = Arc<dyn Fn(&H, u64) -> Option<u64> + Send + Sync>;
 
 impl<H> fmt::Debug for NextBlockBaseFee<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1981,6 +1984,7 @@ where
     /// Makes a call or an estimate on Tempo run with the request's nonce, as anvil runs it, by
     /// overriding the sender's nonce, or its lane's nonce, with it. Reth runs calls with the
     /// state's nonce, and Tempo charges a new account's cost to a transaction with nonce zero.
+    #[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
     fn with_request_nonce(
         &self,
         request: &RpcTxReq<Eth::NetworkTypes>,
@@ -3349,6 +3353,7 @@ where
 
     /// Rejects a Tempo transaction whose `valid_after` lies more than Tempo's pool limit past the
     /// time of the next block, as anvil's clock gives it.
+    #[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
     fn ensure_tempo_valid_after(&self, raw: &Bytes) -> RpcResult<()> {
         #[cfg(feature = "tempo")]
         if let Ok(TempoTxEnvelope::AA(transaction)) =

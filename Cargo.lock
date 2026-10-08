@@ -291,18 +291,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-eip5792"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98353b4e204670901abc1ada1fa47ffecb778c0fdf38e8426e2d32d32e1a3556"
-dependencies = [
- "alloy-primitives",
- "alloy-serde",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "alloy-eip7702"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1324,144 +1312,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anvil"
-version = "1.8.5"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-contract",
- "alloy-dyn-abi",
- "alloy-eips",
- "alloy-evm",
- "alloy-genesis",
- "alloy-hardforks",
- "alloy-monad-evm",
- "alloy-network",
- "alloy-op-evm",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rlp",
- "alloy-rpc-types",
- "alloy-rpc-types-beacon",
- "alloy-rpc-types-eth",
- "alloy-rpc-types-mev",
- "alloy-serde",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-types",
- "alloy-transport",
- "alloy-trie",
- "anvil-core",
- "anvil-rpc",
- "anvil-server",
- "async-trait",
- "axum",
- "base-common-chains",
- "base-common-consensus",
- "base-common-evm",
- "base-common-genesis",
- "base-common-precompiles",
- "base-common-rpc-types",
- "base-execution-eip8130",
- "chrono",
- "clap",
- "clap_complete",
- "ctrlc",
- "ethereum_ssz",
- "eyre",
- "fdlimit",
- "flate2",
- "foundry-cli",
- "foundry-common",
- "foundry-config",
- "foundry-evm",
- "foundry-evm-networks",
- "foundry-primitives",
- "foundry-test-utils",
- "futures",
- "hyper",
- "imbl",
- "itertools 0.15.0",
- "monad-revm",
- "op-alloy-consensus",
- "op-alloy-rpc-types",
- "op-revm",
- "parking_lot",
- "rand 0.8.8",
- "reqwest 0.13.5",
- "revm",
- "revm-inspectors",
- "serde",
- "serde_json",
- "tempfile",
- "tempo-alloy",
- "tempo-evm",
- "tempo-hardfork",
- "tempo-precompiles",
- "tempo-primitives",
- "tempo-revm",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "yansi",
-]
-
-[[package]]
-name = "anvil-core"
-version = "1.8.5"
-dependencies = [
- "alloy-consensus",
- "alloy-dyn-abi",
- "alloy-eip5792",
- "alloy-eips",
- "alloy-network",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types",
- "alloy-rpc-types-mev",
- "alloy-serde",
- "bytes",
- "foundry-common",
- "foundry-evm",
- "foundry-primitives",
- "rand 0.9.5",
- "revm",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "anvil-rpc"
-version = "1.8.5"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "anvil-server"
-version = "1.8.5"
-dependencies = [
- "anvil-rpc",
- "axum",
- "bytes",
- "clap",
- "futures",
- "interprocess",
- "parking_lot",
- "pin-project",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio-util",
- "tower",
- "tower-http 0.7.1",
- "tracing",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2457,7 +2307,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
- "base64 0.22.1",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -2476,10 +2325,8 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
- "sha1",
  "sync_wrapper",
  "tokio",
- "tokio-tungstenite",
  "tower",
  "tower-layer",
  "tower-service",
@@ -11723,6 +11570,8 @@ dependencies = [
  "alloy-transport",
  "alloy-trie",
  "axum",
+ "base-common-consensus",
+ "base-common-precompiles",
  "chrono",
  "clap",
  "clap_complete",
@@ -11744,6 +11593,8 @@ dependencies = [
  "hyper",
  "jsonrpsee",
  "monad-revm",
+ "op-alloy-consensus",
+ "op-alloy-rpc-types",
  "parking_lot",
  "rand 0.8.8",
  "rand 0.9.5",
@@ -17533,12 +17384,10 @@ dependencies = [
  "bitflags 2.13.2",
  "bytes",
  "http 1.5.0",
- "http-body 1.1.0",
  "percent-encoding",
  "pin-project-lite",
  "tower-layer",
  "tower-service",
- "tracing",
 ]
 
 [[package]]
