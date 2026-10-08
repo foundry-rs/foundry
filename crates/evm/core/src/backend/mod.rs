@@ -1556,18 +1556,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let _affects_active = self.is_active_fork(id);
 
         #[cfg(feature = "monad")]
-        let context_update = if _affects_active && let Some(tx) = _tx_env {
-            let chain_context = if self.networks.is_monad() {
-                let block_data = backend.get_full_block(block.hash).wrap_err_with(|| {
-                    format!("failed to fetch rolled fork block {} ({})", block.number, block.hash)
-                })?;
-                ensure_block_identity(&block_data, block, "rolled fork")?;
-                let block_context = Self::block_context_inputs_from_backend(&backend, &block_data)?;
-                block_context.into_child().next_transaction(tx)
-            } else {
-                ChainFor::<FEN>::for_transaction(tx)
-            };
-            ContextUpdate::Replace(chain_context)
+        let context_update = if _affects_active
+            && self.networks.is_monad()
+            && let Some(tx) = _tx_env
+        {
+            let block_data = backend.get_full_block(block.hash).wrap_err_with(|| {
+                format!("failed to fetch rolled fork block {} ({})", block.number, block.hash)
+            })?;
+            ensure_block_identity(&block_data, block, "rolled fork")?;
+            let block_context = Self::block_context_inputs_from_backend(&backend, &block_data)?;
+            ContextUpdate::Replace(block_context.into_child().next_transaction(tx))
         } else {
             ContextUpdate::Unchanged
         };
@@ -1747,19 +1745,21 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             None
         };
         #[cfg(feature = "monad")]
-        let context_update = if _affects_active && let Some(tx) = _tx_env {
-            let chain_context = if let Some(context) = &block_context {
-                let fork_position = ForkPosition::BeforeTransaction {
-                    block: BlockNumHash::new(block.header().number(), block.header().hash),
-                    transaction_index: position
-                        .expect("Monad transaction target includes canonical position")
-                        .index,
-                };
-                Self::context_for_block_position(context.clone(), fork_position, tx)?
-            } else {
-                ChainFor::<FEN>::for_transaction(tx)
+        let context_update = if _affects_active
+            && let Some(context) = &block_context
+            && let Some(tx) = _tx_env
+        {
+            let fork_position = ForkPosition::BeforeTransaction {
+                block: BlockNumHash::new(block.header().number(), block.header().hash),
+                transaction_index: position
+                    .expect("Monad transaction target includes canonical position")
+                    .index,
             };
-            ContextUpdate::Replace(chain_context)
+            ContextUpdate::Replace(Self::context_for_block_position(
+                context.clone(),
+                fork_position,
+                tx,
+            )?)
         } else if _affects_active {
             ContextUpdate::Unchanged
         } else {
@@ -2141,7 +2141,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        let chain_context = self.context_for_fork_synthetic_transaction(id, tx_env)?;
+        let chain_context = if self.networks.is_monad() {
+            Some(self.context_for_fork_synthetic_transaction(id, tx_env)?)
+        } else {
+            None
+        };
 
         // Preserve roll/warp locally so clones sharing remote data cannot change each other's env.
         if let Some(active_fork_id) = self.active_fork_id() {
@@ -2276,7 +2280,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         evm_env.cfg_env.disable_fee_charge = disable_fee_charge;
 
         #[cfg(feature = "monad")]
-        return Ok(ContextUpdate::Replace(chain_context));
+        return Ok(chain_context.map_or(ContextUpdate::Unchanged, ContextUpdate::Replace));
         #[cfg(not(feature = "monad"))]
         Ok(std::marker::PhantomData)
     }
@@ -2396,16 +2400,14 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             None
         };
         #[cfg(feature = "monad")]
-        let context_update = if affects_active {
-            ContextUpdate::Replace(if let Some(context) = block_context {
-                Self::context_for_block_position(
-                    context,
-                    next_position.expect("block context has a next position"),
-                    _outer_tx_env,
-                )?
-            } else {
-                ChainFor::<FEN>::for_transaction(_outer_tx_env)
-            })
+        let context_update = if affects_active && let Some(context) = block_context {
+            ContextUpdate::Replace(Self::context_for_block_position(
+                context,
+                next_position.expect("block context has a next position"),
+                _outer_tx_env,
+            )?)
+        } else if affects_active {
+            ContextUpdate::Unchanged
         } else {
             ContextUpdate::Rebase
         };
@@ -3612,7 +3614,7 @@ mod tests {
     use alloy_eips::Typed2718;
 
     #[cfg(feature = "monad")]
-    use super::ensure_block_identity;
+    use super::{ContextUpdate, ensure_block_identity};
     #[cfg(feature = "monad")]
     use crate::evm::monad::BlockContext;
     #[cfg(feature = "monad")]
@@ -4692,6 +4694,31 @@ mod tests {
             .select_fork(id, &mut evm_env, &mut Default::default(), &mut JournalInner::new())
             .unwrap();
         assert!(evm_env.cfg_env.disable_fee_charge);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(all(feature = "optimism", feature = "monad"))]
+    async fn optimism_fork_selection_keeps_chain_context() {
+        let (_api, op) = spawn(NodeConfig::test().with_optimism()).await;
+        let mut opts = EvmOpts { fork_url: Some(op.http_endpoint()), ..Default::default() };
+        opts.infer_network_from_fork().await.unwrap();
+        let mut backend = Backend::<OpEvmNetwork>::spawn(None).unwrap();
+        let id = backend
+            .create_fork(crate::fork::CreateFork {
+                url: op.http_endpoint(),
+                enable_caching: false,
+                evm_opts: opts,
+            })
+            .unwrap();
+        let update = backend
+            .select_fork(
+                id,
+                &mut EvmEnv::default(),
+                &mut Default::default(),
+                &mut JournalInner::new(),
+            )
+            .unwrap();
+        assert!(matches!(update, ContextUpdate::Unchanged));
     }
 
     #[tokio::test(flavor = "multi_thread")]
