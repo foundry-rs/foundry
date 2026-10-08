@@ -11,12 +11,16 @@ use foundry_cli::{
     utils::{Git, LoadConfig, cache_local_signatures},
 };
 use foundry_common::{
-    compile::{ContractSizeLimits, ProjectCompiler},
+    compile::{ContractSizeLimits, ProjectCompiler, ensure_no_linked_libraries},
     shell,
 };
 use foundry_compilers::{
     CompilationError, FileFilter, Project, ProjectCompileOutput,
-    compilers::{Language, multi::MultiCompilerLanguage},
+    artifacts::{Error, Severity},
+    compilers::{
+        Language,
+        multi::{MultiCompilerError, MultiCompilerLanguage},
+    },
     solc::SolcLanguage,
     utils::source_files_iter,
 };
@@ -121,6 +125,7 @@ impl BuildArgs {
         let format_json = shell::is_json();
 
         let mut output = ProjectCompiler::new()
+            .allow_linked_libraries(config.allow_linked_libraries)
             .external_compilers(&config)
             .files(files)
             .selected_paths(selected_paths)
@@ -132,6 +137,23 @@ impl BuildArgs {
             .size_limits(contract_size_limits(&config))
             .bail(!format_json)
             .compile(&project)?;
+
+        if format_json
+            && !config.allow_linked_libraries
+            && !output.has_compiler_errors()
+            && let Err(error) = ensure_no_linked_libraries(&output)
+        {
+            output.output_mut().errors.push(MultiCompilerError::Solc(Error {
+                source_location: None,
+                secondary_source_locations: Vec::new(),
+                r#type: "LinkedLibraryError".to_string(),
+                component: "foundry".to_string(),
+                severity: Severity::Error,
+                error_code: None,
+                message: error.to_string(),
+                formatted_message: None,
+            }));
+        }
 
         // Cache project selectors.
         cache_local_signatures(&output)?;

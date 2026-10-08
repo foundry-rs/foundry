@@ -1,7 +1,9 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
-use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
+use foundry_test_utils::{
+    TestProject, forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt,
+};
 use globset::Glob;
 use std::{
     collections::BTreeMap,
@@ -591,6 +593,160 @@ error: the argument '--json' cannot be used with '--quiet'
 Usage: forge[..] build --json [PATHS]...
 
 For more information, try '--help'.
+
+"#]]);
+}
+
+#[forgetest]
+fn disallow_linked_libraries(prj: _, cmd: _) {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer {
+    function bar() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]]);
+}
+
+#[forgetest]
+fn disallow_linked_libraries_succeeds_without_libs(prj: _, cmd: _) {
+    prj.add_source(
+        "Plain.sol",
+        r#"
+contract Plain {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_success();
+}
+
+#[forgetest]
+fn disallow_linked_libraries_succeeds_with_internal_library(prj: _, cmd: _) {
+    prj.add_source(
+        "InternalLib.sol",
+        r#"
+library InternalLib {
+    function foo() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import "./InternalLib.sol";
+
+contract Consumer {
+    function bar() public pure returns (uint256) {
+        return InternalLib.foo();
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_success();
+}
+
+#[forgetest]
+fn disallow_linked_libraries_via_config(prj: _, cmd: _) {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer {
+    function bar() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.allow_linked_libraries = false);
+
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]]);
+}
+
+#[forgetest]
+fn disallow_linked_libraries_multiple_violations(prj: _, cmd: _) {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+library Lib {
+    function foo() public pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer1.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer1 {
+    function bar() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer2.sol",
+        r#"
+import "./Lib.sol";
+
+contract Consumer2 {
+    function baz() public pure returns (uint256) {
+        return Lib.foo();
+    }
+}
+"#,
+    );
+
+    cmd.args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer1
+  [..]:Consumer2
 
 "#]]);
 }
@@ -1680,4 +1836,384 @@ contract Warn {
     cmd.forge_fuse().args(["test", "--deny", "warnings"]).assert_failure();
     prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
     cmd.forge_fuse().arg("build").assert_failure();
+}
+
+fn add_linked_library_sources(prj: &TestProject) {
+    prj.add_source(
+        "Lib.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+library Lib {
+    function foo() public pure returns (uint256) { return 42; }
+}
+"#,
+    );
+    prj.add_source(
+        "Consumer.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import {Lib} from "./Lib.sol";
+contract Consumer {
+    function value() public pure returns (uint256) { return Lib.foo(); }
+}
+"#,
+    );
+}
+
+#[forgetest]
+fn disallow_linked_libraries_prelinked_cache(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    prj.update_config(|config| {
+        config.libraries =
+            vec!["src/Lib.sol:Lib:0x0000000000000000000000000000000000000001".to_string()];
+    });
+    cmd.forge_fuse().arg("build").assert_success();
+    prj.update_config(|config| config.allow_linked_libraries = false);
+    for args in [vec!["build"], vec!["build"], vec!["build", "--force"]] {
+        cmd.forge_fuse().args(args).assert_failure().stderr_eq(str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]]);
+    }
+    prj.update_config(|config| config.allow_linked_libraries = true);
+    cmd.forge_fuse().arg("build").assert_success();
+}
+
+#[forgetest]
+fn disallow_linked_libraries_cached_unlinked(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    cmd.forge_fuse().arg("build").assert_success();
+    for _ in 0..2 {
+        cmd.forge_fuse().args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]],
+        );
+    }
+}
+
+#[forgetest]
+fn disallow_linked_libraries_cli_precedence(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"
+[profile.default]
+allow_linked_libraries = true
+[profile.ci]
+allow_linked_libraries = true
+"#,
+    )
+    .unwrap();
+    cmd.env("FOUNDRY_ALLOW_LINKED_LIBRARIES", "true");
+    for profile in ["default", "ci"] {
+        cmd.env("FOUNDRY_PROFILE", profile);
+        cmd.forge_fuse().args(["build", "--disallow-linked-libraries"]).assert_failure().stderr_eq(
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]],
+        );
+    }
+}
+
+#[forgetest]
+fn disallow_linked_libraries_execution_commands(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    prj.add_test(
+        "Linked.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import {Lib} from "../src/Lib.sol";
+contract LinkedTest {
+    function testLinked() public pure { require(Lib.foo() == 42); }
+}
+"#,
+    );
+    prj.add_script(
+        "Linked.s.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import {Lib} from "../src/Lib.sol";
+contract LinkedScript {
+    function run() public pure { require(Lib.foo() == 42); }
+}
+"#,
+    );
+    let cases = [
+        (
+            vec!["test", "--match-test", "testLinked"],
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+  [..]:LinkedTest
+
+"#]],
+        ),
+        (
+            vec!["script", "script/Linked.s.sol:LinkedScript"],
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:LinkedScript
+  [..]:Consumer
+
+"#]],
+        ),
+        (
+            vec!["create", "src/Consumer.sol:Consumer", "--chain", "1"],
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]],
+        ),
+        (
+            vec!["coverage", "--quiet"],
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:LinkedScript
+  [..]:Consumer
+  [..]:LinkedTest
+
+"#]],
+        ),
+    ];
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| config.dynamic_test_linking = dynamic_test_linking);
+        for (args, expected) in &cases {
+            cmd.forge_fuse()
+                .args(args)
+                .arg("--disallow-linked-libraries")
+                .assert_failure()
+                .stderr_eq(expected.clone());
+            prj.update_config(|config| config.allow_linked_libraries = false);
+            cmd.forge_fuse().args(args).assert_failure().stderr_eq(expected.clone());
+            prj.update_config(|config| config.allow_linked_libraries = true);
+        }
+    }
+}
+
+#[forgetest]
+fn disallow_linked_libraries_json(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    for args in [
+        vec!["build", "--json", "--force"],
+        vec!["build", "--json"],
+        vec!["build", "--json", "--sizes"],
+        vec!["build", "--json", "--names"],
+    ] {
+        cmd.forge_fuse().args(args).arg("--disallow-linked-libraries")
+            .assert_failure().stderr_eq("").stdout_eq(str![[r#"
+{
+  "errors": [
+    {
+      "type": "LinkedLibraryError",
+      "component": "foundry",
+      "severity": "error",
+      "errorCode": null,
+      "message": "Linked libraries are not allowed but the following contracts use linked libraries:\n  [..]:Consumer",
+      "formattedMessage": null
+    }
+  ],
+  "sources": "{...}",
+  "contracts": "{...}",
+  "build_infos": "{...}"
+}
+"#]].is_json());
+    }
+}
+
+#[forgetest]
+fn disallow_linked_libraries_dynamic_test_linking(prj: _, cmd: _) {
+    prj.add_source(
+        "Target.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+library InternalLib {
+    function identity(uint256 n) internal pure returns (uint256) { return n; }
+}
+library UnusedLib {
+    function unused() public pure returns (uint256) { return 7; }
+}
+contract Target {
+    uint256 public value;
+    constructor(uint256 n) { value = InternalLib.identity(n); }
+}
+"#,
+    );
+    prj.add_test(
+        "Deploy.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import {Target} from "../src/Target.sol";
+contract DeployTest {
+    function testDeploy() public { require(new Target(42).value() == 42); }
+}
+"#,
+    );
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import {Target} from "../src/Target.sol";
+contract DeployScript {
+    function run() public { require(new Target(42).value() == 42); }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| {
+            config.allow_linked_libraries = false;
+            config.dynamic_test_linking = dynamic_test_linking;
+            // An unused address entry must not reject contracts without library dependencies.
+            config.libraries = vec![
+                "src/Target.sol:InternalLib:0x0000000000000000000000000000000000000001".to_string(),
+            ];
+        });
+        for _ in 0..2 {
+            cmd.forge_fuse().arg("build").assert_success();
+            cmd.forge_fuse()
+                .args(["test", "--match-test", "testDeploy"])
+                .assert_success()
+                .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Deploy.t.sol:DeployTest
+[PASS] testDeploy() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+            cmd.forge_fuse().args(["script", "script/Deploy.s.sol:DeployScript"]).assert_success();
+        }
+    }
+    // Confirm the prohibition did not silently disable the dynamic deployment rewrite.
+    cmd.forge_fuse().args(["test", "--match-test", "testDeploy", "-vvvv"])
+        .assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Deploy.t.sol:DeployTest
+[PASS] testDeploy() ([GAS])
+Traces:
+  [[..]] DeployTest::testDeploy()
+    ├─ [0] VM::deployCode("src/Target.sol:Target", 0x000000000000000000000000000000000000000000000000000000000000002a)
+    │   ├─ [[..]] → new Target@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   │   └─ ← [Return] [..] bytes of code
+    │   └─ ← [Return] Target: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
+    ├─ [[..]] Target::value() [staticcall]
+    │   └─ ← [Return] 42
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+    cmd.forge_fuse().args(["coverage", "--quiet"]).assert_success();
+}
+
+#[forgetest]
+fn disallow_linked_libraries_dynamic_dependency(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    prj.add_test(
+        "Deploy.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+import {Consumer} from "../src/Consumer.sol";
+contract DeployTest {
+    function testDeploy() public { require(new Consumer().value() == 42); }
+}
+"#,
+    );
+    for dynamic_test_linking in [false, true] {
+        prj.update_config(|config| {
+            config.allow_linked_libraries = false;
+            config.dynamic_test_linking = dynamic_test_linking;
+        });
+        let expected = if dynamic_test_linking {
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+
+"#]]
+        } else {
+            str![[r#"
+Error: Linked libraries are not allowed but the following contracts use linked libraries:
+  [..]:Consumer
+  [..]:DeployTest
+
+"#]]
+        };
+        cmd.forge_fuse()
+            .args(["test", "--match-test", "testDeploy"])
+            .assert_failure()
+            .stderr_eq(expected);
+        // Discovery remains available without enforcing unrelated cached executable artifacts.
+        cmd.forge_fuse().args(["test", "--list"]).assert_success();
+        cmd.forge_fuse()
+            .args(["inspect", "Consumer", "libraries"])
+            .assert_success()
+            .stdout_eq(str![[r#"
+src/Lib.sol:Lib
+
+"#]])
+            .stderr_eq(str![[r#"
+Dynamically linked libraries:
+
+"#]]);
+    }
+}
+
+#[forgetest]
+fn disallow_linked_libraries_json_compiler_errors(prj: _, cmd: _) {
+    add_linked_library_sources(&prj);
+    cmd.forge_fuse().arg("build").assert_success();
+    prj.add_source(
+        "Broken.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Broken {
+    function fail() public { missing(); }
+}
+"#,
+    );
+    cmd.forge_fuse()
+        .args(["build", "--json", "--disallow-linked-libraries"])
+        .assert_failure()
+        .stderr_eq("")
+        .stdout_eq(
+            str![[r#"
+{
+  "errors": [
+    {
+      "sourceLocation": "{...}",
+      "type": "DeclarationError",
+      "component": "general",
+      "severity": "error",
+      "errorCode": "7576",
+      "message": "Undeclared identifier.",
+      "formattedMessage": "{...}"
+    }
+  ],
+  "sources": "{...}",
+  "contracts": "{...}",
+  "build_infos": "{...}"
+}
+"#]]
+            .is_json(),
+        );
 }

@@ -94,6 +94,9 @@ pub struct ProjectCompiler {
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
 
+    /// Whether compiled contracts may depend on externally linked Solidity libraries.
+    allow_linked_libraries: bool,
+
     /// Whether ABI acquisition may consult the compiler-owned ABI cache.
     abi_cache: bool,
 
@@ -129,6 +132,7 @@ impl ProjectCompiler {
             source_order_fallback: Vec::new(),
             selected_paths: Vec::new(),
             dynamic_test_linking: false,
+            allow_linked_libraries: true,
             abi_cache: false,
             external_compilers: None,
             external_writes: true,
@@ -244,6 +248,15 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets whether compiled contracts may depend on externally linked Solidity libraries.
+    ///
+    /// This does not disable dynamic test linking. With `bail(false)`, callers must validate the
+    /// returned output with [`ensure_no_linked_libraries`] after handling compiler diagnostics.
+    pub const fn allow_linked_libraries(mut self, allow: bool) -> Self {
+        self.allow_linked_libraries = allow;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -351,6 +364,14 @@ impl ProjectCompiler {
             eyre::bail!("{output}");
         }
 
+        let linking_error = (!self.allow_linked_libraries && !output.has_compiler_errors())
+            .then(|| ensure_no_linked_libraries(&output))
+            .and_then(Result::err);
+        let has_linking_errors = linking_error.is_some();
+        if bail && let Some(error) = linking_error {
+            return Err(error);
+        }
+
         if !quiet && !shell::is_json() {
             if output.is_unchanged() {
                 sh_println!("No files changed, compilation skipped")?;
@@ -361,7 +382,7 @@ impl ProjectCompiler {
         }
 
         // Quiet mode suppresses reports, but size limits still apply.
-        if !(shell::is_json() && output.has_compiler_errors()) {
+        if !(shell::is_json() && (output.has_compiler_errors() || has_linking_errors)) {
             self.handle_output(&output)?;
         }
 
@@ -1041,6 +1062,26 @@ impl std::fmt::Debug for PathOrContractInfo {
             }
         }
     }
+}
+
+/// Rejects artifacts with Solidity library dependencies in creation or runtime bytecode.
+///
+/// Includes cached artifacts and permits internal libraries and dynamic test linking helpers.
+pub fn ensure_no_linked_libraries<C: Compiler<CompilerContract = Contract>>(
+    output: &ProjectCompileOutput<C>,
+) -> Result<()> {
+    let violations = output
+        .artifact_ids()
+        .filter(|(_, artifact)| !artifact.all_link_references().is_empty())
+        .map(|(id, _)| id.identifier())
+        .collect::<BTreeSet<_>>();
+    if !violations.is_empty() {
+        eyre::bail!(
+            "Linked libraries are not allowed but the following contracts use linked libraries:\n  {}",
+            violations.into_iter().collect::<Vec<_>>().join("\n  ")
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
