@@ -653,7 +653,6 @@ async fn simulate_v1_derives_blob_hashes_from_sidecars() {
 // Like geth's eth_call, a blob call without a blob fee cap runs at a zero blob base fee, while
 // calls with a cap and non-blob calls see the block's blob base fee.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth keeps the block's blob base fee in a call with a zero blob fee cap"]
 async fn call_defaults_blob_fee_cap_to_zero() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (api, handle) = spawn(node_config).await;

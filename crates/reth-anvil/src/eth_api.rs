@@ -335,11 +335,7 @@ impl EthApi {
         overrides: EvmOverrides,
     ) -> Result<U256> {
         let EvmOverrides { state, block: block_overrides } = overrides;
-        self.request(
-            "eth_estimateGas",
-            params![request, block.unwrap_or_default(), state, block_overrides],
-        )
-        .await
+        self.request("eth_estimateGas", params![request, block, state, block_overrides]).await
     }
 
     /// Sends a signed transaction.

@@ -296,7 +296,6 @@ async fn can_resolve_safe_and_finalized_block_tags_to_genesis_before_configured_
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth caches its pending block for a second, so a pool change shows late"]
 async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -372,7 +371,6 @@ async fn can_estimate_gas_with_undersized_max_fee_per_gas() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth caches its pending block for a second, so a pool change shows late"]
 async fn can_call_on_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 

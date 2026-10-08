@@ -140,14 +140,17 @@ where
 
         let outcome = self.inner.validate_transaction(origin, transaction).await;
         // Anvil mines a transaction from a sender with code: EIP-3607 is off for mining, as it is
-        // for calls. Reth's validator rejects it, so accept it here as a ready transaction.
+        // for calls. Reth's validator rejects it, so accept it here as a ready transaction. On
+        // Arbitrum, anvil also mines a transaction whose priority fee is above its fee cap.
         if let TransactionValidationOutcome::Invalid(
             transaction,
-            InvalidPoolTransactionError::Consensus(
-                InvalidTransactionError::SignerAccountHasBytecode,
-            ),
-        ) = outcome
+            InvalidPoolTransactionError::Consensus(error),
+        ) = &outcome
+            && (matches!(error, InvalidTransactionError::SignerAccountHasBytecode)
+                || (self.settings.allow_tip_above_fee_cap
+                    && matches!(error, InvalidTransactionError::TipAboveFeeCap)))
         {
+            let transaction = transaction.clone();
             return TransactionValidationOutcome::Valid {
                 balance: U256::MAX,
                 state_nonce: transaction.nonce(),
@@ -369,6 +372,8 @@ pub struct PoolSettings {
     pub disable_min_priority_fee: bool,
     /// Whether the pool rejects EIP-4844 blob transactions.
     pub reject_blob_transactions: bool,
+    /// Whether a priority fee above the fee cap is allowed, as on Arbitrum.
+    pub allow_tip_above_fee_cap: bool,
 }
 
 impl PoolSettings {
@@ -383,6 +388,7 @@ impl PoolSettings {
             },
             disable_min_priority_fee: config.disable_min_priority_fee,
             reject_blob_transactions: false,
+            allow_tip_above_fee_cap: config.is_arbitrum(),
         }
     }
 }

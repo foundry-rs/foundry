@@ -1,7 +1,7 @@
 use crate::{
     api::{
-        AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, NewFilterHook, PersonalApiServer,
-        PoolRefresh, Web3ExtApiServer,
+        AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, NewFilterHook, PendingReset,
+        PersonalApiServer, PoolRefresh, Web3ExtApiServer,
     },
     block_env::BlockEnvOverrides,
     config::NodeConfig,
@@ -18,6 +18,7 @@ use crate::{
         run_interval_mining_task,
     },
     network::{AnvilComponents, AnvilNetwork, AnvilTypes, Prepared, ethereum::Ethereum},
+    otterscan::{AnvilOts, AnvilOtsApiServer, NodeRpcModule},
     pool::SharedTransactionOrder,
     provider::AnvilProvider,
     server::{RpcServer, ServerSettings, SharedModule},
@@ -36,6 +37,7 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm_networks::NetworkVariant;
+use futures::StreamExt;
 use jsonrpsee::{RpcModule, core::RpcResult};
 use parking_lot::RwLock;
 use reth_ethereum::{
@@ -51,8 +53,8 @@ use reth_ethereum::{
         },
     },
     pool::{
-        CanonicalStateUpdate, PoolTransaction, PoolUpdateKind, TransactionOrigin, TransactionPool,
-        TransactionPoolExt,
+        CanonicalStateUpdate, FullTransactionEvent, PoolTransaction, PoolUpdateKind,
+        TransactionOrigin, TransactionPool, TransactionPoolExt,
     },
     primitives::{Bytecode, NodePrimitives, Recovered, SignedTransaction},
     provider::{
@@ -69,7 +71,7 @@ use reth_ethereum::{
 use reth_rpc_eth_api::{
     EthFilterApiServer,
     helpers::{
-        EthTransactions,
+        EthTransactions, LoadPendingBlock,
         config::{EthConfigApiServer, EthConfigHandler},
     },
 };
@@ -618,6 +620,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 config.signer_accounts.iter().find(|wallet| wallet.address() == fee_payer).cloned()
             });
             let rpc_module = rpc_module.clone();
+            let node_module = NodeRpcModule::default();
             let fork = fork.clone();
             let logging = logging.clone();
             let transaction_order = config.transaction_order;
@@ -660,6 +663,27 @@ async fn launch_node<Net: AnvilNetwork>(
                     let mut signers = eth_api.signers().write();
                     signers.push(Box::new(DevSigner::new(signer_accounts)));
                     signers.push(Box::new(ImpersonatedSigner::new(impersonation.clone())));
+                }
+                // Reth reuses a pending block for a second; anvil's pending block shows a change to
+                // the pool at once.
+                let pending_reset = {
+                    let eth = eth_api.clone();
+                    PendingReset::new(move || {
+                        if let Ok(mut cached) = LoadPendingBlock::pending_block(&eth).try_lock() {
+                            *cached = None;
+                        }
+                    })
+                };
+                {
+                    let reset = pending_reset.clone();
+                    let mut events = ctx.pool().all_transactions_event_listener();
+                    tokio::spawn(async move {
+                        while let Some(event) = events.next().await {
+                            if !matches!(event, FullTransactionEvent::Propagated(_)) {
+                                reset.reset();
+                            }
+                        }
+                    });
                 }
                 let fork_info = fork.map(|fork| fork as Arc<dyn ForkInfo>);
                 let txpool_eth = eth_api.clone();
@@ -705,6 +729,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     eth_api,
                     new_filter,
                 )
+                .with_pending_reset(pending_reset)
                 .with_tempo_fee_payer(tempo_fee_payer)
                 .with_pool_refresh(pool_refresh)
                 .with_first_block_keeps_genesis_base_fee(Net::FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE);
@@ -718,6 +743,13 @@ async fn launch_node<Net: AnvilNetwork>(
                     ctx.registry.debug_api(),
                     fork_info.clone(),
                 ));
+                // The address history search starts after the fork block, or after genesis.
+                let first_block = fork_info
+                    .as_ref()
+                    .filter(|fork| fork.has_remote())
+                    .map_or(1, |fork| fork.block_number() + 1);
+                let ots_module =
+                    AnvilOtsApiServer::into_rpc(AnvilOts::new(node_module.clone(), first_block));
                 let trace_module = AnvilTraceApiServer::into_rpc(AnvilTraceApi::new(
                     ctx.registry.trace_api(),
                     fork_info,
@@ -754,6 +786,7 @@ async fn launch_node<Net: AnvilNetwork>(
                     .chain(debug_module.method_names())
                     .chain(trace_module.method_names())
                     .chain(txpool_module.method_names())
+                    .chain(ots_module.method_names())
                 {
                     module.remove_method(name);
                 }
@@ -763,6 +796,8 @@ async fn launch_node<Net: AnvilNetwork>(
                 module.merge(debug_module.clone())?;
                 module.merge(trace_module.clone())?;
                 module.merge(txpool_module.clone())?;
+                module.merge(ots_module.clone())?;
+                let _ = node_module.set(module.clone());
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
                 ctx.modules.merge_configured(anvil_module)?;
@@ -773,6 +808,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 ctx.modules.replace_configured(debug_module)?;
                 ctx.modules.replace_configured(trace_module)?;
                 ctx.modules.replace_configured(txpool_module)?;
+                ctx.modules.replace_configured(ots_module)?;
                 Ok(())
             }
         });

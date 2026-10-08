@@ -64,6 +64,10 @@ about 21k lines plus 40k of tests, and the `anvil` binary builds from it.
 | Serves the fork block's body, receipts, and body indices from the endpoint, because the fork block is the local genesis block and reth writes the genesis block with an empty body | `src/provider.rs` (`remote_for_body`, `remote_for_body_number`) | ~40 | A genesis block with a body, or a hook on the block readers |
 | Recomputes the withdrawals and the parent beacon block root of the payload attributes for the block's final timestamp: `LocalPayloadAttributesBuilder` picks them for the wall-clock time, and the time manager may move the block across a hardfork, as the replayed block of a fork at a transaction hash does | `src/time.rs` (`build_hooks`) | ~30 | A timestamp source on `LocalPayloadAttributesBuilder` |
 | Gives the pending block a zero parent beacon block root on a Cancun chain whose parent has none, the fork block of an older chain; reth takes the root's presence from the parent and builds no pending block | `src/pending.rs` | ~25 | The hardfork check in `BuildPendingEnv` |
+| Drops reth's cached pending block after a change to the pool, the state, or the next block's environment: reth reuses a pending block for a second and keys it on the parent alone, and anvil's pending block shows a change at once. Calls, estimates, and access lists at `pending` run with the pending block's state changes as state overrides: reth runs them with the pending block's environment on the latest state. `eth_estimateGas` without a block estimates on the pending block, as anvil does | `src/api.rs` (`PendingReset`, `with_pending_state`), `src/node.rs` | ~150 | A pending block cache that the node can invalidate, and pending calls on the pending block's state |
+| Replaces `ots_getInternalOperations` to include the top-level operation, `ots_getBlockTransactions` to page from the first transaction, and implements `ots_searchTransactionsBefore` and `ots_searchTransactionsAfter`, which reth leaves unimplemented, over the node's own `trace_block` and `eth_*` methods | `src/otterscan.rs` | ~300 | The same in reth's Otterscan module |
+| Runs a blob call without a blob fee cap at a zero blob base fee in `eth_call` and `trace_call`, as geth and anvil do, through a block override | `src/simulate.rs` (`with_zero_blob_base_fee`), `src/debug.rs` | ~30 | The same rule in reth's call path |
+| Accepts a transaction whose priority fee is above its fee cap on Arbitrum chains, in the pool and in the EVM, as anvil does: Arbitrum does not enforce the EIP-1559 ordering | `src/pool.rs`, `src/evm.rs` (`EvmSettings`) | ~15 | A chain-aware fee rule in reth's pool validator |
 | Leaves the console precompile out of `eth_config` | `src/node.rs` | ~15 | An `eth_config` hook for node-specific precompiles |
 
 ## Gaps that are not hooks
@@ -78,10 +82,6 @@ be free if reth had a dev mode:
 - `--prune-history`, `--max-persisted-states`, and `--transaction-block-keeper` are accepted and have
   no effect: reth keeps the full history on disk, which is what these flags bound in anvil's
   memory.
-- Reth caches its pending block for a second, so a transaction that reaches the pool shows in
-  `eth_getBlockByNumber("pending")` and in calls at `pending` up to a second late; anvil builds
-  the pending block on every request. Calls and estimates without a block run at `latest`, as on
-  reth; anvil runs them on the pending block, so an estimate there sees the pool's transactions.
 - `eth_getFilterChanges` does not report the logs a reorg or a snapshot revert removed with
   `removed: true`; anvil and geth do.
 - A `genesis.json` header carries the forks the node runs and the root of the whole genesis
@@ -96,16 +96,13 @@ be free if reth had a dev mode:
 - Anvil's precompile factory (`NodeConfig::with_precompile_factory`) is not served.
 - Reth's pool requires the sidecar of a blob transaction; anvil mines a blob transaction sent
   without one. A blob call with a zero blob fee cap keeps the block's blob base fee in
-  `eth_call` and `eth_simulateV1` on reth, which rejects the call when validation is off; anvil
-  runs it at zero.
+  `eth_simulateV1` on reth, which rejects the call when validation is off; anvil runs it at zero.
 - `eth_simulateV1` shows the maximum nonce on a transaction that ran with it and no validation,
   as anvil does, but the transaction ran with nonce zero: revm cannot execute the maximum nonce.
 - A trace replays the transaction with the precompiles of the node's current chain id, so after
   `anvil_setChainId` switches to a chain with other precompiles, the traces of the blocks mined
   before it change; anvil serves the traces it recorded at mining. Replays after a chain id
   change skip the EVM's chain id check, and the API checks the chain id of a request instead.
-- Reth's `ots_getInternalOperations` reports no top-level create or transfer, and
-  `ots_getBlockTransactions` pages a block's transactions in another order than anvil.
 - `eth_createAccessList` for a call without fee fields runs at a zero base fee on reth; anvil,
   like geth, runs it at the block's base fee.
 - `anvil_reset` restarts from the configured genesis; anvil's reset carries the next-block base
@@ -153,9 +150,7 @@ block_index,storage_values,eip2935,eip4844,eip6110,eip7702,eip7928,otterscan,bea
 anvil,traces,simulate,state,fork,fork_bal,fork_chains,tempo,tempo_canary}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
 (`api.backend`, `api.execute`, pool types, `eth_callBundle`, the ready-transaction listener, the
 state dump's transaction records, the fee manager's blob fee, the Optimism variants, the block
-listener count, the precompile factory, the JavaScript tracer). Ignored tests carry the reason on the attribute: the pending
-call that expects the beacon root system call, the Arbitrum tip rule, the pending block cache
-above, and the estimate that defaults to the pending block. Assertions on wall-clock seconds
+listener count, the precompile factory, the JavaScript tracer). Ignored tests carry the reason on the attribute. Assertions on wall-clock seconds
 became lower bounds, because blocks take longer to build here than on anvil, error messages
 compare case-insensitively where reth's text differs only in case, and accept reth's text where
 it differs. `state.rs`'s history pruning tests are ignored, because reth keeps the full history.
@@ -182,10 +177,6 @@ with foundry's `RevertDecoder`, as anvil's do.
   anvil only for blocks whose header carries one. `cast run` uses the list to skip replaying the
   earlier transactions of a block, so its progress output differs.
 
-- Pending calls. Reth runs `eth_call` at `pending` on the latest state without the beacon root
-  system call, so the EIP-4788 contract does not hold the pending block's root; anvil runs the
-  call on the pending block.
-- A tip above the fee cap. Reth's pool rejects it on every chain; anvil allows it on Arbitrum.
 - Amsterdam state gas. Anvil does not charge EIP-8037 state gas (foundry-rs/foundry#17428);
   this node does, so a transaction on Amsterdam that creates state with a tight gas limit runs
   out of gas here. Tests that pin such gas limits need more gas.

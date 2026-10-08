@@ -33,7 +33,6 @@ async fn ots_get_api_level() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's ots_getInternalOperations reports no top-level operation"]
 async fn ots_get_internal_operations_contract_deploy() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -55,7 +54,6 @@ async fn ots_get_internal_operations_contract_deploy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's ots_getInternalOperations reports no top-level operation"]
 async fn ots_get_internal_operations_contract_transfer() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -356,7 +354,6 @@ async fn ots_get_block_details_by_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth pages Otterscan block transactions in another order"]
 async fn ots_get_block_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -396,7 +393,6 @@ async fn ots_get_block_transactions() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth does not implement ots_searchTransactionsBefore"]
 async fn ots_search_transactions_before() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -432,7 +428,6 @@ async fn ots_search_transactions_before() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth does not implement ots_searchTransactionsAfter"]
 async fn ots_search_transactions_after() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

@@ -1553,7 +1553,6 @@ async fn can_create_access_list_with_state_override() {
 
 // ensures that the gas estimate is running on pending block by default
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth serves calls and estimates from the latest block by default"]
 async fn estimates_gas_on_pending_by_default() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 

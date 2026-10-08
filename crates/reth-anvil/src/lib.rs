@@ -32,6 +32,7 @@ mod mining;
 mod network;
 mod node;
 pub mod opts;
+mod otterscan;
 mod pending;
 mod pool;
 mod provider;

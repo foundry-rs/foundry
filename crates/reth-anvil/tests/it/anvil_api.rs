@@ -927,7 +927,6 @@ async fn test_set_next_block_parent_beacon_block_root() {
 // Tests that the pending block sees a parent beacon block root override without consuming it, so
 // pending calls observe the root the next mined block will use.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth runs pending calls on the latest state without the beacon root system call"]
 async fn test_set_next_block_parent_beacon_block_root_pending() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -1195,7 +1194,6 @@ async fn flaky_test_reorg() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth's pool rejects a tip above the fee cap on every chain; anvil allows it on Arbitrum"]
 async fn can_replay_arbitrum_transaction_with_priority_fee_above_max_fee() {
     let (api, handle) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;

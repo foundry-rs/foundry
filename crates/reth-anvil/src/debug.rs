@@ -3,9 +3,10 @@
 //! The fork block and the blocks before it are not stored locally, so their traces come from the
 //! fork endpoint, as on anvil. The other differences are error codes and parameter checks.
 
-use crate::fork::ForkInfo;
+use crate::{fork::ForkInfo, simulate::with_zero_blob_base_fee};
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockId;
+use alloy_json_rpc::RpcObject;
 use alloy_primitives::{Address, B256, Bytes, map::HashSet};
 use alloy_rpc_types::trace::{
     filter::TraceFilter,
@@ -13,7 +14,9 @@ use alloy_rpc_types::trace::{
     opcode::BlockOpcodeGas,
     parity::{LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType},
 };
-use alloy_rpc_types_eth::{AccountInfo, Index};
+use alloy_rpc_types_eth::{
+    AccountInfo, BlockOverrides, Index, TransactionRequest, state::StateOverride,
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -89,7 +92,19 @@ pub trait AnvilDebugApi {
 /// The `trace_*` methods with anvil's handling of the pending block, the fork, and the
 /// `trace_get` indices.
 #[rpc(server, namespace = "trace")]
-pub trait AnvilTraceApi {
+pub trait AnvilTraceApi<TxReq: RpcObject> {
+    /// Traces a call. A blob call without a blob fee cap runs at a zero blob base fee, as in
+    /// `eth_call`.
+    #[method(name = "call")]
+    async fn trace_call(
+        &self,
+        call: TxReq,
+        trace_types: HashSet<TraceType>,
+        block_id: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<TraceResults>;
+
     /// Returns the traces of the block's transactions. The pending block is rejected, as in anvil.
     #[method(name = "block")]
     async fn trace_block(
@@ -354,10 +369,31 @@ impl<Eth: TraceExt + 'static> AnvilTraceApi<Eth> {
 }
 
 #[async_trait]
-impl<Eth> AnvilTraceApiServer for AnvilTraceApi<Eth>
+impl<Eth> AnvilTraceApiServer<RpcTxReq<Eth::NetworkTypes>> for AnvilTraceApi<Eth>
 where
     Eth: TraceExt + 'static,
+    RpcTxReq<Eth::NetworkTypes>: AsRef<TransactionRequest>,
 {
+    async fn trace_call(
+        &self,
+        call: RpcTxReq<Eth::NetworkTypes>,
+        trace_types: HashSet<TraceType>,
+        block_id: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<TraceResults> {
+        let block_overrides = with_zero_blob_base_fee(call.as_ref(), block_overrides);
+        <TraceApi<Eth> as TraceApiServer<RpcTxReq<Eth::NetworkTypes>>>::trace_call(
+            &self.inner,
+            call,
+            trace_types,
+            block_id,
+            state_overrides,
+            block_overrides,
+        )
+        .await
+    }
+
     async fn trace_block(
         &self,
         block: LenientBlockId,

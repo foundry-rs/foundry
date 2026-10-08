@@ -358,6 +358,22 @@ pub(crate) fn validate_request(request: &TransactionRequest) -> Result<(), EthAp
     Ok(())
 }
 
+/// Runs a blob call without a blob fee cap at a zero blob base fee, as geth's `eth_call` does,
+/// unless the block overrides set a blob base fee.
+pub(crate) fn with_zero_blob_base_fee(
+    request: &TransactionRequest,
+    block_overrides: Option<Box<BlockOverrides>>,
+) -> Option<Box<BlockOverrides>> {
+    let blob = request.sidecar.is_some()
+        || request.blob_versioned_hashes.as_ref().is_some_and(|hashes| !hashes.is_empty());
+    if !blob || request.max_fee_per_blob_gas.is_some_and(|cap| cap != 0) {
+        return block_overrides;
+    }
+    let mut block_overrides = block_overrides.unwrap_or_default();
+    block_overrides.blob_base_fee.get_or_insert(U256::ZERO);
+    Some(block_overrides)
+}
+
 /// Fills in the block numbers and timestamps of the simulated blocks, and the empty blocks in the
 /// gaps between them, as anvil does.
 fn sanitize_blocks<T>(

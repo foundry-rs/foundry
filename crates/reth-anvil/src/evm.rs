@@ -124,16 +124,19 @@ pub struct EvmSettings {
     pub disable_block_gas_limit: bool,
     /// Whether the per-transaction gas limit cap of EIP-7825 is enforced.
     pub enable_tx_gas_limit: bool,
+    /// Whether a priority fee above the fee cap is allowed, as on Arbitrum.
+    pub disable_priority_fee_check: bool,
 }
 
 impl EvmSettings {
     /// Reads the settings from the node config.
-    pub const fn from_config(config: &NodeConfig) -> Self {
+    pub fn from_config(config: &NodeConfig) -> Self {
         Self {
             code_size_limit: config.code_size_limit,
             memory_limit: config.memory_limit,
             disable_block_gas_limit: config.disable_block_gas_limit,
             enable_tx_gas_limit: config.enable_tx_gas_limit,
+            disable_priority_fee_check: config.is_arbitrum(),
         }
     }
 
@@ -143,6 +146,7 @@ impl EvmSettings {
         // Accounts with code may send transactions, so impersonated contracts work.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        cfg.disable_priority_fee_check = self.disable_priority_fee_check;
         if !self.enable_tx_gas_limit {
             cfg.tx_gas_limit_cap = Some(u64::MAX);
         }

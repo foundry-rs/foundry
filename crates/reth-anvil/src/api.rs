@@ -68,6 +68,7 @@ use reth_ethereum::{
 use reth_execution_types::ChangedAccount;
 use reth_rpc_eth_api::{
     EthApiServer, FullEthApiServer, RpcBlock, RpcReceipt, RpcTransaction, RpcTxReq, RpcTypes,
+    helpers::LoadPendingBlock,
 };
 use reth_rpc_server_types::constants::gas_oracle::ESTIMATE_GAS_ERROR_RATIO;
 use revm::context::{BlockEnv, Cfg};
@@ -823,6 +824,8 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     next_block_base_fee: NextBlockBaseFee<HeaderOf<Provider>>,
     /// Makes the pool drop the state it read at the tip, after an anvil state write.
     pool_refresh: Option<PoolRefresh>,
+    /// Drops reth's cached pending block, after a change to the pool or the state.
+    pending_reset: Option<PendingReset>,
     /// Whether the first block takes the genesis base fee; see
     /// `AnvilNetwork::FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE`.
     first_block_keeps_genesis_base_fee: bool,
@@ -843,6 +846,29 @@ impl PoolRefresh {
 impl fmt::Debug for PoolRefresh {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("PoolRefresh")
+    }
+}
+
+/// Drops reth's cached pending block. Reth reuses a pending block for a second; anvil's pending
+/// block shows a change to the pool or the state at once.
+#[derive(Clone)]
+pub struct PendingReset(Arc<dyn Fn() + Send + Sync>);
+
+impl PendingReset {
+    /// Wraps the reset.
+    pub fn new(reset: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(Arc::new(reset))
+    }
+
+    /// Drops the cached pending block.
+    pub fn reset(&self) {
+        (self.0)();
+    }
+}
+
+impl fmt::Debug for PendingReset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PendingReset")
     }
 }
 
@@ -936,6 +962,7 @@ where
             tempo_fee_payer: None,
             next_block_base_fee,
             pool_refresh: None,
+            pending_reset: None,
             first_block_keeps_genesis_base_fee: true,
         }
     }
@@ -950,6 +977,12 @@ where
     /// Sets the refresh that makes the pool see anvil state writes before the next block.
     pub fn with_pool_refresh(mut self, refresh: Option<PoolRefresh>) -> Self {
         self.pool_refresh = refresh;
+        self
+    }
+
+    /// Sets the reset that drops reth's cached pending block.
+    pub fn with_pending_reset(mut self, reset: PendingReset) -> Self {
+        self.pending_reset = Some(reset);
         self
     }
 
@@ -1732,15 +1765,19 @@ where
 
     async fn anvil_set_block_timestamp_interval(&self, seconds: u64) -> RpcResult<()> {
         self.time.set_block_timestamp_interval(seconds);
+        self.reset_pending_block();
         Ok(())
     }
 
     async fn anvil_remove_block_timestamp_interval(&self) -> RpcResult<bool> {
-        Ok(self.time.remove_block_timestamp_interval())
+        let removed = self.time.remove_block_timestamp_interval();
+        self.reset_pending_block();
+        Ok(removed)
     }
 
     async fn anvil_increase_time(&self, seconds: U256) -> RpcResult<i64> {
         let offset = self.time.increase_time(seconds.to::<u64>());
+        self.reset_pending_block();
         Ok(offset.min(i64::MAX as i128) as i64)
     }
 
@@ -1749,23 +1786,28 @@ where
         let timestamp = if timestamp > 1_000_000_000_000 { timestamp / 1000 } else { timestamp };
         let now = self.time.current_call_timestamp();
         self.time.set_time(timestamp);
+        self.reset_pending_block();
         Ok(timestamp.saturating_sub(now))
     }
 
     async fn anvil_set_next_block_timestamp(&self, seconds: u64) -> RpcResult<()> {
-        self.time.set_next_block_timestamp(seconds).map_err(invalid_params)
+        self.time.set_next_block_timestamp(seconds).map_err(invalid_params)?;
+        self.reset_pending_block();
+        Ok(())
     }
 
     async fn anvil_set_block_gas_limit(&self, gas_limit: U256) -> RpcResult<bool> {
         let gas_limit =
             gas_limit.try_into().map_err(|_| invalid_params("gas_limit exceeds u64::MAX"))?;
         self.block_env.set_gas_limit(gas_limit);
+        self.reset_pending_block();
         Ok(true)
     }
 
     async fn anvil_set_coinbase(&self, address: Address) -> RpcResult<()> {
         self.block_env.set_coinbase(address);
         self.relauncher.update_config(|config| config.coinbase = Some(address));
+        self.reset_pending_block();
         Ok(())
     }
 
@@ -1773,16 +1815,19 @@ where
         let base_fee =
             base_fee.try_into().map_err(|_| invalid_params("base_fee exceeds u64::MAX"))?;
         self.block_env.set_next_base_fee(base_fee);
+        self.reset_pending_block();
         Ok(())
     }
 
     async fn anvil_set_next_block_prev_randao(&self, prev_randao: B256) -> RpcResult<()> {
         self.block_env.set_next_prev_randao(prev_randao);
+        self.reset_pending_block();
         Ok(())
     }
 
     async fn anvil_set_next_block_parent_beacon_block_root(&self, root: B256) -> RpcResult<()> {
         self.block_env.set_next_parent_beacon_block_root(root);
+        self.reset_pending_block();
         Ok(())
     }
 
@@ -2040,6 +2085,76 @@ where
         state_overrides
     }
 
+    /// Returns state overrides that turn the latest state into the pending block's state, with
+    /// the request's overrides on top. Reth runs a call on the pending block with the pending
+    /// block's environment and the latest state; anvil runs it after the pool's transactions.
+    async fn with_pending_state(
+        &self,
+        block: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+    ) -> RpcResult<Option<StateOverride>> {
+        if !block.is_some_and(|block| block.is_pending()) {
+            return Ok(state_overrides);
+        }
+        let Some(pending) =
+            LoadPendingBlock::pool_pending_block(&self.eth).await.map_err(Into::into)?
+        else {
+            return Ok(state_overrides);
+        };
+        let bundle = &pending.executed_block.execution_output.state;
+        let mut merged = StateOverride::default();
+        for (address, account) in &bundle.state {
+            let mut item = AccountOverride::default();
+            let storage = account
+                .storage
+                .iter()
+                .map(|(slot, value)| (B256::from(*slot), B256::from(value.present_value)));
+            match &account.info {
+                Some(info) => {
+                    item.balance = Some(info.balance);
+                    item.nonce = Some(info.nonce);
+                    let original = account.original_info.as_ref().map(|info| info.code_hash);
+                    if original != Some(info.code_hash) {
+                        item.code = info
+                            .code
+                            .clone()
+                            .or_else(|| bundle.contracts.get(&info.code_hash).cloned())
+                            .map(|code| code.original_bytes());
+                    }
+                    if account.was_destroyed() {
+                        item.state = Some(storage.collect());
+                    } else if !account.storage.is_empty() {
+                        item.state_diff = Some(storage.collect());
+                    }
+                }
+                None => {
+                    item.balance = Some(U256::ZERO);
+                    item.nonce = Some(0);
+                    item.code = Some(Bytes::new());
+                    item.state = Some(Default::default());
+                }
+            }
+            merged.insert(*address, item);
+        }
+        for (address, request) in state_overrides.into_iter().flatten() {
+            let item = merged.entry(address).or_default();
+            item.balance = request.balance.or(item.balance);
+            item.nonce = request.nonce.or(item.nonce);
+            item.code = request.code.or(item.code.take());
+            item.move_precompile_to = request.move_precompile_to.or(item.move_precompile_to);
+            if let Some(state) = request.state {
+                item.state = Some(state);
+                item.state_diff = None;
+            } else if let Some(diff) = request.state_diff {
+                match &mut item.state {
+                    Some(state) => state.extend(diff),
+                    None => item.state_diff.get_or_insert_default().extend(diff),
+                }
+            }
+        }
+        Ok(Some(merged))
+    }
+
     /// Fills a missing `from` with the first dev account, as anvil does, and marks a missing
     /// `to` as a contract creation.
     fn with_sender(
@@ -2264,9 +2379,11 @@ where
                 recovered.max_fee_per_gas(),
             )?;
         }
-        EthApiServer::send_raw_transaction(&self.eth, tx)
+        let hash = EthApiServer::send_raw_transaction(&self.eth, tx)
             .await
-            .map_err(|error| self.pool_error(error))
+            .map_err(|error| self.pool_error(error))?;
+        self.reset_pending_block();
+        Ok(hash)
     }
 
     /// Returns whether a lookup by transaction hash that failed with `error` should run again:
@@ -2608,7 +2725,9 @@ where
             request.as_mut().gas = Some(gas_limit.to());
         }
         self.ensure_request_replacement_priced(&request)?;
-        EthApiServer::send_transaction(&self.eth, request).await
+        let hash = EthApiServer::send_transaction(&self.eth, request).await?;
+        self.reset_pending_block();
+        Ok(hash)
     }
 
     async fn eth_send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256> {
@@ -2644,6 +2763,9 @@ where
     ) -> RpcResult<U256> {
         simulate::validate_request(request.as_ref())?;
         ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
+        // Anvil estimates on the pending block by default, with the pool's transactions.
+        let block = block.or(Some(BlockId::pending()));
+        let state_overrides = self.with_pending_state(block, state_overrides).await?;
         self.estimate_gas_exact(request, block, state_overrides, block_overrides)
             .await
             .map_err(with_revert_data)
@@ -2658,9 +2780,11 @@ where
     ) -> RpcResult<Bytes> {
         simulate::validate_request(request.as_ref())?;
         ensure_chain_id(request.as_ref(), self.chain_spec.chain().id())?;
+        let state_overrides = self.with_pending_state(block, state_overrides).await?;
         self.ensure_call_funds(&request, block, state_overrides.as_ref())?;
         let request = self.with_call_fees(request)?;
         let state_overrides = self.with_request_nonce(&request, state_overrides);
+        let block_overrides = simulate::with_zero_blob_base_fee(request.as_ref(), block_overrides);
         EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides)
             .await
             .map_err(with_revert_data)
@@ -2931,6 +3055,7 @@ where
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
     ) -> RpcResult<AccessListResult> {
+        let state_override = self.with_pending_state(block, state_override).await?;
         let state_override = self.with_request_nonce(&request, state_override);
         #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
         let mut result = EthApiServer::create_access_list(
@@ -3334,6 +3459,14 @@ where
     fn refresh_pool(&self) {
         if let Some(refresh) = &self.pool_refresh {
             (refresh.0)();
+        }
+        self.reset_pending_block();
+    }
+
+    /// Drops reth's cached pending block, so the next pending read sees the pool and the state.
+    fn reset_pending_block(&self) {
+        if let Some(reset) = &self.pending_reset {
+            reset.reset();
         }
     }
 

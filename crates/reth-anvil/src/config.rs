@@ -420,6 +420,12 @@ impl NodeConfig {
             .unwrap_or(CHAIN_ID)
     }
 
+    /// Returns whether the chain id is an Arbitrum chain's, whose transactions may have a priority
+    /// fee above the fee cap.
+    pub fn is_arbitrum(&self) -> bool {
+        Chain::from_id(self.get_chain_id()).is_arbitrum()
+    }
+
     /// Sets the block gas limit.
     pub const fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
         self.gas_limit = gas_limit;
