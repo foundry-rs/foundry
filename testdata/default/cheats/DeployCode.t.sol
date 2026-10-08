@@ -35,6 +35,20 @@ contract TestPayableContractWithArgs {
     }
 }
 
+contract RevertingConstructor {
+    constructor() {
+        revert("constructor reverted");
+    }
+}
+
+contract HaltingConstructor {
+    constructor() {
+        assembly {
+            invalid()
+        }
+    }
+}
+
 contract DeployCodeTest is Test {
     address public constant overrideAddress = 0x0000000000000000000000000000000000000064;
 
@@ -123,4 +137,57 @@ contract DeployCodeTest is Test {
         assertEq(withDeployCode.b(), 4);
         assertEq(withDeployCode.c(), 101);
     }
+
+    function testDeployCodeConstructorRevert() public {
+        try vm.deployCode("cheats/DeployCode.t.sol:RevertingConstructor") {
+            revert("expected constructor revert");
+        } catch (bytes memory reason) {
+            assertEq(reason, abi.encodeWithSignature("Error(string)", "constructor reverted"));
+        }
+    }
+
+    function testDeployCodeConstructorHalt() public {
+        try vm.deployCode("cheats/DeployCode.t.sol:HaltingConstructor") {
+            revert("expected constructor halt");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+    }
 }
+
+/// forge-config: default.isolate = false
+contract DeployCodeNonIsolatedTest is DeployCodeTest {}
+
+/// forge-config: default.always_use_create_2_factory = true
+contract DeployCodeCreate2FactoryTest is Test {
+    address constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
+    function testNewWithSaltUsesFactory() public {
+        address deployed = address(new TestContract{salt: bytes32("salt")}());
+
+        assertEq(
+            deployed,
+            vm.computeCreate2Address(bytes32("salt"), keccak256(type(TestContract).creationCode), CREATE2_FACTORY)
+        );
+    }
+
+    function testNewWithSaltConstructorRevert() public {
+        try new RevertingConstructor{salt: bytes32("salt")}() {
+            revert("expected constructor revert");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+    }
+
+    function testNewWithSaltConstructorHalt() public {
+        try new HaltingConstructor{salt: bytes32("salt")}() {
+            revert("expected constructor halt");
+        } catch (bytes memory reason) {
+            assertEq(reason, "");
+        }
+    }
+}
+
+/// forge-config: default.always_use_create_2_factory = true
+/// forge-config: default.isolate = false
+contract DeployCodeCreate2FactoryNonIsolatedTest is DeployCodeCreate2FactoryTest {}

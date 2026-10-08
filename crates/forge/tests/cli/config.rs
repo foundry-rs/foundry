@@ -3185,7 +3185,7 @@ contract AnotherCounterTest is Test {
 Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
 ...
 [FAIL: EvmError: Revert] test_Failure() ([GAS])
-Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 1 failed; [..] skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -3427,4 +3427,20 @@ exit 1
     write_config(SOLC_VERSION);
     cmd.forge_fuse().args(["build", "--force"]).assert_success();
     assert_not_invoked();
+}
+
+// `--config-path` selects the project root, so combining it with `--root` is rejected.
+#[forgetest]
+fn config_path_conflicts_with_root(prj: _, cmd: _) {
+    let config_path = prj.root().join(Config::FILE_NAME);
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--config-path")
+        .arg(config_path)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+error: the argument '--root <PATH>' cannot be used with '--config-path <FILE>'
+...
+"#]]);
 }

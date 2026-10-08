@@ -21,3 +21,6 @@ contract Issue2984Test is Test {
         uint256 fork2 = vm.createSelectFork("avaxTestnet", 12880749);
     }
 }
+
+/// forge-config: default.isolate = false
+contract Issue2984NonIsolatedTest is Issue2984Test {}

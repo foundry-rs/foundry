@@ -584,7 +584,7 @@ mod tests {
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
     use foundry_config::NamedChain;
-    use foundry_test_utils::TestProject;
+    use foundry_test_utils::{TestProject, util::SOLC_VERSION};
 
     #[cfg(feature = "monad")]
     fn monad_env(timestamp: u64) -> EvmEnvFor<foundry_evm::core::evm::MonadEvmNetwork> {
@@ -691,7 +691,7 @@ mod tests {
         prj.add_source(
             "Counter.sol",
             r#"
-pragma solidity 0.8.16;
+pragma solidity ^0.8.0;
 
 contract Counter {
     uint256 public number;
@@ -701,7 +701,7 @@ contract Counter {
         prj.add_source(
             "Broken.sol",
             r#"
-pragma solidity 0.8.16;
+pragma solidity ^0.8.0;
 
 contract Broken {
     this is not valid Solidity
@@ -710,7 +710,7 @@ contract Broken {
         );
 
         let mut config = Config::load_with_root(prj.root()).unwrap();
-        config.solc = Some("0.8.16".into());
+        config.solc = Some(SOLC_VERSION.into());
         let args = VerifyBytecodeArgs {
             address: Address::ZERO,
             contract: "src/Counter.sol:Counter".parse().unwrap(),

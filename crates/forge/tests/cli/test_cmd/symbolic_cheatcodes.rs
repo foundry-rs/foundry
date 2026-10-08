@@ -4894,8 +4894,10 @@ contract StorageHooksTest is Test {
         StorageHookDepthTarget hooked = new StorageHookDepthTarget();
         hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
 
-        assertTrue(baseline.recurse(1024));
-        assertFalse(hooked.recurse(1024));
+        // Without isolation the test contract's frame takes one more call-depth slot.
+        uint256 depth = vm.isIsolateMode() ? 1024 : 1023;
+        assertTrue(baseline.recurse(depth));
+        assertFalse(hooked.recurse(depth));
     }
 
     function testConcreteTraceSuccess() public {
@@ -5086,29 +5088,18 @@ contract StorageHooksTest is Test {
 "#,
     );
 
-    cmd.forge_fuse()
-        .args([
-            "test",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "testConcrete",
-            "--gas-limit",
-            "10000000000000",
-            "--disable-block-gas-limit",
-        ])
-        .assert_success();
-
-    cmd.forge_fuse()
-        .args([
-            "test",
-            "--isolate",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "testIsolateEnclosingRevertRollsBackTargetAndGhost",
-        ])
-        .assert_success();
+    let args = [
+        "test",
+        "--match-contract",
+        "StorageHooksTest",
+        "--match-test",
+        "test(Concrete|Isolate)",
+        "--gas-limit",
+        "10000000000000",
+        "--disable-block-gas-limit",
+    ];
+    cmd.forge_fuse().args(args).arg("--isolate").assert_success();
+    cmd.forge_fuse().args(args).arg("--no-isolate").assert_success();
 
     let output = cmd
         .forge_fuse()

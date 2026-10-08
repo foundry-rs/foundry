@@ -550,6 +550,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         }
     }
 
+    ccx.state.deploy_code_depth = Some(depth);
     let outcome = exec_create(
         executor,
         CreateInputs::new(
@@ -562,6 +563,7 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
         ),
         ccx,
     );
+    ccx.state.deploy_code_depth = None;
 
     // Clear the flag in case the synthetic create was not broadcast, and end a single-call
     // broadcast at the original depth as native create cleanup would.

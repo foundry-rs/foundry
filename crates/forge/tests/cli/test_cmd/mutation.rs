@@ -2116,6 +2116,58 @@ contract NestedTest {
     assert_eq!(run("8"), serial);
 }
 
+// Mutant paths must be relative to the project root, also if a parent directory of the project
+// has a well-known name such as `src`.
+#[forgetest]
+fn mutation_paths_are_relative_to_project_root(prj: _, cmd: _) {
+    let root = prj.root().join("src/project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(root.join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(
+        root.join("src/Counter.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("test/Counter.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.current_dir(&root)
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":4,"killed":3,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":75.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+
+"#]]);
+}
+
 // A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
 #[forgetest]
 fn mutation_timeout_keeps_invariant_run_limit(prj: _, cmd: _) {
