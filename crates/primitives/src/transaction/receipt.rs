@@ -276,18 +276,18 @@ impl<T> FoundryReceiptEnvelope<T> {
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
-            Self::Legacy(t) => &t.logs_bloom,
-            Self::Eip2930(t) => &t.logs_bloom,
-            Self::Eip1559(t) => &t.logs_bloom,
-            Self::Eip4844(t) => &t.logs_bloom,
-            Self::Eip7702(t) => &t.logs_bloom,
+            Self::Legacy(t) => t.bloom_ref(),
+            Self::Eip2930(t) => t.bloom_ref(),
+            Self::Eip1559(t) => t.bloom_ref(),
+            Self::Eip4844(t) => t.bloom_ref(),
+            Self::Eip7702(t) => t.bloom_ref(),
             #[cfg(feature = "optimism")]
-            Self::PostExec(t) => &t.logs_bloom,
+            Self::PostExec(t) => t.bloom_ref(),
             #[cfg(any(feature = "base", feature = "optimism"))]
-            Self::Deposit(t) => &t.logs_bloom,
+            Self::Deposit(t) => t.bloom_ref(),
             #[cfg(feature = "base")]
-            Self::Eip8130(t) => &t.logs_bloom,
-            Self::Tempo(t) => &t.logs_bloom,
+            Self::Eip8130(t) => t.bloom_ref(),
+            Self::Tempo(t) => t.bloom_ref(),
             Self::Unknown(t) => &t.inner.logs_bloom,
         }
     }

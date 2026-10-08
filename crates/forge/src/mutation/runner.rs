@@ -14,7 +14,7 @@ use crate::{
     workspace,
 };
 use eyre::Result;
-use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
+use foundry_common::{compile::ProjectCompiler, fs::canonicalize_path, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
@@ -23,7 +23,6 @@ use foundry_evm::{
     executors::ExecutorBuilder,
     opts::EvmOpts,
 };
-use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
     fs,
@@ -224,7 +223,7 @@ pub fn run_mutations_parallel_with_progress<FEN: FoundryEvmNetwork>(
     // temp root as well so explicit compiler inputs, project-local remappings, and the project
     // root all use the same path spelling (notably `/private/var` rather than `/var` on macOS).
     let temp_root = std::env::temp_dir();
-    let temp_root = dunce::canonicalize(&temp_root).map_err(|err| {
+    let temp_root = canonicalize_path(&temp_root).map_err(|err| {
         eyre::eyre!("failed to canonicalize mutation temp root {}: {err}", temp_root.display())
     })?;
 
@@ -242,12 +241,19 @@ pub fn run_mutations_parallel_with_progress<FEN: FoundryEvmNetwork>(
     let filter_args = Arc::new(filter_args);
     let rerun_failures = Arc::new(rerun_failures);
 
-    pool.install(|| {
-        mutants.into_par_iter().for_each(|mutant| {
-            // Skip if cancelled
+    // Each worker pulls mutants from a shared queue. Do not use a parallel iterator here: a worker
+    // that waits on another pool (for example solar's parser pool in `Session::enter`) steals
+    // queued jobs from this pool. If those jobs are mutants, they nest on one stack, and each
+    // waiting mutant keeps its compiler session and thread pool alive until the run ends.
+    let queue = Mutex::new(mutants.into_iter());
+    pool.broadcast(|_| {
+        loop {
             if shared_state.is_cancelled() {
-                return;
+                break;
             }
+            let Some(mutant) = queue.lock().ok().and_then(|mut queue| queue.next()) else {
+                break;
+            };
 
             // Wrap in catch_unwind to prevent one panic from aborting the entire run
             let mutant_clone = mutant.clone();
@@ -281,7 +287,7 @@ pub fn run_mutations_parallel_with_progress<FEN: FoundryEvmNetwork>(
             if let Ok(mut results) = completed_results.lock() {
                 results.push(test_result);
             }
-        });
+        }
     });
 
     // Extract results
@@ -813,7 +819,7 @@ mod tests {
         config.mutation.timeout = Some(5);
 
         let temp_config = temp_config_for_mutation(&config, temp.path());
-        let expected_root = dunce::canonicalize(temp.path()).unwrap();
+        let expected_root = canonicalize_path(temp.path()).unwrap();
 
         assert_eq!(temp_config.root, expected_root);
         assert_eq!(temp_config.src, expected_root.join("contracts"));

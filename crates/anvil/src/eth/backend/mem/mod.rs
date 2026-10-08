@@ -170,7 +170,7 @@ use revm::{
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{InstructionResult, interpreter::EthInterpreter, interpreter_action::FrameInit},
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
+    primitives::{eip2780, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
@@ -3336,6 +3336,11 @@ impl<N: Network> Backend<N> {
             CallTxEnv::Op(tx) => tx.tx_type() != DEPOSIT_TX_TYPE_ID,
             _ => true,
         };
+        let min_gas = if prepared.evm_env.cfg_env.enable_amsterdam_eip2780 {
+            eip2780::TX_BASE_COST
+        } else {
+            MIN_TRANSACTION_GAS as u64
+        };
         let tx_env = prepared.tx_env.base_mut();
         if gas_omitted && cap_by_balance && tx_env.gas_price > 0 {
             let balance =
@@ -3346,7 +3351,7 @@ impl<N: Network> Backend<N> {
             if let Some(allowance) = balance
                 .checked_sub(upfront)
                 .map(|available| available / U256::from(tx_env.gas_price))
-                && allowance >= U256::from(MIN_TRANSACTION_GAS)
+                && allowance >= U256::from(min_gas)
             {
                 tx_env.gas_limit = tx_env.gas_limit.min(allowance.saturating_to());
             }
@@ -3477,7 +3482,7 @@ impl<N: Network> Backend<N> {
         }
 
         let parsed: FoundryTransactionRequest =
-            request.try_into().map_err(|err: serde_json::Error| {
+            FoundryTransactionRequest::new(request).map_err(|err: serde_json::Error| {
                 BlockchainError::InvalidTransactionRequest(err.to_string())
             })?;
         if parsed.is_tempo() {
@@ -3946,7 +3951,7 @@ impl<N: Network> Backend<N> {
         let code = if let Some(code) = account.code {
             code
         } else {
-            state.code_by_hash_ref(account.code_hash)?
+            state.code_by_hash_ref(account.code_hash())?
         };
         Ok(code.original_bytes())
     }
@@ -5389,7 +5394,7 @@ impl<N: Network> Backend<N> {
         let genesis_base_fee =
             if preserve_live_base_fee { staged_fees.base_fee() } else { local_base_fee };
 
-        let mut staged_cfg = CfgEnv::default();
+        let mut staged_cfg = CfgEnv::new();
         staged_cfg.set_spec_and_mainnet_gas_params(local_spec);
         staged_cfg.chain_id = local_chain_id;
         staged_cfg.limit_contract_code_size = staged_config.code_size_limit;
@@ -7304,7 +7309,7 @@ where
             let db = block_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
             let account = db.get(&address).cloned().unwrap_or_default();
             let storage_root = storage_root(&account.storage);
-            let code_hash = account.info.code_hash;
+            let code_hash = account.info.code_hash();
             let balance = account.info.balance;
             let nonce = account.info.nonce;
             Ok(TrieAccount { balance, nonce, code_hash, storage_root })
@@ -7370,7 +7375,7 @@ where
                     .json_result(
                         result,
                         &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                        &evm_env.block_env,
+                        evm_env.block_env(),
                         &cache_db,
                     )
                     .map_err(|e| BlockchainError::Message(e.to_string()))
@@ -7416,7 +7421,7 @@ where
                 address,
                 balance: account.info.balance,
                 nonce: account.info.nonce,
-                code_hash: account.info.code_hash,
+                code_hash: account.info.code_hash(),
                 storage_hash,
                 account_proof: proof,
                 storage_proof: keys
@@ -7447,7 +7452,7 @@ where
     ) -> Result<Option<TransactionOpcodeGas>, BlockchainError> {
         match self.replay_tx_with_inspector(
             hash,
-            OpcodeGasInspector::default(),
+            OpcodeGasInspector::new(),
             move |_, _, inspector, _, _| TransactionOpcodeGas {
                 transaction_hash: hash,
                 opcode_gas: inspector.opcode_gas_iter().collect(),
@@ -7514,7 +7519,7 @@ where
             let monad_context = self.active_monad_context_for_mined_block(block)?;
 
             for tx_envelope in &block.body.transactions {
-                let mut inspector = OpcodeGasInspector::default();
+                let mut inspector = OpcodeGasInspector::new();
                 let pending_tx = self.pending_mined_transaction(tx_envelope.clone())?;
                 let transaction_context =
                     monad_execution_context_at(monad_context.as_ref(), transactions.len());
@@ -7606,10 +7611,11 @@ where
                 for slot in account.storage.keys() {
                     keys.push(Bytes::from(slot.to_be_bytes::<32>()));
                 }
-                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash) {
+                if !account.info.is_empty_code_hash() && seen_codes.insert(account.info.code_hash())
+                {
                     let code = match &account.info.code {
                         Some(code) => code.original_bytes(),
-                        None => state.code_by_hash_ref(account.info.code_hash)?.original_bytes(),
+                        None => state.code_by_hash_ref(account.info.code_hash())?.original_bytes(),
                     };
                     codes.push(code);
                 }
@@ -10184,8 +10190,14 @@ where
 
         // Balance and fee related checks
         if !self.disable_pool_balance_checks {
-            // Gas limit validation
-            if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
+            // Gas limit validation. Under EIP-2780 a transaction's intrinsic gas starts at a lower
+            // base, which execution then checks in full.
+            let min_gas = if evm_env.cfg_env.enable_amsterdam_eip2780 {
+                eip2780::TX_BASE_COST
+            } else {
+                MIN_TRANSACTION_GAS as u64
+            };
+            if tx.gas_limit() < min_gas {
                 debug!(target: "backend", "[{:?}] gas too low", tx.hash());
                 return Err(InvalidTransactionError::GasTooLow);
             }
@@ -10532,7 +10544,7 @@ fn commit_cache(db: &mut dyn Db, cache: revm::database::Cache) -> Result<(), Blo
             continue;
         }
         if info.code.is_none() {
-            info.code = contracts.get(&info.code_hash).cloned();
+            info.code = contracts.get(&info.code_hash()).cloned();
         }
         let mut account = Account::from(info);
         account.mark_touch();

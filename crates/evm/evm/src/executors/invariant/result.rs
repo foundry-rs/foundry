@@ -60,6 +60,8 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_value: Option<I256>,
     /// For optimization mode: the call sequence that produced the best value.
     pub optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Whether fail-fast or Ctrl-C stopped the campaign before its timeout or planned runs.
+    pub interrupted: bool,
 }
 
 impl InvariantFuzzTestResult {
@@ -103,6 +105,7 @@ impl InvariantFuzzTestResult {
             fork_block_number,
             optimization_best_value,
             optimization_best_sequence,
+            interrupted: false,
         }
     }
 }

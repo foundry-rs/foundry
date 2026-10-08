@@ -57,7 +57,7 @@ impl Default for CoverageSummaryReporter {
             Cell::new("% Funcs"),
         ]);
 
-        Self { table, total: CoverageSummary::default() }
+        Self { table, total: CoverageSummary::new() }
     }
 }
 

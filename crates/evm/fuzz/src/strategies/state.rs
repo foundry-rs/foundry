@@ -525,11 +525,11 @@ impl FuzzDictionary {
                 for (slot, value) in &account.storage {
                     let slot_info = slot_identifier_key.and_then(|key| {
                         let slot = B256::from(*slot);
-                        let value_word = B256::from(value.present_value);
+                        let value_word = B256::from(value.present_value());
                         self.identify_storage_slot(key, slot, mapping_slots)
                             .filter(|slot_info| slot_info.decode(value_word).is_some())
                     });
-                    self.insert_storage_value(slot, &value.present_value, slot_info);
+                    self.insert_storage_value(slot, &value.present_value(), slot_info);
                 }
             }
         }
@@ -576,7 +576,7 @@ impl FuzzDictionary {
         if self.values_full() {
             return;
         }
-        if self.push_bytecode_hashes.insert(account_info.code_hash) {
+        if self.push_bytecode_hashes.insert(account_info.code_hash()) {
             self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
         }
     }

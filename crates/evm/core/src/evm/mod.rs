@@ -318,7 +318,7 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
         }
         for slot in account.storage.values_mut() {
             slot.is_cold = true;
-            slot.original_value = slot.present_value;
+            slot.original_value = slot.present_value();
         }
     }
     state
@@ -357,7 +357,7 @@ pub fn merge_child_state(parent: &mut EvmState, child: EvmState, remove_absent: 
                 parent_account.storage.insert(key, slot);
                 continue;
             };
-            parent_slot.present_value = slot.present_value;
+            parent_slot.present_value = slot.present_value();
             parent_slot.is_cold &= slot.is_cold;
         }
     }
@@ -398,7 +398,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
     Ok(CallInputs {
         caller: inputs.caller(),
         bytecode_address: deployer,
-        known_bytecode: (account.info.code_hash, account.info.code.clone().unwrap_or_default()),
+        known_bytecode: (account.info.code_hash(), account.info.code.clone().unwrap_or_default()),
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value()),
