@@ -1544,8 +1544,9 @@ async fn test_fork_optimism_with_transaction_hash() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_eth_fee_history() {
-    let (api, _handle) = spawn(fork_config()).await;
-    let upstream = http_provider(&fork_url(&api).await);
+    let config = fork_config();
+    let upstream = http_provider(&config.fork_urls[0].url);
+    let (api, _handle) = spawn(config).await;
 
     let count = 10u64;
     let history =
