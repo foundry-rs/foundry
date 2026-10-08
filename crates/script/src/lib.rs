@@ -1285,7 +1285,7 @@ mod tests {
     use alloy_provider::Provider as _;
     use alloy_rpc_types::TransactionRequest;
     use alloy_signer::SignerSync as _;
-    use anvil::{NodeConfig, spawn};
+    use anvil::{NodeConfig, TempoConfigExt, spawn};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
     use foundry_common::tempo::{
         GeneratedSessionKey, SessionAuthorizationRequest, SessionEntry, TEMPO_HOME_ENV,

@@ -12,55 +12,55 @@ use op_alloy_consensus as _;
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
 
-mod api;
-pub mod args;
+pub mod api;
 mod beacon;
-mod block_env;
-pub mod cmd;
-mod config;
-mod console;
+pub mod block_env;
+pub mod config;
+pub mod console;
 mod debug;
 mod engine;
 mod eth_api;
-mod evm;
-mod fork;
+pub mod evm;
+pub mod fork;
 mod history;
-mod impersonation;
+pub mod impersonation;
 mod launcher;
-mod logging;
+pub mod logging;
 mod miner;
 mod mining;
-mod network;
+pub mod network;
 mod node;
-pub mod opts;
 mod otterscan;
-mod pending;
-mod pool;
-mod provider;
+pub mod pending;
+pub mod pool;
+pub mod provider;
 mod server;
 mod signer;
 mod simulate;
 mod snapshot;
-mod state;
-mod state_dump;
+pub mod state;
+pub mod state_dump;
 mod state_provider;
-mod time;
-mod txpool;
+pub mod time;
+pub mod txpool;
 mod types;
 
 pub use api::{
-    AnvilApiServer, AnvilRpc, CLIENT_VERSION, EthExtApiServer, EvmApiServer, PersonalApiServer,
-    Web3ExtApiServer,
+    AnvilApiServer, AnvilRpc, CLIENT_VERSION, CallBatch, EthExtApiServer, EvmApiServer,
+    PersonalApiServer, Web3ExtApiServer,
 };
 pub use config::{
     AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, DEFAULT_IPC_ENDPOINT, DEFAULT_MNEMONIC,
     DEFAULT_SLOTS_IN_AN_EPOCH, ForkSource, INITIAL_BASE_FEE, NODE_PORT, NodeConfig,
 };
 pub use eth_api::EthApi;
-pub use fork::{ForkBackend, ForkSettings, LocalWrites};
+pub use evm::AnvilExecutorBuilder;
+pub use fork::{ForkBackend, ForkNetwork, ForkSettings, LocalWrites};
 pub use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
-pub use node::{NodeHandle, spawn, try_spawn};
+pub use network::{AnvilComponents, AnvilNetwork, AnvilRpcOf};
+pub use node::{NodeHandle, launch, spawn, try_spawn};
 pub use state_dump::{SerializableAccountRecord, SerializableState, StateFile};
+pub use txpool::TxPoolKey;
 pub use types::{ForkChoice, ForkUrl, ReorgOptions, TransactionData, TransactionOrder};
 
 pub use alloy_rpc_types::anvil::{Forking, Metadata, NodeInfo};

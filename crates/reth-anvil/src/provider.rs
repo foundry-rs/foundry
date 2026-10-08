@@ -1,7 +1,7 @@
 use crate::{
     fork::{
-        AnvilPrimitives, ForkOf, ForkStateProvider, LocalWrites, decode_remote_tx_number,
-        remote_tx_number,
+        EthereumFork, ForkBackend, ForkNetwork, ForkStateProvider, LocalWrites,
+        decode_remote_tx_number, remote_tx_number,
     },
     miner::RewindHooks,
     state::{AnvilState, SharedAnvilState},
@@ -69,19 +69,17 @@ use reth_prune_types::{PruneCheckpoint, PruneSegment};
 use reth_stages_types::{StageCheckpoint, StageId};
 use std::{
     collections::BTreeMap,
+    fmt,
     ops::{RangeBounds, RangeInclusive},
     sync::Arc,
     time::Instant,
 };
 
-/// The node types the provider supports: primitives with a fork network, so remote fork data
-/// converts into the local types.
-pub trait AnvilNodeTypes: ProviderNodeTypes<Primitives: AnvilPrimitives> {}
+/// The node types the provider supports: the fork adapter converts remote data into their
+/// native primitives.
+pub trait AnvilNodeTypes<F: ForkNetwork>: ProviderNodeTypes<Primitives = F::Primitives> {}
 
-impl<N: ProviderNodeTypes<Primitives: AnvilPrimitives>> AnvilNodeTypes for N {}
-
-/// The fork backend of the given node types.
-pub type NodeFork<N> = ForkOf<<N as reth_ethereum::node::api::NodeTypes>::Primitives>;
+impl<N: ProviderNodeTypes<Primitives = F::Primitives>, F: ForkNetwork> AnvilNodeTypes<F> for N {}
 
 /// The node provider: reth's [`BlockchainProvider`] with anvil state writes served on top of the
 /// latest and pending state, and with a remote fork below the local chain.
@@ -92,17 +90,28 @@ pub type NodeFork<N> = ForkOf<<N as reth_ethereum::node::api::NodeTypes>::Primit
 ///
 /// When the node forks a remote chain, blocks below the fork block and the state keys the local
 /// chain has not written come from the remote endpoint.
-#[derive(Debug)]
-pub struct AnvilProvider<N: AnvilNodeTypes> {
+pub struct AnvilProvider<N: AnvilNodeTypes<F>, F: ForkNetwork = EthereumFork> {
     inner: BlockchainProvider<N>,
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
-    fork: Option<Arc<NodeFork<N>>>,
+    fork: Option<Arc<ForkBackend<F>>>,
     /// The blocks a rewind in progress removes, for the reorg notification once it settles.
     rewinding: Arc<RwLock<Vec<ExecutedBlock<N::Primitives>>>>,
 }
 
-impl<N: AnvilNodeTypes> Clone for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> fmt::Debug for AnvilProvider<N, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnvilProvider")
+            .field("inner", &self.inner)
+            .field("state", &self.state)
+            .field("slots_in_an_epoch", &self.slots_in_an_epoch)
+            .field("fork", &self.fork)
+            .field("rewinding", &self.rewinding)
+            .finish()
+    }
+}
+
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> Clone for AnvilProvider<N, F> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -114,13 +123,13 @@ impl<N: AnvilNodeTypes> Clone for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> AnvilProvider<N, F> {
     /// Wraps the given provider.
     pub fn new(
         inner: BlockchainProvider<N>,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
-        fork: Option<Arc<NodeFork<N>>>,
+        fork: Option<Arc<ForkBackend<F>>>,
     ) -> Self {
         Self { inner, state, slots_in_an_epoch, fork, rewinding: Arc::default() }
     }
@@ -158,12 +167,12 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
         Ok(ExecutedBlock::new(Arc::new(block), Arc::new(output), ComputedTrieData::default()))
     }
 
-    fn remote_for(&self, number: BlockNumber) -> Option<&Arc<NodeFork<N>>> {
+    fn remote_for(&self, number: BlockNumber) -> Option<&Arc<ForkBackend<F>>> {
         self.fork.as_ref().filter(|fork| fork.predates_fork(number))
     }
 
     /// Returns the fork when the block with the given hash is a remote block below the fork block.
-    fn remote_for_hash(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+    fn remote_for_hash(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<ForkBackend<F>>>> {
         let Some(fork) = &self.fork else { return Ok(None) };
         if self.inner.block_number(hash)?.is_some() {
             return Ok(None);
@@ -179,7 +188,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     /// Returns the fork when it serves the body of the block with the given hash: a remote block
     /// below the fork block, or the fork block itself. The fork block is the local genesis block,
     /// whose body is empty; anvil serves its transactions from the endpoint.
-    fn remote_for_body(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+    fn remote_for_body(&self, hash: BlockHash) -> ProviderResult<Option<&Arc<ForkBackend<F>>>> {
         if let Some(fork) = &self.fork
             && hash == fork.block_hash()
         {
@@ -193,7 +202,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     fn remote_for_body_number(
         &self,
         number: BlockNumber,
-    ) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+    ) -> ProviderResult<Option<&Arc<ForkBackend<F>>>> {
         if let Some(fork) = &self.fork
             && number == fork.block_number()
         {
@@ -206,7 +215,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     fn remote_for_body_id(
         &self,
         id: BlockHashOrNumber,
-    ) -> ProviderResult<Option<&Arc<NodeFork<N>>>> {
+    ) -> ProviderResult<Option<&Arc<ForkBackend<F>>>> {
         match id {
             BlockHashOrNumber::Hash(hash) => self.remote_for_body(hash),
             BlockHashOrNumber::Number(number) => self.remote_for_body_number(number),
@@ -238,7 +247,7 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     /// Returns the remote state at `block`, which is below the fork block.
     fn remote_state(
         &self,
-        fork: &Arc<NodeFork<N>>,
+        fork: &Arc<ForkBackend<F>>,
         block: BlockNumber,
     ) -> ProviderResult<StateProviderBox> {
         Ok(Box::new(ForkStateProvider::new(fork.clone(), None, block)?))
@@ -373,23 +382,23 @@ impl<N: AnvilNodeTypes> AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> NodePrimitivesProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> NodePrimitivesProvider for AnvilProvider<N, F> {
     type Primitives = N::Primitives;
 }
 
-impl<N: AnvilNodeTypes> BalProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BalProvider for AnvilProvider<N, F> {
     fn bal_store(&self) -> &BalStoreHandle {
         self.inner.bal_store()
     }
 }
 
-impl<N: AnvilNodeTypes> StateRangeProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StateRangeProviderFactory for AnvilProvider<N, F> {
     fn state_range_provider(&self, state_root: B256) -> ProviderResult<Option<StateRangeView>> {
         self.inner.state_range_provider(state_root)
     }
 }
 
-impl<N: AnvilNodeTypes> DatabaseProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> DatabaseProviderFactory for AnvilProvider<N, F> {
     type DB = N::DB;
     type Provider = <BlockchainProvider<N> as DatabaseProviderFactory>::Provider;
     type ProviderRW = <BlockchainProvider<N> as DatabaseProviderFactory>::ProviderRW;
@@ -403,7 +412,7 @@ impl<N: AnvilNodeTypes> DatabaseProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> StaticFileProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StaticFileProviderFactory for AnvilProvider<N, F> {
     fn static_file_provider(&self) -> StaticFileProvider<Self::Primitives> {
         self.inner.static_file_provider()
     }
@@ -417,7 +426,7 @@ impl<N: AnvilNodeTypes> StaticFileProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> RocksDBProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> RocksDBProviderFactory for AnvilProvider<N, F> {
     fn rocksdb_provider(&self) -> RocksDBProvider {
         self.inner.rocksdb_provider()
     }
@@ -431,7 +440,7 @@ impl<N: AnvilNodeTypes> RocksDBProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> HeaderProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> HeaderProvider for AnvilProvider<N, F> {
     type Header = HeaderTy<N>;
 
     fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
@@ -518,7 +527,7 @@ impl<N: AnvilNodeTypes> HeaderProvider for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> BlockHashReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockHashReader for AnvilProvider<N, F> {
     fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
         match self.remote_for(number) {
             Some(fork) => fork.block_hash_by_number(number),
@@ -545,7 +554,7 @@ impl<N: AnvilNodeTypes> BlockHashReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> BlockNumReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockNumReader for AnvilProvider<N, F> {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         self.inner.chain_info()
     }
@@ -577,7 +586,7 @@ impl<N: AnvilNodeTypes> BlockNumReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> BlockIdReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockIdReader for AnvilProvider<N, F> {
     fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
         self.inner.pending_block_num_hash()
     }
@@ -633,7 +642,7 @@ impl<N: AnvilNodeTypes> BlockIdReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockReader for AnvilProvider<N, F> {
     type Block = BlockTy<N>;
 
     fn find_block_by_hash(
@@ -747,7 +756,7 @@ impl<N: AnvilNodeTypes> BlockReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> TransactionsProvider for AnvilProvider<N, F> {
     type Transaction = TxTy<N>;
 
     fn transaction_id(&self, tx_hash: TxHash) -> ProviderResult<Option<TxNumber>> {
@@ -857,7 +866,7 @@ impl<N: AnvilNodeTypes> TransactionsProvider for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> ReceiptProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> ReceiptProvider for AnvilProvider<N, F> {
     type Receipt = ReceiptTy<N>;
 
     fn receipt(&self, id: TxNumber) -> ProviderResult<Option<Self::Receipt>> {
@@ -922,7 +931,7 @@ impl<N: AnvilNodeTypes> ReceiptProvider for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> ReceiptProviderIdExt for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> ReceiptProviderIdExt for AnvilProvider<N, F> {
     fn receipts_by_block_id(&self, block: BlockId) -> ProviderResult<Option<Vec<Self::Receipt>>> {
         match block {
             BlockId::Hash(hash) => self.receipts_by_block(hash.block_hash.into()),
@@ -934,7 +943,7 @@ impl<N: AnvilNodeTypes> ReceiptProviderIdExt for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> BlockBodyIndicesProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockBodyIndicesProvider for AnvilProvider<N, F> {
     fn block_body_indices(
         &self,
         number: BlockNumber,
@@ -966,7 +975,7 @@ impl<N: AnvilNodeTypes> BlockBodyIndicesProvider for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> StageCheckpointReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StageCheckpointReader for AnvilProvider<N, F> {
     fn get_stage_checkpoint(&self, id: StageId) -> ProviderResult<Option<StageCheckpoint>> {
         self.inner.get_stage_checkpoint(id)
     }
@@ -980,7 +989,7 @@ impl<N: AnvilNodeTypes> StageCheckpointReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> PruneCheckpointReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> PruneCheckpointReader for AnvilProvider<N, F> {
     fn get_prune_checkpoint(
         &self,
         segment: PruneSegment,
@@ -993,7 +1002,7 @@ impl<N: AnvilNodeTypes> PruneCheckpointReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> ChainSpecProvider for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> ChainSpecProvider for AnvilProvider<N, F> {
     type ChainSpec = N::ChainSpec;
 
     fn chain_spec(&self) -> Arc<N::ChainSpec> {
@@ -1001,7 +1010,7 @@ impl<N: AnvilNodeTypes> ChainSpecProvider for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StateProviderFactory for AnvilProvider<N, F> {
     type Primitives = N::Primitives;
 
     fn latest(&self) -> ProviderResult<StateProviderBox> {
@@ -1100,7 +1109,7 @@ impl<N: AnvilNodeTypes> StateProviderFactory for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> CanonChainTracker for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> CanonChainTracker for AnvilProvider<N, F> {
     type Header = HeaderTy<N>;
 
     fn on_forkchoice_update_received(&self, update: &ForkchoiceState) {
@@ -1124,7 +1133,7 @@ impl<N: AnvilNodeTypes> CanonChainTracker for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> BlockReaderIdExt for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockReaderIdExt for AnvilProvider<N, F> {
     fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
         match id {
             BlockId::Hash(hash) => self.block(hash.block_hash.into()),
@@ -1188,7 +1197,7 @@ impl<N: AnvilNodeTypes> BlockReaderIdExt for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> CanonStateSubscriptions for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> CanonStateSubscriptions for AnvilProvider<N, F> {
     type Primitives = N::Primitives;
 
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives> {
@@ -1196,7 +1205,7 @@ impl<N: AnvilNodeTypes> CanonStateSubscriptions for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> ForkChoiceSubscriptions for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> ForkChoiceSubscriptions for AnvilProvider<N, F> {
     type Header = HeaderTy<N>;
 
     fn subscribe_safe_block(&self) -> ForkChoiceNotifications<Self::Header> {
@@ -1208,13 +1217,13 @@ impl<N: AnvilNodeTypes> ForkChoiceSubscriptions for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> PersistedBlockSubscriptions for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> PersistedBlockSubscriptions for AnvilProvider<N, F> {
     fn subscribe_persisted_block(&self) -> PersistedBlockNotifications {
         self.inner.subscribe_persisted_block()
     }
 }
 
-impl<N: AnvilNodeTypes> StorageChangeSetReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StorageChangeSetReader for AnvilProvider<N, F> {
     fn storage_changeset(
         &self,
         block_number: BlockNumber,
@@ -1239,7 +1248,7 @@ impl<N: AnvilNodeTypes> StorageChangeSetReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> ChangeSetReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> ChangeSetReader for AnvilProvider<N, F> {
     fn account_block_changeset(
         &self,
         block_number: BlockNumber,
@@ -1263,7 +1272,7 @@ impl<N: AnvilNodeTypes> ChangeSetReader for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> StateReader for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StateReader for AnvilProvider<N, F> {
     type Receipt = ReceiptTy<N>;
 
     fn get_state(
@@ -1362,7 +1371,7 @@ impl<DB: DBProvider + Send + Sync, N: reth_ethereum::primitives::NodePrimitives>
     }
 }
 
-impl<N: AnvilNodeTypes> StateDump for AnvilProvider<N> {
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StateDump for AnvilProvider<N, F> {
     fn dump_blocks(
         &self,
         impersonated: &dyn Fn(B256) -> Option<Address>,
@@ -1571,7 +1580,7 @@ impl<N: AnvilNodeTypes> StateDump for AnvilProvider<N> {
     }
 }
 
-impl<N: AnvilNodeTypes> RewindHooks for AnvilProvider<N>
+impl<N: AnvilNodeTypes<F>, F: ForkNetwork> RewindHooks for AnvilProvider<N, F>
 where
     HeaderTy<N>: HeaderMut,
 {

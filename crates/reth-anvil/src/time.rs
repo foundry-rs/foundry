@@ -166,7 +166,7 @@ impl TimeManager {
     /// `active_forks` tells whether Shanghai and Cancun are active at a timestamp: the attributes
     /// builder picks withdrawals and the beacon root for the wall-clock time, and the block may
     /// get another timestamp, on the other side of a hardfork.
-    pub fn build_hooks<A: AnvilPayloadAttributes>(
+    pub fn build_hooks<A: AnvilPayloadAttributes<Net>, Net: 'static>(
         &self,
         block_env: BlockEnvOverrides,
         default_coinbase: Address,
@@ -217,7 +217,7 @@ impl TimeManager {
 }
 
 /// Payload attributes the time manager and the block environment overrides can adjust.
-pub trait AnvilPayloadAttributes: Send + 'static {
+pub trait AnvilPayloadAttributes<Net = ()>: Send + 'static {
     /// Sets the block timestamp.
     fn set_timestamp(&mut self, timestamp: u64);
     /// Sets the fee recipient.
@@ -234,7 +234,7 @@ pub trait AnvilPayloadAttributes: Send + 'static {
     fn set_withdrawals_active(&mut self, active: bool);
 }
 
-impl AnvilPayloadAttributes for PayloadAttributes {
+impl<Net> AnvilPayloadAttributes<Net> for PayloadAttributes {
     fn set_timestamp(&mut self, timestamp: u64) {
         self.timestamp = timestamp;
     }

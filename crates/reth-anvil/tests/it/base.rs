@@ -1396,8 +1396,11 @@ async fn base_beryl_rejects_eip8130_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "the Base network does not run on reth-anvil yet; see docs/networks.md"]
 async fn base_eip8130_is_rejected_by_non_base_networks() {
-    let configs =
-        [NodeConfig::test(), NodeConfig::test().with_optimism(), NodeConfig::test_tempo()];
+    let configs = [
+        NodeConfig::test(),
+        NodeConfig::test().with_optimism(),
+        NodeConfig::test().with_networks(foundry_evm_networks::NetworkConfigs::with_tempo()),
+    ];
 
     for config in configs {
         let (_api, handle) = spawn(config).await;

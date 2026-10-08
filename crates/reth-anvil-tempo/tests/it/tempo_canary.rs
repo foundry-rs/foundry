@@ -27,7 +27,7 @@
 //! `TEMPO_TESTNET_RPC_URL`. The canaries run in a single-threaded nextest group
 //! because the public endpoint rate limits concurrent replays.
 
-use crate::utils::http_provider;
+use crate::{spawn, utils::http_provider};
 use alloy_consensus::Transaction;
 use alloy_network::{ReceiptResponse, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
@@ -35,7 +35,8 @@ use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Log};
 use foundry_test_utils::rpc::{next_tempo_mainnet_rpc_endpoint, next_tempo_testnet_rpc_endpoint};
 use jsonrpsee::rpc_params;
-use reth_anvil::{EthApi, NodeConfig, TransactionOrder, spawn};
+use reth_anvil::{EthApi, NodeConfig, TransactionOrder};
+use reth_anvil_tempo::TempoConfigExt;
 use std::fmt;
 use tempo_alloy::rpc::TempoTransactionReceipt;
 use tempo_hardfork::TempoHardfork;

@@ -1,6 +1,6 @@
 //! The `anvil` CLI: a local Ethereum development node built on the reth SDK.
 
-use reth_anvil::args::run;
+use reth_anvil_cli::args::run;
 
 #[global_allocator]
 static ALLOC: foundry_cli::utils::Allocator = foundry_cli::utils::new_allocator();

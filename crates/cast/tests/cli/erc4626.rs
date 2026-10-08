@@ -1,7 +1,7 @@
 //! End-to-end tests for `cast erc4626`.
 
 use alloy_primitives::U256;
-use anvil::{NodeConfig, NodeHandle};
+use anvil::{NodeConfig, NodeHandle, TempoConfigExt};
 use foundry_test_utils::{rpc::next_http_archive_rpc_url, str, util::OutputExt};
 
 mod anvil_const {

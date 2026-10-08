@@ -1,5 +1,7 @@
+//! Shared node settings and Ethereum genesis construction.
+
 use crate::{
-    fork::{ForkGenesisAccount, ForkSettings, NodeInfoProbe},
+    fork::{ForkGenesisAccount, ForkNetwork, ForkSettings, NodeInfoProbe},
     mining::INSTANT_COALESCE_WINDOW,
     state_dump::{CheckpointForks, SerializableState},
     types::{ForkChoice, ForkUrl, TransactionOrder},
@@ -22,6 +24,7 @@ use foundry_evm_core::{
 use foundry_evm_hardforks::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use foundry_fork_db::AccountFetchPolicy;
+use hyper::http::Extensions;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use reth_ethereum::{
@@ -39,12 +42,8 @@ use std::{
 };
 use yansi::Paint;
 
-#[cfg(feature = "tempo")]
-use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
 #[cfg(feature = "optimism")]
 use reth_ethereum::chainspec::NamedChain;
-#[cfg(feature = "tempo")]
-use tempo_hardfork::constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE};
 
 const BANNER: &str = r"
                              _   _
@@ -103,6 +102,9 @@ pub struct NodeConfig {
     pub genesis: Option<Genesis>,
     /// Base fee of the genesis block.
     pub base_fee: Option<u64>,
+    /// Network default for the genesis base fee and legacy gas price, set during preparation.
+    /// Explicit fee settings and a custom genesis take precedence.
+    pub default_base_fee: u64,
     /// Interval between blocks. `None` mines a block per transaction.
     pub block_time: Option<Duration>,
     /// Mine only on request.
@@ -189,8 +191,8 @@ pub struct NodeConfig {
     pub max_transactions: usize,
     /// Disable pool balance checks.
     pub disable_pool_balance_checks: bool,
-    /// The account that sponsors Tempo fee-payer requests. Defaults to the last dev account.
-    pub tempo_fee_payer: Option<Address>,
+    /// Typed settings supplied by external network extensions.
+    pub extensions: Extensions,
     /// Overrides the Base activation-registry administrator. The Base network reads it once it
     /// runs; see `docs/networks.md`.
     #[cfg(feature = "base")]
@@ -245,6 +247,7 @@ impl Default for NodeConfig {
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             genesis: None,
             base_fee: None,
+            default_base_fee: INITIAL_BASE_FEE,
             block_time: None,
             no_mining: false,
             transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
@@ -288,7 +291,7 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             max_transactions: 1_000,
             disable_pool_balance_checks: false,
-            tempo_fee_payer: None,
+            extensions: Extensions::new(),
             #[cfg(feature = "base")]
             base_activation_admin: None,
             coinbase: None,
@@ -326,12 +329,6 @@ impl NodeConfig {
         Self { port: 0, silent: true, ..Default::default() }
     }
 
-    /// Returns a test config for the Tempo network.
-    #[doc(hidden)]
-    pub fn test_tempo() -> Self {
-        Self { networks: NetworkConfigs::with_tempo(), ..Self::test() }
-    }
-
     /// Returns a test config for the Base network.
     #[cfg(feature = "base")]
     #[doc(hidden)]
@@ -339,32 +336,11 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_base(), ..Self::test() }
     }
 
-    /// Runs the Tempo network.
-    pub fn with_tempo(mut self) -> Self {
-        self.networks = NetworkConfigs::with_tempo();
-        self
-    }
-
     /// Sets the Base activation-registry administrator override.
     #[cfg(feature = "base")]
     pub const fn with_base_activation_admin(mut self, admin: Option<Address>) -> Self {
         self.base_activation_admin = admin;
         self
-    }
-
-    /// Sets the account that sponsors Tempo fee-payer requests.
-    pub const fn with_tempo_fee_payer(mut self, fee_payer: Option<Address>) -> Self {
-        self.tempo_fee_payer = fee_payer;
-        self
-    }
-
-    /// Returns the account that sponsors Tempo fee-payer requests: the configured one, or the
-    /// last dev account. `None` when the node does not run Tempo.
-    pub fn tempo_fee_payer_address(&self) -> Option<Address> {
-        if !self.networks.is_tempo() {
-            return None;
-        }
-        self.tempo_fee_payer.or_else(|| self.genesis_accounts.last().map(|wallet| wallet.address()))
     }
 
     /// Runs the Optimism network.
@@ -442,20 +418,7 @@ impl NodeConfig {
                     .as_ref()
                     .and_then(|genesis| genesis.base_fee_per_gas.map(|fee| fee as u64))
             })
-            .unwrap_or_else(|| self.default_base_fee())
-    }
-
-    /// Returns the base fee the network starts with: Tempo's fixed fee on Tempo, and the
-    /// Ethereum default otherwise.
-    #[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
-    fn default_base_fee(&self) -> u64 {
-        #[cfg(feature = "tempo")]
-        if self.networks.is_tempo()
-            && let Ok(hardfork) = self.get_tempo_hardfork()
-        {
-            return if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE };
-        }
-        INITIAL_BASE_FEE
+            .unwrap_or(self.default_base_fee)
     }
 
     /// Sets the hardfork active from genesis.
@@ -472,36 +435,12 @@ impl NodeConfig {
 
     /// Returns the configured Ethereum hardfork, or the one active on `chain` at `timestamp`.
     fn ethereum_hardfork_at(&self, chain: Chain, timestamp: u64) -> Result<EthereumHardfork> {
-        // Every Tempo hardfork runs on Osaka.
-        #[cfg(feature = "tempo")]
-        if self.networks.is_tempo() {
-            self.tempo_hardfork_at(timestamp)?;
-            return Ok(EthereumHardfork::Osaka);
-        }
         match self.hardfork {
             None => {
                 Ok(EthereumHardfork::from_chain_and_timestamp(chain, timestamp).unwrap_or_default())
             }
             Some(FoundryHardfork::Ethereum(hardfork)) => Ok(hardfork),
             Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not supported yet"),
-        }
-    }
-
-    /// Returns the Tempo hardfork active from genesis.
-    #[cfg(feature = "tempo")]
-    pub fn get_tempo_hardfork(&self) -> Result<TempoHardfork> {
-        self.tempo_hardfork_at(self.get_genesis_timestamp())
-    }
-
-    /// Returns the configured Tempo hardfork, or the one active on the chain at `timestamp`, or
-    /// the latest one active on a public Tempo network otherwise.
-    #[cfg(feature = "tempo")]
-    pub(crate) fn tempo_hardfork_at(&self, timestamp: u64) -> Result<TempoHardfork> {
-        match self.hardfork {
-            None => Ok(TempoHardfork::from_chain_and_timestamp(self.get_chain_id(), timestamp)
-                .unwrap_or_else(latest_active_tempo_hardfork)),
-            Some(FoundryHardfork::Tempo(hardfork)) => Ok(hardfork),
-            Some(hardfork) => eyre::bail!("hardfork {hardfork:?} is not a Tempo hardfork"),
         }
     }
 
@@ -575,7 +514,7 @@ impl NodeConfig {
 
     /// Returns the gas price for pre-London chains.
     pub fn get_gas_price(&self) -> u128 {
-        self.gas_price.unwrap_or(self.default_base_fee() as u128)
+        self.gas_price.unwrap_or(self.default_base_fee as u128)
     }
 
     /// Disables the block gas limit.
@@ -856,6 +795,11 @@ impl NodeConfig {
     /// fork takes its endpoint's network, from the endpoint's node info or its chain id, and
     /// other nodes the network their chain id implies.
     pub async fn resolve_networks(&mut self) -> Result<()> {
+        self.resolve_networks_for(&[NetworkVariant::Ethereum]).await
+    }
+
+    /// Resolves an implicit network from the extensions installed by the application.
+    pub async fn resolve_networks_for(&mut self, supported: &[NetworkVariant]) -> Result<()> {
         if self.adopted_fork_network {
             return Ok(());
         }
@@ -868,7 +812,7 @@ impl NodeConfig {
                 // A network this node cannot run yet leaves the fork on Ethereum, which serves
                 // the remote chain without its own transaction types.
                 if let Ok(Some(networks)) = self.fork_networks(&url).await
-                    && runs_network(networks.execution_network())
+                    && supported.contains(&networks.execution_network())
                 {
                     self.networks = networks;
                 }
@@ -1282,7 +1226,11 @@ impl NodeConfig {
 
     /// Gives a state dump with a block environment but no block at its head a checkpoint block
     /// to continue from, as anvil does, on top of the dump's block before it, if any.
-    pub fn ensure_dump_head(&self, state: &mut SerializableState) -> Result<()> {
+    pub fn ensure_dump_head<F: ForkNetwork>(
+        &self,
+        state: &mut SerializableState,
+        hardfork: EthereumHardfork,
+    ) -> Result<()> {
         let Some(number) = state.head_number() else { return Ok(()) };
         if state.blocks.iter().any(|block| block.header.number == number) {
             return Ok(());
@@ -1290,7 +1238,6 @@ impl NodeConfig {
         if !state.blocks.is_empty() {
             eyre::bail!("Best hash not found for best number {number}");
         }
-        let hardfork = self.get_hardfork()?;
         let parent_hash =
             number.checked_sub(1).and_then(|parent| state.block_hash(parent)).unwrap_or_default();
         state.synthesize_head(
@@ -1300,8 +1247,8 @@ impl NodeConfig {
                 shanghai: hardfork >= EthereumHardfork::Shanghai,
                 cancun: hardfork >= EthereumHardfork::Cancun,
                 prague: hardfork >= EthereumHardfork::Prague,
-                tempo: self.networks.is_tempo(),
             },
+            F::checkpoint_header,
         );
         Ok(())
     }
@@ -1456,18 +1403,6 @@ impl NodeConfig {
             }));
         }
         Ok(genesis.extend_accounts(alloc))
-    }
-}
-
-/// Returns whether this build runs the network.
-const fn runs_network(network: NetworkVariant) -> bool {
-    match network {
-        NetworkVariant::Ethereum => true,
-        #[cfg(feature = "tempo")]
-        NetworkVariant::Tempo => true,
-        // Other crates may enable more variants than this crate runs.
-        #[allow(unreachable_patterns)]
-        _ => false,
     }
 }
 

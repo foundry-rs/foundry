@@ -20,29 +20,17 @@ use reth_ethereum::{
     primitives::NodePrimitives,
 };
 use reth_rpc_eth_api::{EthApiTypes, RpcConvert, RpcNodeCore, RpcTransaction};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
 
 /// The key of a pooled transaction in the `txpool` maps.
-pub trait TxPoolKey {
+pub trait TxPoolKey<Net = ()> {
     /// Returns the key: the nonce, or the nonce key and nonce of a transaction on a nonce lane.
     fn txpool_key(&self) -> String;
 }
 
-impl TxPoolKey for TransactionSigned {
+impl<Net> TxPoolKey<Net> for TransactionSigned {
     fn txpool_key(&self) -> String {
         self.nonce().to_string()
-    }
-}
-
-#[cfg(feature = "tempo")]
-impl TxPoolKey for tempo_primitives::TempoTxEnvelope {
-    fn txpool_key(&self) -> String {
-        match self.as_aa() {
-            Some(tx) if !tx.tx().nonce_key.is_zero() => {
-                format!("{}:{}", tx.tx().nonce_key, tx.tx().nonce)
-            }
-            _ => self.nonce().to_string(),
-        }
     }
 }
 
@@ -68,21 +56,24 @@ pub trait AnvilTxPoolApi<Tx> {
 
 /// The `txpool` namespace over the node's `eth` API, which holds the pool and the RPC converter.
 #[derive(Clone, Debug)]
-pub struct AnvilTxPool<Eth> {
+pub struct AnvilTxPool<Eth, Net = ()> {
+    network: PhantomData<fn() -> Net>,
     eth: Eth,
 }
 
-impl<Eth> AnvilTxPool<Eth> {
+impl<Eth, Net: Clone + Send + Sync + 'static> AnvilTxPool<Eth, Net> {
     /// Creates the namespace.
     pub const fn new(eth: Eth) -> Self {
-        Self { eth }
+        Self { eth, network: PhantomData }
     }
 }
 
-impl<Eth> AnvilTxPool<Eth>
+impl<Eth, Net: Clone + Send + Sync + 'static> AnvilTxPool<Eth, Net>
 where
     Eth: RpcNodeCore<
-            Pool: TransactionPool<Transaction: PoolTransaction<Consensus: Transaction + TxPoolKey>>,
+            Pool: TransactionPool<
+                Transaction: PoolTransaction<Consensus: Transaction + TxPoolKey<Net>>,
+            >,
         > + EthApiTypes<
             RpcConvert: RpcConvert<
                 Primitives: NodePrimitives<SignedTx = PoolConsensusTx<Eth::Pool>>,
@@ -107,10 +98,13 @@ where
 type RpcNetwork<Eth> = <<Eth as EthApiTypes>::RpcConvert as RpcConvert>::Network;
 
 #[async_trait]
-impl<Eth> AnvilTxPoolApiServer<RpcTransaction<RpcNetwork<Eth>>> for AnvilTxPool<Eth>
+impl<Eth, Net: Clone + Send + Sync + 'static> AnvilTxPoolApiServer<RpcTransaction<RpcNetwork<Eth>>>
+    for AnvilTxPool<Eth, Net>
 where
     Eth: RpcNodeCore<
-            Pool: TransactionPool<Transaction: PoolTransaction<Consensus: Transaction + TxPoolKey>>,
+            Pool: TransactionPool<
+                Transaction: PoolTransaction<Consensus: Transaction + TxPoolKey<Net>>,
+            >,
         > + EthApiTypes<
             RpcConvert: RpcConvert<
                 Primitives: NodePrimitives<SignedTx = PoolConsensusTx<Eth::Pool>>,
@@ -124,7 +118,10 @@ where
 
     async fn txpool_inspect(&self) -> RpcResult<TxpoolInspect> {
         let AllPoolTransactions { pending, queued } = self.eth.pool().all_transactions();
-        Ok(TxpoolInspect { pending: summarize(pending), queued: summarize(queued) })
+        Ok(TxpoolInspect {
+            pending: summarize::<_, Net>(pending),
+            queued: summarize::<_, Net>(queued),
+        })
     }
 
     async fn txpool_content_from(
@@ -159,7 +156,7 @@ where
 }
 
 /// Summarizes pooled transactions by sender and key, as `txpool_inspect` reports them.
-fn summarize<T: PoolTransaction<Consensus: Transaction + TxPoolKey>>(
+fn summarize<T: PoolTransaction<Consensus: Transaction + TxPoolKey<Net>>, Net>(
     txs: Vec<Arc<ValidPoolTransaction<T>>>,
 ) -> BTreeMap<Address, BTreeMap<String, TxpoolInspectSummary>> {
     let mut summary = BTreeMap::<Address, BTreeMap<String, TxpoolInspectSummary>>::new();

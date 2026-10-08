@@ -2,6 +2,8 @@
 members = [
     "benches/",
     "crates/reth-anvil/",
+    "crates/reth-anvil-cli/",
+    "crates/reth-anvil-tempo/",
     "crates/cast/",
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
@@ -299,7 +301,7 @@ crossterm.opt-level = "s"
 alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
-anvil = { package = "reth-anvil", path = "crates/reth-anvil", default-features = false, features = [
+anvil = { package = "reth-anvil-cli", path = "crates/reth-anvil-cli", default-features = false, features = [
     "tempo",
 ] }
 

@@ -1,6 +1,7 @@
 //! CLI tests for vaddr commands.
 
 use super::*;
+use anvil::TempoConfigExt;
 
 // Tests for `cast vaddr` JSON output
 #[casttest]
@@ -77,6 +78,7 @@ Virtual addresses:
 
 mod vaddr_e2e {
     use super::*;
+    use anvil::TempoConfigExt;
     use foundry_cli::utils::parse_json;
     use std::{
         io::{BufRead, BufReader},

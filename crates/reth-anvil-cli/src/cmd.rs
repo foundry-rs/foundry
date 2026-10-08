@@ -1,7 +1,6 @@
 use crate::{
-    AccountGenerator, CHAIN_ID, DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, NodeConfig,
-    state_dump::{SerializableState, StateFile},
-    types::{ForkChoice, ForkUrl, TransactionOrder},
+    AccountGenerator, CHAIN_ID, DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice, ForkUrl,
+    NodeConfig, SerializableState, StateFile, TransactionOrder,
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
@@ -325,13 +324,14 @@ impl NodeArgs {
             .with_chain_id(self.evm.chain_id.map(u64::from))
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
-            .with_tempo_fee_payer(self.tempo_fee_payer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
             .with_funded_accounts(funded_accounts);
         #[cfg(feature = "base")]
         let config = config.with_base_activation_admin(self.base_activation_admin);
+        #[cfg(feature = "tempo")]
+        let config = crate::TempoConfigExt::with_tempo_fee_payer(config, self.tempo_fee_payer);
         Ok(config)
     }
 
@@ -417,11 +417,11 @@ impl NodeArgs {
                     Ok(mut stream) => {
                         stream.recv().await;
                     }
-                    Err(_) => futures::future::pending::<()>().await,
+                    Err(_) => std::future::pending::<()>().await,
                 }
             };
             #[cfg(not(unix))]
-            let sigterm = futures::future::pending::<()>();
+            let sigterm = std::future::pending::<()>();
             tokio::select! {
                 _ = sigterm => {}
                 _ = tokio::signal::ctrl_c() => {}

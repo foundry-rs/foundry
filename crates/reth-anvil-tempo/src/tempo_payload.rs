@@ -6,7 +6,7 @@
 //! as the payload value. It leaves out Tempo's prewarming, parallel replay, and build budgets,
 //! which serve block production under consensus.
 
-use crate::{evm::AnvilEvmConfig, time::TimeManager};
+use super::tempo::Tempo;
 use alloy_consensus::BlockHeader;
 use alloy_evm::{
     Database, Evm,
@@ -14,6 +14,7 @@ use alloy_evm::{
 };
 use alloy_primitives::U256;
 use alloy_rlp::Encodable;
+use reth_anvil::{evm::AnvilEvmConfig, time::TimeManager};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder, PayloadConfig,
     is_better_payload,
@@ -22,7 +23,8 @@ use reth_ethereum::{
     chainspec::EthereumHardforks,
     evm::{
         primitives::{
-            ConfigureEvm, EvmEnvFor, EvmFor, ExecutionCtxFor,
+            ConfigureEngineEvm, ConfigureEvm, EvmEnvFor, EvmFor, ExecutableTxIterator,
+            ExecutionCtxFor, InspectorFor,
             execute::{BlockBuilder, BlockBuilderOutcome},
         },
         revm::{cached::CachedReads, database::StateProviderDatabase, db::State},
@@ -57,7 +59,92 @@ use tempo_transaction_pool::{
 };
 
 /// The EVM config a Tempo dev node runs: Tempo's, with the anvil wrapper.
-pub type TempoAnvilEvmConfig = AnvilEvmConfig<TempoEvmConfig>;
+#[derive(Clone, Debug)]
+pub struct TempoAnvilEvmConfig(pub AnvilEvmConfig<TempoEvmConfig, Tempo>);
+
+impl ConfigureEvm for TempoAnvilEvmConfig {
+    type Primitives = TempoPrimitives;
+    type Error = <AnvilEvmConfig<TempoEvmConfig, Tempo> as ConfigureEvm>::Error;
+    type NextBlockEnvCtx = TempoNextBlockEnvAttributes;
+    type BlockExecutorFactory =
+        <AnvilEvmConfig<TempoEvmConfig, Tempo> as ConfigureEvm>::BlockExecutorFactory;
+    type BlockAssembler = <AnvilEvmConfig<TempoEvmConfig, Tempo> as ConfigureEvm>::BlockAssembler;
+
+    fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
+        self.0.block_executor_factory()
+    }
+
+    fn block_assembler(&self) -> &Self::BlockAssembler {
+        self.0.block_assembler()
+    }
+
+    fn evm_env(&self, header: &TempoHeader) -> Result<EvmEnvFor<Self>, Self::Error> {
+        self.0.evm_env(header)
+    }
+
+    fn next_evm_env(
+        &self,
+        parent: &TempoHeader,
+        attributes: &Self::NextBlockEnvCtx,
+    ) -> Result<EvmEnvFor<Self>, Self::Error> {
+        self.0.next_evm_env(parent, attributes)
+    }
+
+    fn context_for_block<'a>(
+        &self,
+        block: &'a SealedBlock<tempo_primitives::Block>,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        self.0.context_for_block(block)
+    }
+
+    fn context_for_next_block(
+        &self,
+        parent: &SealedHeader<TempoHeader>,
+        attributes: Self::NextBlockEnvCtx,
+    ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
+        self.0.context_for_next_block(parent, attributes)
+    }
+
+    fn evm_with_env<DB: Database>(&self, db: DB, env: EvmEnvFor<Self>) -> EvmFor<Self, DB> {
+        self.0.evm_with_env(db, env)
+    }
+
+    fn evm_with_env_and_inspector<DB, I>(
+        &self,
+        db: DB,
+        env: EvmEnvFor<Self>,
+        inspector: I,
+    ) -> EvmFor<Self, DB, I>
+    where
+        DB: Database,
+        I: InspectorFor<Self, DB>,
+    {
+        self.0.evm_with_env_and_inspector(db, env, inspector)
+    }
+}
+
+impl ConfigureEngineEvm<tempo_payload_types::TempoExecutionData> for TempoAnvilEvmConfig {
+    fn evm_env_for_payload(
+        &self,
+        payload: &tempo_payload_types::TempoExecutionData,
+    ) -> Result<EvmEnvFor<Self>, Self::Error> {
+        self.0.evm_env_for_payload(payload)
+    }
+
+    fn context_for_payload<'a>(
+        &self,
+        payload: &'a tempo_payload_types::TempoExecutionData,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        self.0.context_for_payload(payload)
+    }
+
+    fn tx_iterator_for_payload(
+        &self,
+        payload: &tempo_payload_types::TempoExecutionData,
+    ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
+        self.0.tx_iterator_for_payload(payload)
+    }
+}
 
 /// Builds the [`TempoDevPayloadBuilder`] of a node.
 #[derive(Clone, Copy, Debug, Default)]

@@ -2,7 +2,7 @@
 
 use crate::constants::*;
 use alloy_primitives::hex;
-use anvil::{NodeConfig, spawn};
+use anvil::{NodeConfig, TempoConfigExt, spawn};
 use foundry_compilers::artifacts::BytecodeHash;
 use foundry_test_utils::{forgetest, snapbox::IntoData, str, util::OutputExt};
 use std::{fs, time::Duration};

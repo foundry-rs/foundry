@@ -18,7 +18,7 @@ use reth_rpc_eth_api::{
     FromEvmError, RpcConvert, RpcTypes, SignableTxRequest,
     helpers::pending_block::{BuildPendingEnv, PendingEnvBuilder},
 };
-use std::{fmt, sync::Arc};
+use std::{fmt, marker::PhantomData, sync::Arc};
 
 /// Tells whether Cancun is active at a timestamp.
 #[derive(Clone)]
@@ -33,16 +33,17 @@ impl fmt::Debug for CancunSchedule {
 /// Builds the environment of the pending block from the time manager and the block environment
 /// overrides, as the miner does for the next block.
 #[derive(Clone, Debug)]
-pub struct AnvilPendingEnv {
+pub struct AnvilPendingEnv<Net = ()> {
+    network: PhantomData<fn() -> Net>,
     time: TimeManager,
     block_env: BlockEnvOverrides,
     cancun: Option<CancunSchedule>,
 }
 
-impl AnvilPendingEnv {
+impl<Net> AnvilPendingEnv<Net> {
     /// Creates the builder over the node's time manager and block environment overrides.
     pub const fn new(time: TimeManager, block_env: BlockEnvOverrides) -> Self {
-        Self { time, block_env, cancun: None }
+        Self { time, block_env, cancun: None, network: PhantomData }
     }
 
     /// Sets the chain whose Cancun schedule decides whether the pending block has a parent
@@ -58,11 +59,17 @@ impl AnvilPendingEnv {
     }
 }
 
-impl<Evm> PendingEnvBuilder<Evm> for AnvilPendingEnv
+impl<Net> Default for AnvilPendingEnv<Net> {
+    fn default() -> Self {
+        Self::new(TimeManager::new(0), BlockEnvOverrides::default())
+    }
+}
+
+impl<Evm, Net: fmt::Debug + 'static> PendingEnvBuilder<Evm> for AnvilPendingEnv<Net>
 where
     Evm: ConfigureEvm<
         NextBlockEnvCtx: BuildPendingEnv<<Evm::Primitives as NodePrimitives>::BlockHeader>
-                             + AnvilNextBlockEnv,
+                             + AnvilNextBlockEnv<Net>,
     >,
 {
     fn pending_env_attributes(

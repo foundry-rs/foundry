@@ -8,7 +8,7 @@ use alloy_rlp::{Header, PayloadView};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use anvil::NodeConfig;
+use anvil::{NodeConfig, TempoConfigExt};
 use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, str, util::OutputExt};

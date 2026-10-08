@@ -1,10 +1,10 @@
 //! The Ethereum network: reth's Ethereum node with the anvil pool and executor wrappers.
 
-use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, Prepared};
+use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, AnvilRpcOf, Prepared};
 use crate::{
     config::{ForkSource, NodeConfig},
     engine::AnvilEngineValidatorBuilder,
-    evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
+    evm::{AnvilEvmFactory, AnvilExecutorBuilder, PrecompileBuilder},
     fork::{EthereumFork, ForkBackend, ForkInfo, dump_head},
     impersonation::ImpersonationState,
     logging::{LoggingState, NodeInfoLayer},
@@ -12,11 +12,16 @@ use crate::{
     pool::{AnvilPoolBuilder, PoolSettings},
 };
 use alloy_evm::eth::spec::EthExecutorSpec;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_evm_networks::{
     arbitrum,
     celo::transfer::{self as celo_transfer, CELO_TRANSFER_ADDRESS},
+};
+use jsonrpsee::{
+    RpcModule,
+    core::RpcResult,
+    types::{ErrorObjectOwned, Params, error::INTERNAL_ERROR_CODE},
 };
 use reth_ethereum::{
     EthPrimitives,
@@ -35,6 +40,7 @@ use reth_ethereum::{
         },
     },
 };
+use serde::de::DeserializeOwned;
 use std::{fmt, sync::Arc};
 use tower::layer::util::Identity;
 
@@ -44,6 +50,7 @@ pub struct Ethereum;
 
 impl AnvilNetwork for Ethereum {
     type Node = EthereumNode;
+    type Fork = EthereumFork;
     type Components = ComponentsBuilder<
         AnvilAdapter<EthereumNode>,
         AnvilPoolBuilder,
@@ -74,19 +81,15 @@ impl AnvilNetwork for Ethereum {
                 order: anvil.order.clone(),
                 settings: PoolSettings::from_config(&anvil.config),
             })
-            .executor(AnvilExecutorBuilder {
-                inner: EthereumEvmBuilder::new(
+            .executor(AnvilExecutorBuilder::new(
+                EthereumEvmBuilder::new(
                     network_precompiles(&anvil.config),
                     anvil.fork.clone(),
                     anvil.console.is_some(),
                     anvil.impersonation.clone(),
                 ),
-                state: anvil.impersonation.clone(),
-                block_env: anvil.block_env.clone(),
-                anvil_state: anvil.anvil_state.clone(),
-                settings: EvmSettings::from_config(&anvil.config),
-                console: anvil.console.clone(),
-            })
+                anvil,
+            ))
             .consensus(NoopConsensusBuilder)
     }
 
@@ -101,9 +104,38 @@ impl AnvilNetwork for Ethereum {
         ))
     }
 
+    fn extend_rpc(
+        rpc: AnvilRpcOf<Self>,
+        _anvil: &AnvilComponents,
+    ) -> Result<(AnvilRpcOf<Self>, RpcModule<()>)> {
+        // Preserve Ethereum's legacy rejection of Tempo-only RPC methods. Their implementations
+        // and native request types belong to the external Tempo crate.
+        let mut module = RpcModule::new(());
+        for method in ["anvil_dealTIP20", "anvil_setFeeAmmLiquidity"] {
+            module.register_method(method, |params, _, _| {
+                unsupported_network_method::<(Address, Address, U256)>(params)
+            })?;
+        }
+        for method in ["anvil_setFeeToken", "anvil_setValidatorFeeToken"] {
+            module.register_method(method, |params, _, _| {
+                unsupported_network_method::<(Address, Address)>(params)
+            })?;
+        }
+        module.register_method("eth_signRawTransaction", |params, _, _| {
+            unsupported_network_method::<(Bytes,)>(params)
+        })?;
+        Ok((rpc, module))
+    }
+
     fn payload_attributes(chain_spec: Arc<ChainSpec>) -> Self::Attributes {
         LocalPayloadAttributesBuilder::new(chain_spec)
     }
+}
+
+/// Keeps the existing parameter validation and error for unsupported network methods.
+fn unsupported_network_method<T: DeserializeOwned>(params: Params<'_>) -> RpcResult<()> {
+    params.parse::<T>()?;
+    Err(ErrorObjectOwned::owned(INTERNAL_ERROR_CODE, "Not implemented", None::<()>))
 }
 
 /// Resolves the chain spec and the fork of a network built on reth's Ethereum node types.
@@ -120,7 +152,7 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
             state.head_number().is_some_and(|number| number > fork.block_number())
         }) && let Some(mut state) = config.init_state.take()
         {
-            config.ensure_dump_head(&mut state)?;
+            config.ensure_dump_head::<EthereumFork>(&mut state, config.get_hardfork()?)?;
             let head = dump_head::<EthereumFork>(&state)?;
             let fork = Arc::try_unwrap(fork)
                 .map_err(|_| eyre::eyre!("the fork backend is shared"))?
@@ -141,7 +173,7 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
     // genesis block; the blocks before it come from the dump.
     if config.init_state.as_ref().is_some_and(|state| state.block.is_some()) {
         let mut state = config.init_state.take().expect("checked above");
-        config.ensure_dump_head(&mut state)?;
+        config.ensure_dump_head::<EthereumFork>(&mut state, config.get_hardfork()?)?;
         let head = dump_head::<EthereumFork>(&state)?;
         let fork = ForkBackend::from_dump(config, &state, &head)?;
         let chain_spec = config.dump_chain_spec(&head, &state)?;

@@ -1,7 +1,7 @@
 use crate::{
     api::{
         AnvilApiServer, AnvilRpc, EthExtApiServer, EvmApiServer, NewFilterHook, PendingReset,
-        PersonalApiServer, PoolRefresh, Web3ExtApiServer,
+        PersonalApiServer, Web3ExtApiServer,
     },
     block_env::BlockEnvOverrides,
     config::NodeConfig,
@@ -52,10 +52,7 @@ use reth_ethereum::{
             node_config::NodeConfig as RethNodeConfig,
         },
     },
-    pool::{
-        CanonicalStateUpdate, FullTransactionEvent, PoolTransaction, PoolUpdateKind,
-        TransactionOrigin, TransactionPool, TransactionPoolExt,
-    },
+    pool::{FullTransactionEvent, PoolTransaction, TransactionOrigin, TransactionPool},
     primitives::{Bytecode, NodePrimitives, Recovered, SignedTransaction},
     provider::{
         CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
@@ -65,7 +62,7 @@ use reth_ethereum::{
         },
     },
     rpc::builder::{RpcModuleSelection, constants::MAX_ETH_PROOF_WINDOW},
-    storage::{BlockNumReader, BlockReader, TransactionVariant},
+    storage::BlockNumReader,
     tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
 use reth_rpc_eth_api::{
@@ -76,7 +73,6 @@ use reth_rpc_eth_api::{
     },
 };
 use std::{
-    collections::BTreeMap,
     net::{SocketAddr, TcpListener},
     pin::Pin,
     sync::{Arc, Mutex},
@@ -283,8 +279,6 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     config.resolve_networks().await?;
     match config.networks.resolved_network().unwrap_or_default() {
         NetworkVariant::Ethereum => launch::<Ethereum>(config).await,
-        #[cfg(feature = "tempo")]
-        NetworkVariant::Tempo => launch::<crate::network::tempo::Tempo>(config).await,
         // Other crates may enable more variants than this crate runs.
         #[allow(unreachable_patterns)]
         network => eyre::bail!("the {network:?} network is not supported yet"),
@@ -292,7 +286,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 }
 
 /// Launches a node of the given network and the RPC server in front of it.
-pub(crate) async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
+pub async fn launch<Net: AnvilNetwork>(config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     let address = SocketAddr::new(config.host[0], rpc_port(config.port)?);
     let instance_id = Arc::new(RwLock::new(B256::random()));
     let (requests, relaunches) = mpsc::unbounded_channel();
@@ -456,7 +450,7 @@ async fn relaunch<Net: AnvilNetwork>(
 /// Launches the reth node of the given network, without RPC servers, and returns its RPC module.
 async fn launch_node<Net: AnvilNetwork>(
     config: NodeConfig,
-    prepared: Prepared<Net::Node>,
+    prepared: Prepared<Net::Node, Net::Fork>,
     instance_id: Arc<RwLock<B256>>,
     relauncher: Relauncher,
 ) -> Result<(RpcModule<()>, RunningNode)> {
@@ -470,6 +464,7 @@ async fn launch_node<Net: AnvilNetwork>(
         // the chain id and hardfork until a reset to another endpoint.
         let mut launch_config = relauncher.config.write();
         launch_config.networks = config.networks;
+        launch_config.default_base_fee = config.default_base_fee;
         launch_config.adopted_fork_network = config.adopted_fork_network;
         // The dev wallets sign for the adopted chain id too.
         launch_config.set_chain_id(config.chain_id);
@@ -603,10 +598,11 @@ async fn launch_node<Net: AnvilNetwork>(
 
     let builder = NodeBuilder::new(node_config)
         .with_database(Arc::new(db))
-        .with_types_and_provider::<Net::Node, AnvilProvider<AnvilTypes<Net::Node>>>()
+        .with_types_and_provider::<Net::Node, AnvilProvider<AnvilTypes<Net::Node>, Net::Fork>>()
         .with_components(Net::components(&anvil))
         .with_add_ons(Net::add_ons(&anvil, logging.clone()))
         .extend_rpc_modules({
+            let anvil = anvil.clone();
             let mining = mining.clone();
             let time = time.clone();
             let block_env = block_env.clone();
@@ -614,9 +610,6 @@ async fn launch_node<Net: AnvilNetwork>(
             let snapshots = snapshots.clone();
             let chain_spec = chain_spec.clone();
             let signer_accounts = config.signer_accounts.clone();
-            let tempo_fee_payer = config.tempo_fee_payer_address().and_then(|fee_payer| {
-                config.signer_accounts.iter().find(|wallet| wallet.address() == fee_payer).cloned()
-            });
             let rpc_module = rpc_module.clone();
             let node_module = NodeRpcModule::default();
             let fork = fork.clone();
@@ -624,7 +617,6 @@ async fn launch_node<Net: AnvilNetwork>(
             let transaction_order = config.transaction_order;
             let min_priority_fee_enforced = !config.disable_min_priority_fee;
             let identity = Net::identity(&config)?;
-            let network_precompiles = network_precompiles(&config);
             move |ctx| {
                 let eth_api = ctx.registry.eth_api().clone();
                 // Anvil's filters report the blocks after the one they are installed on; reth's
@@ -685,29 +677,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 }
                 let fork_info = fork.map(|fork| fork as Arc<dyn ForkInfo>);
                 let txpool_eth = eth_api.clone();
-                // Tempo's pool keeps the reads it made at the tip; replaying the tip to it drops
-                // them, so anvil state writes reach it before the next block.
-                let pool_refresh = (identity.network == Some("tempo")).then(|| {
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    PoolRefresh::new(move || {
-                        let Ok(Some(block)) = provider.best_block_number().and_then(|number| {
-                            provider.recovered_block(number.into(), TransactionVariant::NoHash)
-                        }) else {
-                            return;
-                        };
-                        let info = pool.block_info();
-                        pool.on_canonical_state_change(CanonicalStateUpdate {
-                            new_tip: block.sealed_block(),
-                            pending_block_base_fee: info.pending_basefee,
-                            pending_block_blob_fee: info.pending_blob_fee,
-                            changed_accounts: Vec::new(),
-                            mined_transactions: Vec::new(),
-                            update_kind: PoolUpdateKind::Commit,
-                        });
-                    })
-                });
-                let rpc = AnvilRpc::new(
+                let rpc = AnvilRpc::<_, _, _, _, Net>::new(
                     identity,
                     relauncher,
                     impersonation,
@@ -726,17 +696,18 @@ async fn launch_node<Net: AnvilNetwork>(
                     ctx.provider().clone(),
                     eth_api,
                     new_filter,
+                    Net::Fork::checkpoint_header,
                 )
                 .with_pending_reset(pending_reset)
-                .with_tempo_fee_payer(tempo_fee_payer)
-                .with_pool_refresh(pool_refresh)
                 .with_first_block_keeps_genesis_base_fee(Net::FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE);
+                let (rpc, network_module) = Net::extend_rpc(rpc, &anvil)?;
                 let anvil_module = AnvilApiServer::into_rpc(rpc.clone());
                 let evm_module = EvmApiServer::into_rpc(rpc.clone());
                 let eth_module = EthExtApiServer::into_rpc(rpc.clone());
                 let web3_module = Web3ExtApiServer::into_rpc(rpc.clone());
                 let personal_module = PersonalApiServer::into_rpc(rpc);
-                let txpool_module = AnvilTxPoolApiServer::into_rpc(AnvilTxPool::new(txpool_eth));
+                let txpool_module =
+                    AnvilTxPoolApiServer::into_rpc(AnvilTxPool::<_, Net>::new(txpool_eth));
                 let debug_module = AnvilDebugApiServer::into_rpc(AnvilDebugApi::new(
                     ctx.registry.debug_api(),
                     fork_info.clone(),
@@ -764,8 +735,6 @@ async fn launch_node<Net: AnvilNetwork>(
                 ));
                 config_module.register_method("eth_config", move |_, handler, _| {
                     let mut config = EthConfigApiServer::config(handler)?;
-                    // Tempo installs its precompiles per call, so the EVM lists none of them.
-                    config.current.precompiles.extend(network_precompiles.clone());
                     for fork in
                         [Some(&mut config.current), config.next.as_mut(), config.last.as_mut()]
                             .into_iter()
@@ -795,6 +764,10 @@ async fn launch_node<Net: AnvilNetwork>(
                 module.merge(trace_module.clone())?;
                 module.merge(txpool_module.clone())?;
                 module.merge(ots_module.clone())?;
+                for name in network_module.method_names() {
+                    module.remove_method(name);
+                }
+                module.merge(network_module.clone())?;
                 let _ = node_module.set(module.clone());
                 *rpc_module.lock().expect("rpc module lock") = Some(module);
 
@@ -807,6 +780,7 @@ async fn launch_node<Net: AnvilNetwork>(
                 ctx.modules.replace_configured(trace_module)?;
                 ctx.modules.replace_configured(txpool_module)?;
                 ctx.modules.replace_configured(ots_module)?;
+                ctx.modules.replace_configured(network_module)?;
                 Ok(())
             }
         });
@@ -827,7 +801,7 @@ async fn launch_node<Net: AnvilNetwork>(
         }
     };
     let (map_attributes, finish) =
-        time.build_hooks(block_env.clone(), chain_spec.genesis().coinbase, active_forks);
+        time.build_hooks::<_, Net>(block_env.clone(), chain_spec.genesis().coinbase, active_forks);
     let genesis_hash = node.provider.genesis_header()?.hash();
     let automine = {
         let mining = mining.clone();
@@ -999,17 +973,4 @@ async fn clear_applied_state_writes<N: NodePrimitives>(
             Err(RecvError::Closed) => return,
         }
     }
-}
-
-/// Returns the precompiles of the network that the EVM does not list: Tempo's, which Tempo
-/// installs per call.
-#[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
-fn network_precompiles(config: &NodeConfig) -> BTreeMap<String, Address> {
-    #[cfg(feature = "tempo")]
-    if config.networks.is_tempo() {
-        let hardfork = config.get_tempo_hardfork().ok().map(Into::into);
-        return config.networks.precompiles(hardfork);
-    }
-    let _ = config;
-    BTreeMap::new()
 }

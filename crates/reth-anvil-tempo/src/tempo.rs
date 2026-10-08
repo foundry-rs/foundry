@@ -13,20 +13,7 @@ use super::{
         TempoAnvilEvmConfig, TempoAnvilPool, TempoDevPayloadBuilderBuilder, TempoPoolEvmConfig,
     },
 };
-use crate::{
-    api::NodeIdentity,
-    config::NodeConfig,
-    console::ConsoleBuffer,
-    evm::{
-        AnvilExecutionPayload, AnvilExecutorBuilder, AnvilNextBlockEnv, ConsoleEvmFactory,
-        EvmSettings,
-    },
-    fork::{AnvilPrimitives, ForkBackend, ForkGenesisAccount, ForkNetwork, TxPosition, dump_head},
-    logging::{LoggingState, NodeInfoLayer},
-    pending::{AnvilEthApiBuilder, AnvilPendingEnv},
-    state_dump::SerializableState,
-    time::{AnvilPayloadAttributes, TimeManager},
-};
+use crate::TempoConfigExt;
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::Recovered};
 use alloy_eips::Encodable2718;
 use alloy_evm::Database;
@@ -36,6 +23,17 @@ use alloy_primitives::{Address, B256, Bytes, U64, U256};
 use eyre::Result;
 use foundry_evm_hardforks::EthereumHardfork;
 use foundry_primitives::FoundryHeader;
+use reth_anvil::{
+    api::NodeIdentity,
+    config::NodeConfig,
+    console::ConsoleBuffer,
+    evm::{AnvilExecutionPayload, AnvilExecutorBuilder, AnvilNextBlockEnv, ConsoleEvmFactory},
+    fork::{ForkBackend, ForkGenesisAccount, ForkNetwork, TxPosition, dump_head},
+    logging::{LoggingState, NodeInfoLayer},
+    pending::AnvilPendingEnv,
+    state_dump::SerializableState,
+    time::{AnvilPayloadAttributes, TimeManager},
+};
 use reth_ethereum::{
     evm::primitives::ConfigureEvm,
     network::primitives::BasicNetworkPrimitives,
@@ -47,8 +45,8 @@ use reth_ethereum::{
         builder::{
             AddOnsContext, BuilderContext,
             components::{
-                BasicPayloadServiceBuilder, ComponentsBuilder, NoopConsensusBuilder,
-                NoopNetworkBuilder, PoolBuilder, spawn_maintenance_tasks,
+                BasicPayloadServiceBuilder, ComponentsBuilder, ExecutorBuilder,
+                NoopConsensusBuilder, NoopNetworkBuilder, PoolBuilder, spawn_maintenance_tasks,
             },
             rpc::{
                 BasicEngineValidatorBuilder, EthApiBuilder, EthApiCtx, NoopEngineApiBuilder,
@@ -71,7 +69,10 @@ use std::{
 use tempo_alloy::rpc::{TempoHeaderResponse, TempoTransactionReceipt};
 use tempo_chainspec::{TempoChainSpec, spec::DEV};
 use tempo_evm::{FeeTokenResolver, TempoEvmFactory, TempoNextBlockEnvAttributes, TempoStateAccess};
-use tempo_hardfork::TempoHardfork;
+use tempo_hardfork::{
+    TempoHardfork,
+    constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+};
 use tempo_node::{
     TempoNode, TempoPayloadTypes,
     engine::TempoEngineValidator,
@@ -102,12 +103,13 @@ pub struct Tempo;
 
 impl AnvilNetwork for Tempo {
     type Node = TempoNode;
+    type Fork = TempoFork;
     type Components = ComponentsBuilder<
-        AnvilAdapter<TempoNode>,
+        AnvilAdapter<TempoNode, TempoFork>,
         TempoAnvilPoolBuilder,
         BasicPayloadServiceBuilder<TempoDevPayloadBuilderBuilder>,
         NoopNetworkBuilder<BasicNetworkPrimitives<TempoPrimitives, TempoTxEnvelope>>,
-        AnvilExecutorBuilder<TempoExecutorBuilder>,
+        TempoAnvilExecutorBuilder,
         NoopConsensusBuilder,
     >;
     type AddOns = RpcAddOns<
@@ -123,20 +125,28 @@ impl AnvilNetwork for Tempo {
     // Tempo's chain spec sets every block's base fee: a fixed fee, or the T7 controller.
     const FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE: bool = false;
 
-    async fn prepare(config: &mut NodeConfig) -> Result<Prepared<TempoNode>> {
+    async fn prepare(config: &mut NodeConfig) -> Result<Prepared<TempoNode, TempoFork>> {
+        if !config.is_fork() {
+            let hardfork = config.get_tempo_hardfork()?;
+            config.default_base_fee =
+                if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE };
+        }
         if config.is_fork() {
             let (fork, accounts) = ForkBackend::<TempoFork>::setup(config).await?;
             config.apply_fork(fork.chain_id(), fork.header().header(), fork.gas_price());
             if let Some(info) = fork.node_info() {
                 config.adopt_fork_identity(info);
             }
+            let hardfork = config.get_tempo_hardfork()?;
+            config.default_base_fee =
+                if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE };
             // A state dump whose head lies above the fork block continues at its head, with the
             // dump's blocks above the fork block; one at or below it only overlays its accounts.
             if config.init_state.as_ref().is_some_and(|state| {
                 state.head_number().is_some_and(|number| number > fork.block_number())
             }) && let Some(mut state) = config.init_state.take()
             {
-                config.ensure_dump_head(&mut state)?;
+                config.ensure_dump_head::<TempoFork>(&mut state, EthereumHardfork::Osaka)?;
                 let head = dump_head::<TempoFork>(&state)?;
                 let fork = Arc::try_unwrap(fork)
                     .map_err(|_| eyre::eyre!("the fork backend is shared"))?
@@ -155,7 +165,7 @@ impl AnvilNetwork for Tempo {
         // genesis block; the blocks before it come from the dump.
         if config.init_state.as_ref().is_some_and(|state| state.block.is_some()) {
             let mut state = config.init_state.take().expect("checked above");
-            config.ensure_dump_head(&mut state)?;
+            config.ensure_dump_head::<TempoFork>(&mut state, EthereumHardfork::Osaka)?;
             let head = dump_head::<TempoFork>(&state)?;
             let fork = ForkBackend::<TempoFork>::from_dump(config, &state, &head)?;
             let chain_spec = tempo_dump_chain_spec(config, &head, &state, false)?;
@@ -167,19 +177,15 @@ impl AnvilNetwork for Tempo {
 
     fn components(anvil: &AnvilComponents) -> Self::Components {
         ComponentsBuilder::default()
-            .node_types::<AnvilAdapter<TempoNode>>()
+            .node_types::<AnvilAdapter<TempoNode, TempoFork>>()
             .pool(TempoAnvilPoolBuilder {
                 time: anvil.time.clone(),
                 disable_balance_check: anvil.config.disable_pool_balance_checks,
             })
-            .executor(AnvilExecutorBuilder {
-                inner: TempoExecutorBuilder::default(),
-                state: anvil.impersonation.clone(),
-                block_env: anvil.block_env.clone(),
-                anvil_state: anvil.anvil_state.clone(),
-                settings: EvmSettings::from_config(&anvil.config),
-                console: anvil.console.clone(),
-            })
+            .executor(TempoAnvilExecutorBuilder(AnvilExecutorBuilder::new(
+                TempoExecutorBuilder::default(),
+                anvil,
+            )))
             .payload(BasicPayloadServiceBuilder::new(TempoDevPayloadBuilderBuilder))
             .network(NoopNetworkBuilder::default())
             .consensus(NoopConsensusBuilder)
@@ -196,6 +202,13 @@ impl AnvilNetwork for Tempo {
             NodeInfoLayer::new(logging),
             Identity::new(),
         )
+    }
+
+    fn extend_rpc(
+        rpc: reth_anvil::AnvilRpcOf<Self>,
+        anvil: &AnvilComponents,
+    ) -> Result<(reth_anvil::AnvilRpcOf<Self>, jsonrpsee::RpcModule<()>)> {
+        crate::rpc::extend_rpc(rpc, anvil)
     }
 
     fn payload_attributes(_chain_spec: Arc<TempoChainSpec>) -> Self::Attributes {
@@ -443,15 +456,9 @@ where
 }
 
 /// Builds Tempo's `eth` API with [`AnvilPendingEnv`] as the pending block environment.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TempoAnvilEthApiBuilder {
-    pending: AnvilPendingEnv,
-}
-
-impl Default for TempoAnvilEthApiBuilder {
-    fn default() -> Self {
-        Self { pending: AnvilEthApiBuilder::default().pending }
-    }
+    pending: AnvilPendingEnv<Tempo>,
 }
 
 impl<N> EthApiBuilder<N> for TempoAnvilEthApiBuilder
@@ -464,7 +471,7 @@ where
         + TempoEthApiBounds,
     <N as RpcNodeCore>::Provider: ChainSpecProvider<ChainSpec = TempoChainSpec>,
     <<N as RpcNodeCore>::Evm as ConfigureEvm>::NextBlockEnvCtx:
-        BuildPendingEnv<TempoHeader> + AnvilNextBlockEnv,
+        BuildPendingEnv<TempoHeader> + AnvilNextBlockEnv<Tempo>,
 {
     type EthApi = AnvilTempoEthApi<N>;
 
@@ -481,6 +488,18 @@ where
     }
 }
 
+/// Builds the Tempo EVM wrapper with anvil's shared state and sender cache.
+#[derive(Clone, Debug)]
+pub struct TempoAnvilExecutorBuilder(AnvilExecutorBuilder<TempoExecutorBuilder, Tempo>);
+
+impl<N: FullNodeTypes<Types = TempoNode>> ExecutorBuilder<N> for TempoAnvilExecutorBuilder {
+    type EVM = TempoAnvilEvmConfig;
+
+    async fn build_evm(self, ctx: &BuilderContext<N>) -> Result<Self::EVM> {
+        self.0.build_evm(ctx).await.map(TempoAnvilEvmConfig)
+    }
+}
+
 impl FeeTokenResolver for TempoAnvilEvmConfig {
     fn resolve_fee_token<S, M>(
         &self,
@@ -493,67 +512,67 @@ impl FeeTokenResolver for TempoAnvilEvmConfig {
     where
         S: TempoStateAccess<M>,
     {
-        self.inner().resolve_fee_token(state, tx, fee_payer, spec, actions)
+        self.0.inner().resolve_fee_token(state, tx, fee_payer, spec, actions)
     }
 }
 
-impl AnvilNextBlockEnv for TempoNextBlockEnvAttributes {
+impl AnvilNextBlockEnv<Tempo> for TempoNextBlockEnvAttributes {
     fn set_timestamp(&mut self, timestamp: u64) {
-        self.inner.set_timestamp(timestamp);
+        AnvilNextBlockEnv::<Tempo>::set_timestamp(&mut self.inner, timestamp);
     }
 
     fn set_suggested_fee_recipient(&mut self, recipient: Address) {
-        self.inner.set_suggested_fee_recipient(recipient);
+        AnvilNextBlockEnv::<Tempo>::set_suggested_fee_recipient(&mut self.inner, recipient);
     }
 
     fn set_prev_randao(&mut self, prev_randao: B256) {
-        self.inner.set_prev_randao(prev_randao);
+        AnvilNextBlockEnv::<Tempo>::set_prev_randao(&mut self.inner, prev_randao);
     }
 
     fn set_gas_limit(&mut self, gas_limit: u64) {
-        self.inner.set_gas_limit(gas_limit);
+        AnvilNextBlockEnv::<Tempo>::set_gas_limit(&mut self.inner, gas_limit);
     }
 
     fn override_parent_beacon_block_root(&mut self, root: B256) {
-        self.inner.override_parent_beacon_block_root(root);
+        AnvilNextBlockEnv::<Tempo>::override_parent_beacon_block_root(&mut self.inner, root);
     }
 
     fn ensure_parent_beacon_block_root(&mut self) {
-        self.inner.ensure_parent_beacon_block_root();
+        AnvilNextBlockEnv::<Tempo>::ensure_parent_beacon_block_root(&mut self.inner);
     }
 }
 
-impl AnvilPayloadAttributes for TempoPayloadAttributes {
+impl AnvilPayloadAttributes<Tempo> for TempoPayloadAttributes {
     fn set_timestamp(&mut self, timestamp: u64) {
-        (**self).set_timestamp(timestamp);
+        AnvilPayloadAttributes::<Tempo>::set_timestamp(&mut **self, timestamp);
     }
 
     fn set_suggested_fee_recipient(&mut self, recipient: Address) {
-        (**self).set_suggested_fee_recipient(recipient);
+        AnvilPayloadAttributes::<Tempo>::set_suggested_fee_recipient(&mut **self, recipient);
     }
 
     fn set_prev_randao(&mut self, prev_randao: B256) {
-        (**self).set_prev_randao(prev_randao);
+        AnvilPayloadAttributes::<Tempo>::set_prev_randao(&mut **self, prev_randao);
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
-        (**self).parent_beacon_block_root()
+        AnvilPayloadAttributes::<Tempo>::parent_beacon_block_root(&**self)
     }
 
     fn set_parent_beacon_block_root(&mut self, root: B256) {
-        (**self).set_parent_beacon_block_root(root);
+        AnvilPayloadAttributes::<Tempo>::set_parent_beacon_block_root(&mut **self, root);
     }
 
     fn clear_parent_beacon_block_root(&mut self) {
-        (**self).clear_parent_beacon_block_root();
+        AnvilPayloadAttributes::<Tempo>::clear_parent_beacon_block_root(&mut **self);
     }
 
     fn set_withdrawals_active(&mut self, active: bool) {
-        (**self).set_withdrawals_active(active);
+        AnvilPayloadAttributes::<Tempo>::set_withdrawals_active(&mut **self, active);
     }
 }
 
-impl AnvilExecutionPayload for TempoExecutionData {
+impl AnvilExecutionPayload<Tempo> for TempoExecutionData {
     fn raw_transactions(&self) -> Vec<Bytes> {
         self.block
             .sealed_block()
@@ -565,7 +584,7 @@ impl AnvilExecutionPayload for TempoExecutionData {
     }
 }
 
-impl ConsoleEvmFactory for TempoEvmFactory {
+impl ConsoleEvmFactory<Tempo> for TempoEvmFactory {
     fn console<DB: Database, I: Inspector<Self::Context<DB>>>(
         _evm: &Self::Evm<DB, I>,
     ) -> Option<&ConsoleBuffer> {
@@ -582,6 +601,10 @@ impl ConsoleEvmFactory for TempoEvmFactory {
 pub struct TempoFork;
 
 impl ForkNetwork for TempoFork {
+    fn checkpoint_header(header: alloy_consensus::Header) -> FoundryHeader {
+        FoundryHeader::tempo(header)
+    }
+
     type Network = AnyNetwork;
     type Primitives = TempoPrimitives;
 
@@ -692,8 +715,4 @@ fn to_json(response: &impl serde::Serialize) -> Result<serde_json::Value, Provid
 /// Reads a Tempo response from its JSON form.
 fn from_json<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, ProviderError> {
     serde_json::from_value(value).map_err(ProviderError::other)
-}
-
-impl AnvilPrimitives for TempoPrimitives {
-    type Fork = TempoFork;
 }

@@ -5,8 +5,9 @@ impersonation, snapshots, forks, and the `anvil_*` namespace. A network supplies
 types and the components that differ from Ethereum. Everything else is shared.
 
 This guide is for the teams that own a network, for example Optimism, Base, and Monad. Ethereum
-(`src/network/ethereum.rs`) and Tempo (`src/network/tempo.rs`) are the worked examples. Tempo
-shows a network with its own node types, pool, and RPC.
+(`src/network/ethereum.rs`) and Tempo (`../reth-anvil-tempo/src/tempo.rs`) are the worked examples.
+Tempo implements the SDK from a separate crate. `reth-anvil-cli` owns the `anvil` binary and
+selects between the two implementations. The core SDK has no direct Tempo dependency.
 
 ## What a network implements
 
@@ -15,11 +16,13 @@ A network is a marker type that implements `AnvilNetwork` (`src/network/mod.rs`)
 | Item | What it is |
 | --- | --- |
 | `Node` | The reth node type. It sets the primitives, the chain spec, and the payload types. |
+| `Fork` | The `ForkNetwork` adapter for remote responses and checkpoint headers. It is owned by the network, rather than its foreign primitive types. |
 | `Components` | The node components builder. Install the anvil wrappers here; see below. |
 | `AddOns` | The RPC add-ons. Their `EthApi` must serve the network's RPC types. |
 | `Attributes` | The payload attributes builder for the next block. |
 | `prepare` | Builds the chain spec and, for a fork, the fork backend. It can change the config, for example to adopt the chain id of the fork. |
 | `components`, `add_ons`, `payload_attributes` | Build the items above from the shared anvil state (`AnvilComponents`). |
+| `extend_rpc` | Registers network methods with their own request types and can replace standard handlers. The launcher installs them on every transport and rebuilds them after reset. |
 | `identity` | What `anvil_nodeInfo` reports: the network name and the hardfork. |
 | `FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE` | Set it to `false` when the chain spec sets every base fee, as Tempo's does. |
 
@@ -31,9 +34,18 @@ The network's types implement small traits, so the shared code can use them:
 | `AnvilPayloadAttributes` | the payload attributes | The miner sets the same fields on the payload. |
 | `AnvilExecutionPayload` | the execution payload | The executor finds impersonated senders by transaction. |
 | `ConsoleEvmFactory` | the EVM factory | `console.log` printing. Return `None` when the factory has no console. |
-| `ForkNetwork`, `AnvilPrimitives` | a fork marker type, the primitives | Convert remote blocks, receipts, and transactions into the node's types. |
+| `ForkNetwork` | a fork marker type | Convert remote blocks, receipts, and transactions into the node's types. |
 | `TxPoolKey` | the signed transaction | The key of a transaction in `txpool_content` and `txpool_inspect`. |
-| `CallBatch` | the RPC transaction request | Call batches, nonce lanes, and fields that a signature covers. Keep the defaults on an Ethereum-shaped request. |
+| `CallBatch` | the RPC transaction request | Call batches, request validation, nonce state overrides, and fields that a signature covers. |
+
+The adapter traits take the local network marker as a type parameter, for example
+`impl CallBatch<Tempo> for TempoTransactionRequest`. This lets an external crate implement the
+traits for its upstream types under Rust's orphan rules. Pass the same marker to
+`AnvilExecutorBuilder`, `AnvilPendingEnv`, and other wrappers that use these adapters.
+
+`NodeConfig::extensions` stores typed, cloneable settings from the network crate. Tempo provides
+`TempoConfigExt` for its builders and hardfork resolution. Import that trait when using
+`NodeConfig::test_tempo()` or the fee-payer builders.
 
 ## The anvil wrappers
 
@@ -51,23 +63,33 @@ Install these in `components`, as `ethereum.rs` does:
   with the wrapped EVM config, as `TempoAnvilPoolBuilder` does.
 
 When the network's builders take its own EVM config as a concrete type, the wrappers cannot reach
-them. Tempo is that case. It builds its pool and its blocks in reth-anvil, and `UPSTREAM.md`
+them. Tempo is that case. It builds its pool and its blocks in reth-anvil-tempo, and `UPSTREAM.md`
 lists the hooks that would remove that code. Prefer to add the hook to the network's crates.
 
 ## Steps
 
-1. Add a Cargo feature to `crates/reth-anvil/Cargo.toml` with the network's crates as optional
-   dependencies. Put a comment with the feature name above the group.
-2. Add `src/network/<name>.rs` behind the feature, and implement the items above.
-3. Dispatch to the network in `try_spawn` (`src/node.rs`), and return `true` for it in
-   `runs_network` (`src/config.rs`). The network selection, the hardfork parsing, and the fork
-   endpoint discovery are in `foundry-evm-networks` and `foundry-evm-hardforks` already.
-4. Add the network's hardfork to `NodeConfig`, as `get_tempo_hardfork` does, and map it to the Ethereum hardfork it runs on in `ethereum_hardfork_at`.
-5. Add the network's anvil methods to the `anvil_*` namespace (`src/api.rs`), and fail them with
-   `Not implemented` on other networks, as the Tempo methods do.
-6. Port anvil's tests for the network to `tests/it/<name>.rs` behind the feature. Make the calls
-   async, use the RPC instead of anvil's internal backend, and give every ignored test its reason.
-7. Run `cargo nextest run -p reth-anvil --features <name>`, and the same without the feature.
+1. Create a crate that depends on `reth-anvil` and the network's upstream crates.
+2. Implement `AnvilNetwork` and the adapters above in that crate. Keep the same reth, revm,
+   and alloy-evm revisions as the SDK.
+3. Use `AnvilExecutorBuilder::new(inner, anvil)` to reuse the node's authoritative state,
+   clock, and impersonation handles. If a foreign trait requires a local EVM newtype, delegate
+   `evm_with_env`, `evm_with_env_and_inspector`, and `tx_iterator_for_payload` as well as the
+   required methods. These overrides preserve impersonation and sender-cache recording.
+4. Register network RPC methods through `extend_rpc`. Use `AnvilRpc::eth_api()` for the native
+   provider and pool, and `AnvilRpc::update_state()` to apply writes and invalidate their caches.
+   Return a `RpcModule<()>`; matching method names replace the shared handlers.
+5. Launch the network with `launch::<YourNetwork>(config)`. An application that selects between
+   networks should depend on each extension and dispatch once at its boundary. Use
+   `NodeConfig::resolve_networks_for` with the installed networks for implicit fork discovery.
+6. Keep network tests in the extension crate. Put tests that invoke the executable in the CLI
+   crate. Ethereum and the ignored Optimism/Base specifications remain in the SDK crate.
+7. Run tests for the core, extension, and binary together. For the installed networks:
+   `cargo nextest run -p reth-anvil -p reth-anvil-tempo -p reth-anvil-cli`.
+
+The binary moved from `reth-anvil` to `reth-anvil-cli`. Build or install the latter package when
+an executable is needed. The workspace's `anvil` dependency points to that facade, so Foundry
+callers retain runtime network selection. SDK callers can depend on core alone and launch a
+concrete network without the CLI.
 
 ## Optimism and Base
 

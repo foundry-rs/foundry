@@ -6,8 +6,10 @@ hook for a piece of that behaviour, this crate carries a copy or a workaround. T
 one, the reth change that would replace it, and what it costs here, so the upstream work has a
 ready list and the crate shrinks as hooks land.
 
-Size: the old anvil crates (`crates/anvil`, about 84k lines of Rust) are gone; this crate is
-about 21k lines plus 40k of tests, and the `anvil` binary builds from it.
+The old anvil crates (`crates/anvil`) are gone. `reth-anvil` is the shared SDK and Ethereum
+implementation. `reth-anvil-tempo` implements Tempo through the public SDK. `reth-anvil-cli`
+provides the `anvil` binary and selects the network. The sender-cache workarounds and receipt
+lookup retry remain until the pinned reth revision includes the required fixes.
 
 ## Workarounds and the hooks that remove them
 
@@ -117,7 +119,7 @@ be free if reth had a dev mode:
   every mined transaction needs an inspector during block building, or a replay of every block.
 - Networks: Optimism and Base through `op-reth` node types, which moved from the reth repository to
   `ethereum-optimism/optimism` and must be pinned to the same reth revision as this crate; see
-  `docs/networks.md`. Tempo runs (`src/network/tempo.rs`); see "What Tempo needs". Monad is not
+  `docs/networks.md`. Tempo runs in `crates/reth-anvil-tempo` (`src/tempo.rs`); see "What Tempo needs". Monad is not
   run: networks other than Ethereum belong in extensions their teams own, on the `AnvilNetwork`
   API.
 
@@ -138,7 +140,7 @@ be free if reth had a dev mode:
 
 `tests/it/{anvil_api,api,transaction,gas,revert,logs,filter,pubsub,sign,txpool,genesis,proof,
 block_index,storage_values,eip2935,eip4844,eip6110,eip7702,eip7928,otterscan,beacon_api,ipc,wsapi,
-anvil,traces,simulate,state,fork,fork_bal,fork_chains,tempo,tempo_canary}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
+anvil,traces,simulate,state,fork,fork_bal,fork_chains}.rs` are anvil's modules of the same name with the in-process calls made async and the anvil-internal hooks removed
 (`api.backend`, `api.execute`, pool types, `eth_callBundle`, the ready-transaction listener, the
 state dump's transaction records, the fee manager's blob fee, the Optimism variants, the block
 listener count, the precompile factory, the JavaScript tracer). Ignored tests carry the reason on the attribute. Assertions on wall-clock seconds
@@ -153,7 +155,7 @@ round-trips through EIP-7910's fields.
 
 ## Differences that cast's tests show
 
-The workspace's `anvil` dependency is this crate. `crates/cast/tests` pass, Tempo included,
+The workspace's `anvil` dependency is the `reth-anvil-cli` facade. `crates/cast/tests` pass, Tempo included,
 except these groups. None of them is a missing method. Revert messages decode the revert data
 with foundry's `RevertDecoder`, as anvil's do.
 
@@ -180,12 +182,12 @@ those that need Optimism, and the `--fork-bal` prewarm test, for EIP-8037 above.
 
 ## What Tempo needs
 
-Tempo runs (`src/network/tempo.rs`) on Tempo's node types, primitives, pool implementation, eth
-API, and block executor, with `AnvilEvmConfig<TempoEvmConfig>` as the EVM config, and without a
+Tempo runs in `crates/reth-anvil-tempo` (`src/tempo.rs`) on Tempo's node types, primitives, pool implementation, eth
+API, and block executor, with `AnvilEvmConfig<TempoEvmConfig, Tempo>` inside its local EVM config, and without a
 change to tempo (rev `6ef1f812`). These are the workarounds, and the tempo hook that would remove
-each.
+each. Paths in this section are relative to `crates/reth-anvil-tempo/src`.
 
-| Workaround in reth-anvil | Tempo hook that removes it |
+| Workaround in reth-anvil-tempo | Tempo hook that removes it |
 | --- | --- |
 | A dev block builder (`tempo_payload.rs`): sequential, without prewarming, parallel replay, or build budgets. `TempoPayloadBuilderBuilder` takes `TempoEvmConfig` as a concrete type (`crates/node/src/node.rs:885`). | Builders generic over the EVM config, as reth's `EthereumPayloadBuilder` is. |
 | A pool builder that repeats `TempoPoolBuilder::build_pool` (`node.rs:772`) for the wrapped config. | The same. |
@@ -194,8 +196,12 @@ each.
 | A copy of `TempoEthApi` (`tempo_eth.rs`, about 300 lines): Tempo's returns `PendingBlockKind::None`, reports `NATIVE_BALANCE_PLACEHOLDER` for native balances (`crates/node/src/rpc/mod.rs:351`), and simulates every AA call with a zero hash and one shared identifier (`crates/alloy/src/rpc/revm_compat.rs:68,94`), so two expiring nonce calls in one bundle collide. The copy builds pending blocks, reports balances, and hashes each simulated expiring nonce call by its request. A fork reads accounts with `eth_getAccountInfo`, as anvil does. | A pending block kind and a balance policy on `TempoEthApi`, and a unique identifier per simulated call. |
 | A pool-only EVM config (`TempoPoolEvmConfig`): the pool validates against the block anvil mines next, at anvil's clock, and skips the fee balance check when pool balance checks are off. The validator still bounds `valid_before` by the tip timestamp (`crates/transaction-pool/src/validator.rs:210`), and `valid_after` by the wall clock, which reth-anvil lifts and checks against anvil's clock at its API instead. | A clock the node can give the validator. |
 | A pool refresh after anvil state writes: the validator keeps the state it read at the tip until the next block (`validator.rs:399`), so reth-anvil replays the tip to the pool. The 2D nonce pool still learns lane changes only from blocks. | A way to drop the validator's read cache. |
-| Calls, estimates, and access lists run with the request's nonce through a state override: reth drops the request's nonce for calls (`crates/rpc/rpc-eth-api/src/helpers/call.rs:895`), and Tempo charges a new account's cost to nonce zero. | A reth option to keep the request's nonce. |
+| Calls, estimates, and access lists run with the request's nonce through `CallBatch<Tempo>::call_state_overrides` (`request.rs`): reth drops the request's nonce for calls (`crates/rpc/rpc-eth-api/src/helpers/call.rs:895`), and Tempo charges a new account's cost to nonce zero. | A reth option to keep the request's nonce. |
 | Simulated and sent call batches keep no create target: reth's `resolve_transaction` and anvil's request filling mark a request without `to` as a creation, which adds a create call to a Tempo batch. | A reth hook for the default kind of a request. |
+
+Tempo's tests live in `crates/reth-anvil-tempo/tests/it/{tempo,tempo_canary}.rs`. The two tests
+that launch the binary live in `crates/reth-anvil-cli/tests/tempo.rs`. The SDK's external-network
+test verifies typed method registration, handler replacement, and reset over HTTP and WebSocket.
 
 Behavior that follows Tempo instead of anvil's emulation of it:
 

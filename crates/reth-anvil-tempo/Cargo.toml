@@ -1,0 +1,63 @@
+[package]
+name = "reth-anvil-tempo"
+description = "Tempo network extension for reth-anvil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-anvil = { path = "../reth-anvil", default-features = false }
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-evm.workspace = true
+alloy-genesis.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+alloy-rpc-types-eth.workspace = true
+eyre.workspace = true
+foundry-evm-core.workspace = true
+foundry-evm-hardforks.workspace = true
+foundry-evm-networks.workspace = true
+foundry-primitives.workspace = true
+futures.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-payload-builder.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-eth-types.workspace = true
+revm.workspace = true
+serde_json.workspace = true
+tempo-alloy.workspace = true
+tempo-chainspec.workspace = true
+tempo-evm.workspace = true
+tempo-hardfork.workspace = true
+tempo-node.workspace = true
+tempo-payload-types.workspace = true
+tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
+tempo-revm.workspace = true
+tempo-transaction-pool.workspace = true
+tokio.workspace = true
+tower.workspace = true
+reth-ethereum = { workspace = true, features = ["exex", "node", "node-api"] }
+serde.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+
+[dev-dependencies]
+alloy-contract = { workspace = true, features = ["pubsub"] }
+alloy-provider = { workspace = true, features = ["txpool-api", "trace-api"] }
+alloy-sol-types = { workspace = true, features = ["json"] }
+foundry-test-utils.workspace = true
+jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }
+alloy-serde.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "txpool"] }
+foundry-common.workspace = true

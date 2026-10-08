@@ -106,6 +106,11 @@ pub trait ForkNetwork: Send + Sync + 'static {
     /// The node primitives the responses convert into.
     type Primitives: NodePrimitives;
 
+    /// Converts a synthetic checkpoint header into the network's persisted representation.
+    fn checkpoint_header(header: alloy_consensus::Header) -> FoundryHeader {
+        header.into()
+    }
+
     /// Returns the hash of a remote block and the number of its uncles.
     fn uncles(response: &<Self::Network as Network>::BlockResponse) -> (B256, usize);
 
@@ -352,15 +357,6 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
     }
 }
 
-/// Node primitives that can fork a remote chain.
-pub trait AnvilPrimitives: NodePrimitives {
-    /// The fork network for these primitives.
-    type Fork: ForkNetwork<Primitives = Self>;
-}
-
-/// The fork backend of a node with the given primitives.
-pub type ForkOf<P> = ForkBackend<<P as AnvilPrimitives>::Fork>;
-
 /// The Ethereum fork network.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EthereumFork;
@@ -425,10 +421,6 @@ impl ForkNetwork for EthereumFork {
     fn dump_header(header: &FoundryHeader) -> Result<Header, ProviderError> {
         Ok(header.inner().clone())
     }
-}
-
-impl AnvilPrimitives for EthPrimitives {
-    type Fork = EthereumFork;
 }
 
 /// The header type of a fork network.

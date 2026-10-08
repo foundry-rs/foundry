@@ -54,8 +54,6 @@ pub struct CheckpointForks {
     pub cancun: bool,
     /// Prague: the header has a requests hash.
     pub prague: bool,
-    /// Tempo: the header has the Tempo fields.
-    pub tempo: bool,
 }
 
 /// One block of a state dump.
@@ -363,7 +361,12 @@ impl SerializableState {
 
     /// Gives a dump without a block at its head a checkpoint block to continue from, as anvil
     /// does: a synthetic header built from the block environment on top of `parent_hash`.
-    pub fn synthesize_head(&mut self, parent_hash: B256, forks: CheckpointForks) {
+    pub fn synthesize_head(
+        &mut self,
+        parent_hash: B256,
+        forks: CheckpointForks,
+        convert: fn(Header) -> FoundryHeader,
+    ) {
         let Some(block) = self.block_env() else { return };
         let number = self.head_number().unwrap_or_else(|| block.number.saturating_to());
         let header = Header {
@@ -395,7 +398,7 @@ impl SerializableState {
             "state dump has no block history; created a synthetic checkpoint block"
         );
         self.blocks.push(SerializableBlock {
-            header: if forks.tempo { FoundryHeader::tempo(header) } else { header.into() },
+            header: convert(header),
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: forks.shanghai.then(Default::default),

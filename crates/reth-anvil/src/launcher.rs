@@ -5,7 +5,7 @@
 //! in the [`AnvilProvider`] so anvil state writes reach RPC and pool reads.
 
 use crate::{
-    fork::{AnvilPrimitives, ForkOf},
+    fork::{ForkBackend, ForkNetwork},
     provider::AnvilProvider,
     state::SharedAnvilState,
 };
@@ -64,15 +64,15 @@ use tracing::{debug, error, info};
 
 /// The engine node launcher with the [`AnvilProvider`] installed.
 #[derive(Debug)]
-pub struct AnvilNodeLauncher<P: AnvilPrimitives> {
+pub struct AnvilNodeLauncher<F: ForkNetwork> {
     ctx: LaunchContext,
     engine_tree_config: TreeConfig,
     state: SharedAnvilState,
     slots_in_an_epoch: u64,
-    fork: Option<Arc<ForkOf<P>>>,
+    fork: Option<Arc<ForkBackend<F>>>,
 }
 
-impl<P: AnvilPrimitives> AnvilNodeLauncher<P> {
+impl<F: ForkNetwork> AnvilNodeLauncher<F> {
     /// Creates a new launcher.
     pub const fn new(
         task_executor: TaskExecutor,
@@ -80,7 +80,7 @@ impl<P: AnvilPrimitives> AnvilNodeLauncher<P> {
         engine_tree_config: TreeConfig,
         state: SharedAnvilState,
         slots_in_an_epoch: u64,
-        fork: Option<Arc<ForkOf<P>>>,
+        fork: Option<Arc<ForkBackend<F>>>,
     ) -> Self {
         Self {
             ctx: LaunchContext::new(task_executor, data_dir),
@@ -96,11 +96,11 @@ impl<P: AnvilPrimitives> AnvilNodeLauncher<P> {
         target: NodeBuilderWithComponents<T, CB, AO>,
     ) -> eyre::Result<NodeHandle<NodeAdapter<T, CB::Components>, AO>>
     where
-        N: Node<T> + NodeTypesForProvider + NodeTypes<Primitives = P>,
+        N: Node<T> + NodeTypesForProvider + NodeTypes<Primitives = F::Primitives>,
         DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
         T: FullNodeTypes<
                 Types = N,
-                Provider = AnvilProvider<NodeTypesWithDBAdapter<N, DB>>,
+                Provider = AnvilProvider<NodeTypesWithDBAdapter<N, DB>, F>,
                 DB = DB,
             >,
         CB: NodeComponentsBuilder<T>,
@@ -445,11 +445,15 @@ impl<P: AnvilPrimitives> AnvilNodeLauncher<P> {
     }
 }
 
-impl<P, N, DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for AnvilNodeLauncher<P>
+impl<F, N, DB, T, CB, AO> LaunchNode<NodeBuilderWithComponents<T, CB, AO>> for AnvilNodeLauncher<F>
 where
-    P: AnvilPrimitives,
-    N: NodeTypes<Primitives = P>,
-    T: FullNodeTypes<Types = N, DB = DB, Provider = AnvilProvider<NodeTypesWithDBAdapter<N, DB>>>,
+    F: ForkNetwork,
+    N: NodeTypes<Primitives = F::Primitives>,
+    T: FullNodeTypes<
+            Types = N,
+            DB = DB,
+            Provider = AnvilProvider<NodeTypesWithDBAdapter<N, DB>, F>,
+        >,
     N: Node<T> + NodeTypesForProvider,
     DB: Database + DatabaseMetrics + Clone + Unpin + 'static,
     CB: NodeComponentsBuilder<T> + 'static,

@@ -132,7 +132,7 @@ fn header_not_found() -> EthApiError {
 /// node's base fee override for the first block, and `compute_state_root` whether the blocks get
 /// real state roots; fork databases are partial, so their blocks keep a zero root. Simulations on
 /// blocks before the fork block are forwarded to the fork endpoint.
-pub(crate) async fn simulate_v1<Eth>(
+pub(crate) async fn simulate_v1<Eth, Net: Send + Sync + 'static>(
     eth: &Eth,
     payload: SimulatePayload<RpcTxReq<Eth::NetworkTypes>>,
     block: Option<BlockId>,
@@ -143,8 +143,8 @@ pub(crate) async fn simulate_v1<Eth>(
 ) -> Result<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>, Eth::Error>
 where
     Eth: EthCall + Clone + 'static,
-    RpcTxReq<Eth::NetworkTypes>: CallBatch,
-    <Eth::Evm as ConfigureEvm>::NextBlockEnvCtx: AnvilNextBlockEnv,
+    RpcTxReq<Eth::NetworkTypes>: CallBatch<Net>,
+    <Eth::Evm as ConfigureEvm>::NextBlockEnvCtx: AnvilNextBlockEnv<Net>,
 {
     let SimulatePayload {
         block_state_calls,
@@ -324,7 +324,7 @@ where
                 builder.evm_mut().db_mut().bal_state = BalState::new().with_bal_builder();
             }
 
-            let (outcome, calls) = execute_calls(
+            let (outcome, calls) = execute_calls::<_, _, Net>(
                 builder,
                 &*state_provider,
                 calls,
@@ -555,7 +555,7 @@ struct SimulatedCall<Halt> {
 
 /// Executes the calls of one simulated block, with anvil's gas rules, and builds the block.
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
-fn execute_calls<S, T>(
+fn execute_calls<S, T, Net>(
     mut builder: S,
     state_provider: impl StateProvider,
     calls: Vec<RpcTxReq<T::Network>>,
@@ -582,7 +582,7 @@ where
         >,
     >,
     T: RpcConvert<Primitives = S::Primitives>,
-    RpcTxReq<T::Network>: CallBatch,
+    RpcTxReq<T::Network>: CallBatch<Net>,
 {
     builder.apply_pre_execution_changes()?;
 
@@ -647,7 +647,7 @@ where
             }
         }
         let basefee = builder.evm().block().basefee();
-        let tx = resolve_transaction(
+        let tx = resolve_transaction::<_, _, Net>(
             call,
             execution_gas,
             basefee,
@@ -975,7 +975,7 @@ where
 
 /// Fills the missing fields of a simulated call, as reth's `resolve_transaction` does, except
 /// that a call batch without `to` stays a batch instead of becoming a contract creation.
-fn resolve_transaction<DB, T>(
+fn resolve_transaction<DB, T, Net>(
     mut tx: RpcTxReq<T::Network>,
     default_gas_limit: u64,
     block_base_fee_per_gas: u64,
@@ -987,7 +987,7 @@ fn resolve_transaction<DB, T>(
 where
     DB: Database<Error: Into<EthApiError>>,
     T: RpcConvert,
-    RpcTxReq<T::Network>: CallBatch,
+    RpcTxReq<T::Network>: CallBatch<Net>,
 {
     if tx.has_calls() {
         let from = tx.as_ref().from.unwrap_or_default();

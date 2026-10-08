@@ -43,12 +43,15 @@ use foundry_evm_core::tempo::{
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
 use foundry_test_utils::rpc::spawn_rpc_proxy_canned_method;
 use futures::StreamExt;
-use reth_anvil::{NodeConfig, TransactionOrder, spawn};
+use reth_anvil::{NodeConfig, TransactionOrder};
+use reth_anvil_tempo::TempoConfigExt;
 use std::{num::NonZeroU64, sync::atomic::Ordering};
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
     TempoHardfork,
-    constants::gas::{TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR},
+    constants::gas::{
+        TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE, TEMPO_T7_BASE_FEE_CAP, TEMPO_T7_BASE_FEE_FLOOR,
+    },
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
@@ -73,13 +76,7 @@ use tempo_primitives::{
     },
 };
 
-use crate::utils::http_provider;
-use std::{
-    net::TcpListener,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::Duration,
-};
+use crate::spawn;
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
 const ALPHA_USD: Address = ALPHA_USD_ADDRESS;
@@ -156,19 +153,6 @@ fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
     assert_eq!(inner.general_gas_limit, inner.inner.gas_limit);
     assert_eq!(inner.shared_gas_limit, 0);
     assert_eq!(inner.timestamp_millis_part, 0);
-}
-
-struct ChildGuard(Child);
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn anvil_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_anvil"))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1313,116 +1297,6 @@ async fn test_tempo_t5_implicit_approvals_are_hardfork_gated() {
         !registry.isImplicitlyApproved(random_address).call().await.unwrap(),
         "arbitrary addresses should not be implicitly approved"
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_anvil_cli_tempo_t5_hardfork_precompile_smoke() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let port_arg = port.to_string();
-
-    let mut child = ChildGuard(
-        Command::new(anvil_binary())
-            .args([
-                "--network",
-                "tempo",
-                "--hardfork",
-                "tempo:T5",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port_arg,
-                "-q",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn anvil --hardfork tempo:T5"),
-    );
-
-    let endpoint = format!("http://127.0.0.1:{port}");
-    let provider = http_provider(&endpoint);
-    let mut ready = false;
-    // The node starts a reth node, which takes longer than anvil's in-memory backend.
-    for _ in 0..600 {
-        if provider.get_chain_id().await.is_ok() {
-            ready = true;
-            break;
-        }
-        if let Some(status) = child.0.try_wait().unwrap() {
-            panic!("anvil exited before serving RPC: {status}");
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(ready, "anvil --hardfork tempo:T5 should start serving RPC");
-
-    let registry = IAddressRegistryRpc::new(ADDRESS_REGISTRY_ADDRESS, &provider);
-    assert!(registry.isImplicitlyApproved(TIP20_CHANNEL_RESERVE_ADDRESS).call().await.unwrap());
-
-    let reserve = ITIP20ChannelReserveT5Rpc::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
-    assert_ne!(reserve.domainSeparator().call().await.unwrap(), B256::ZERO);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_anvil_cli_tempo_t6_hardfork_receive_policy_guard_smoke() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let port_arg = port.to_string();
-
-    let mut child = ChildGuard(
-        Command::new(anvil_binary())
-            .args([
-                "--network",
-                "tempo",
-                "--hardfork",
-                "tempo:T6",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port_arg,
-                "-q",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn anvil --hardfork tempo:T6"),
-    );
-
-    let endpoint = format!("http://127.0.0.1:{port}");
-    let provider = http_provider(&endpoint);
-    let mut ready = false;
-    // The node starts a reth node, which takes longer than anvil's in-memory backend.
-    for _ in 0..600 {
-        if provider.get_chain_id().await.is_ok() {
-            ready = true;
-            break;
-        }
-        if let Some(status) = child.0.try_wait().unwrap() {
-            panic!("anvil exited before serving RPC: {status}");
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(ready, "anvil --hardfork tempo:T6 should start serving RPC");
-
-    let receipt = IReceivePolicyGuard::ClaimReceiptV1::new(
-        PATH_USD,
-        Address::with_last_byte(2),
-        Address::with_last_byte(3),
-        Address::with_last_byte(4),
-        1,
-        1,
-        ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8,
-        InboundKind::TRANSFER,
-        B256::ZERO,
-    )
-    .abi_encode()
-    .into();
-    let guard = IReceivePolicyGuard::new(RECEIVE_POLICY_GUARD_ADDRESS, &provider);
-    assert_eq!(guard.balanceOf(receipt).call().await.unwrap(), U256::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -6981,5 +6855,20 @@ async fn test_tempo_mined_traces_use_hardfork_precompiles() {
 
         let replay = provider.trace_replay_transaction(hash).trace().await.unwrap();
         assert_eq!(replay.trace, traces, "{hardfork:?}");
+    }
+}
+
+/// The handle reports resolved network defaults without turning them into user overrides.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_handle_reports_network_fee_defaults() {
+    for (hardfork, fee) in
+        [(TempoHardfork::T0, TEMPO_T0_BASE_FEE), (TempoHardfork::T1, TEMPO_T1_BASE_FEE)]
+    {
+        let (_api, handle) =
+            spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        assert_eq!(handle.config().get_base_fee(), fee);
+        assert_eq!(handle.config().get_gas_price(), u128::from(fee));
+        assert_eq!(handle.config().base_fee, None);
+        assert_eq!(handle.config().gas_price, None);
     }
 }

@@ -35,6 +35,7 @@ mod eip4844;
 mod eip6110;
 mod eip7702;
 mod eip7928;
+mod extensions;
 mod filter;
 mod fork;
 mod fork_bal;
@@ -53,10 +54,6 @@ mod sign;
 mod simulate;
 mod state;
 mod storage_values;
-#[cfg(feature = "tempo")]
-mod tempo;
-#[cfg(feature = "tempo")]
-mod tempo_canary;
 mod traces;
 mod transaction;
 mod txpool;

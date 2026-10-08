@@ -4,6 +4,7 @@ use crate::{
     console::{ConsoleBuffer, ConsolePrinter, HARDHAT_CONSOLE_ADDRESS},
     fork::ForkInfo,
     impersonation::ImpersonationState,
+    network::AnvilComponents,
     state::{SharedAnvilState, StateOverride},
 };
 use alloy_consensus::transaction::TxHashRef;
@@ -54,7 +55,7 @@ use std::{
 };
 
 /// Next-block attributes the block environment overrides can set.
-pub trait AnvilNextBlockEnv: Clone {
+pub trait AnvilNextBlockEnv<Net = ()>: Clone {
     /// Sets the block timestamp.
     fn set_timestamp(&mut self, timestamp: u64);
     /// Sets the block beneficiary.
@@ -70,7 +71,7 @@ pub trait AnvilNextBlockEnv: Clone {
     fn ensure_parent_beacon_block_root(&mut self);
 }
 
-impl AnvilNextBlockEnv for NextBlockEnvAttributes {
+impl<Net> AnvilNextBlockEnv<Net> for NextBlockEnvAttributes {
     fn set_timestamp(&mut self, timestamp: u64) {
         self.timestamp = timestamp;
     }
@@ -99,12 +100,12 @@ impl AnvilNextBlockEnv for NextBlockEnvAttributes {
 }
 
 /// Execution payloads whose raw transactions the engine EVM config can decode.
-pub trait AnvilExecutionPayload {
+pub trait AnvilExecutionPayload<Net = ()> {
     /// Returns the encoded transactions of the payload.
     fn raw_transactions(&self) -> Vec<Bytes>;
 }
 
-impl AnvilExecutionPayload for ExecutionData {
+impl<Net> AnvilExecutionPayload<Net> for ExecutionData {
     fn raw_transactions(&self) -> Vec<Bytes> {
         self.payload.transactions().clone()
     }
@@ -386,7 +387,7 @@ impl<E, DB> AnvilEvm<E, DB> {
 
 /// An EVM factory whose EVMs may collect the `console.log` calls of the transaction they
 /// execute. A network whose EVM factory cannot be wrapped in [`AnvilEvmFactory`] collects none.
-pub trait ConsoleEvmFactory: EvmFactory {
+pub trait ConsoleEvmFactory<Net = ()>: EvmFactory {
     /// Whether the factory installs anvil's precompiles, as [`AnvilEvmFactory`] does. For a
     /// factory that does not, [`AnvilEvmConfig`] installs the `ecrecover` override on the EVMs it
     /// creates.
@@ -398,7 +399,7 @@ pub trait ConsoleEvmFactory: EvmFactory {
     ) -> Option<&ConsoleBuffer>;
 }
 
-impl<F> ConsoleEvmFactory for AnvilEvmFactory<F>
+impl<F, Net> ConsoleEvmFactory<Net> for AnvilEvmFactory<F>
 where
     F: EvmFactory<Precompiles = PrecompilesMap>,
 {
@@ -477,9 +478,9 @@ where
 /// engine payload execution, to apply the block environment overrides for the gas limit and the
 /// base fee, and to apply the [`EvmSettings`].
 #[derive(Debug, Clone)]
-pub struct AnvilEvmConfig<Evm: ConfigureEvm> {
+pub struct AnvilEvmConfig<Evm: ConfigureEvm, Net = ()> {
     inner: Evm,
-    executor_factory: AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>,
+    executor_factory: AnvilBlockExecutorFactory<Evm::BlockExecutorFactory, Net>,
     state: ImpersonationState,
     block_env: BlockEnvOverrides,
     settings: EvmSettings,
@@ -488,7 +489,7 @@ pub struct AnvilEvmConfig<Evm: ConfigureEvm> {
     sender_cache: Option<SenderRecoveryCache>,
 }
 
-impl<Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>> AnvilEvmConfig<Evm> {
+impl<Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv<Net>>, Net> AnvilEvmConfig<Evm, Net> {
     /// Applies the persistent block environment overrides, and the pending parent beacon block
     /// root, so the pending block shows the root the next mined block gets.
     fn next_block_attributes(&self, mut attributes: Evm::NextBlockEnvCtx) -> Evm::NextBlockEnvCtx {
@@ -502,7 +503,7 @@ impl<Evm: ConfigureEvm<NextBlockEnvCtx: AnvilNextBlockEnv>> AnvilEvmConfig<Evm> 
     }
 }
 
-impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
+impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>, Net> AnvilEvmConfig<Evm, Net> {
     /// Wraps the given EVM config.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
@@ -526,15 +527,16 @@ impl<Evm: ConfigureEvm<BlockExecutorFactory: Clone>> AnvilEvmConfig<Evm> {
     }
 
     /// Returns the wrapped EVM config.
-    #[cfg_attr(not(feature = "tempo"), expect(dead_code))]
     pub const fn inner(&self) -> &Evm {
         &self.inner
     }
 }
 
-impl<Evm, Factory> ConfigureEvm for AnvilEvmConfig<Evm>
+impl<Evm, Factory, Net: Clone + Debug + Send + Sync + Unpin + 'static> ConfigureEvm
+    for AnvilEvmConfig<Evm, Net>
 where
     Factory: ConsoleEvmFactory<
+            Net,
             Precompiles = PrecompilesMap,
             Tx: TransactionEnvMut
                     + FromRecoveredTx<SignedTxOf<Evm>>
@@ -542,7 +544,7 @@ where
             Spec: Into<SpecId>,
         >,
     Evm: ConfigureEvm<
-            NextBlockEnvCtx: AnvilNextBlockEnv,
+            NextBlockEnvCtx: AnvilNextBlockEnv<Net>,
             BlockExecutorFactory: Clone
                                       + Debug
                                       + Send
@@ -561,7 +563,7 @@ where
     type Primitives = Evm::Primitives;
     type Error = Evm::Error;
     type NextBlockEnvCtx = Evm::NextBlockEnvCtx;
-    type BlockExecutorFactory = AnvilBlockExecutorFactory<Evm::BlockExecutorFactory>;
+    type BlockExecutorFactory = AnvilBlockExecutorFactory<Evm::BlockExecutorFactory, Net>;
     type BlockAssembler = AnvilBlockAssembler<Evm::BlockAssembler>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
@@ -615,7 +617,7 @@ where
     }
     fn evm_with_env<DB: Database>(&self, db: DB, evm_env: EvmEnvFor<Self>) -> EvmFor<Self, DB> {
         let mut evm = self.evm_factory().create_evm(db, evm_env);
-        if !Factory::INSTALLS_PRECOMPILES {
+        if !<Factory as ConsoleEvmFactory<Net>>::INSTALLS_PRECOMPILES {
             install_ecrecover_override(evm.precompiles_mut(), &self.state);
         }
         evm
@@ -632,16 +634,18 @@ where
         I: InspectorFor<Self, DB>,
     {
         let mut evm = self.evm_factory().create_evm_with_inspector(db, evm_env, inspector);
-        if !Factory::INSTALLS_PRECOMPILES {
+        if !<Factory as ConsoleEvmFactory<Net>>::INSTALLS_PRECOMPILES {
             install_ecrecover_override(evm.precompiles_mut(), &self.state);
         }
         evm
     }
 }
 
-impl<Evm, Factory, Payload> ConfigureEngineEvm<Payload> for AnvilEvmConfig<Evm>
+impl<Evm, Factory, Payload, Net: Clone + Debug + Send + Sync + Unpin + 'static>
+    ConfigureEngineEvm<Payload> for AnvilEvmConfig<Evm, Net>
 where
     Factory: ConsoleEvmFactory<
+            Net,
             Precompiles = PrecompilesMap,
             Tx: TransactionEnvMut
                     + FromRecoveredTx<SignedTxOf<Evm>>
@@ -649,7 +653,7 @@ where
             Spec: Into<SpecId>,
         >,
     Evm: ConfigureEvm<
-            NextBlockEnvCtx: AnvilNextBlockEnv,
+            NextBlockEnvCtx: AnvilNextBlockEnv<Net>,
             BlockExecutorFactory: Clone
                                       + Debug
                                       + Send
@@ -664,7 +668,7 @@ where
                 Block = <Evm::Primitives as NodePrimitives>::Block,
             >,
         > + ConfigureEngineEvm<Payload>,
-    Payload: AnvilExecutionPayload,
+    Payload: AnvilExecutionPayload<Net>,
 {
     fn evm_env_for_payload(&self, payload: &Payload) -> Result<EvmEnvFor<Self>, Self::Error> {
         let mut env = self.inner.evm_env_for_payload(payload)?;
@@ -731,7 +735,8 @@ impl fmt::Debug for BlockReward {
 /// block, caps the number of transactions per block, takes back the block reward, and prints
 /// `console.log` output.
 #[derive(Debug, Clone)]
-pub struct AnvilBlockExecutorFactory<F> {
+pub struct AnvilBlockExecutorFactory<F, Net = ()> {
+    network: PhantomData<fn() -> Net>,
     inner: F,
     state: SharedAnvilState,
     block_env: BlockEnvOverrides,
@@ -739,7 +744,7 @@ pub struct AnvilBlockExecutorFactory<F> {
     reward: BlockReward,
 }
 
-impl<F> AnvilBlockExecutorFactory<F> {
+impl<F, Net> AnvilBlockExecutorFactory<F, Net> {
     /// Wraps the given factory.
     pub const fn new(
         inner: F,
@@ -748,15 +753,17 @@ impl<F> AnvilBlockExecutorFactory<F> {
         console: Option<ConsolePrinter>,
         reward: BlockReward,
     ) -> Self {
-        Self { inner, state, block_env, console, reward }
+        Self { inner, state, block_env, console, reward, network: PhantomData }
     }
 }
 
-impl<F> BlockExecutorFactory for AnvilBlockExecutorFactory<F>
+impl<F, Net: Clone + Debug + Send + Sync + Unpin + 'static> BlockExecutorFactory
+    for AnvilBlockExecutorFactory<F, Net>
 where
     F: BlockExecutorFactory<
             Transaction: TxHashRef,
             EvmFactory: ConsoleEvmFactory<
+                Net,
                 Precompiles = PrecompilesMap,
                 Tx: FromRecoveredTx<F::Transaction> + FromTxWithEncoded<F::Transaction>,
             >,
@@ -784,7 +791,8 @@ where
         I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>>,
     {
         let reward = (self.reward.0)(evm.block().number().saturating_to());
-        let console_buffer = F::EvmFactory::console::<DB, I>(&evm).cloned();
+        let console_buffer =
+            <F::EvmFactory as ConsoleEvmFactory<Net>>::console::<DB, I>(&evm).cloned();
         AnvilBlockExecutor {
             inner: self.inner.create_executor(evm, ctx),
             console_buffer,
@@ -939,7 +947,8 @@ impl InvalidTxError for BlockFull {
 
 /// Executor builder that wraps a network's executor builder in an [`AnvilEvmConfig`].
 #[derive(Debug, Clone)]
-pub struct AnvilExecutorBuilder<Inner> {
+pub struct AnvilExecutorBuilder<Inner, Net = ()> {
+    network: PhantomData<fn() -> Net>,
     /// The network's executor builder.
     pub inner: Inner,
     /// The shared impersonation state.
@@ -954,6 +963,21 @@ pub struct AnvilExecutorBuilder<Inner> {
     pub console: Option<ConsolePrinter>,
 }
 
+impl<Inner, Net> AnvilExecutorBuilder<Inner, Net> {
+    /// Wraps an executor builder with the node's shared anvil components.
+    pub fn new(inner: Inner, anvil: &AnvilComponents) -> Self {
+        Self {
+            inner,
+            state: anvil.impersonation.clone(),
+            block_env: anvil.block_env.clone(),
+            anvil_state: anvil.anvil_state.clone(),
+            settings: EvmSettings::from_config(&anvil.config),
+            console: anvil.console.clone(),
+            network: PhantomData,
+        }
+    }
+}
+
 /// The signed transaction type of an EVM config.
 type SignedTxOf<Evm> = <<Evm as ConfigureEvm>::Primitives as NodePrimitives>::SignedTx;
 
@@ -961,9 +985,11 @@ type SignedTxOf<Evm> = <<Evm as ConfigureEvm>::Primitives as NodePrimitives>::Si
 type ExecutionDataOf<Node> =
     <<<Node as FullNodeTypes>::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData;
 
-impl<Node, Inner, Factory> ExecutorBuilder<Node> for AnvilExecutorBuilder<Inner>
+impl<Node, Inner, Factory, Net: Clone + Debug + Send + Sync + Unpin + 'static> ExecutorBuilder<Node>
+    for AnvilExecutorBuilder<Inner, Net>
 where
     Factory: ConsoleEvmFactory<
+            Net,
             Precompiles = PrecompilesMap,
             Tx: TransactionEnvMut
                     + FromRecoveredTx<SignedTxOf<Inner::EVM>>
@@ -974,7 +1000,7 @@ where
     Inner: ExecutorBuilder<Node>,
     Inner::EVM: ConfigureEvm<
             Primitives = <Node::Types as NodeTypes>::Primitives,
-            NextBlockEnvCtx: AnvilNextBlockEnv,
+            NextBlockEnvCtx: AnvilNextBlockEnv<Net>,
             BlockExecutorFactory: Clone
                                       + Debug
                                       + Send
@@ -989,9 +1015,9 @@ where
                 Block = BlockTy<Node::Types>,
             >,
         > + ConfigureEngineEvm<ExecutionDataOf<Node>>,
-    ExecutionDataOf<Node>: AnvilExecutionPayload,
+    ExecutionDataOf<Node>: AnvilExecutionPayload<Net>,
 {
-    type EVM = AnvilEvmConfig<Inner::EVM>;
+    type EVM = AnvilEvmConfig<Inner::EVM, Net>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
         Ok(AnvilEvmConfig::new(
@@ -1066,10 +1092,10 @@ impl<A> AnvilBlockAssembler<A> {
     }
 }
 
-impl<A, F> BlockAssembler<AnvilBlockExecutorFactory<F>> for AnvilBlockAssembler<A>
+impl<A, F, Net> BlockAssembler<AnvilBlockExecutorFactory<F, Net>> for AnvilBlockAssembler<A>
 where
     A: BlockAssembler<F>,
-    AnvilBlockExecutorFactory<F>: BlockExecutorFactory<
+    AnvilBlockExecutorFactory<F, Net>: BlockExecutorFactory<
             EvmFactory = F::EvmFactory,
             Transaction = F::Transaction,
             Receipt = F::Receipt,
@@ -1083,7 +1109,7 @@ where
         input: BlockAssemblerInput<
             '_,
             '_,
-            AnvilBlockExecutorFactory<F>,
+            AnvilBlockExecutorFactory<F, Net>,
             <Self::Block as reth_ethereum::primitives::Block>::Header,
         >,
     ) -> Result<Self::Block, BlockExecutionError> {

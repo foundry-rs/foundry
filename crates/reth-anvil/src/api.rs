@@ -16,7 +16,7 @@ use crate::{
     types::{ForkChoice, ForkUrl, ReorgOptions, ReorgParams, TransactionData, TransactionOrder},
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TxEip4844Variant, TxEnvelope,
+    Blob, BlockHeader, Header, Transaction, TxEip4844Variant, TxEnvelope,
     transaction::{TxEip4844WithSidecar, TxHashRef},
 };
 use alloy_dyn_abi::TypedData;
@@ -38,12 +38,12 @@ use alloy_rpc_types_eth::{
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
-use alloy_signer_local::PrivateKeySigner;
 use foundry_common::{
     provider::{ProviderBuilder, redact_url},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 use foundry_evm_core::{decode::RevertDecoder, utils::block_env_from_header};
+use foundry_primitives::FoundryHeader;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -78,37 +78,11 @@ use revm::{
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex as AsyncMutex;
-
-#[cfg(feature = "tempo")]
-use crate::network::tempo_storage::TempoStorage;
-#[cfg(feature = "tempo")]
-use alloy_consensus::transaction::SignerRecoverable;
-#[cfg(feature = "tempo")]
-use alloy_rlp::{Encodable as _, Header as RlpHeader, PayloadView};
-#[cfg(feature = "tempo")]
-use alloy_signer::SignerSync;
-#[cfg(feature = "tempo")]
-use foundry_evm_core::tempo::PATH_USD_ADDRESS;
-#[cfg(feature = "tempo")]
-use tempo_precompiles::{
-    NONCE_PRECOMPILE_ADDRESS,
-    nonce::NonceManager,
-    storage::{Handler, StorageCtx},
-    tip_fee_manager::{IFeeManager, TipFeeManager},
-    tip20::{ITIP20, TIP20Token},
-    tip20_factory::TIP20Factory,
-};
-#[cfg(feature = "tempo")]
-use tempo_primitives::{
-    TEMPO_TX_TYPE_ID, TempoTxEnvelope,
-    transaction::{FEE_PAYER_SIGNATURE_MARKER, TEMPO_EXPIRING_NONCE_KEY},
-};
-#[cfg(feature = "tempo")]
-use tempo_transaction_pool::validator::DEFAULT_AA_VALID_AFTER_MAX_SECS;
 
 /// The `anvil_*` RPC namespace, with the `hardhat_*` and `evm_*` aliases that anvil accepts.
 #[rpc(server, namespace = "anvil")]
@@ -329,36 +303,6 @@ pub trait AnvilApi<B: RpcObject, TxReq: RpcObject> {
     /// Applies a state dump on top of the current state. Nonces take the higher value.
     #[method(name = "loadState", aliases = ["hardhat_loadState"])]
     async fn anvil_load_state(&self, buf: Bytes) -> RpcResult<bool>;
-
-    /// Sets the balance of an account in a TIP-20 token. Tempo only.
-    #[method(name = "dealTIP20")]
-    async fn anvil_deal_tip20(
-        &self,
-        address: Address,
-        token_address: Address,
-        balance: U256,
-    ) -> RpcResult<()>;
-
-    /// Sets the token an account pays fees with. Tempo only.
-    #[method(name = "setFeeToken")]
-    async fn anvil_set_fee_token(&self, user: Address, token: Address) -> RpcResult<()>;
-
-    /// Sets the token a validator receives fees in. Tempo only.
-    #[method(name = "setValidatorFeeToken")]
-    async fn anvil_set_validator_fee_token(
-        &self,
-        validator: Address,
-        token: Address,
-    ) -> RpcResult<()>;
-
-    /// Adds Fee AMM liquidity for a token pair. Tempo only.
-    #[method(name = "setFeeAmmLiquidity")]
-    async fn anvil_set_fee_amm_liquidity(
-        &self,
-        user_token: Address,
-        validator_token: Address,
-        amount: U256,
-    ) -> RpcResult<()>;
 }
 
 /// The `evm_*` methods that have no `anvil_*` counterpart.
@@ -574,11 +518,6 @@ pub trait EthExtApi<
     #[method(name = "signTransaction")]
     async fn eth_sign_transaction(&self, request: TxReq) -> RpcResult<Bytes>;
 
-    /// Signs a sender-signed Tempo transaction as the node's fee payer and returns it, without
-    /// sending it. This is the sign-only mode of Tempo's fee payer service. Tempo only.
-    #[method(name = "signRawTransaction")]
-    async fn eth_sign_raw_transaction(&self, tx: Bytes) -> RpcResult<Bytes>;
-
     /// Fills the defaults of a transaction request and returns it with its unsigned encoding.
     #[method(name = "fillTransaction")]
     async fn eth_fill_transaction(&self, request: TxReq) -> RpcResult<FillTransaction<RawTx>>;
@@ -624,7 +563,18 @@ pub const CLIENT_VERSION: &str = concat!(env!("CARGO_PKG_NAME"), "/v", env!("CAR
 type HeaderOf<Provider> = <Provider as HeaderProvider>::Header;
 
 /// A transaction request, which may carry a batch of calls in place of one recipient.
-pub trait CallBatch {
+pub trait CallBatch<Net = ()> {
+    /// Checks that the request's transaction type belongs to its native RPC representation.
+    fn validate_type(&self) -> RpcResult<()>;
+
+    /// Merges request-specific call state with the caller's overrides.
+    ///
+    /// Requests whose nonce lives outside the account can supply the corresponding state
+    /// slot. Explicit caller overrides take precedence.
+    fn call_state_overrides(&self, overrides: Option<StateOverride>) -> Option<StateOverride> {
+        overrides
+    }
+
     /// Returns whether the request carries a batch of calls.
     fn has_calls(&self) -> bool {
         false
@@ -653,32 +603,22 @@ pub enum NonceLane {
     Storage(Address, U256),
 }
 
-impl CallBatch for TransactionRequest {}
-
-#[cfg(feature = "tempo")]
-impl CallBatch for tempo_alloy::rpc::TempoTransactionRequest {
-    fn has_calls(&self) -> bool {
-        !self.calls.is_empty()
-    }
-
-    fn signs_gas(&self) -> bool {
-        self.fee_payer_signature.is_some()
-    }
-
-    fn nonce_lane(&self, from: Address) -> NonceLane {
-        match self.nonce_key.filter(|key| !key.is_zero()) {
-            None => NonceLane::Account,
-            Some(TEMPO_EXPIRING_NONCE_KEY) => NonceLane::Expiring,
-            Some(key) => NonceLane::Storage(
-                NONCE_PRECOMPILE_ADDRESS,
-                NonceManager::new().nonces[from][key].slot(),
-            ),
+impl<Net> CallBatch<Net> for TransactionRequest {
+    fn validate_type(&self) -> RpcResult<()> {
+        // Keep the CLI hint for Tempo requests sent to the Ethereum RPC implementation.
+        if self.transaction_type == Some(0x76) {
+            return Err(invalid_params(
+                "tempo transaction received but is not supported.\n\nYou can use it by running anvil with '--tempo'.",
+            ));
         }
+        Ok(())
     }
 }
 
 /// Marks a request without `to` or calls as a contract creation, so the signer can build it.
-fn with_recipient<TxReq: AsMut<TransactionRequest> + CallBatch>(mut request: TxReq) -> TxReq {
+fn with_recipient<TxReq: AsMut<TransactionRequest> + CallBatch<Net>, Net>(
+    mut request: TxReq,
+) -> TxReq {
     if !request.has_calls() && request.as_mut().to.is_none() {
         request.as_mut().to = Some(TxKind::Create);
     }
@@ -798,7 +738,8 @@ pub struct NodeIdentity {
 
 /// Implementation of the `anvil_*` RPC namespace.
 #[derive(Debug, Clone)]
-pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
+pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec, Net = ()> {
+    network: PhantomData<fn() -> Net>,
     identity: NodeIdentity,
     relauncher: Relauncher,
     impersonation: ImpersonationState,
@@ -822,8 +763,6 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     /// Installs a log filter that reports the blocks after the current one; see
     /// `eth_newFilter`.
     new_filter: NewFilterHook,
-    /// The dev account that sponsors Tempo fee-payer requests, if any.
-    tempo_fee_payer: Option<PrivateKeySigner>,
     /// The chain spec's base fee rule for the block after a header.
     next_block_base_fee: NextBlockBaseFee<HeaderOf<Provider>>,
     /// Makes the pool drop the state it read at the tip, after an anvil state write.
@@ -833,6 +772,8 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec> {
     /// Whether the first block takes the genesis base fee; see
     /// `AnvilNetwork::FIRST_BLOCK_KEEPS_GENESIS_BASE_FEE`.
     first_block_keeps_genesis_base_fee: bool,
+    /// Converts a synthetic checkpoint header through the network's fork adapter.
+    checkpoint_header: fn(Header) -> FoundryHeader,
 }
 
 /// Makes the pool drop the state it read at the tip. Tempo's pool keeps the reads it made at a
@@ -911,7 +852,8 @@ impl NewFilterHook {
     }
 }
 
-impl<Pool, Provider: HeaderProvider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider: HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+    AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Spec: EthChainSpec<Header = HeaderOf<Provider>> + 'static,
 {
@@ -936,6 +878,7 @@ where
         provider: Provider,
         eth: Eth,
         new_filter: NewFilterHook,
+        checkpoint_header: fn(Header) -> FoundryHeader,
     ) -> Self {
         let next_block_base_fee = {
             let chain_spec = chain_spec.clone();
@@ -944,6 +887,7 @@ where
             }))
         };
         Self {
+            network: PhantomData,
             identity,
             relauncher,
             impersonation,
@@ -963,12 +907,24 @@ where
             eth,
             nonce_locks: Default::default(),
             new_filter,
-            tempo_fee_payer: None,
             next_block_base_fee,
             pool_refresh: None,
             pending_reset: None,
             first_block_keeps_genesis_base_fee: true,
+            checkpoint_header,
         }
+    }
+
+    /// Returns the native eth API, with the network's provider, pool, and request types.
+    pub const fn eth_api(&self) -> &Eth {
+        &self.eth
+    }
+
+    /// Applies state writes and invalidates pool and pending-state caches before returning.
+    pub fn update_state<R>(&self, update: impl FnOnce(&mut crate::state::AnvilState) -> R) -> R {
+        let result = update(&mut self.state.write());
+        self.refresh_pool();
+        result
     }
 
     /// Sets whether the first block takes the genesis base fee, as on Ethereum, or the fee the
@@ -989,16 +945,10 @@ where
         self.pending_reset = Some(reset);
         self
     }
-
-    /// Sets the dev account that sponsors Tempo fee-payer requests.
-    pub fn with_tempo_fee_payer(mut self, fee_payer: Option<PrivateKeySigner>) -> Self {
-        self.tempo_fee_payer = fee_payer;
-        self
-    }
 }
 
-impl<Pool, Provider: BlockNumReader + HeaderProvider, Eth, Spec>
-    AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider: BlockNumReader + HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+    AnvilRpc<Pool, Provider, Eth, Spec, Net>
 {
     fn best_block_number(&self) -> RpcResult<u64> {
         self.provider
@@ -1014,12 +964,13 @@ impl<Pool, Provider: BlockNumReader + HeaderProvider, Eth, Spec>
     }
 }
 
-impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+    AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: TransactionPool,
     Provider:
         BlockNumReader + HeaderProvider + TransactionsProvider + StateProviderFactory + StateDump,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch<Net>>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks,
 {
     async fn block_by_number(
@@ -1246,9 +1197,9 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static>
     AnvilApiServer<RpcBlock<Eth::NetworkTypes>, RpcTxReq<Eth::NetworkTypes>>
-    for AnvilRpc<Pool, Provider, Eth, Spec>
+    for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: TransactionPool + TransactionPoolExt + Send + Sync + 'static,
     Provider: BlockNumReader
@@ -1259,7 +1210,7 @@ where
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch<Net>>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks + Send + Sync + 'static,
 {
     async fn anvil_impersonate_account(&self, address: Address) -> RpcResult<()> {
@@ -1639,10 +1590,6 @@ where
         calldata.extend_from_slice(&[0u8; 12]);
         calldata.extend_from_slice(address.as_slice());
 
-        // A TIP-20 token keeps its balances in precompile storage, which no call reveals.
-        if self.is_tempo() && self.try_set_tip20_balance(address, token_address, balance)? {
-            return Ok(());
-        }
         let slot = self.find_erc20_storage_slot(token_address, calldata.into(), balance).await?;
         self.state.write().set_storage_at(token_address, slot, balance);
         Ok(())
@@ -1923,9 +1870,8 @@ where
                         .is_some_and(|ts| self.chain_spec.is_cancun_active_at_timestamp(ts)),
                     prague: timestamp
                         .is_some_and(|ts| self.chain_spec.is_prague_active_at_timestamp(ts)),
-                    tempo: self.is_tempo(),
                 };
-                state.synthesize_head(parent, forks);
+                state.synthesize_head(parent, forks, self.checkpoint_header);
             } else if state.head_block().is_none() {
                 return Err(internal_error(format!(
                     "Best hash not found for best number {number}"
@@ -1988,44 +1934,11 @@ where
         }
         Ok(true)
     }
-
-    async fn anvil_deal_tip20(
-        &self,
-        address: Address,
-        token_address: Address,
-        balance: U256,
-    ) -> RpcResult<()> {
-        if self.try_set_tip20_balance(address, token_address, balance)? {
-            Ok(())
-        } else {
-            Err(internal_error(format!("address {token_address} is not a deployed TIP-20 token")))
-        }
-    }
-
-    async fn anvil_set_fee_token(&self, user: Address, token: Address) -> RpcResult<()> {
-        self.set_fee_token(user, token)
-    }
-
-    async fn anvil_set_validator_fee_token(
-        &self,
-        validator: Address,
-        token: Address,
-    ) -> RpcResult<()> {
-        self.set_validator_fee_token(validator, token)
-    }
-
-    async fn anvil_set_fee_amm_liquidity(
-        &self,
-        user_token: Address,
-        validator_token: Address,
-        amount: U256,
-    ) -> RpcResult<()> {
-        self.set_fee_amm_liquidity(user_token, validator_token, amount)
-    }
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth, Spec> EvmApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static> EvmApiServer
+    for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: TransactionPool + TransactionPoolExt + Send + Sync + 'static,
     Provider: BlockNumReader
@@ -2036,7 +1949,7 @@ where
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: Default + CallBatch<Net>>>,
     Spec: EthChainSpec + EthereumHardforks + Hardforks + Send + Sync + 'static,
 {
     async fn evm_mine(&self, opts: Option<MineOptions>) -> RpcResult<String> {
@@ -2045,50 +1958,14 @@ where
     }
 }
 
-impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+    AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: TransactionPool,
     Provider: BlockNumReader + HeaderProvider + StateProviderFactory,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch>>,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch<Net>>>,
     Spec: EthChainSpec + EthereumHardforks,
 {
-    /// Makes a call or an estimate on Tempo run with the request's nonce, as anvil runs it, by
-    /// overriding the sender's nonce, or its lane's nonce, with it. Reth runs calls with the
-    /// state's nonce, and Tempo charges a new account's cost to a transaction with nonce zero.
-    #[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
-    fn with_request_nonce(
-        &self,
-        request: &RpcTxReq<Eth::NetworkTypes>,
-        state_overrides: Option<StateOverride>,
-    ) -> Option<StateOverride> {
-        #[cfg(feature = "tempo")]
-        if self.is_tempo()
-            && let Some(nonce) = request.as_ref().nonce
-            && let Some(from) = request.as_ref().from
-        {
-            let mut overrides = state_overrides.unwrap_or_default();
-            match request.nonce_lane(from) {
-                NonceLane::Account => {
-                    let account = overrides.entry(from).or_default();
-                    account.nonce.get_or_insert(nonce);
-                }
-                // An expiring nonce has no lane state.
-                NonceLane::Expiring => {}
-                NonceLane::Storage(address, slot) => {
-                    let account = overrides.entry(address).or_default();
-                    account
-                        .state_diff
-                        .get_or_insert_default()
-                        .entry(slot.into())
-                        .or_insert(U256::from(nonce).into());
-                }
-            }
-            return Some(overrides);
-        }
-        let _ = request;
-        state_overrides
-    }
-
     /// Returns state overrides that turn the latest state into the pending block's state, with
     /// the request's overrides on top. Reth runs a call on the pending block with the pending
     /// block's environment and the latest state; anvil runs it after the pool's transactions.
@@ -2165,14 +2042,14 @@ where
         &self,
         mut request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
-        self.ensure_network_supports(request.as_ref())?;
+        request.validate_type()?;
         if request.as_ref().from.is_none() {
             let accounts = EthApiServer::accounts(&self.eth)?;
             let from =
                 accounts.first().copied().ok_or_else(|| invalid_params("No Signer available"))?;
             request.as_mut().from = Some(from);
         }
-        Ok(with_recipient(request))
+        Ok(with_recipient::<_, Net>(request))
     }
 
     /// Estimates the gas of a call down to the exact limit; see `eth_estimateGas`.
@@ -2185,7 +2062,7 @@ where
     ) -> RpcResult<U256> {
         ensure_call_fee_cap(&self.eth, request.as_ref(), block, block_overrides.as_deref()).await?;
         let request = self.with_call_fees(request)?;
-        let state_overrides = self.with_request_nonce(&request, state_overrides);
+        let state_overrides = request.call_state_overrides(state_overrides);
         // Anvil checks the value against the balance before it runs the call.
         if let Some(from) = request.as_ref().from
             && let Some(value) = request.as_ref().value
@@ -2276,7 +2153,7 @@ where
 
     /// Fills missing fees: twice the base fee plus the suggested tip, or the gas price before
     /// London, as anvil does.
-    async fn fill_fees(&self, request: &mut RpcTxReq<Eth::NetworkTypes>) -> RpcResult<()> {
+    pub async fn fill_fees(&self, request: &mut RpcTxReq<Eth::NetworkTypes>) -> RpcResult<()> {
         if request.as_ref().gas_price.is_none() && request.as_ref().max_fee_per_gas.is_none() {
             match self.sealed_header(self.best_block_number()?)?.base_fee_per_gas() {
                 Some(base_fee) => {
@@ -2339,9 +2216,7 @@ where
         // Reth signs a blob transaction without its sidecar and the pool rejects it; the signed
         // transaction gets the sidecar back and goes in as a pooled transaction.
         let Some(sidecar) = request.as_ref().sidecar.clone() else {
-            return EthApiServer::send_transaction(&self.eth, request)
-                .await
-                .map_err(|error| self.pool_error(error));
+            return EthApiServer::send_transaction(&self.eth, request).await;
         };
         if request.as_ref().blob_versioned_hashes.is_none() {
             request.as_mut().blob_versioned_hashes = Some(sidecar.versioned_hashes().collect());
@@ -2375,15 +2250,6 @@ where
     /// through the pool insertion, as in [`Self::send`]. A transaction reth cannot decode fails
     /// in reth's handler with reth's error.
     async fn send_raw(&self, tx: Bytes) -> RpcResult<B256> {
-        // A Tempo transaction that asks for sponsorship gets the node's fee payer signature
-        // first, as the sign-and-relay mode of Tempo's fee payer service does.
-        let tx = if self.is_tempo() {
-            let tx = self.sponsor_raw_transaction(&tx, false)?;
-            self.ensure_tempo_valid_after(&tx)?;
-            tx
-        } else {
-            tx
-        };
         let recovered = recover_raw_transaction::<PooledTransactionVariant>(&tx).ok();
         let _guard = match &recovered {
             Some(recovered) => Some(self.nonce_lock(recovered.signer()).lock_owned().await),
@@ -2397,9 +2263,7 @@ where
                 recovered.max_fee_per_gas(),
             )?;
         }
-        let hash = EthApiServer::send_raw_transaction(&self.eth, tx)
-            .await
-            .map_err(|error| self.pool_error(error))?;
+        let hash = EthApiServer::send_raw_transaction(&self.eth, tx).await?;
         self.reset_pending_block();
         Ok(hash)
     }
@@ -2631,7 +2495,7 @@ where
         &self,
         mut request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<RpcTxReq<Eth::NetworkTypes>> {
-        self.ensure_network_supports(request.as_ref())?;
+        request.validate_type()?;
         request.as_mut().populate_blob_hashes();
         let Some(base_fee) = self.sealed_header(self.best_block_number()?)?.base_fee_per_gas()
         else {
@@ -2682,14 +2546,14 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static>
     EthExtApiServer<
         RpcTxReq<Eth::NetworkTypes>,
         RpcReceipt<Eth::NetworkTypes>,
         RpcTransaction<Eth::NetworkTypes>,
         RpcBlock<Eth::NetworkTypes>,
         TxTy<Eth::Primitives>,
-    > for AnvilRpc<Pool, Provider, Eth, Spec>
+    > for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: TransactionPool + 'static,
     Provider: BlockNumReader
@@ -2699,8 +2563,8 @@ where
         + Send
         + Sync
         + 'static,
-    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch>>,
-    <Eth::Evm as ConfigureEvm>::NextBlockEnvCtx: AnvilNextBlockEnv,
+    Eth: FullEthApiServer<NetworkTypes: RpcTypes<TransactionRequest: CallBatch<Net>>>,
+    <Eth::Evm as ConfigureEvm>::NextBlockEnvCtx: AnvilNextBlockEnv<Net>,
     Spec: EthChainSpec + EthereumHardforks + Send + Sync + 'static,
 {
     async fn eth_send_transaction(&self, request: RpcTxReq<Eth::NetworkTypes>) -> RpcResult<B256> {
@@ -2802,7 +2666,7 @@ where
         ensure_call_fee_cap(&self.eth, request.as_ref(), block, block_overrides.as_deref()).await?;
         self.ensure_call_funds(&request, block, state_overrides.as_ref())?;
         let request = self.with_call_fees(request)?;
-        let state_overrides = self.with_request_nonce(&request, state_overrides);
+        let state_overrides = request.call_state_overrides(state_overrides);
         let block_overrides = simulate::with_zero_blob_base_fee(request.as_ref(), block_overrides);
         EthApiServer::call(&self.eth, request, block, state_overrides, block_overrides)
             .await
@@ -2892,7 +2756,7 @@ where
                 .unwrap_or(simulate::DEFAULT_BLOCK_INTERVAL_SECS)
         });
         let base_fee = self.block_env.building_base_fee().or(self.block_env.next_base_fee());
-        simulate::simulate_v1(
+        simulate::simulate_v1::<_, Net>(
             &self.eth,
             payload,
             block,
@@ -3011,10 +2875,6 @@ where
             };
             request.as_mut().gas = Some(gas);
         }
-        // A Tempo transaction cannot be built without fees; reth signs what it is given.
-        if self.is_tempo() {
-            self.fill_fees(&mut request).await?;
-        }
         EthApiServer::sign_transaction(&self.eth, request).await
     }
 
@@ -3022,18 +2882,8 @@ where
         &self,
         request: RpcTxReq<Eth::NetworkTypes>,
     ) -> RpcResult<FillTransaction<TxTy<Eth::Primitives>>> {
-        self.ensure_network_supports(request.as_ref())?;
+        request.validate_type()?;
         EthApiServer::fill_transaction(&self.eth, request).await
-    }
-
-    async fn eth_sign_raw_transaction(&self, tx: Bytes) -> RpcResult<Bytes> {
-        if !self.is_tempo() {
-            return Err(tempo_only());
-        }
-        if tx.is_empty() {
-            return Err(invalid_params("empty transaction data"));
-        }
-        self.sponsor_raw_transaction(&tx, true)
     }
 
     async fn eth_coinbase(&self) -> RpcResult<Address> {
@@ -3075,7 +2925,7 @@ where
         state_override: Option<StateOverride>,
     ) -> RpcResult<AccessListResult> {
         let state_override = self.with_pending_state(block, state_override).await?;
-        let state_override = self.with_request_nonce(&request, state_override);
+        let state_override = request.call_state_overrides(state_override);
         EthApiServer::create_access_list(&self.eth, request, block, state_override).await
     }
 
@@ -3145,7 +2995,8 @@ where
         if !impersonated {
             self.impersonation.impersonate(from);
         }
-        let result = EthApiServer::send_transaction(&self.eth, with_recipient(request)).await;
+        let result =
+            EthApiServer::send_transaction(&self.eth, with_recipient::<_, Net>(request)).await;
         if !impersonated {
             self.impersonation.stop_impersonating(from);
         }
@@ -3154,7 +3005,8 @@ where
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth, Spec> PersonalApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static> PersonalApiServer
+    for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: Send + Sync + 'static,
     Provider: HeaderProvider + Send + Sync + 'static,
@@ -3218,7 +3070,8 @@ fn ensure_chain_id(request: &TransactionRequest, chain_id: u64) -> RpcResult<()>
 }
 
 #[async_trait]
-impl<Pool, Provider, Eth, Spec> Web3ExtApiServer for AnvilRpc<Pool, Provider, Eth, Spec>
+impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static> Web3ExtApiServer
+    for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Pool: Send + Sync + 'static,
     Provider: HeaderProvider + Send + Sync + 'static,
@@ -3230,247 +3083,9 @@ where
     }
 }
 
-impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
-where
-    Provider: BlockNumReader + HeaderProvider + StateProviderFactory,
-    Spec: EthChainSpec,
+impl<Pool, Provider: HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+    AnvilRpc<Pool, Provider, Eth, Spec, Net>
 {
-    /// Sets the balance of an account in a TIP-20 token, and returns whether the token is a
-    /// TIP-20 token. Tempo only.
-    fn try_set_tip20_balance(
-        &self,
-        address: Address,
-        token_address: Address,
-        balance: U256,
-    ) -> RpcResult<bool> {
-        #[cfg(feature = "tempo")]
-        {
-            self.with_tempo_storage(|| {
-                if !TIP20Factory::new().is_tip20(token_address)? {
-                    return Ok(false);
-                }
-                TIP20Token::from_address(token_address)?.balances[address].write(balance)?;
-                Ok(true)
-            })
-        }
-        #[cfg(not(feature = "tempo"))]
-        {
-            let _ = (address, token_address, balance);
-            Err(tempo_only())
-        }
-    }
-
-    /// Sets the token an account pays fees with. Tempo only.
-    fn set_fee_token(&self, user: Address, token: Address) -> RpcResult<()> {
-        #[cfg(feature = "tempo")]
-        {
-            self.with_tempo_storage(|| {
-                TipFeeManager::new().set_user_token(user, IFeeManager::setUserTokenCall { token })
-            })
-        }
-        #[cfg(not(feature = "tempo"))]
-        {
-            let _ = (user, token);
-            Err(tempo_only())
-        }
-    }
-
-    /// Sets the token a validator receives fees in. Tempo only.
-    fn set_validator_fee_token(&self, validator: Address, token: Address) -> RpcResult<()> {
-        #[cfg(feature = "tempo")]
-        {
-            // The zero beneficiary passes the check that the validator is not the beneficiary.
-            self.with_tempo_storage(|| {
-                TipFeeManager::new().set_validator_token(
-                    validator,
-                    IFeeManager::setValidatorTokenCall { token },
-                    Address::ZERO,
-                )
-            })
-        }
-        #[cfg(not(feature = "tempo"))]
-        {
-            let _ = (validator, token);
-            Err(tempo_only())
-        }
-    }
-
-    /// Mints both tokens to a helper account and adds them as Fee AMM liquidity for the pair.
-    /// Tempo only.
-    fn set_fee_amm_liquidity(
-        &self,
-        user_token: Address,
-        validator_token: Address,
-        amount: U256,
-    ) -> RpcResult<()> {
-        #[cfg(feature = "tempo")]
-        {
-            // From T3 on, liquidity cannot go to the zero address.
-            let admin = Address::repeat_byte(0x11);
-            self.with_tempo_storage(|| {
-                for token in [user_token, validator_token] {
-                    let mut token = TIP20Token::from_address(token)?;
-                    token.grant_role_internal(admin, TIP20Token::issuer_role())?;
-                    token.mint(admin, ITIP20::mintCall { to: admin, amount })?;
-                }
-                TipFeeManager::new().mint(admin, user_token, validator_token, amount, admin)?;
-                Ok(())
-            })
-        }
-        #[cfg(not(feature = "tempo"))]
-        {
-            let _ = (user_token, validator_token, amount);
-            Err(tempo_only())
-        }
-    }
-
-    /// Runs Tempo precompile logic over the latest state, and applies its storage and code
-    /// writes as anvil state writes for the next block.
-    #[cfg(feature = "tempo")]
-    fn with_tempo_storage<R>(
-        &self,
-        f: impl FnOnce() -> tempo_precompiles::error::Result<R>,
-    ) -> RpcResult<R> {
-        self.run_tempo_storage(f, true)
-    }
-
-    /// Runs Tempo precompile logic over the latest state, and applies its writes when `apply`
-    /// is set.
-    #[cfg(feature = "tempo")]
-    fn run_tempo_storage<R>(
-        &self,
-        f: impl FnOnce() -> tempo_precompiles::error::Result<R>,
-        apply: bool,
-    ) -> RpcResult<R> {
-        if !self.is_tempo() {
-            return Err(tempo_only());
-        }
-        let hardfork = self
-            .identity
-            .hardfork
-            .as_deref()
-            .and_then(|hardfork| hardfork.parse().ok())
-            .ok_or_else(|| internal_error("unknown Tempo hardfork"))?;
-        let base = self.provider.latest().map_err(|error| internal_error(error.to_string()))?;
-        let mut storage = TempoStorage::new(
-            Some(&*base),
-            self.chain_spec.chain_id(),
-            self.best_block_number()? + 1,
-            self.time.current_call_timestamp(),
-            hardfork,
-        );
-        let result = StorageCtx::enter(&mut storage, f)
-            .map_err(|error| internal_error(error.to_string()))?;
-        if !apply {
-            return Ok(result);
-        }
-        {
-            let mut state = self.state.write();
-            for (address, writes) in storage.into_writes() {
-                if let Some(code) = writes.code {
-                    state.set_code(address, reth_ethereum::primitives::Bytecode(code));
-                }
-                for (slot, value) in writes.storage {
-                    state.set_storage_at(address, slot.into(), value);
-                }
-            }
-        }
-        self.refresh_pool();
-        Ok(result)
-    }
-}
-
-impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
-where
-    Provider: BlockNumReader + HeaderProvider + StateProviderFactory,
-    Spec: EthChainSpec,
-{
-    /// Fee-payer signs a raw Tempo transaction that carries the sponsorship placeholder, as
-    /// Tempo's fee payer service does: the node's fee payer picks the fee token when the sender
-    /// left it open, and signs. With `sign_only`, the transaction must ask for sponsorship;
-    /// otherwise a transaction that does not ask for it comes back as is.
-    fn sponsor_raw_transaction(&self, raw: &Bytes, sign_only: bool) -> RpcResult<Bytes> {
-        #[cfg(feature = "tempo")]
-        {
-            // Fee payer service clients send the transaction with a `0x00` placeholder in the
-            // fee payer signature field.
-            let normalized = normalize_fee_payer_service_encoding(raw);
-            let mut data = normalized.as_deref().unwrap_or(raw);
-            let transaction = match TempoTxEnvelope::decode_2718(&mut data) {
-                Ok(TempoTxEnvelope::AA(transaction)) => transaction,
-                Ok(_) if sign_only => {
-                    return Err(invalid_params(
-                        "only Tempo (0x76) transactions can be fee-payer signed",
-                    ));
-                }
-                Err(_) if sign_only => {
-                    return Err(invalid_params("failed to decode signed transaction"));
-                }
-                _ => return Ok(raw.clone()),
-            };
-            match transaction.tx().fee_payer_signature {
-                Some(FEE_PAYER_SIGNATURE_MARKER) => {}
-                _ if !sign_only => return Ok(raw.clone()),
-                Some(_) => {
-                    return Err(invalid_params("transaction is already fee-payer signed"));
-                }
-                None => {
-                    return Err(invalid_params(
-                        "transaction does not request sponsorship; sign it with the fee payer \
-                         signature placeholder",
-                    ));
-                }
-            }
-            let sender = transaction.recover_signer().map_err(|_| {
-                invalid_params("transaction must be signed by the sender before fee-payer signing")
-            })?;
-            let Some(signer) = &self.tempo_fee_payer else {
-                return Err(invalid_params("no Tempo fee payer account available"));
-            };
-            let sponsor = signer.address();
-            if sponsor == sender {
-                return Err(invalid_params(format!(
-                    "Tempo fee payer {sponsor} must not equal the transaction sender"
-                )));
-            }
-            let (mut tx, sender_signature, _) = transaction.into_parts();
-            // The fee payer signature commits to the fee token, so the token comes first.
-            if tx.fee_token.is_none() {
-                let token = self
-                    .run_tempo_storage(
-                        || {
-                            TipFeeManager::new()
-                                .user_tokens(IFeeManager::userTokensCall { user: sponsor })
-                        },
-                        false,
-                    )
-                    .unwrap_or_default();
-                tx.fee_token = Some(if token.is_zero() { PATH_USD_ADDRESS } else { token });
-            }
-            let digest = tx.fee_payer_signature_hash(sender);
-            tx.fee_payer_signature = Some(
-                signer
-                    .sign_hash_sync(&digest)
-                    .map_err(|error| internal_error(error.to_string()))?,
-            );
-            Ok(TempoTxEnvelope::AA(tx.into_signed(sender_signature)).encoded_2718().into())
-        }
-        #[cfg(not(feature = "tempo"))]
-        {
-            if sign_only { Err(tempo_only()) } else { Ok(raw.clone()) }
-        }
-    }
-}
-
-impl<Pool, Provider, Eth, Spec> AnvilRpc<Pool, Provider, Eth, Spec>
-where
-    Provider: HeaderProvider,
-{
-    /// Returns whether the node runs the Tempo network.
-    fn is_tempo(&self) -> bool {
-        self.identity.network == Some("tempo")
-    }
-
     /// Makes the pool see the anvil state writes made since the tip.
     fn refresh_pool(&self) {
         if let Some(refresh) = &self.pool_refresh {
@@ -3485,101 +3100,4 @@ where
             reset.reset();
         }
     }
-
-    /// Rejects a Tempo transaction request on a node that does not run Tempo, as anvil does,
-    /// instead of running it as an Ethereum transaction.
-    fn ensure_network_supports(&self, request: &TransactionRequest) -> RpcResult<()> {
-        if !self.is_tempo() && request.transaction_type == Some(TEMPO_TRANSACTION_TYPE) {
-            return Err(invalid_params(
-                "tempo transaction received but is not supported.\n\nYou can use it by running \
-                 anvil with '--tempo'.",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Reports a pool rejection as anvil does: on Tempo, a fee payer short of fee tokens gets the
-    /// fee token shortfall, which reth reports as missing native funds.
-    fn pool_error(&self, error: ErrorObjectOwned) -> ErrorObjectOwned {
-        const INSUFFICIENT_FUNDS: &str = "insufficient funds for gas * price + value: have ";
-        if self.is_tempo()
-            && let Some(amounts) = error.message().strip_prefix(INSUFFICIENT_FUNDS)
-            && let Some((balance, required)) = amounts.split_once(" want ")
-        {
-            return ErrorObjectOwned::owned(
-                error.code(),
-                format!("insufficient fee token balance: have {balance}, need {required}"),
-                None::<()>,
-            );
-        }
-        error
-    }
-
-    /// Rejects a Tempo transaction whose `valid_after` lies more than Tempo's pool limit past the
-    /// time of the next block, as anvil's clock gives it.
-    #[cfg_attr(not(feature = "tempo"), expect(clippy::missing_const_for_fn))]
-    fn ensure_tempo_valid_after(&self, raw: &Bytes) -> RpcResult<()> {
-        #[cfg(feature = "tempo")]
-        if let Ok(TempoTxEnvelope::AA(transaction)) =
-            TempoTxEnvelope::decode_2718(&mut raw.as_ref())
-        {
-            let max_allowed =
-                self.time.current_call_timestamp().saturating_add(DEFAULT_AA_VALID_AFTER_MAX_SECS);
-            transaction.tx().ensure_valid_after(max_allowed).map_err(|error| {
-                ErrorObjectOwned::owned(TRANSACTION_REJECTED_CODE, error.to_string(), None::<()>)
-            })?;
-        }
-        #[cfg(not(feature = "tempo"))]
-        let _ = raw;
-        Ok(())
-    }
-}
-
-/// Returns the standard encoding of a Tempo transaction sent in the fee payer service encoding,
-/// which carries a `0x00` placeholder for the fee payer signature, or `None` for any other
-/// transaction.
-#[cfg(feature = "tempo")]
-fn normalize_fee_payer_service_encoding(raw: &[u8]) -> Option<Vec<u8>> {
-    let (tx_type, mut encoded_fields) = raw.split_first()?;
-    if *tx_type != TEMPO_TX_TYPE_ID {
-        return None;
-    }
-    let PayloadView::List(fields) = RlpHeader::decode_raw(&mut encoded_fields).ok()? else {
-        return None;
-    };
-    if !encoded_fields.is_empty() {
-        return None;
-    }
-    // The fee payer signature is the twelfth field of a Tempo transaction.
-    if fields.get(11).is_none_or(|field| *field != [0x00]) {
-        return None;
-    }
-
-    // The standard encoding of the placeholder signature, as Tempo encodes it.
-    let marker = FEE_PAYER_SIGNATURE_MARKER;
-    let mut marker_field = Vec::new();
-    RlpHeader { list: true, payload_length: marker.rlp_rs_len() + marker.v().length() }
-        .encode(&mut marker_field);
-    marker.write_rlp_vrs(&mut marker_field, marker.v());
-
-    let mut payload = Vec::new();
-    for (index, field) in fields.into_iter().enumerate() {
-        if index == 11 {
-            payload.extend_from_slice(&marker_field);
-        } else {
-            payload.extend_from_slice(field);
-        }
-    }
-    let mut normalized = vec![TEMPO_TX_TYPE_ID];
-    RlpHeader { list: true, payload_length: payload.len() }.encode(&mut normalized);
-    normalized.extend_from_slice(&payload);
-    Some(normalized)
-}
-
-/// The type of a Tempo transaction.
-const TEMPO_TRANSACTION_TYPE: u8 = 0x76;
-
-/// The error for a Tempo method on a node that does not run Tempo, as anvil reports it.
-fn tempo_only() -> ErrorObjectOwned {
-    internal_error("Not implemented")
 }
