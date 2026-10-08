@@ -18,6 +18,9 @@ use foundry_evm_core::{
 };
 use revm::context::ContextTr;
 
+#[cfg(feature = "monad")]
+use foundry_evm_core::FoundryChain;
+
 impl Cheatcode for activeForkCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -457,7 +460,7 @@ fn apply_context_update<FEN: FoundryEvmNetwork>(
     match context_update {
         foundry_evm_core::backend::ContextUpdate::Unchanged => {}
         foundry_evm_core::backend::ContextUpdate::Replace(chain_context) => {
-            *ecx.chain_mut() = chain_context;
+            ecx.chain_mut().apply_fork_position(chain_context);
             foundry_evm_core::evm::refresh_chain_journal(ecx);
         }
         foundry_evm_core::backend::ContextUpdate::Rebase => {
@@ -651,5 +654,133 @@ fn convert_to_bytes(token: &DynSolValue) -> DynSolValue {
         }
         DynSolValue::Address(addr) => DynSolValue::Bytes(addr.to_vec()),
         val => val.clone(),
+    }
+}
+
+#[cfg(all(test, feature = "monad"))]
+mod tests {
+    use super::*;
+    use foundry_evm_core::{
+        backend::{Backend, ContextUpdate},
+        evm::{EvmEnvFor, FoundryEvmFactory, MonadEvmNetwork},
+    };
+    use monad_revm::{
+        MonadChainContext, MonadHardfork, MonadJournalTr,
+        reserve_balance::tracker::ReserveBalanceInit,
+    };
+    use revm::{
+        context::CfgEnv,
+        inspector::NoOpInspector,
+        state::{Account, AccountInfo},
+    };
+
+    #[cfg(feature = "base")]
+    use foundry_evm_core::evm::BaseEvmNetwork;
+
+    #[cfg(feature = "optimism")]
+    use foundry_evm_core::evm::OpEvmNetwork;
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn optimism_fork_position_update_preserves_live_fees() {
+        let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
+        let mut evm = EvmFactoryFor::<OpEvmNetwork>::default().create_foundry_evm_with_inspector(
+            &mut db,
+            EvmEnvFor::<OpEvmNetwork>::default(),
+            NoOpInspector,
+        );
+        let ecx = evm.ctx_mut();
+        let chain = ecx.chain_mut();
+        chain.l2_block = Some(U256::from(42));
+        chain.l1_base_fee = U256::from(123);
+        chain.operator_fee_scalar = Some(U256::from(7));
+        chain.operator_fee_constant = Some(U256::from(11));
+        chain.tx_l1_cost = Some(U256::from(456));
+
+        for update in [
+            ContextUpdate::Unchanged,
+            ContextUpdate::Replace(Default::default()),
+            ContextUpdate::Rebase,
+        ] {
+            apply_context_update::<OpEvmNetwork>(ecx, update);
+            assert_eq!(ecx.chain().l2_block, Some(U256::from(42)));
+            assert_eq!(ecx.chain().l1_base_fee, U256::from(123));
+            assert_eq!(ecx.chain().operator_fee_scalar, Some(U256::from(7)));
+            assert_eq!(ecx.chain().operator_fee_constant, Some(U256::from(11)));
+            assert_eq!(ecx.chain().tx_l1_cost, Some(U256::from(456)));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn base_fork_position_update_preserves_live_fees() {
+        let mut db = Backend::<BaseEvmNetwork>::spawn(None).unwrap();
+        let mut evm = EvmFactoryFor::<BaseEvmNetwork>::default().create_foundry_evm_with_inspector(
+            &mut db,
+            EvmEnvFor::<BaseEvmNetwork>::default(),
+            NoOpInspector,
+        );
+        let ecx = evm.ctx_mut();
+        let chain = ecx.chain_mut();
+        chain.l2_block = Some(U256::from(42));
+        chain.l1_base_fee = U256::from(123);
+        chain.operator_fee_scalar = Some(U256::from(7));
+        chain.operator_fee_constant = Some(U256::from(11));
+        chain.tx_l1_cost = Some(U256::from(456));
+
+        for update in [
+            ContextUpdate::Unchanged,
+            ContextUpdate::Replace(Default::default()),
+            ContextUpdate::Rebase,
+        ] {
+            apply_context_update::<BaseEvmNetwork>(ecx, update);
+            assert_eq!(ecx.chain().l2_block, Some(U256::from(42)));
+            assert_eq!(ecx.chain().l1_base_fee, U256::from(123));
+            assert_eq!(ecx.chain().operator_fee_scalar, Some(U256::from(7)));
+            assert_eq!(ecx.chain().operator_fee_constant, Some(U256::from(11)));
+            assert_eq!(ecx.chain().tx_l1_cost, Some(U256::from(456)));
+        }
+    }
+
+    #[test]
+    fn monad_fork_position_update_replaces_chain_and_rebases_tracker() {
+        let sender = Address::with_last_byte(1);
+        let old_chain = MonadChainContext::default();
+        let new_chain = MonadChainContext {
+            parent_senders_and_authorities: [sender].into_iter().collect(),
+            ..Default::default()
+        };
+        let mut account =
+            Account::from(AccountInfo { balance: U256::from(12), ..Default::default() });
+        let mut db = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+        let mut env = EvmEnvFor::<MonadEvmNetwork>::default();
+        env.cfg_env = CfgEnv::new_with_spec(MonadHardfork::MonadNine);
+        let mut evm = EvmFactoryFor::<MonadEvmNetwork>::default()
+            .create_foundry_evm_with_inspector(&mut db, env, NoOpInspector);
+        let ecx = evm.ctx_mut();
+        ecx.journal_mut().reserve_balance_mut().init(ReserveBalanceInit {
+            chain: &old_chain,
+            spec: MonadHardfork::MonadNine,
+            sender,
+            effective_gas_price: 0,
+            gas_limit: 0,
+            sender_is_delegated: false,
+            sender_account: Some(&account),
+        });
+        account.info.balance = U256::from(9);
+        ecx.db_journal_inner_mut().1.state.insert(sender, account);
+
+        apply_context_update::<MonadEvmNetwork>(ecx, ContextUpdate::Unchanged);
+        assert_eq!(ecx.chain(), &old_chain);
+        assert!(!ecx.journal().reserve_balance().has_violation());
+
+        apply_context_update::<MonadEvmNetwork>(ecx, ContextUpdate::Replace(new_chain.clone()));
+        assert_eq!(ecx.chain(), &new_chain);
+        assert!(ecx.journal().reserve_balance().has_violation());
+
+        ecx.db_journal_inner_mut().1.state.get_mut(&sender).unwrap().info.balance = U256::from(12);
+        apply_context_update::<MonadEvmNetwork>(ecx, ContextUpdate::Rebase);
+        assert_eq!(ecx.chain(), &new_chain);
+        assert!(!ecx.journal().reserve_balance().has_violation());
     }
 }

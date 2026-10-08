@@ -92,6 +92,10 @@ impl FoundryChain<TxEnv> for MonadChainContext {
         tracker.rebase(self, journal.evm_state());
         journal.restore_reserve_balance(tracker);
     }
+
+    fn apply_fork_position(&mut self, replacement: Self) {
+        *self = replacement;
+    }
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {

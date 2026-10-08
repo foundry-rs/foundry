@@ -428,7 +428,9 @@ impl FoundryTransaction for TempoTxEnv {
 ///
 /// Every family that doesn't need chain metadata uses `()`.
 pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
-    /// Builds chain context for a standalone synthetic transaction.
+    /// Builds fresh chain context for a standalone synthetic transaction.
+    ///
+    /// This does not update the context of a transaction that is already executing.
     fn for_transaction(_tx: &Tx) -> Self {
         Self::default()
     }
@@ -449,6 +451,15 @@ pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
 
     /// Clears cached protocol fees after a synthetic transaction restores chain context.
     fn clear_transaction_fee_cache(&mut self) {}
+
+    /// Applies the fork-position portion of a prepared context to an executing transaction.
+    ///
+    /// Unlike fresh context construction, this must preserve unrelated live transaction state. The
+    /// default retains the existing context, including OP/Base's loaded L1 fees and cached cost.
+    /// Families with a live fork cursor override this to accept its replacement. This does not
+    /// start a transaction or clear fee caches; the caller refreshes the journal afterward.
+    #[cfg(feature = "monad")]
+    fn apply_fork_position(&mut self, _replacement: Self) {}
 }
 
 impl<Tx> FoundryChain<Tx> for () {}

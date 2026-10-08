@@ -174,6 +174,12 @@ with successful write-back. Inspector assembly stays with the adapter, and EVM f
 construction ownership. This shared operation still uses the existing Monad journal bridge; it
 is not a replacement for the deferred native journal, snapshot, and fork lifecycle migrations.
 
+The existing fork-update bridge applies live positions through
+[`FoundryChain::apply_fork_position`](../../crates/evm/core/src/env.rs), separately from fresh
+context construction and nested inheritance. This hook owns only native chain-state mutation;
+backend family guards, cursor ownership, and journal orchestration still await complete-owner
+migration.
+
 Isolated calls and `executeTransaction` share account-state preparation and settlement through
 [`prepare_child_state` and `merge_child_state`](../../crates/evm/core/src/evm/mod.rs).
 Their transaction context, environment restoration, and native journal handling remain distinct:
