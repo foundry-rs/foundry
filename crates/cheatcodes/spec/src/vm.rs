@@ -709,6 +709,14 @@ interface Vm {
 
     /// Stores a value to an address' transient storage slot.
     /// The value lasts until the end of the current transaction, like a value written with `TSTORE`.
+    /// With isolation enabled (the default), each top-level call from a test runs as its own
+    /// transaction with empty transient storage, so a value the test stored is not visible to that
+    /// call, even though a later `loadTransient` in the test still returns it. For the target to see
+    /// the value, store it and call the target inside the same call, for example through a helper.
+    /// Example usage, where `helper.storeAndCall` stores the value and then calls `target.f()`:
+    /// vm.storeTransient(address(target), slot, value);
+    /// target.f(); // With isolation, `f` reads 0 from `slot`.
+    /// helper.storeAndCall(address(target), slot, value); // `f` reads `value`.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function storeTransient(address target, bytes32 slot, bytes32 value) external;
 
