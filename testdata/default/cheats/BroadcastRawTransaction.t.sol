@@ -255,39 +255,91 @@ contract BroadcastRawTransactionTest is Test {
 
     function test_execute_signed_tx_that_reverts() public {
         vm.etch(FAILING_TARGET, hex"60006000fd");
-        executeFailingSignedTx(21_006);
+        executeFailingSignedTx(21_006, false, false);
     }
 
     function test_execute_signed_tx_that_halts() public {
         vm.etch(FAILING_TARGET, hex"fe");
-        executeFailingSignedTx(100_000);
+        executeFailingSignedTx(100_000, false, false);
+    }
+
+    function test_reverted_signed_tx_inside_call() public {
+        vm.etch(FAILING_TARGET, hex"600960005560006000fd");
+        executeFailingSignedTx(43_112, true, false);
+    }
+
+    function test_halted_signed_tx_inside_call() public {
+        vm.etch(FAILING_TARGET, hex"6009600055fe");
+        executeFailingSignedTx(100_000, true, false);
+    }
+
+    function test_reverted_signed_tx_inside_reverting_call() public {
+        vm.etch(FAILING_TARGET, hex"600960005560006000fd");
+        executeFailingSignedTx(43_112, true, true);
+    }
+
+    function test_halted_signed_tx_inside_reverting_call() public {
+        vm.etch(FAILING_TARGET, hex"6009600055fe");
+        executeFailingSignedTx(100_000, true, true);
+    }
+
+    function broadcastFromNestedCall(bytes calldata signedTx, bool revertParent) external {
+        revertedMintToken.mint(1, address(this));
+        vm.broadcastRawTransaction(signedTx);
+        assertEq(revertedMintToken.balanceOf(address(this)), 1);
+        if (revertParent) revert("parent reverted");
     }
 
     // Broadcasts a transfer of 17 wei to `FAILING_TARGET` and checks the failed transaction is
     // still charged while its value transfer is rolled back.
-    function executeFailingSignedTx(uint256 gasUsed) internal {
+    function executeFailingSignedTx(uint256 gasUsed, bool nested, bool revertParent) internal {
         vm.fee(1);
         vm.chainId(1);
         uint256 privateKey = 1;
         address sender = vm.addr(privateKey);
         vm.deal(sender, 1 ether);
 
+        bytes memory signedTx = signTransfer("");
+        if (revertParent) {
+            try this.broadcastFromNestedCall(signedTx, true) {
+                revert("expected parent revert");
+            } catch Error(string memory reason) {
+                assertEq(reason, "parent reverted");
+            }
+        } else if (nested) {
+            this.broadcastFromNestedCall(signedTx, false);
+        } else {
+            vm.broadcastRawTransaction(signedTx);
+        }
+
+        assertEq(vm.getNonce(sender), 1);
+        assertEq(sender.balance, 1 ether - gasUsed * 100);
+        assertEq(FAILING_TARGET.balance, 0);
+        assertEq(vm.load(FAILING_TARGET, bytes32(0)), bytes32(0));
+        assertEq(revertedMintToken.balanceOf(address(this)), nested && !revertParent ? 1 : 0);
+
+        // The next transaction must see the committed nonce and remain usable after the failure.
+        vm.etch(FAILING_TARGET, "");
+        vm.broadcastRawTransaction(signTransfer(hex"01"));
+        assertEq(vm.getNonce(sender), 2);
+        assertEq(sender.balance, 1 ether - (gasUsed + 21_000) * 100 - 17);
+        assertEq(FAILING_TARGET.balance, 17);
+    }
+
+    function signTransfer(bytes memory nonce) internal pure returns (bytes memory) {
         bytes[] memory fields = new bytes[](9);
+        fields[0] = nonce;
         fields[1] = hex"64"; // Gas price.
         fields[2] = hex"0186a0"; // Gas limit.
         fields[3] = abi.encodePacked(FAILING_TARGET);
         fields[4] = hex"11"; // Value.
         fields[6] = hex"01"; // Chain ID.
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, keccak256(vm.toRlp(fields)));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, keccak256(vm.toRlp(fields)));
         fields[6] = abi.encodePacked(v + 10); // EIP-155 replay-protected v for chain ID 1.
         fields[7] = trimLeadingZeros(r);
         fields[8] = trimLeadingZeros(s);
 
-        vm.broadcastRawTransaction(vm.toRlp(fields));
-
-        assertEq(vm.getNonce(sender), 1);
-        assertEq(sender.balance, 1 ether - gasUsed * 100);
-        assertEq(FAILING_TARGET.balance, 0);
+        return vm.toRlp(fields);
     }
 
     function trimLeadingZeros(bytes32 value) internal pure returns (bytes memory out) {
