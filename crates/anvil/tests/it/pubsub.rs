@@ -192,7 +192,7 @@ async fn test_sub_logs_reorg_removed() {
         .with_input(data);
     api.anvil_reorg(ReorgOptions {
         depth: 2,
-        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
     })
     .await
     .unwrap();

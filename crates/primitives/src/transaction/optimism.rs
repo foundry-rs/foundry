@@ -98,6 +98,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
                 unreachable!("EIP-8130 transaction in Optimism context")
             }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
+            FoundryTxEnvelope::Celo(_) => unreachable!("CIP-64 transaction in optimism context"),
         }
     }
 }

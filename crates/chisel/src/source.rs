@@ -92,7 +92,10 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         let c = self.repl_contract_hir().expect("REPL contract not found in HIR");
         let f = c
             .functions()
-            .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))
+            .find(|&f| {
+                let f = hir.function(f);
+                f.name.is_some_and(|n| n.as_str() == "run") && f.parameters.is_empty()
+            })
             .expect("`run()` function not found in REPL contract");
         hir.function(f).body.expect("`run()` function does not have a body")
     }
@@ -233,7 +236,10 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
             _ => None,
         })?;
         contract_ast.body.iter().find_map(|i| match &i.kind {
-            ItemKind::Function(f) if f.header.name.is_some_and(|n| n.as_str() == "run") => {
+            ItemKind::Function(f)
+                if f.header.name.is_some_and(|n| n.as_str() == "run")
+                    && f.header.parameters.is_empty() =>
+            {
                 f.body.as_ref()
             }
             _ => None,
