@@ -206,10 +206,14 @@ contract DeployCodeCreate2FactoryTest is Test {
 
     function testNestedPrankDeployCodeUsesFactory() public {
         DeployCodeCaller caller = new DeployCodeCaller();
-        address deployed = caller.deploy(true);
+        (address deployed, address created) = caller.deployThenCreate();
         assertEq(
             deployed,
             vm.computeCreate2Address(bytes32("nested"), keccak256(type(TestContract).creationCode), CREATE2_FACTORY)
+        );
+        assertEq(
+            created,
+            vm.computeCreate2Address(bytes32("after"), keccak256(type(TestContract).creationCode), address(caller))
         );
     }
 
@@ -241,6 +245,11 @@ contract DeployCodeCreate2FactoryTest is Test {
         assertEq(tx.origin, originalOrigin);
         address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         assertEq(address(new TestContract()), expected);
+        DeployCodeCaller caller = new DeployCodeCaller();
+        assertEq(
+            caller.create(),
+            vm.computeCreate2Address(bytes32("native"), keccak256(type(TestContract).creationCode), address(caller))
+        );
         address deployed = vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("recovery"));
         assertEq(
             deployed,
@@ -257,6 +266,16 @@ contract DeployCodeCaller is Test {
     function deploy(bool prank) external returns (address) {
         if (prank) vm.prank(address(1234));
         return vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("nested"));
+    }
+
+    function create() external returns (address) {
+        return address(new TestContract{salt: bytes32("native")}());
+    }
+
+    function deployThenCreate() external returns (address deployed, address created) {
+        vm.prank(address(1234));
+        deployed = vm.deployCode("cheats/DeployCode.t.sol:TestContract", bytes32("nested"));
+        created = address(new TestContract{salt: bytes32("after")}());
     }
 }
 
