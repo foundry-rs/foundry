@@ -9,6 +9,10 @@ on:
         description: Publish as a pre-release version
         type: boolean
         default: false
+      dry-run:
+        description: Check Marketplace publish rights without publishing
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}
@@ -45,8 +49,12 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
+      - name: Check Marketplace publish rights
+        if: inputs.dry-run
+        run: npx vsce verify-pat --azure-credential
       - name: Publish to the Visual Studio Marketplace
+        if: ${{ !inputs.dry-run }}
         run: npx vsce publish --packagePath bundle/forge.vsix --azure-credential ${PRE_RELEASE:+"$PRE_RELEASE"}
       - name: Publish to Open VSX
-        if: vars.OPEN_VSX_PUBLISH == 'true'
+        if: ${{ !inputs.dry-run && vars.OPEN_VSX_PUBLISH == 'true' }}
         run: npx ovsx publish bundle/forge.vsix --trusted-publishing ${PRE_RELEASE:+"$PRE_RELEASE"}

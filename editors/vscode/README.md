@@ -191,7 +191,8 @@ Marketplace does not accept a version twice. The workflow signs in to Azure with
 so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
 variables for a federated identity that trusts
 `repo:foundry-rs/foundry:environment:release` and is a member of the
-`paradigm` publisher. Select `pre-release` to publish a pre-release version.
+`paradigm` publisher. Select `pre-release` to publish a pre-release version, or
+`dry-run` to check the publish rights without publishing.
 
 The workflow also publishes to Open VSX with trusted publishing when the
 `release` environment sets `OPEN_VSX_PUBLISH` to `true`. Before enabling it,
