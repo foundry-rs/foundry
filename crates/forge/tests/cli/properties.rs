@@ -707,6 +707,14 @@ library Fee {
         ),
     )
     .unwrap();
+    // A handler assertion fails the campaign even when every predicate holds.
+    fs::write(
+        prj.root().join("handler.json"),
+        candidate(
+            "pragma solidity ^0.8.20;\nimport {Test} from \"forge-std/Test.sol\";\ncontract BrokenHandler {\n    uint256 public pokes;\n    function poke() public {\n        pokes += 1;\n        assert(false);\n    }\n}\n/// forge-config: default.invariant.runs = 8\n/// forge-config: default.invariant.depth = 8\ncontract HandlerInvariantTest is Test {\n    function setUp() public {\n        targetContract(address(new BrokenHandler()));\n    }\n    function invariant_one() public pure {}\n    function invariant_two() public pure {}\n}\n",
+        ),
+    )
+    .unwrap();
     fs::write(
         prj.root().join("seeded.json"),
         candidate(
@@ -771,6 +779,22 @@ Error: candidate check failed
   ],
   "possible_bugs": [
     "FeeInvariantTest::invariant_totalStaysZero (seed 1: assertion failed: 1 != 0; counterexample: [..]; seed 2: assertion failed: 3 != 0; counterexample: [..])"
+  ]
+}
+
+"#]]);
+    cmd.forge_fuse()
+        .args(["properties", "--check", "handler.json", "--seed", "1", "--seed", "2"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{
+  "passed": false,
+  "reasons": [
+    "HandlerInvariantTest::invariant_one failed on seed 1: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]",
+    "HandlerInvariantTest::invariant_one failed on seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]"
+  ],
+  "possible_bugs": [
+    "HandlerInvariantTest::invariant_one (seed 1: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..]; seed 2: handler test/generated/FeeCheck.t.sol:BrokenHandler::poke: panic: assertion failed (0x01); counterexample: [..])"
   ]
 }
 

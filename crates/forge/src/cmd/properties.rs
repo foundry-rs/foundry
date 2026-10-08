@@ -972,12 +972,27 @@ fn candidate_test_results(
             let result = TestResult::deserialize(result)
                 .wrap_err_with(|| format!("invalid result for {contract}::{test}"))?;
             let key = |name: &str| RerunFailure { contract: contract.clone(), test: name.into() };
+            // Handler assertion failures belong to the whole campaign, not to one predicate.
+            let handler_failures = result
+                .invariant_handler_failures
+                .iter()
+                .chain(result.invariant_failures.iter().filter(|f| f.predicate_name().is_none()))
+                .map(|failure| {
+                    format!(
+                        "handler {}: {}",
+                        failure.name(),
+                        failure_reason(failure.reason(), failure.counterexample())
+                    )
+                })
+                .collect::<Vec<_>>();
             if result.invariant_predicate_results.is_empty() {
                 let reason = result.reason.clone().or_else(|| {
                     let reasons = result
                         .invariant_failures
                         .iter()
+                        .filter(|failure| failure.predicate_name().is_some())
                         .map(|failure| failure_reason(failure.reason(), failure.counterexample()))
+                        .chain(handler_failures.iter().cloned())
                         .collect::<Vec<_>>();
                     (!reasons.is_empty()).then(|| reasons.join("; "))
                 });
@@ -986,7 +1001,9 @@ fn candidate_test_results(
                     (None, Some(counterexample)) => Some(failure_reason("", Some(counterexample))),
                     (None, None) => None,
                 };
-                results.push((key(test), result.status, reason));
+                let status =
+                    if handler_failures.is_empty() { result.status } else { TestStatus::Failure };
+                results.push((key(test), status, reason));
                 continue;
             }
             for predicate in &result.invariant_predicate_results {
@@ -1001,15 +1018,9 @@ fn candidate_test_results(
                 });
                 results.push((key(&predicate.name), predicate.status, reason));
             }
-            // Handler assertion failures belong to the campaign, not to one predicate.
-            for failure in result.invariant_failures.iter().filter(|f| f.predicate_name().is_none())
-            {
-                let reason = format!(
-                    "handler {}: {}",
-                    failure.name(),
-                    failure_reason(failure.reason(), failure.counterexample())
-                );
-                results.push((key(test), TestStatus::Failure, Some(reason)));
+            // One campaign result per seed, so the count of failing seeds stays correct.
+            if !handler_failures.is_empty() {
+                results.push((key(test), TestStatus::Failure, Some(handler_failures.join("; "))));
             }
         }
     }
