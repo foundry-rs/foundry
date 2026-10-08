@@ -11,7 +11,7 @@ use tokio::{
     },
     time::sleep,
 };
-use tracing::warn;
+use tracing::{error, warn};
 
 /// The block production mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,8 +29,8 @@ pub enum MiningMode {
 /// A request for the miner task.
 #[derive(Debug)]
 pub enum MinerRequest<H = Header> {
-    /// Builds and inserts one block. The sender, if any, receives the mined header.
-    Mine(Option<oneshot::Sender<Result<SealedHeader<H>, String>>>),
+    /// Builds and inserts one block. The sender receives the mined header.
+    Mine(oneshot::Sender<Result<SealedHeader<H>, String>>),
     /// Builds and inserts one block if the pool holds pending transactions.
     MineIfPending,
     /// Rewinds the chain head to the given canonical header.
@@ -103,11 +103,6 @@ impl<H> MiningController<H> {
         self.mode_tx.subscribe()
     }
 
-    /// Requests one block without waiting for it.
-    pub fn trigger(&self) {
-        let _ = self.requests.send(MinerRequest::Mine(None));
-    }
-
     /// Requests one block for the pending transactions without waiting for it.
     pub fn trigger_if_pending(&self) {
         let _ = self.requests.send(MinerRequest::MineIfPending);
@@ -117,7 +112,7 @@ impl<H> MiningController<H> {
     pub async fn mine_block(&self) -> Result<SealedHeader<H>, String> {
         let (tx, rx) = oneshot::channel();
         self.requests
-            .send(MinerRequest::Mine(Some(tx)))
+            .send(MinerRequest::Mine(tx))
             .map_err(|_| "the miner task has stopped".to_string())?;
         rx.await.map_err(|_| "the miner task has stopped".to_string())?
     }
@@ -178,8 +173,12 @@ pub async fn run_interval_mining_task<H>(mining: MiningController<H>) {
                         }
                     }
                     _ = sleep(duration) => {
-                        if matches!(*mode_rx.borrow(), MiningMode::Interval(_) | MiningMode::Mixed(_)) {
-                            mining.trigger();
+                        // Wait for the block, so blocks slower than the interval do not queue
+                        // requests that a switch to manual mining would still mine.
+                        if matches!(*mode_rx.borrow(), MiningMode::Interval(_) | MiningMode::Mixed(_))
+                            && let Err(error) = mining.mine_block().await
+                        {
+                            error!(target: "reth_anvil::miner", %error, "failed to mine block");
                         }
                     }
                 }

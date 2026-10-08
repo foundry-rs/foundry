@@ -114,16 +114,7 @@ impl<T: PayloadTypes> AnvilMiner<T> {
                     let result = self.advance().await;
                     (self.finish)(result.is_ok());
                     let mined = result.is_ok();
-                    match responder {
-                        Some(tx) => {
-                            let _ = tx.send(result.map_err(|error| error.to_string()));
-                        }
-                        None => {
-                            if let Err(error) = result {
-                                error!(target: "reth_anvil::miner", %error, "failed to mine block");
-                            }
-                        }
-                    }
+                    let _ = responder.send(result.map_err(|error| error.to_string()));
                     if mined {
                         self.idle = None;
                         self.follow_up().await;
