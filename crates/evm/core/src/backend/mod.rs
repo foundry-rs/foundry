@@ -1607,17 +1607,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: Option<&TxEnvFor<FEN>>,
+        _tx_env: Option<&TxEnvFor<FEN>>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         if !self.networks.is_monad() {
-            return self.roll_fork_to_transaction_inner(
-                id,
-                transaction,
-                evm_env,
-                tx_env,
-                journaled_state,
-            );
+            return self.roll_fork_to_transaction_inner(id, transaction, evm_env, journaled_state);
         }
 
         #[cfg(not(feature = "monad"))]
@@ -1632,7 +1626,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 self.get_block_number_and_block_for_transaction(id, transaction)?;
             let position = position.expect("Monad transaction target includes canonical position");
             let block_context = self.block_context_inputs(id, &block)?;
-            let context_update = if affects_active && let Some(tx) = tx_env {
+            let context_update = if affects_active && let Some(tx) = _tx_env {
                 let fork_position = ForkPosition::BeforeTransaction {
                     block: BlockNumHash::new(block.header().number(), block.header().hash),
                     transaction_index: position.index,
@@ -1729,7 +1723,6 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: &mut EvmEnvFor<FEN>,
-        _tx_env: Option<&TxEnvFor<FEN>>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         trace!(?id, ?transaction, "roll fork to transaction");
@@ -1739,32 +1732,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let TransactionForkTarget { fork_block, block, mined, position, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         #[cfg(feature = "monad")]
-        let block_context = if self.networks.is_monad() {
-            Some(self.block_context_inputs(id, &block)?)
-        } else {
-            None
-        };
-        #[cfg(feature = "monad")]
-        let context_update = if _affects_active
-            && let Some(context) = &block_context
-            && let Some(tx) = _tx_env
-        {
-            let fork_position = ForkPosition::BeforeTransaction {
-                block: BlockNumHash::new(block.header().number(), block.header().hash),
-                transaction_index: position
-                    .expect("Monad transaction target includes canonical position")
-                    .index,
-            };
-            ContextUpdate::Replace(Self::context_for_block_position(
-                context.clone(),
-                fork_position,
-                tx,
-            )?)
-        } else if _affects_active {
-            ContextUpdate::Unchanged
-        } else {
-            ContextUpdate::Rebase
-        };
+        let context_update =
+            if _affects_active { ContextUpdate::Unchanged } else { ContextUpdate::Rebase };
         #[cfg(not(feature = "monad"))]
         let context_update = std::marker::PhantomData;
 
@@ -1786,7 +1755,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 ReplayInputs { fork_id, forks, evm_env: replay_env, networks: self.networks },
                 &block,
                 #[cfg(feature = "monad")]
-                block_context.as_ref(),
+                None,
                 transaction,
                 journaled_state,
                 &persistent_accounts,
