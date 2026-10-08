@@ -8,10 +8,10 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then install `foundry.forge` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=foundry.forge)
+[Foundry](https://getfoundry.sh), then install `paradigm.forge` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge)
 or, for Cursor, VSCodium and other VS Code forks,
-[Open VSX](https://open-vsx.org/extension/foundry/forge).
+[Open VSX](https://open-vsx.org/extension/paradigm/forge).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
@@ -73,7 +73,7 @@ ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
 are never reinterpreted as Forge paths. The language ID `solidity`, `solarLsp.*`
 setting keys and `solar.*` commands remain unchanged. The extension ID is
-`foundry.forge`; `forge lsp` does not require a Marketplace installation.
+`paradigm.forge`; `forge lsp` does not require a Marketplace installation.
 
 ## Formatting
 
@@ -193,10 +193,10 @@ it to the Visual Studio Marketplace and Open VSX. Bump `version` in
 step signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credential`,
 so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
 variables for a federated identity that trusts
-`repo:foundry-rs/foundry:environment:release` and is a member of the `foundry`
-publisher. The Open VSX step uses trusted publishing, so the `foundry` namespace
-needs a trusted publisher for this workflow and the `release` environment in
-`foundry-rs/foundry`, registered at
+`repo:foundry-rs/foundry:environment:release` and is a member of the
+`paradigm` publisher. The Open VSX step uses trusted publishing, so the
+`paradigm` namespace needs a trusted publisher for this workflow and the
+`release` environment in `foundry-rs/foundry`, registered at
 <https://open-vsx.org/user-settings/trusted-publishers>. Select `pre-release` to
 publish a pre-release version.
 
