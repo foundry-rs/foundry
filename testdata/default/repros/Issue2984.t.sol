@@ -14,11 +14,19 @@ contract Issue2984Test is Test {
     }
 
     function testForkRevertSnapshot() public {
-        vm.revertToState(snapshot);
+        assertTrue(vm.revertToState(snapshot));
+        assertEq(vm.activeFork(), fork);
+        assertEq(block.number, 12880747);
     }
 
     function testForkSelectSnapshot() public {
         uint256 fork2 = vm.createSelectFork("avaxTestnet", 12880749);
+        assertTrue(fork2 != fork);
+        assertEq(vm.activeFork(), fork2);
+        assertEq(block.number, 12880749);
+        assertTrue(vm.revertToState(snapshot));
+        assertEq(vm.activeFork(), fork);
+        assertEq(block.number, 12880747);
     }
 }
 
