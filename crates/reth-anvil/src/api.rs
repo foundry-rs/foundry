@@ -578,11 +578,6 @@ pub trait EthExtApi<
     #[method(name = "fillTransaction")]
     async fn eth_fill_transaction(&self, request: TxReq) -> RpcResult<FillTransaction<RawTx>>;
 
-    /// Returns the native balance of an account. Tempo's API reports a placeholder for it;
-    /// anvil reports the balance.
-    #[method(name = "getBalance")]
-    async fn eth_get_balance(&self, address: Address, block: Option<BlockId>) -> RpcResult<U256>;
-
     /// Returns the coinbase of the next block: the override set by `anvil_setCoinbase`, else the
     /// genesis coinbase.
     #[method(name = "coinbase")]
@@ -1879,6 +1874,7 @@ where
                         .is_some_and(|ts| self.chain_spec.is_cancun_active_at_timestamp(ts)),
                     prague: timestamp
                         .is_some_and(|ts| self.chain_spec.is_prague_active_at_timestamp(ts)),
+                    tempo: self.is_tempo(),
                 };
                 state.synthesize_head(parent, forks);
             } else if state.head_block().is_none() {
@@ -1886,6 +1882,17 @@ where
                     "Best hash not found for best number {number}"
                 )));
             }
+            // The chain's accounts stay, as anvil loads a dump over its state: the dump sets the
+            // balance and the code, raises the nonce, and writes its storage slots.
+            let mut accounts = current.accounts;
+            for (address, record) in std::mem::take(&mut state.accounts) {
+                let account = accounts.entry(address).or_default();
+                account.nonce = account.nonce.max(record.nonce);
+                account.balance = record.balance;
+                account.code = record.code;
+                account.storage.extend(record.storage);
+            }
+            state.accounts = accounts;
             // The chain's blocks stay as history; the dump's blocks win at equal heights.
             let mut blocks = current.blocks;
             blocks.extend(state.blocks);
@@ -2866,13 +2873,6 @@ where
             self.fill_fees(&mut request).await?;
         }
         EthApiServer::sign_transaction(&self.eth, request).await
-    }
-
-    async fn eth_get_balance(&self, address: Address, block: Option<BlockId>) -> RpcResult<U256> {
-        if self.is_tempo() {
-            return self.balance_of(address, block, None);
-        }
-        EthApiServer::balance(&self.eth, address, block).await
     }
 
     async fn eth_fill_transaction(

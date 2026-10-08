@@ -576,6 +576,7 @@ reth-node-events = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-prune-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
+reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-stages-types = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }
 reth-storage-overlay = { git = "https://github.com/paradigmxyz/reth", rev = "5723a3f" }

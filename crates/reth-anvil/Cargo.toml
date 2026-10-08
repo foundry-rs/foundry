@@ -26,6 +26,7 @@ foundry-evm-core.workspace = true
 foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 foundry-fork-db.workspace = true
+foundry-primitives.workspace = true
 
 # reth
 reth-chain-state.workspace = true
@@ -83,6 +84,7 @@ op-alloy-rpc-types = { workspace = true, optional = true }
 # tempo
 alloy-rlp = { workspace = true, optional = true }
 reth-basic-payload-builder = { workspace = true, optional = true }
+reth-rpc-eth-types = { workspace = true, optional = true }
 tempo-alloy = { workspace = true, optional = true }
 tempo-chainspec = { workspace = true, optional = true }
 tempo-evm = { workspace = true, optional = true }
@@ -134,6 +136,7 @@ monad = [
 tempo = [
     "dep:alloy-rlp",
     "dep:reth-basic-payload-builder",
+    "dep:reth-rpc-eth-types",
     "dep:tempo-alloy",
     "dep:tempo-chainspec",
     "dep:tempo-evm",
@@ -171,7 +174,6 @@ alloy-rlp.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
 alloy-transport.workspace = true
 alloy-trie.workspace = true
-foundry-primitives.workspace = true
 foundry-test-utils.workspace = true
 futures.workspace = true
 jsonrpsee = { version = "0.26", features = ["http-client", "ws-client"] }

@@ -5,6 +5,7 @@ use alloy_eips::{eip4895::Withdrawals, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use eyre::{Result, WrapErr};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use foundry_primitives::FoundryHeader;
 use reth_ethereum::storage::errors::provider::ProviderResult;
 use revm::context::BlockEnv;
 use serde::{Deserialize, Serialize};
@@ -53,14 +54,16 @@ pub struct CheckpointForks {
     pub cancun: bool,
     /// Prague: the header has a requests hash.
     pub prague: bool,
+    /// Tempo: the header has the Tempo fields.
+    pub tempo: bool,
 }
 
 /// One block of a state dump.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableBlock {
-    /// The header.
+    /// The header: a Tempo header keeps its Tempo fields.
     #[serde(deserialize_with = "deserialize_header_compat")]
-    pub header: Header,
+    pub header: FoundryHeader,
     /// The transactions, in block order.
     #[serde(default)]
     pub transactions: Vec<SerializableTransactionType>,
@@ -258,7 +261,9 @@ const OPTIONAL_HEADER_FIELDS: [&str; 8] = [
 ];
 
 /// Fills in the optional fields a header from an older dump lacks.
-fn header_from_value(mut value: serde_json::Value) -> Result<Header, serde_json::Error> {
+fn header_from_value<H: serde::de::DeserializeOwned>(
+    mut value: serde_json::Value,
+) -> Result<H, serde_json::Error> {
     if let Some(header) = value.as_object_mut() {
         for field in OPTIONAL_HEADER_FIELDS {
             header.entry(field).or_insert(serde_json::Value::Null);
@@ -267,10 +272,11 @@ fn header_from_value(mut value: serde_json::Value) -> Result<Header, serde_json:
     serde_json::from_value(value)
 }
 
-/// Reads a header of a dump from an older anvil, which may lack the newer optional fields.
+/// Reads a header of a dump from an older anvil, which may lack the newer optional fields. A
+/// header with the Tempo fields reads as a Tempo header.
 fn deserialize_header_compat<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Header, D::Error> {
+) -> Result<FoundryHeader, D::Error> {
     header_from_value(serde_json::Value::deserialize(deserializer)?)
         .map_err(serde::de::Error::custom)
 }
@@ -389,7 +395,7 @@ impl SerializableState {
             "state dump has no block history; created a synthetic checkpoint block"
         );
         self.blocks.push(SerializableBlock {
-            header,
+            header: if forks.tempo { FoundryHeader::tempo(header) } else { header.into() },
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: forks.shanghai.then(Default::default),
@@ -496,7 +502,7 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test-data/state-dump.json");
         let dump: serde_json::Value = serde_json::from_reader(File::open(path).unwrap()).unwrap();
         let header = dump["blocks"][0]["header"].clone();
-        let filled = header_from_value(header.clone());
+        let filled = header_from_value::<Header>(header.clone());
         assert!(filled.is_ok(), "{:?}: {header}", filled.err());
     }
 

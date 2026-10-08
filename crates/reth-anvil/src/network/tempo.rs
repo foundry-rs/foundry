@@ -7,6 +7,7 @@
 
 use super::{
     AnvilAdapter, AnvilComponents, AnvilNetwork, NodeOf, Prepared,
+    tempo_eth::AnvilTempoEthApi,
     tempo_genesis::tempo_genesis_alloc,
     tempo_payload::{
         TempoAnvilEvmConfig, TempoAnvilPool, TempoDevPayloadBuilderBuilder, TempoPoolEvmConfig,
@@ -20,9 +21,10 @@ use crate::{
         AnvilExecutionPayload, AnvilExecutorBuilder, AnvilNextBlockEnv, ConsoleEvmFactory,
         EvmSettings,
     },
-    fork::{AnvilPrimitives, ForkBackend, ForkGenesisAccount, ForkNetwork, TxPosition},
+    fork::{AnvilPrimitives, ForkBackend, ForkGenesisAccount, ForkNetwork, TxPosition, dump_head},
     logging::{LoggingState, NodeInfoLayer},
     pending::{AnvilEthApiBuilder, AnvilPendingEnv},
+    state_dump::SerializableState,
     time::{AnvilPayloadAttributes, TimeManager},
 };
 use alloy_consensus::{BlockHeader, TxReceipt, transaction::Recovered};
@@ -33,6 +35,7 @@ use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionRe
 use alloy_primitives::{Address, B256, Bytes, U64, U256};
 use eyre::Result;
 use foundry_evm_hardforks::EthereumHardfork;
+use foundry_primitives::FoundryHeader;
 use reth_ethereum::{
     evm::primitives::ConfigureEvm,
     network::primitives::BasicNetworkPrimitives,
@@ -73,7 +76,7 @@ use tempo_node::{
     TempoNode, TempoPayloadTypes,
     engine::TempoEngineValidator,
     node::TempoExecutorBuilder,
-    rpc::{TempoEthApi, TempoEthApiBounds, TempoReceiptConverter},
+    rpc::{TempoEthApiBounds, TempoReceiptConverter},
 };
 use tempo_payload_types::{TempoExecutionData, TempoPayloadAttributes};
 use tempo_precompiles::{
@@ -127,13 +130,38 @@ impl AnvilNetwork for Tempo {
             if let Some(info) = fork.node_info() {
                 config.adopt_fork_identity(info);
             }
+            // A state dump whose head lies above the fork block continues at its head, with the
+            // dump's blocks above the fork block; one at or below it only overlays its accounts.
+            if config.init_state.as_ref().is_some_and(|state| {
+                state.head_number().is_some_and(|number| number > fork.block_number())
+            }) && let Some(mut state) = config.init_state.take()
+            {
+                config.ensure_dump_head(&mut state)?;
+                let head = dump_head::<TempoFork>(&state)?;
+                let fork = Arc::try_unwrap(fork)
+                    .map_err(|_| eyre::eyre!("the fork backend is shared"))?
+                    .into_dump_fork(&state, &head)?;
+                let chain_spec = tempo_dump_chain_spec(config, &head, &state, true)?;
+                config.init_state = Some(state);
+                return Ok(Prepared {
+                    chain_spec: Arc::new(chain_spec),
+                    fork: Some(Arc::new(fork)),
+                });
+            }
             let chain_spec = tempo_fork_chain_spec(config, fork.header(), &accounts)?;
             return Ok(Prepared { chain_spec: Arc::new(chain_spec), fork: Some(fork) });
         }
-        eyre::ensure!(
-            config.init_state.as_ref().is_none_or(|state| state.block.is_none()),
-            "loading a Tempo state dump with blocks is not supported yet"
-        );
+        // A state dump with a block environment continues at its head block, which becomes the
+        // genesis block; the blocks before it come from the dump.
+        if config.init_state.as_ref().is_some_and(|state| state.block.is_some()) {
+            let mut state = config.init_state.take().expect("checked above");
+            config.ensure_dump_head(&mut state)?;
+            let head = dump_head::<TempoFork>(&state)?;
+            let fork = ForkBackend::<TempoFork>::from_dump(config, &state, &head)?;
+            let chain_spec = tempo_dump_chain_spec(config, &head, &state, false)?;
+            config.init_state = Some(state);
+            return Ok(Prepared { chain_spec: Arc::new(chain_spec), fork: Some(fork) });
+        }
         Ok(Prepared { chain_spec: Arc::new(tempo_chain_spec(config)?), fork: None })
     }
 
@@ -216,6 +244,39 @@ fn tempo_fork_chain_spec(
     }
     let mut spec = TempoChainSpec::from_genesis(genesis);
     spec.inner.genesis_header = header.clone();
+    Ok(spec)
+}
+
+/// Builds the chain spec of a chain loaded from a state dump: the dump's head block is the
+/// genesis block, with the dump's accounts as the allocation. Without a fork, the allocation also
+/// gets the Tempo genesis accounts the dump lacks, so a dump of an Ethereum chain runs as a Tempo
+/// chain; a fork reads them from the remote chain.
+fn tempo_dump_chain_spec(
+    config: &NodeConfig,
+    head: &SealedHeader<TempoHeader>,
+    state: &SerializableState,
+    forked: bool,
+) -> Result<TempoChainSpec> {
+    let hardfork = config.tempo_hardfork_at(head.timestamp())?;
+    let mut genesis = config.dump_genesis(head.header(), state);
+    genesis.config = tempo_genesis_config(config.get_chain_id(), hardfork);
+    if forked {
+        // As for a fork without a dump, see `tempo_fork_chain_spec`.
+        if genesis.coinbase.is_zero() {
+            genesis.coinbase = TIP_FEE_MANAGER_ADDRESS;
+        }
+    } else {
+        let dev_accounts: Vec<Address> =
+            config.genesis_accounts.iter().map(|account| account.address()).collect();
+        let alloc =
+            tempo_genesis_alloc(config.get_chain_id(), genesis.timestamp, hardfork, &dev_accounts)
+                .map_err(|error| eyre::eyre!("failed to build the Tempo genesis: {error}"))?;
+        for (address, account) in alloc {
+            genesis.alloc.entry(address).or_insert(account);
+        }
+    }
+    let mut spec = TempoChainSpec::from_genesis(genesis);
+    spec.inner.genesis_header = head.clone();
     Ok(spec)
 }
 
@@ -405,7 +466,7 @@ where
     <<N as RpcNodeCore>::Evm as ConfigureEvm>::NextBlockEnvCtx:
         BuildPendingEnv<TempoHeader> + AnvilNextBlockEnv,
 {
-    type EthApi = TempoEthApi<N>;
+    type EthApi = AnvilTempoEthApi<N>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> Result<Self::EthApi> {
         let chain_spec = FullNodeComponents::provider(ctx.components).chain_spec();
@@ -416,7 +477,7 @@ where
             .map_converter(|_| RpcConverter::new(TempoReceiptConverter::new(chain_spec)).erased())
             .with_pending_env_builder(pending)
             .build();
-        Ok(TempoEthApi::new(eth_api))
+        Ok(AnvilTempoEthApi::new(eth_api))
     }
 }
 
@@ -587,6 +648,21 @@ impl ForkNetwork for TempoFork {
             };
         let tx: Recovered<TempoTxEnvelope> = response.inner;
         Ok(Some((tx.into_inner(), position)))
+    }
+
+    fn dump_header(header: &FoundryHeader) -> Result<TempoHeader, ProviderError> {
+        // A header from a dump of an Ethereum chain gets the Tempo fields as anvil projects it:
+        // the whole gas limit for general transactions, and a timestamp in whole seconds.
+        Ok(match header {
+            FoundryHeader::Tempo(header) => header.clone(),
+            FoundryHeader::Ethereum(header) => TempoHeader {
+                general_gas_limit: header.gas_limit,
+                shared_gas_limit: 0,
+                timestamp_millis_part: 0,
+                inner: header.clone(),
+                consensus_context: None,
+            },
+        })
     }
 }
 

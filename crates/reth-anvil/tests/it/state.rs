@@ -109,6 +109,23 @@ async fn can_load_state() {
     assert_eq!(num, U256::from(num_from_tag));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn load_state_with_blocks_keeps_accounts_missing_from_dump() {
+    let (source, _source_handle) = spawn(NodeConfig::test()).await;
+    source.mine_one().await.unwrap();
+    let state = source.serialized_state(false).await.unwrap();
+
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let kept = Address::random();
+    api.anvil_set_balance(kept, U256::from(1234)).await.unwrap();
+    api.anvil_set_storage_at(kept, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    assert_eq!(best_hash(&api).await, state.blocks.last().unwrap().header.hash_slow());
+    assert_eq!(api.balance(kept, None).await.unwrap(), U256::from(1234));
+    assert_eq!(api.storage_at(kept, U256::ZERO, None).await.unwrap(), B256::with_last_byte(1));
+}
+
 // <https://github.com/foundry-rs/foundry/issues/10331>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_load_state_continues_saved_timeline() {

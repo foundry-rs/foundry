@@ -44,6 +44,8 @@ pub mod monad;
 #[cfg(feature = "tempo")]
 pub mod tempo;
 #[cfg(feature = "tempo")]
+mod tempo_eth;
+#[cfg(feature = "tempo")]
 mod tempo_genesis;
 #[cfg(feature = "tempo")]
 mod tempo_payload;

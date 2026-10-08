@@ -210,13 +210,11 @@ each.
 | A pool builder that repeats `TempoPoolBuilder::build_pool` (`node.rs:772`) for the wrapped config. | The same. |
 | An assembler adapter around `TempoBlockAssembler`, which implements only `BlockAssembler<TempoEvmConfig>` (`crates/evm/src/assemble.rs:86`). | An assembler over any config whose block executor factory is Tempo's. |
 | No `console.log`, no `anvil_impersonateSignature` in `ecrecover` or EIP-7702 authorities, and no fork block hashes below the fork block: `TempoEvmConfig::new` builds `TempoEvmFactory::default()`, so the anvil EVM factory cannot wrap it. One test is ignored for this. | A constructor that takes an EVM factory. |
-| No pending block: `TempoEthApi` returns `PendingBlockKind::None`. Calls at `pending` still run on anvil's next block environment. Two tests are ignored for this. | A configurable pending block kind on `TempoEthApi`. |
-| `eth_getBalance` is anvil's: `TempoEthApi` reports `NATIVE_BALANCE_PLACEHOLDER` (`crates/node/src/rpc/mod.rs:351`), and a fork reads accounts with `eth_getAccountInfo`, as anvil does. | None needed; anvil reports the native balance on purpose. |
+| A copy of `TempoEthApi` (`tempo_eth.rs`, about 300 lines): Tempo's returns `PendingBlockKind::None`, reports `NATIVE_BALANCE_PLACEHOLDER` for native balances (`crates/node/src/rpc/mod.rs:351`), and simulates every AA call with a zero hash and one shared identifier (`crates/alloy/src/rpc/revm_compat.rs:68,94`), so two expiring nonce calls in one bundle collide. The copy builds pending blocks, reports balances, and hashes each simulated expiring nonce call by its request. A fork reads accounts with `eth_getAccountInfo`, as anvil does. | A pending block kind and a balance policy on `TempoEthApi`, and a unique identifier per simulated call. |
 | A pool-only EVM config (`TempoPoolEvmConfig`): the pool validates against the block anvil mines next, at anvil's clock, and skips the fee balance check when pool balance checks are off. The validator still bounds `valid_before` by the tip timestamp (`crates/transaction-pool/src/validator.rs:210`), and `valid_after` by the wall clock, which reth-anvil lifts and checks against anvil's clock at its API instead. | A clock the node can give the validator. |
 | A pool refresh after anvil state writes: the validator keeps the state it read at the tip until the next block (`validator.rs:399`), so reth-anvil replays the tip to the pool. The 2D nonce pool still learns lane changes only from blocks. | A way to drop the validator's read cache. |
 | Calls, estimates, and access lists run with the request's nonce through a state override: reth drops the request's nonce for calls (`crates/rpc/rpc-eth-api/src/helpers/call.rs:895`), and Tempo charges a new account's cost to nonce zero. | A reth option to keep the request's nonce. |
 | Simulated and sent call batches keep no create target: reth's `resolve_transaction` and anvil's request filling mark a request without `to` as a creation, which adds a create call to a Tempo batch. | A reth hook for the default kind of a request. |
-| Two expiring nonce calls in one `eth_callMany` bundle collide: Tempo simulates every AA call with a zero transaction hash (`crates/alloy/src/rpc/revm_compat.rs:94`). Two tests are ignored for this. | A unique hash per simulated call. |
 
 Behavior that follows Tempo instead of anvil's emulation of it:
 
@@ -224,9 +222,6 @@ Behavior that follows Tempo instead of anvil's emulation of it:
   instead of `native value transfer not allowed in Tempo mode`, `invalid chain ID` instead of
   `invalid chain id for signer`, and Tempo's intrinsic gas and `valid_before` messages. A fee
   token shortfall keeps anvil's `insufficient fee token balance` message.
-- A Tempo chain stores Tempo headers only, so a loaded Ethereum dump cannot add Ethereum blocks
-  to its history (one test ignored), and loading a Tempo dump with blocks at launch is not
-  supported yet.
 - The dev chain's epoch length is `u64::MAX`, so no block ends an epoch: from T8 on, the last
   block of an epoch must carry a key generation outcome, which a dev chain has none of.
 

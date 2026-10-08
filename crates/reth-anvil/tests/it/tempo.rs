@@ -172,7 +172,6 @@ fn anvil_binary() -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Tempo's eth API builds no pending block (`PendingBlockKind::None`), so the pending header is null; see UPSTREAM.md"]
 async fn can_get_tempo_header_by_number() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.mine_one().await.unwrap();
@@ -210,7 +209,6 @@ async fn tempo_new_heads_subscription_returns_full_header() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Tempo's eth API builds no pending block (`PendingBlockKind::None`), so the pending header is null; see UPSTREAM.md"]
 async fn tempo_rpc_block_hashes_match_canonical_headers() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.mine_one().await.unwrap();
@@ -251,8 +249,6 @@ async fn tempo_rpc_block_hashes_match_canonical_headers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "a reth Tempo chain stores Tempo headers only, so a loaded Ethereum dump cannot add \
-            Ethereum blocks to its history"]
 async fn tempo_rpc_projects_legacy_ethereum_headers() {
     let (source_api, _source_handle) = spawn(NodeConfig::test()).await;
     source_api.mine_one().await.unwrap();
@@ -261,7 +257,9 @@ async fn tempo_rpc_projects_legacy_ethereum_headers() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
 
-    let legacy_hash = state.blocks[0].header.hash_slow();
+    let stored_header = &state.blocks.iter().find(|block| block.header.number == 1).unwrap().header;
+    assert!(stored_header.as_tempo().is_none());
+    let legacy_hash = stored_header.hash_slow();
 
     let provider = handle.http_provider();
     let header: TempoHeaderResponse =
@@ -275,6 +273,55 @@ async fn tempo_rpc_projects_legacy_ethereum_headers() {
         provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
     assert_eq!(child.parent_hash(), legacy_hash);
     assert_eq!(child.hash, child.as_ref().hash_slow());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tempo_state_dump_with_blocks_round_trips() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    let source = source_handle.http_provider();
+    let from = source_handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let transfer = TransactionRequest::default().from(from).to(PATH_USD).with_input(
+        IERC20::new(PATH_USD, &source).transfer(recipient, U256::from(1000)).calldata().clone(),
+    );
+    let receipt = source
+        .send_transaction(WithOtherFields::new(transfer))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+    source_api.mine_one().await.unwrap();
+    let state = source_api.serialized_state(false).await.unwrap();
+    let head: TempoHeaderResponse =
+        source.client().request("eth_getHeaderByNumber", ("latest",)).await.unwrap();
+
+    for at_runtime in [false, true] {
+        let (api, handle) = if at_runtime {
+            let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+            api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+            (api, handle)
+        } else {
+            spawn(NodeConfig::test_tempo().with_init_state(Some(state.clone()))).await
+        };
+        let provider = handle.http_provider();
+        let loaded: TempoHeaderResponse =
+            provider.client().request("eth_getHeaderByNumber", ("latest",)).await.unwrap();
+        assert_eq!(loaded.hash, head.hash);
+        assert_eq!(loaded.as_ref(), head.as_ref());
+        let loaded_receipt =
+            provider.get_transaction_receipt(receipt.transaction_hash()).await.unwrap().unwrap();
+        assert_eq!(loaded_receipt.block_hash(), receipt.block_hash());
+        let balance = IERC20::new(PATH_USD, &provider).balanceOf(recipient).call().await.unwrap();
+        assert_eq!(balance, U256::from(1000));
+
+        api.mine_one().await.unwrap();
+        let child: TempoHeaderResponse =
+            provider.client().request("eth_getHeaderByNumber", ("latest",)).await.unwrap();
+        assert_eq!(child.parent_hash(), head.hash);
+        assert_eq!(child.hash, child.as_ref().hash_slow());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3284,7 +3331,6 @@ async fn test_tempo_call_many_executes_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Tempo simulates every AA call with a zero transaction hash, so two expiring nonce calls in one bundle collide; see UPSTREAM.md"]
 async fn test_tempo_call_many_distinguishes_expiring_nonce_transactions() {
     for hardfork in [TempoHardfork::T1, TempoHardfork::T1B] {
         let (_api, handle) = spawn(
@@ -3350,7 +3396,6 @@ async fn test_tempo_trace_call_many_executes_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Tempo simulates every AA call with a zero transaction hash, so two expiring nonce calls in one bundle collide; see UPSTREAM.md"]
 async fn test_tempo_trace_call_many_distinguishes_expiring_nonce_transactions() {
     for hardfork in [TempoHardfork::T1, TempoHardfork::T1B] {
         let (_api, handle) = spawn(

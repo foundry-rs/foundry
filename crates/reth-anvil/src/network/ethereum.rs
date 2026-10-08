@@ -5,7 +5,7 @@ use crate::{
     config::{ForkSource, NodeConfig},
     engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, EvmSettings, PrecompileBuilder},
-    fork::{EthereumFork, ForkBackend, ForkInfo},
+    fork::{EthereumFork, ForkBackend, ForkInfo, dump_head},
     impersonation::ImpersonationState,
     logging::{LoggingState, NodeInfoLayer},
     pending::AnvilEthApiBuilder,
@@ -34,7 +34,6 @@ use reth_ethereum::{
             rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, RpcAddOns},
         },
     },
-    primitives::SealedHeader,
 };
 use std::{fmt, sync::Arc};
 use tower::layer::util::Identity;
@@ -122,8 +121,7 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
         }) && let Some(mut state) = config.init_state.take()
         {
             config.ensure_dump_head(&mut state)?;
-            let head =
-                SealedHeader::seal_slow(state.head_block().expect("ensured above").header.clone());
+            let head = dump_head::<EthereumFork>(&state)?;
             let fork = Arc::try_unwrap(fork)
                 .map_err(|_| eyre::eyre!("the fork backend is shared"))?
                 .into_dump_fork(&state, &head)?;
@@ -144,8 +142,7 @@ pub(super) async fn prepare(config: &mut NodeConfig) -> Result<Prepared<Ethereum
     if config.init_state.as_ref().is_some_and(|state| state.block.is_some()) {
         let mut state = config.init_state.take().expect("checked above");
         config.ensure_dump_head(&mut state)?;
-        let head = state.head_block().expect("ensured above").header.clone();
-        let head = SealedHeader::seal_slow(head);
+        let head = dump_head::<EthereumFork>(&state)?;
         let fork = ForkBackend::from_dump(config, &state, &head)?;
         let chain_spec = config.dump_chain_spec(&head, &state)?;
         config.init_state = Some(state);

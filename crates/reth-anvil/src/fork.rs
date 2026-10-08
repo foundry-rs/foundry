@@ -16,7 +16,7 @@ use crate::{
     types::ForkChoice,
 };
 use alloy_consensus::{
-    BlockHeader, TxReceipt, TxType,
+    BlockHeader, Header, TxReceipt, TxType,
     transaction::{SignerRecoverable, TransactionMeta, TxHashRef},
 };
 use alloy_eips::{BlockHashOrNumber, BlockId};
@@ -33,6 +33,7 @@ use foundry_fork_db::{
     AccountFetchPolicy, BlockchainDb, ForkBlock as ForkAnchor, SharedBackend,
     backend::BlockingMode, cache::BlockchainDbMeta,
 };
+use foundry_primitives::FoundryHeader;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorObjectOwned, error::INTERNAL_ERROR_CODE},
@@ -130,6 +131,19 @@ pub trait ForkNetwork: Send + Sync + 'static {
         Option<(<Self::Primitives as NodePrimitives>::SignedTx, Option<TxPosition>)>,
         ProviderError,
     >;
+
+    /// Converts the header of a dumped block into the node's header type.
+    fn dump_header(
+        header: &FoundryHeader,
+    ) -> Result<<Self::Primitives as NodePrimitives>::BlockHeader, ProviderError>;
+}
+
+/// Returns the head block header of a state dump in the node's header type. It keeps the dumped
+/// hash, also when the node's header type is not the dump's.
+pub fn dump_head<F: ForkNetwork>(state: &SerializableState) -> Result<SealedHeader<ForkHeader<F>>> {
+    let header =
+        &state.head_block().ok_or_else(|| eyre::eyre!("the state dump has no head block"))?.header;
+    Ok(SealedHeader::new(F::dump_header(header)?, header.hash_slow()))
 }
 
 /// Fetches the uncles of a remote block, which the block response names by hash only.
@@ -406,6 +420,10 @@ impl ForkNetwork for EthereumFork {
             return Ok(None);
         };
         Ok(Some((envelope.into(), position)))
+    }
+
+    fn dump_header(header: &FoundryHeader) -> Result<Header, ProviderError> {
+        Ok(header.inner().clone())
     }
 }
 
@@ -962,7 +980,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
         // One entry per block, as anvil stores them by hash.
         let mut dumped_blocks = HashMap::new();
         for block in &state.blocks {
-            let header: ForkHeader<F> = json_convert(&block.header)?;
+            let header = F::dump_header(&block.header)?;
             let transactions = block
                 .transactions
                 .iter()
@@ -973,8 +991,10 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 "ommers": block.ommers,
                 "withdrawals": block.withdrawals,
             }))?;
-            let sealed = SealedBlock::seal_slow(
+            // A dumped block keeps its hash, also when the node's header type is not the dump's.
+            let sealed = SealedBlock::new_unchecked(
                 <ForkBlock<F> as reth_ethereum::primitives::Block>::new(header, body),
+                block.header.hash_slow(),
             );
             let hash = sealed.hash();
             let mut block_senders = Vec::with_capacity(block.transactions.len());

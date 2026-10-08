@@ -1323,6 +1323,7 @@ impl NodeConfig {
                 shanghai: hardfork >= EthereumHardfork::Shanghai,
                 cancun: hardfork >= EthereumHardfork::Cancun,
                 prague: hardfork >= EthereumHardfork::Prague,
+                tempo: self.networks.is_tempo(),
             },
         );
         Ok(())
@@ -1337,15 +1338,26 @@ impl NodeConfig {
     ) -> Result<Arc<ChainSpec>> {
         let hardfork =
             self.ethereum_hardfork_at(Chain::from_id(self.get_chain_id()), header.timestamp)?;
+        let builder = ChainSpecBuilder::default()
+            .chain(Chain::from_id(self.get_chain_id()))
+            .genesis(self.dump_genesis(header.header(), state));
+        let mut spec = build_chain_spec(builder, hardfork, None);
+        spec.genesis_header = header.clone();
+        Ok(Arc::new(spec))
+    }
+
+    /// Builds the genesis of a chain loaded from a state dump: the dump's head block, with the
+    /// dump's accounts as the allocation.
+    pub fn dump_genesis(&self, header: &impl BlockHeader, state: &SerializableState) -> Genesis {
         let mut genesis = self
             .genesis
             .clone()
             .unwrap_or_default()
-            .with_timestamp(header.timestamp)
-            .with_gas_limit(header.gas_limit)
-            .with_difficulty(header.difficulty)
-            .with_base_fee(header.base_fee_per_gas.map(u128::from));
-        genesis.number = Some(header.number);
+            .with_timestamp(header.timestamp())
+            .with_gas_limit(header.gas_limit())
+            .with_difficulty(header.difficulty())
+            .with_base_fee(header.base_fee_per_gas().map(u128::from));
+        genesis.number = Some(header.number());
         genesis.config.chain_id = self.get_chain_id();
         let alloc = state.accounts.iter().map(|(address, record)| {
             let storage = (!record.storage.is_empty()).then(|| record.storage.clone());
@@ -1358,12 +1370,7 @@ impl NodeConfig {
                     .with_storage(storage),
             )
         });
-        genesis = genesis.extend_accounts(alloc);
-        let builder =
-            ChainSpecBuilder::default().chain(Chain::from_id(self.get_chain_id())).genesis(genesis);
-        let mut spec = build_chain_spec(builder, hardfork, None);
-        spec.genesis_header = SealedHeader::new(header.clone_header(), header.hash());
-        Ok(Arc::new(spec))
+        genesis.extend_accounts(alloc)
     }
 
     /// Builds the chain spec: the configured hardfork active from genesis, with the dev accounts
