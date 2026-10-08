@@ -216,6 +216,26 @@ contract MappingStorageHooksTest is Test {
         assertEq(target.balances(address(0xA11CE)), 0);
     }
 
+    function testCallbackInvalidPropagates() public {
+        bool success;
+        bytes memory data;
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onInvalid.selector);
+        (success, data) = address(target).call(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
+        vm.assertFalse(success);
+        assertEq(data, "");
+        assertEq(target.balances(address(0xA11CE)), 0);
+    }
+
+    function testCallbackOutOfGasPropagates() public {
+        bool success;
+        bytes memory data;
+        vm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onOutOfGas.selector);
+        (success, data) = address(target).call{gas: 1_000_000}(abi.encodeCall(target.setBalance, (address(0xA11CE), 3)));
+        vm.assertFalse(success);
+        assertEq(data, "");
+        assertEq(target.balances(address(0xA11CE)), 0);
+    }
+
     function testCallbackRejectsExternalSpoofing() public {
         bytes32[] memory callbackKeys = new bytes32[](1);
         (bool success,) = address(this)
@@ -288,6 +308,17 @@ contract MappingStorageHooksTest is Test {
     function onRevert(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
         revert("hook revert");
     }
+
+    function onInvalid(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        assembly {
+            invalid()
+        }
+    }
+
+    function onOutOfGas(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external onlyStorageHook {
+        while (true) {}
+    }
+
     function onRaw(address, bytes32, bytes32, bytes32) external onlyStorageHook {}
 
     function onZeroMemory(address, bytes32 slot, bytes32, bytes32[] calldata callbackKeys, bytes32, bytes32)
@@ -312,3 +343,6 @@ contract MappingStorageHooksTest is Test {
         }
     }
 }
+
+/// forge-config: default.isolate = false
+contract MappingStorageHooksNonIsolatedTest is MappingStorageHooksTest {}

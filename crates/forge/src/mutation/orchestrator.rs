@@ -492,7 +492,7 @@ fn filter_args_fingerprint(filter_args: &FilterArgs) -> FilterArgsFingerprint<'_
     }
 }
 
-fn project_relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
+pub(super) fn project_relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
     if path.is_relative() {
         return Some(path.to_path_buf());
     }

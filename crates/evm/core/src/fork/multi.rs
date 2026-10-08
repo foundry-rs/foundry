@@ -1226,7 +1226,8 @@ mod tests {
                 .with_from(handle.dev_accounts().next().unwrap())
                 .with_to(address)
                 .with_nonce(0)
-                .with_gas_limit(100_000)
+                // Enough for the EIP-8037 state gas of creating slot one.
+                .with_gas_limit(1_000_000)
                 .with_gas_price(2_000_000_000),
         ))
         .await

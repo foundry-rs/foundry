@@ -5,9 +5,9 @@ use crate::{
     utils::{KillOnDrop, assert_debug_dump_identifies_contract, generate_large_runtime_contract},
 };
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, hex, keccak256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
@@ -21,7 +21,7 @@ use foundry_test_utils::{
         spawn_rpc_proxy_rejecting_method_after_when_enabled,
     },
     snapbox::IntoData,
-    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestProject},
+    util::{OTHER_SOLC_VERSION, SOLC_VERSION, TestCommand, TestProject},
 };
 use regex::Regex;
 use serde_json::Value;
@@ -5298,8 +5298,8 @@ contract DeployScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [9882] DeployScript::run()
-    ├─ [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
+  [12182] DeployScript::run()
+    ├─ [2300] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -7172,4 +7172,201 @@ contract HandoffResume is Script {
     assert!(receipts.iter().all(|receipt| receipt["status"] == "0x1"));
     assert!(fresh.root().join(sensitive).exists());
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 2);
+}
+
+const DELEGATED_RESUME_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract DelegatedResumeTarget {}
+
+contract DelegatedResume is Script {
+    function run() external {
+        vm.startBroadcast();
+        new DelegatedResumeTarget();
+        vm.stopBroadcast();
+    }
+}
+"#;
+
+// Runs an unlocked broadcast whose only submission fails at the RPC, and returns the id of the
+// delegated attempt that is left with an unknown outcome.
+async fn interrupt_delegated_submission(
+    prj: &TestProject,
+    cmd: &mut TestCommand,
+    script: &Path,
+    rpc: &str,
+    sender: Address,
+    reached: &tokio::sync::Notify,
+    release: &tokio::sync::Notify,
+) -> String {
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    tokio::time::timeout(Duration::from_secs(60), reached.notified())
+        .await
+        .expect("forge did not submit the delegated transaction");
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("forge did not stop after the ambiguous submission");
+    let output = child.kill_and_wait();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "submission outcome for delegated operation 0 is unknown; refusing to risk a duplicate transaction"
+        ),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let recovery: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("cache/DelegatedResume.s.sol/31337/run-latest.json.recovery.json"),
+    )
+    .unwrap();
+    let attempt = &recovery["deployments"][0]["attempts"][0];
+    assert_eq!(attempt["kind"]["kind"], "delegated");
+    assert_eq!(attempt["kind"]["status"]["status"], "outcomeUnknown");
+    attempt["id"].as_str().unwrap().to_string()
+}
+
+// A delegated submission that reached the node but returned an error is resolved by the operator
+// with its transaction hash, after an unrelated transaction is rejected.
+#[forgetest_init]
+async fn resume_resolves_unknown_delegated_outcome_with_tx_hash(prj: _, cmd: _) {
+    let script = prj.add_script("DelegatedResume.s.sol", DELEGATED_RESUME_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        true,
+    )
+    .await;
+    let mut accounts = handle.dev_accounts();
+    let sender = accounts.next().unwrap();
+    let other_sender = accounts.next().unwrap();
+    let provider = handle.http_provider();
+
+    let attempt =
+        interrupt_delegated_submission(&prj, &mut cmd, &script, &rpc, sender, &reached, &release)
+            .await;
+    let block = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(block) = provider.get_block_by_number(1.into()).await.unwrap() {
+                break block;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the accepted delegated transaction was not mined");
+    let hashes = block.transactions.hashes().collect::<Vec<_>>();
+    assert_eq!(hashes.len(), 1);
+    let accepted = hashes[0];
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+
+    // A transaction that exists but does not match the saved request is rejected.
+    let other = ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+    let unrelated = <Ethereum as Network>::TransactionRequest::default()
+        .with_from(other_sender)
+        .with_to(other_sender)
+        .with_value(U256::from(1));
+    let unrelated = *other.send_transaction(unrelated).await.unwrap().tx_hash();
+    let resume = |cmd: &mut TestCommand, hash: B256| {
+        cmd.forge_fuse().arg("script").arg(&script).args([
+            "--tc",
+            "DelegatedResume",
+            "--rpc-url",
+            &rpc,
+            "--sender",
+            &sender.to_string(),
+            "--unlocked",
+            "--resume",
+            "--resume-attempt",
+            &attempt,
+            "--resume-tx-hash",
+            &hash.to_string(),
+        ]);
+    };
+    resume(&mut cmd, unrelated);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: resolved transaction does not match its delegated submission attempt
+
+"#]]);
+
+    // The accepted transaction completes the operation without another submission.
+    resume(&mut cmd, accepted);
+    cmd.assert_success();
+    assert_eq!(submissions.lock().unwrap().len(), 1);
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/DelegatedResume.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["transactionHash"].as_str().unwrap().parse::<B256>().unwrap(), accepted);
+    let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+// A delegated submission that never reached the node is retried once after the operator
+// explicitly allows it.
+#[forgetest_init]
+async fn resume_retries_unsubmitted_delegated_outcome(prj: _, cmd: _) {
+    let script = prj.add_script("DelegatedResume.s.sol", DELEGATED_RESUME_SCRIPT);
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (rpc, submissions, reached, release) = spawn_rpc_proxy_blocking_first_submission(
+        handle.http_endpoint(),
+        "eth_sendTransaction",
+        false,
+    )
+    .await;
+    let sender = handle.dev_accounts().next().unwrap();
+    let provider = handle.http_provider();
+
+    let attempt =
+        interrupt_delegated_submission(&prj, &mut cmd, &script, &rpc, sender, &reached, &release)
+            .await;
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 0);
+
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--tc",
+        "DelegatedResume",
+        "--rpc-url",
+        &rpc,
+        "--sender",
+        &sender.to_string(),
+        "--unlocked",
+        "--resume",
+        "--resume-attempt",
+        &attempt,
+        "--resume-retry",
+    ]);
+    cmd.assert_success();
+
+    assert_eq!(submissions.lock().unwrap().len(), 2);
+    let sequence: Value = foundry_common::fs::read_json_file(
+        &prj.root().join("broadcast/DelegatedResume.s.sol/31337/run-latest.json"),
+    )
+    .unwrap();
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let receipts = sequence["receipts"].as_array().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["status"], "0x1");
+    let address = sequence["transactions"][0]["contractAddress"].as_str().unwrap();
+    assert!(!provider.get_code_at(address.parse().unwrap()).await.unwrap().is_empty());
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
 }

@@ -366,7 +366,8 @@ async fn cast_run_fork_bal_replays_prefix_for_execution_overrides(prj: _, cmd: _
                         .from(sender)
                         .to(target)
                         .nonce(nonce + index as u64)
-                        .gas_limit(100_000)
+                        // Enough for the EIP-8037 state gas of creating slot zero.
+                        .gas_limit(1_000_000)
                         .input(input.into())
                         .into(),
                 )
@@ -393,7 +394,7 @@ Traces:
 
 
 Transaction successfully executed.
-Gas used: 23152
+Gas used: 17152
 
 "#]])
         .stderr_eq("");
@@ -418,7 +419,12 @@ Transaction successfully executed.
 Gas used: 23152
 
 "#]])
-            .stderr_eq("Executing previous transactions from the block.\n");
+            // Cancun prices the call above what the Amsterdam chain charged.
+            .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Warning: the replay does not match the transaction's receipt: it used 17152 gas on-chain but 23152 in the replay. The chain may apply rules the replay does not model; `--debug-trace-transaction` shows the node's own trace if it exposes the `debug` namespace.
+
+"#]]);
         OutputAssert::new(run(&mut cmd, hash, &endpoint, flags))
             .stdout_eq(replay.stdout)
             .stderr_eq(replay.stderr);

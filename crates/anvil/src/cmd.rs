@@ -103,6 +103,11 @@ pub struct NodeArgs {
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
     pub block_time: Option<Duration>,
 
+    /// Time in milliseconds to group ready transactions into one auto-mined block.
+    /// Set to 0 to disable the coalescing delay.
+    #[arg(long, value_name = "MILLISECONDS", default_value = "5")]
+    pub transaction_coalescing_window: u64,
+
     /// Slots in an epoch
     #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
@@ -297,6 +302,9 @@ impl NodeArgs {
             .with_gas_price(self.evm.gas_price)
             .with_hardfork(hardfork)
             .with_blocktime(self.block_time)
+            .with_transaction_coalescing_window(Duration::from_millis(
+                self.transaction_coalescing_window,
+            ))
             .with_no_mining(self.no_mining)
             .with_mixed_mining(self.mixed_mining, self.block_time)
             .with_account_generator(self.account_generator())?
@@ -1643,5 +1651,20 @@ mod tests {
             let result = NodeArgs::try_parse_from(args);
             assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
         }
+    }
+
+    #[test]
+    fn transaction_coalescing_window_cli() {
+        for (args, expected) in [
+            (vec!["anvil"], 5),
+            (vec!["anvil", "--transaction-coalescing-window", "0"], 0),
+            (vec!["anvil", "--transaction-coalescing-window", "20"], 20),
+        ] {
+            let config = NodeArgs::parse_from(args).into_node_config().unwrap();
+            assert_eq!(config.transaction_coalescing_window, Duration::from_millis(expected));
+        }
+        assert!(
+            NodeArgs::try_parse_from(["anvil", "--transaction-coalescing-window", "-1"]).is_err()
+        );
     }
 }

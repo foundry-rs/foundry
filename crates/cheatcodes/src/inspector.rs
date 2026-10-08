@@ -115,16 +115,15 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         tx: TxEnvFor<FEN>,
     ) -> eyre::Result<()>;
 
-    /// Runs a closure with a fresh nested EVM built from a raw database and environment.
-    /// Unlike `with_nested_evm`, this does NOT clone from `ecx` and does NOT write back.
+    /// Runs a closure with a fresh nested EVM using the current environment and database.
+    /// Unlike `with_nested_evm`, this starts an independent journal and does not write back.
     /// The caller is responsible for state merging. Used by `executeTransactionCall`.
     /// Returns the final EVM environment after the closure runs (consumed without cloning).
     #[allow(clippy::type_complexity)]
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
@@ -136,11 +135,6 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
     fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
-
-    /// Marks that the next EVM frame is an "inner context" so that isolation mode does not
-    /// trigger a nested `transact_inner`. `original_origin` is stored for the existing
-    /// inner-context adjustment logic that restores `tx.origin`.
-    fn set_in_inner_context(&mut self, _enabled: bool, _original_origin: Option<Address>) {}
 }
 
 /// Builds a sub-EVM from the current context and executes the given CREATE frame.
@@ -192,13 +186,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
-        evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
+        let depth = ecx.journal().depth();
+        let evm_env = ecx.evm_clone();
+        let (db, _) = ecx.db_journal_inner_mut();
         let mut evm =
             FEN::EvmFactory::default().create_nested_evm_with_inspector(db, evm_env, cheats);
+        evm.journal_inner_mut().depth = depth;
         *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
@@ -849,11 +846,20 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// suspended parent alongside the returned state.
     pub pending_isolated_snapshot_journal: Option<Vec<JournalEntry>>,
 
-    /// Whether snapshot restorations belong to the active isolated transaction.
+    /// Whether snapshot restorations belong to the tracked transaction (an isolated call, or the
+    /// top-level transaction when isolation is disabled) and must be unwound by failing frames.
     pub track_isolated_snapshots: bool,
 
-    /// Snapshot restorations that may need to be unwound with an enclosing isolated frame.
+    /// Journals replaced by snapshot restorations that may need to be reinstated when an
+    /// enclosing frame of the tracked transaction fails.
     pub isolated_snapshot_restores: Vec<JournaledState>,
+
+    /// Whether the next snapshot restoration is the first one since its calling frame started,
+    /// and so must be recorded in `isolated_snapshot_restores`.
+    pub capture_isolated_snapshot_restore: bool,
+
+    /// Depth of the in-flight `deployCode` call, whose create frame runs one level deeper.
+    pub deploy_code_depth: Option<usize>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -940,6 +946,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             pending_isolated_snapshot_journal: None,
             track_isolated_snapshots: false,
             isolated_snapshot_restores: Vec::new(),
+            capture_isolated_snapshot_restore: false,
+            deploy_code_depth: None,
         }
     }
 
@@ -1224,7 +1232,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             e
         })?;
 
-        let caller = call.caller;
+        let caller = call.transfer_from();
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
@@ -1251,7 +1259,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         call: &CallInputs,
     ) -> Result {
         let input = call.input.bytes(ecx);
-        let caller = call.caller;
+        let caller = call.transfer_from();
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
@@ -1378,7 +1386,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             trace!(target: "cheatcodes", %sender, nonce=account.info.nonce, prev, "corrected nonce");
         }
 
-        if call.target_address == CHEATCODE_ADDRESS {
+        if call.transfer_to() == CHEATCODE_ADDRESS {
             return match self.apply_cheatcode(ecx, call, executor) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -1406,10 +1414,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        if crate::monad::is_monad_cheatcode_call(
-            self.extra_cheatcode_addresses,
-            call.target_address,
-        ) {
+        if crate::monad::is_monad_cheatcode_call(self.extra_cheatcode_addresses, call.transfer_to())
+        {
             let checkpoint = ecx.journal_mut().checkpoint();
             return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => {
@@ -1443,7 +1449,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             };
         }
 
-        if call.target_address == HARDHAT_CONSOLE_ADDRESS {
+        if call.transfer_to() == HARDHAT_CONSOLE_ADDRESS {
             return None;
         }
 
@@ -1477,28 +1483,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 }
             }
 
-            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                // At the target depth we set `msg.sender`
-                let prank_applied = if curr_depth == prank.depth {
+            if let Some(changes) = prank.changes_for(curr_depth, call.transfer_from()) {
+                if let Some(new_caller) = changes.caller {
                     // Ensure new caller is loaded and touched
-                    let _ = journaled_account(ecx, prank.new_caller);
-                    call.caller = prank.new_caller;
-                    true
-                } else {
-                    false
-                };
-
-                // At the target depth, or deeper, we set `tx.origin`
-                let prank_applied = if let Some(new_origin) = prank.new_origin {
+                    let _ = journaled_account(ecx, new_caller);
+                    call.caller = new_caller;
+                }
+                if let Some(new_origin) = changes.origin {
                     ecx.tx_mut().set_caller(new_origin);
-                    true
-                } else {
-                    prank_applied
-                };
-
-                // If prank applied for first time, then update
-                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                    self.pranks.insert(curr_depth, applied_prank);
+                }
+                if let Some(used) = changes.used {
+                    self.pranks.insert(curr_depth, used);
                 }
             }
         }
@@ -1573,7 +1568,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // we only want to grab *this* call, not internal ones. `deployCode` routed through
             // the CREATE2 factory runs one level deeper in a nested EVM.
             if (curr_depth == broadcast.depth || broadcast.deploy_from_code)
-                && call.caller == broadcast.original_caller
+                && call.transfer_from() == broadcast.original_caller
             {
                 // Reset deploy from code flag for upcoming calls.
                 broadcast.deploy_from_code = false;
@@ -1612,7 +1607,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                     let mut tx_req = TransactionRequestFor::<FEN>::default()
                         .with_from(broadcast.new_origin)
-                        .with_to(call.target_address)
+                        .with_to(call.transfer_to())
                         .with_value(call.transfer_value().unwrap_or_default())
                         .with_input(input)
                         .with_nonce(nonce)
@@ -1707,7 +1702,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let (initialized, old_balance, old_nonce) =
-                if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                if let Ok(acc) = ecx.journal_mut().load_account(call.transfer_to()) {
                     (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
                 } else {
                     (false, U256::ZERO, 0)
@@ -1730,7 +1725,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     forkId: ecx.db().active_fork_id().unwrap_or_default(),
                     chainId: U256::from(ecx.cfg().chain_id()),
                 },
-                accessor: call.caller,
+                accessor: call.transfer_from(),
                 account: call.bytecode_address,
                 kind,
                 initialized,
@@ -1961,8 +1956,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.active_storage_hook.as_ref().is_some_and(|active| {
             active.outcome.is_none()
                 && ecx.journal().depth() == active.parent_depth
-                && call.caller == CHEATCODE_ADDRESS
-                && call.target_address == active.callback_target
+                && call.transfer_from() == CHEATCODE_ADDRESS
+                && call.transfer_to() == active.callback_target
                 && call.input.bytes(ecx) == active.callback_input
         })
     }
@@ -1976,8 +1971,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let Some(active) = self.active_storage_hook.as_mut() else { return false };
         if active.outcome.is_some()
             || ecx.journal().depth() != active.parent_depth
-            || call.caller != CHEATCODE_ADDRESS
-            || call.target_address != active.callback_target
+            || call.transfer_from() != CHEATCODE_ADDRESS
+            || call.transfer_to() != active.callback_target
             || call.input.bytes(ecx) != active.callback_input
         {
             return false;
@@ -2345,13 +2340,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
-            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let cheatcode_call = call.transfer_to() == CHEATCODE_ADDRESS
+            || call.transfer_to() == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call
             || crate::monad::is_monad_cheatcode_call(
                 self.extra_cheatcode_addresses,
-                call.target_address,
+                call.transfer_to(),
             );
         let curr_depth = ecx.journal().depth();
 
@@ -2395,7 +2390,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Record current reverter address before processing the expect revert if call reverted,
             // expect revert is set with expected reverter address and no actual reverter set yet.
             if outcome.result.is_revert() && assume_no_revert.reverted_by.is_none() {
-                assume_no_revert.reverted_by = Some(call.target_address);
+                assume_no_revert.reverted_by = Some(call.transfer_to());
             }
 
             // allow multiple cheatcode calls at the same depth
@@ -2442,7 +2437,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 if expected_revert.reverter.is_some()
                     && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
                 {
-                    expected_revert.reverted_by = Some(call.target_address);
+                    expected_revert.reverted_by = Some(call.transfer_to());
                 }
             }
 
@@ -2538,7 +2533,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     // calls to update if execution has percolated up to a higher depth.
                     let curr_depth = ecx.journal().depth();
                     if call_access.depth == curr_depth as u64
-                        && let Ok(acc) = ecx.journal_mut().load_account(call.target_address)
+                        && let Ok(acc) = ecx.journal_mut().load_account(call.transfer_to())
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.data.info.balance;
@@ -2590,10 +2585,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // `Stop` we check if the contract actually exists on the active fork
             if ecx.db().is_forked_mode()
                 && outcome.result.result == InstructionResult::Stop
-                && call.target_address != test_contract
+                && call.transfer_to() != test_contract
             {
                 self.fork_revert_diagnostic =
-                    ecx.db().diagnose_revert(call.target_address, ecx.journal().evm_state());
+                    ecx.db().diagnose_revert(call.transfer_to(), ecx.journal().evm_state());
             }
         }
 
@@ -2671,31 +2666,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth)
-            && curr_depth >= prank.depth
-            && input.caller() == prank.prank_caller
+        if let Some(prank) = self.get_prank(curr_depth)
+            && let Some(changes) = prank.changes_for(curr_depth, input.caller())
         {
-            // At the target depth we set `msg.sender`
-            let prank_applied = if curr_depth == prank.depth {
+            if let Some(new_caller) = changes.caller {
                 // Ensure new caller is loaded and touched
-                let _ = journaled_account(ecx, prank.new_caller);
-                input.set_caller(prank.new_caller);
-                true
-            } else {
-                false
-            };
-
-            // At the target depth, or deeper, we set `tx.origin`
-            let prank_applied = if let Some(new_origin) = prank.new_origin {
+                let _ = journaled_account(ecx, new_caller);
+                input.set_caller(new_caller);
+            }
+            if let Some(new_origin) = changes.origin {
                 ecx.tx_mut().set_caller(new_origin);
-                true
-            } else {
-                prank_applied
-            };
-
-            // If prank applied for first time, then update
-            if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                self.pranks.insert(curr_depth, applied_prank);
+            }
+            if let Some(used) = changes.used {
+                self.pranks.insert(curr_depth, used);
             }
         }
 
@@ -2947,16 +2930,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
 impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
+        // `deployCode` executes its create frame in a nested EVM one level deeper, so match it
+        // at the depth of the cheatcode call, as for native creates.
+        let depth =
+            if self.deploy_code_depth.is_some_and(|d| d + 1 == depth) { depth - 1 } else { depth };
         let target_depth = if let Some(prank) = &self.get_prank(depth) {
             prank.depth
         } else if let Some(broadcast) = &self.broadcast {
-            // `deployCode` executes its create frame in a nested EVM one level deeper, so match
-            // it by caller rather than by the broadcast depth.
-            if broadcast.deploy_from_code && inputs.caller() == broadcast.original_caller {
-                depth
-            } else {
-                broadcast.depth
-            }
+            broadcast.depth
         } else {
             1
         };
@@ -3373,7 +3354,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         };
         let known_bytecode =
-            (account.info.code_hash, account.info.code.clone().unwrap_or_default());
+            (account.info.code_hash(), account.info.code.clone().unwrap_or_default());
         let saved_gas = interpreter.gas;
         let saved_return_data = Bytes::copy_from_slice(interpreter.return_data.buffer());
         let gas_limit = interpreter.gas.remaining();
@@ -3888,7 +3869,7 @@ const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<
 }
 
 fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
-    cheat.func.signature.split('(').next().unwrap()
+    cheatcode_signature(cheat).split('(').next().unwrap()
 }
 
 const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
@@ -3973,7 +3954,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     for auth in authorizations {
         if (!auth.chain_id.is_zero() && auth.chain_id != U256::from(chain_id))
-            || auth.nonce == u64::MAX
+            || auth.nonce() == u64::MAX
         {
             continue;
         }
@@ -3982,7 +3963,7 @@ fn apply_authorization_nonces<FEN: FoundryEvmNetwork>(
         // the local code that EIP-7702 validates.
         let account = journaled_account(ecx, authority)?;
         // The sender nonce has not been incremented for the transaction yet.
-        if auth.nonce == account.info.nonce + u64::from(authority == sender) {
+        if auth.nonce() == account.info.nonce + u64::from(authority == sender) {
             account.info.nonce += 1;
         }
     }

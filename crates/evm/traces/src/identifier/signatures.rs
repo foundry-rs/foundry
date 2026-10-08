@@ -436,7 +436,7 @@ mod tests {
     async fn abi_seeded_signatures_are_not_persisted_to_disk() {
         let temp = tempfile::tempdir().unwrap();
         let event = Event::parse("event CodexEphemeral(uint256 indexed value)").unwrap();
-        let mut abi = JsonAbi::default();
+        let mut abi = JsonAbi::new();
         abi.events.insert(event.name.clone(), vec![event.clone()]);
 
         {
@@ -456,9 +456,9 @@ mod tests {
         let first = Event::parse("event CodexCollision(uint256 indexed value)").unwrap();
         let second = Event::parse("event CodexCollision(uint256 value)").unwrap();
 
-        let mut first_abi = JsonAbi::default();
+        let mut first_abi = JsonAbi::new();
         first_abi.events.insert(first.name.clone(), vec![first.clone()]);
-        let mut second_abi = JsonAbi::default();
+        let mut second_abi = JsonAbi::new();
         second_abi.events.insert(second.name.clone(), vec![second]);
 
         let mut cache = SignaturesCache::default();
@@ -478,9 +478,9 @@ mod tests {
             Event::parse("event CodexIndexedCount(uint256 indexed marker, uint256 indexed value)")
                 .unwrap();
 
-        let mut one_topic_abi = JsonAbi::default();
+        let mut one_topic_abi = JsonAbi::new();
         one_topic_abi.events.insert(one_topic.name.clone(), vec![one_topic.clone()]);
-        let mut two_topics_abi = JsonAbi::default();
+        let mut two_topics_abi = JsonAbi::new();
         two_topics_abi.events.insert(two_topics.name.clone(), vec![two_topics.clone()]);
 
         let identifier = SignaturesIdentifier::new_offline_with_abis_from_cache(

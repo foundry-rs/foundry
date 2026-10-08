@@ -20,7 +20,7 @@ use foundry_common::{
     provider::{ProviderBuilder, is_rpc_method_not_found},
 };
 use foundry_compilers::artifacts::EvmVersion;
-use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit};
+use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit, evm_spec_id};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use revm::{context::CfgEnv, primitives::hardfork::SpecId};
 use serde::{Deserialize, Serialize};
@@ -1346,7 +1346,7 @@ where
     {
         (spec, Some(hardfork))
     } else {
-        let spec = SPEC::from_evm_version(evm_version);
+        let spec = evm_spec_id::<SPEC>(evm_version);
         (spec, spec.reported_hardfork())
     };
     evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);

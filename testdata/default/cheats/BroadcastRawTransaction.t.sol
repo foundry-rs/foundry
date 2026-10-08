@@ -250,7 +250,60 @@ contract BroadcastRawTransactionTest is Test {
 
         assertEq(revertedMintToken.balanceOf(address(this)), 0);
     }
+
+    address constant FAILING_TARGET = address(0xFA11);
+
+    function test_execute_signed_tx_that_reverts() public {
+        vm.etch(FAILING_TARGET, hex"60006000fd");
+        executeFailingSignedTx(21_006);
+    }
+
+    function test_execute_signed_tx_that_halts() public {
+        vm.etch(FAILING_TARGET, hex"fe");
+        executeFailingSignedTx(100_000);
+    }
+
+    // Broadcasts a transfer of 17 wei to `FAILING_TARGET` and checks the failed transaction is
+    // still charged while its value transfer is rolled back.
+    function executeFailingSignedTx(uint256 gasUsed) internal {
+        vm.fee(1);
+        vm.chainId(1);
+        uint256 privateKey = 1;
+        address sender = vm.addr(privateKey);
+        vm.deal(sender, 1 ether);
+
+        bytes[] memory fields = new bytes[](9);
+        fields[1] = hex"64"; // Gas price.
+        fields[2] = hex"0186a0"; // Gas limit.
+        fields[3] = abi.encodePacked(FAILING_TARGET);
+        fields[4] = hex"11"; // Value.
+        fields[6] = hex"01"; // Chain ID.
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, keccak256(vm.toRlp(fields)));
+        fields[6] = abi.encodePacked(v + 10); // EIP-155 replay-protected v for chain ID 1.
+        fields[7] = trimLeadingZeros(r);
+        fields[8] = trimLeadingZeros(s);
+
+        vm.broadcastRawTransaction(vm.toRlp(fields));
+
+        assertEq(vm.getNonce(sender), 1);
+        assertEq(sender.balance, 1 ether - gasUsed * 100);
+        assertEq(FAILING_TARGET.balance, 0);
+    }
+
+    function trimLeadingZeros(bytes32 value) internal pure returns (bytes memory out) {
+        uint256 offset;
+        while (offset < 32 && value[offset] == bytes1(0)) {
+            offset++;
+        }
+        out = new bytes(32 - offset);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = value[offset + i];
+        }
+    }
 }
+
+/// forge-config: default.isolate = false
+contract BroadcastRawTransactionNonIsolatedTest is BroadcastRawTransactionTest {}
 
 contract MyERC20 {
     mapping(address => uint256) private _balances;

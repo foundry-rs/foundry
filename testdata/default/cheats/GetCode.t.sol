@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity =0.8.18;
+pragma solidity =0.8.35;
 
 import "utils/Test.sol";
 
@@ -76,7 +76,7 @@ contract GetCodeTest is Test {
     }
 
     function testWithVersion() public {
-        bytes memory code = vm.getCode("cheats/GetCode.t.sol:TestContract:0.8.18");
+        bytes memory code = vm.getCode("cheats/GetCode.t.sol:TestContract:0.8.35");
         assertEq(type(TestContract).creationCode, code);
 
         vm._expectCheatcodeRevert("no matching artifact found");
@@ -89,7 +89,7 @@ contract GetCodeTest is Test {
     }
 
     function testByNameAndVersion() public {
-        bytes memory code = vm.getCode("TestContractGetCode:0.8.18");
+        bytes memory code = vm.getCode("TestContractGetCode:0.8.35");
         assertEq(type(TestContractGetCode).creationCode, code);
     }
 }

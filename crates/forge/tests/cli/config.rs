@@ -17,7 +17,7 @@ use foundry_config::{
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
     foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
-    util::{OTHER_SOLC_VERSION, OutputExt, TestCommand, pretty_err},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
 use semver::VersionReq;
@@ -29,6 +29,9 @@ use std::{
     str::FromStr,
     thread,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const DEFAULT_CONFIG: &str = r#"[profile.default]
 src = "src"
@@ -3182,7 +3185,7 @@ contract AnotherCounterTest is Test {
 Ran [..] for test/AnotherCounterTest.sol:AnotherCounterTest
 ...
 [FAIL: EvmError: Revert] test_Failure() ([GAS])
-Suite result: FAILED. [..] passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 1 failed; [..] skipped; [ELAPSED]
 ...
 "#]]);
 }
@@ -3361,4 +3364,83 @@ contract MixedTests is Test {
     assert!(rerun_output.contains("Ran 1 test"));
     assert!(rerun_output.contains("testFail()"));
     assert!(!rerun_output.contains("[PASS] testPass()"));
+}
+
+// Loading config must never execute a local `solc`, whether it was overridden by `--use`, the
+// command doesn't compile, or it comes from a nested dependency config.
+#[cfg(unix)]
+#[forgetest]
+fn config_loading_does_not_run_local_solc(prj: _, cmd: _) {
+    let fake_solc = prj.root().join("fake-solc");
+    let marker = prj.root().join("fake-solc.invoked");
+    fs::write(
+        &fake_solc,
+        r#"#!/bin/sh
+echo "$@" >> "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.13+commit.abaa5c0e"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&fake_solc, fs::Permissions::from_mode(0o755)).unwrap();
+    prj.add_source("Counter.sol", "contract Counter {}");
+    let assert_not_invoked =
+        || assert!(!marker.exists(), "{}", fs::read_to_string(&marker).unwrap());
+    let write_config = |solc: &str| {
+        let config = format!(
+            "[profile.default]\nsrc = \"src\"\nout = \"out\"\nlibs = [\"lib\"]\nsolc = \"{solc}\"\n"
+        );
+        fs::write(prj.root().join(Config::FILE_NAME), config).unwrap();
+    };
+
+    // `evm_version` is unset, so only the `--use` compiler may determine it.
+    write_config(fake_solc.to_str().unwrap());
+    cmd.args(["build", "--use", SOLC_VERSION]).assert_success();
+    assert_not_invoked();
+    let artifact: Value =
+        serde_json::from_slice(&fs::read(prj.root().join("out/Counter.sol/Counter.json")).unwrap())
+            .unwrap();
+    let default_evm_version = Config::default().evm_version;
+    assert_eq!(artifact["metadata"]["settings"]["evmVersion"], default_evm_version.to_string());
+
+    let output = cmd.forge_fuse().args(["config", "--json"]).assert_success();
+    let config: Config = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(config.evm_version, default_evm_version);
+    assert_not_invoked();
+
+    cmd.forge_fuse().arg("fmt").assert_success();
+    assert_not_invoked();
+
+    // A dependency's `solc` is never used to compile the parent project.
+    let dep = prj.root().join("lib/dep");
+    fs::create_dir_all(dep.join("src")).unwrap();
+    fs::write(dep.join("src/Dep.sol"), "contract Dep {}").unwrap();
+    fs::write(
+        dep.join(Config::FILE_NAME),
+        format!("[profile.default]\nsolc = \"{}\"\n", fake_solc.display()),
+    )
+    .unwrap();
+    write_config(SOLC_VERSION);
+    cmd.forge_fuse().args(["build", "--force"]).assert_success();
+    assert_not_invoked();
+}
+
+// `--config-path` selects the project root, so combining it with `--root` is rejected.
+#[forgetest]
+fn config_path_conflicts_with_root(prj: _, cmd: _) {
+    let config_path = prj.root().join(Config::FILE_NAME);
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--config-path")
+        .arg(config_path)
+        .assert_failure()
+        .stderr_eq(str![[r#"
+error: the argument '--root <PATH>' cannot be used with '--config-path <FILE>'
+...
+"#]]);
 }
