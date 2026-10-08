@@ -2167,3 +2167,94 @@ contract CounterTest {
 
 "#]]);
 }
+
+// A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
+#[forgetest]
+fn mutation_timeout_keeps_invariant_run_limit(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = number + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract Handler {
+    Counter public counter;
+    uint256 public calls;
+
+    constructor(Counter counter_) {
+        counter = counter_;
+    }
+
+    function increment() public {
+        counter.increment();
+        calls++;
+    }
+}
+
+contract CounterInvariantTest {
+    Counter counter;
+    Handler handler;
+
+    function setUp() public {
+        counter = new Counter();
+        handler = new Handler(counter);
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(handler);
+    }
+
+    /// forge-config: default.invariant.runs = 4
+    /// forge-config: default.invariant.depth = 4
+    /// forge-config: default.invariant.shrink_run_limit = 0
+    function invariant_countsCalls() public view {
+        require(counter.number() == handler.calls(), "count mismatch");
+    }
+}
+"#,
+    );
+
+    let mut run = |args: &[&str]| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "4", "--json"])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut summary = mutation_summary(&output);
+        summary.as_object_mut().unwrap().remove("duration_secs");
+        summary
+    };
+    let unbounded = run(&[]);
+    assert_eq!(
+        unbounded,
+        serde_json::json!({
+            "total": 10,
+            "killed": 9,
+            "survived": 1,
+            "invalid": 0,
+            "skipped": 0,
+            "timed_out": 0,
+            "mutation_score": 90.0,
+        })
+    );
+    assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
+}
