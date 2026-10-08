@@ -652,7 +652,8 @@ fn properties_check_reports_candidate_result(prj: _, cmd: _) {
     let toml = fs::read_to_string(&foundry_toml).unwrap();
     fs::write(
         &foundry_toml,
-        toml.replacen("[profile.default]\n", "[profile.default]\nextends = \"base.toml\"\n", 1),
+        toml.replacen("[profile.default]\n", "[profile.default]\nextends = \"base.toml\"\n", 1)
+            + "\n[profile.ci]\n",
     )
     .unwrap();
     prj.add_source(
@@ -680,7 +681,7 @@ library Fee {
     fs::write(
         prj.root().join("passing.json"),
         candidate(
-            "pragma solidity ^0.8.20;\nimport {Fee} from \"fee/Fee.sol\";\ncontract FeeCheckTest {\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
+            "pragma solidity ^0.8.20;\nimport {Fee} from \"fee/Fee.sol\";\ncontract FeeCheckTest {\n    /// forge-config: ci.fuzz.runs = 10\n    function testFee() public pure {\n        require(Fee.fee(199) == 1);\n    }\n}\n",
         ),
     )
     .unwrap();

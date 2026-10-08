@@ -920,7 +920,12 @@ fn write_workspace_config(config: &Config, workspace: &Path) -> Result<()> {
     let mut rebased = workspace::rebase_config_paths(config, workspace);
     // `extends` values are already merged into the resolved config.
     rebased.extends = None;
-    fs::write(workspace.join(Config::FILE_NAME), rebased.to_string_pretty()?)?;
+    let mut toml = rebased.to_string_pretty()?;
+    // Inline config may name the project's other profiles, so they must still exist.
+    for profile in config.profiles.iter().filter(|profile| **profile != config.profile) {
+        toml.push_str(&format!("\n[profile.{profile}]\n"));
+    }
+    fs::write(workspace.join(Config::FILE_NAME), toml)?;
     Ok(())
 }
 
