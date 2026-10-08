@@ -4245,6 +4245,8 @@ async fn test_tempo_txpool_orders_same_nonce_lane() {
         }
     }
 
+    // The block must come before `valid_after`, however long the setup took.
+    api.evm_set_next_block_timestamp(current_time + 1).await.unwrap();
     api.mine_one().await.unwrap();
 
     for hash in &tx_hashes {

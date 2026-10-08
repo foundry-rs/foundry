@@ -43,7 +43,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
-use foundry_evm_core::utils::block_env_from_header;
+use foundry_evm_core::{decode::RevertDecoder, utils::block_env_from_header};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -701,10 +701,25 @@ fn fund_default_caller(
 
 /// Gives a revert without data the empty data anvil reports, where reth leaves it out.
 fn with_revert_data(error: ErrorObjectOwned) -> ErrorObjectOwned {
-    if error.code() == REVERT_ERROR_CODE && error.data().is_none() {
-        return ErrorObjectOwned::owned(error.code(), error.message().to_string(), Some("0x"));
+    if error.code() != REVERT_ERROR_CODE {
+        return error;
     }
-    error
+    let Some(data) = error.data() else {
+        return ErrorObjectOwned::owned(error.code(), error.message().to_string(), Some("0x"));
+    };
+    // The message decodes the revert data as anvil does: the reason string, the panic, or the
+    // custom error with its data. Tempo's API would name a precompile error by its selector,
+    // which several precompiles share.
+    match serde_json::from_str::<Bytes>(data.get()) {
+        Ok(revert) => {
+            let mut message = "execution reverted".to_string();
+            if let Some(reason) = RevertDecoder::new().maybe_decode(&revert, None) {
+                message = format!("{message}: {reason}");
+            }
+            ErrorObjectOwned::owned(error.code(), message, Some(revert))
+        }
+        Err(_) => error,
+    }
 }
 
 /// The error code of a reverted call, as anvil and reth report it.

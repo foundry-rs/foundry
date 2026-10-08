@@ -168,13 +168,10 @@ round-trips through EIP-7910's fields.
 
 ## Differences that cast's tests show
 
-Running `crates/cast/tests` against this node instead of anvil (the `anvil` dev-dependency renamed
-to `reth-anvil`) passes everything that does not need Tempo, except these groups. None of them
-is a missing method.
+The workspace's `anvil` dependency is this crate. `crates/cast/tests` pass, Tempo included,
+except these groups. None of them is a missing method. Revert messages decode the revert data
+with foundry's `RevertDecoder`, as anvil's do.
 
-- Error text. Reth reports reverts as `execution reverted` with the revert data in the `data`
-  field; anvil decodes custom errors into the message and prints `data: "0x"` for empty data.
-  Tests that snapshot these messages need new snapshots.
 - `eth_getBlockAccessListByBlockNumber` for a block without a list answers `block not found`
   (reth) instead of anvil's `block access list ... not found`.
 - Storage on a plain address. `anvil_setStorageAt` on an account without balance, nonce, or code
@@ -194,12 +191,11 @@ is a missing method.
   this node does, so a transaction on Amsterdam that creates state with a tight gas limit runs
   out of gas here. Tests that pin such gas limits need more gas.
 
-Running `crates/forge/tests/cli` the same way passes everything that does not need Tempo, except
-a `--fork-bal` test: anvil's block access lists carry no storage reads, reth's do, and forge's
+`crates/forge/tests/cli` pass, except a `--fork-bal` test: anvil's block access lists carry no storage reads, reth's do, and forge's
 parent cache then does not fall back to the endpoint for read-only slots.
 
 The unit tests of `forge-script` and `foundry-evm-core` that spawn a node pass as well, except
-those that need Tempo or Optimism.
+those that need Optimism, and the `--fork-bal` prewarm test, for EIP-8037 above.
 
 ## What Tempo needs
 
