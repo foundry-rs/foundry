@@ -4708,8 +4708,8 @@ contract StorageHooksTest is Test {
 
         (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (11)));
         assertFalse(ok);
-        assertEq(target.value(), 7);
         assertEq(ghostValue, 7);
+        assertEq(target.value(), 7);
 
         target.storeTwice(9, 12);
         assertEq(ghostValue, 12);
@@ -4779,8 +4779,8 @@ contract StorageHooksTest is Test {
     function testIsolateEnclosingRevertRollsBackTargetAndGhost() public {
         (bool ok,) = address(this).call(abi.encodeCall(this.storeAndRevert, (37)));
         assertFalse(ok);
-        assertEq(target.value(), 0);
         assertEq(ghostValue, 0);
+        assertEq(target.value(), 0);
     }
 
     function storeAndRevert(uint256 newValue) external {
@@ -4805,6 +4805,7 @@ contract StorageHooksTest is Test {
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (1)));
 
         assertFalse(ok);
+        assertEq(ghostValue, 0);
         assertEq(target.value(), 0);
     }
 
@@ -4916,17 +4917,17 @@ contract StorageHooksTest is Test {
 
     function revertingStoreHook(address, bytes32, bytes32, bytes32)
         external
-        view
         onlyStorageHook
     {
+        ghostValue = 99;
         revert("replacement hook");
     }
 
     function panickingStoreHook(address, bytes32, bytes32, bytes32)
         external
-        view
         onlyStorageHook
     {
+        ghostValue = 99;
         assert(false);
     }
 
@@ -5001,22 +5002,23 @@ contract StorageHooksTest is Test {
     function checkSymbolicRollback(uint256 newValue) public {
         (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (newValue)));
         assertFalse(ok);
-        assertEq(target.value(), 0);
         assertEq(ghostValue, 0);
+        assertEq(target.value(), 0);
     }
 
     function checkSymbolicCallbackRevert(uint256 newValue) public {
         hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
         assertFalse(ok);
-        assertEq(target.value(), 0);
         assertEq(ghostValue, 0);
+        assertEq(target.value(), 0);
     }
 
     function checkSymbolicCallbackPanic(uint256 newValue) public {
         hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
         (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
         assertFalse(ok);
+        assertEq(ghostValue, 0);
         assertEq(target.value(), 0);
     }
 
@@ -5101,69 +5103,77 @@ contract StorageHooksTest is Test {
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();
     cmd.forge_fuse().args(args).arg("--no-isolate").assert_success();
 
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--match-contract",
-            "StorageHooksTest",
-            "--match-test",
-            "testConcreteTrace",
-            "-vvvvv",
-            "--json",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
-    let suite = output.as_object().unwrap().values().next().unwrap();
+    for isolate in ["--isolate", "--no-isolate"] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--match-contract",
+                "StorageHooksTest",
+                "--match-test",
+                "testConcreteTrace",
+                "-vvvvv",
+                "--json",
+            ])
+            .arg(isolate)
+            .assert_success()
+            .get_output()
+            .stdout
+            .clone();
+        let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        let suite = output.as_object().unwrap().values().next().unwrap();
 
-    let success = &suite["test_results"]["testConcreteTraceSuccess()"];
-    let success_target = success["traces"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
-        .find(|node| {
-            node["trace"]["address"].as_str().is_some_and(|address| {
-                address.ends_with("00000000000000000000000000000000000a11ce")
+        let success = &suite["test_results"]["testConcreteTraceSuccess()"];
+        let success_target = success["traces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+            .find(|node| {
+                node["trace"]["address"].as_str().is_some_and(|address| {
+                    address.ends_with("00000000000000000000000000000000000a11ce")
+                })
             })
-        })
-        .unwrap();
-    let resumed_step = success_target["trace"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|step| step["pc"] == 5)
-        .unwrap();
-    let sstore_step = success_target["trace"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|step| step["pc"] == 4)
-        .unwrap();
-    assert_eq!(
-        resumed_step["gas_remaining"].as_u64().unwrap(),
-        sstore_step["gas_remaining"].as_u64().unwrap() - sstore_step["gas_cost"].as_u64().unwrap()
-    );
-    assert_eq!(resumed_step["gas_cost"], 3);
+            .unwrap();
+        let resumed_step = success_target["trace"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["pc"] == 5)
+            .unwrap();
+        let sstore_step = success_target["trace"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["pc"] == 4)
+            .unwrap();
+        assert_eq!(
+            resumed_step["gas_remaining"].as_u64().unwrap(),
+            sstore_step["gas_remaining"].as_u64().unwrap()
+                - sstore_step["gas_cost"].as_u64().unwrap()
+        );
+        assert_eq!(resumed_step["gas_cost"], 3);
 
-    let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
-    let reverted_target = reverted["traces"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
-        .find(|node| {
-            node["trace"]["address"].as_str().is_some_and(|address| {
-                address.ends_with("0000000000000000000000000000000000000b0b")
+        let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
+        let reverted_target = reverted["traces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+            .find(|node| {
+                node["trace"]["address"].as_str().is_some_and(|address| {
+                    address.ends_with("0000000000000000000000000000000000000b0b")
+                })
             })
-        })
-        .unwrap();
-    assert!(
-        reverted_target["trace"]["steps"].as_array().unwrap().iter().all(|step| step["pc"] != 5)
-    );
+            .unwrap();
+        assert!(
+            reverted_target["trace"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|step| step["pc"] != 5)
+        );
+    }
 
     if !z3_available() {
         let _ = sh_eprintln!(
