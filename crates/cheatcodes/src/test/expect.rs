@@ -238,6 +238,23 @@ impl Cheatcode for expectDelegateCallCall {
     }
 }
 
+impl Cheatcode for expectStaticCallCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { callee, data } = self;
+        expect_call(
+            state,
+            callee,
+            data,
+            None,
+            None,
+            None,
+            Some(CallScheme::StaticCall),
+            1,
+            ExpectedCallType::NonCount,
+        )
+    }
+}
+
 impl Cheatcode for expectCallMinGas_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, minGas, data } = self;
@@ -1159,6 +1176,19 @@ mod tests {
 
         observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::DelegateCall);
         assert_eq!(seen(&t, &calldata, Some(CallScheme::DelegateCall)), 1);
+
+        let mut t = tracker(
+            calldata.clone(),
+            Some(CallScheme::StaticCall),
+            expected(None, None, None, 1, ExpectedCallType::NonCount),
+        );
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::Call);
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::DelegateCall);
+        assert_eq!(seen(&t, &calldata, Some(CallScheme::StaticCall)), 0);
+
+        observe_call(t.get_mut(&TARGET).unwrap(), &calldata, None, 0, CallScheme::StaticCall);
+        assert_eq!(seen(&t, &calldata, Some(CallScheme::StaticCall)), 1);
     }
 
     #[test]

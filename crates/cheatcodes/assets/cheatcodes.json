@@ -6233,6 +6233,26 @@
     },
     {
       "func": {
+        "id": "expectStaticCall",
+        "description": "Expects a static call to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectStaticCall(address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectStaticCall(address,bytes)",
+        "selector": "0x85180b6c",
+        "selectorBytes": [
+          133,
+          24,
+          11,
+          108
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectTip20LogoURIUpdated",
         "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
         "declaration": "function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
