@@ -423,6 +423,10 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
+    /// Loads a transient storage slot from an address.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);
+
     /// Load a genesis JSON file's `allocs` into the in-memory EVM state.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function loadAllocs(string calldata pathToAllocsJson) external;
@@ -702,6 +706,11 @@ interface Vm {
     /// Stores a value to an address' storage slot.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
+
+    /// Stores a value to an address' transient storage slot.
+    /// The value lasts until the end of the current transaction, like a value written with `TSTORE`.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function storeTransient(address target, bytes32 slot, bytes32 value) external;
 
     /// Sets a TIP-20 token's logo URI directly in storage.
     /// This bypasses the token admin check, but still validates the URI against T5 constraints.

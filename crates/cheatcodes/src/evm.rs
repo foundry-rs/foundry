@@ -338,6 +338,14 @@ impl Cheatcode for loadCall {
     }
 }
 
+impl Cheatcode for loadTransientCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, slot } = *self;
+        let value = ccx.ecx.journal_mut().tload(target, slot.into());
+        Ok(B256::from(value).abi_encode())
+    }
+}
+
 impl Cheatcode for loadAllocsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToAllocsJson } = self;
@@ -881,6 +889,15 @@ impl Cheatcode for storeCall {
             .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
         ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for storeTransientCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, slot, value } = *self;
+        ccx.ensure_not_precompile(&target)?;
+        ccx.ecx.journal_mut().tstore(target, slot.into(), value.into());
         Ok(Default::default())
     }
 }

@@ -7457,6 +7457,26 @@
     },
     {
       "func": {
+        "id": "loadTransient",
+        "description": "Loads a transient storage slot from an address.",
+        "declaration": "function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "loadTransient(address,bytes32)",
+        "selector": "0x69fd765a",
+        "selectorBytes": [
+          105,
+          253,
+          118,
+          90
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "makePersistent_0",
         "description": "Marks that the account(s) should use persistent storage across fork swaps in a multifork setup\nMeaning, changes made to the state of this account will be kept when switching forks.",
         "declaration": "function makePersistent(address account) external;",
@@ -12379,6 +12399,26 @@
           202,
           16,
           187
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "storeTransient",
+        "description": "Stores a value to an address' transient storage slot.\nThe value lasts until the end of the current transaction, like a value written with `TSTORE`.",
+        "declaration": "function storeTransient(address target, bytes32 slot, bytes32 value) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "storeTransient(address,bytes32,bytes32)",
+        "selector": "0x89b5a4cd",
+        "selectorBytes": [
+          137,
+          181,
+          164,
+          205
         ]
       },
       "group": "evm",
