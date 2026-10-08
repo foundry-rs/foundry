@@ -140,9 +140,10 @@ fn expect_call_tests_should_fail(prj: _, cmd: _) {
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002, call type DelegateCall to be called 1 time, but was called 0 times] testShouldFailExpectDelegateCallWithCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectInnerCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 3 times, but was called 2 times] testShouldFailExpectMultipleCallsWithDataAdditive() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002, call type Call to be called 1 time, but was called 0 times] testShouldFailExpectRegularCallWithStaticCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 to be called 1 time, but was called 0 times] testShouldFailExpectSelectorCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc290d6910000000000000000000000000000000000000000000000000000000000000001, call type StaticCall to be called 1 time, but was called 0 times] testShouldFailExpectStaticCallWithCall() ([GAS])
-Suite result: FAILED. 0 passed; 12 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 13 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
