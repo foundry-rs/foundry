@@ -8,10 +8,10 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then install `tempo-labs.solar-lsp` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=tempo-labs.solar-lsp)
+[Foundry](https://getfoundry.sh), then install `foundry.solar-lsp` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=foundry.solar-lsp)
 or, for Cursor, VSCodium and other VS Code forks,
-[Open VSX](https://open-vsx.org/extension/tempo-labs/solar-lsp).
+[Open VSX](https://open-vsx.org/extension/foundry/solar-lsp).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
@@ -73,7 +73,7 @@ ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
 are never reinterpreted as Forge paths. The package name `solar-lsp`, language
 ID `solidity`, `solarLsp.*` setting keys and `solar.*` commands remain unchanged.
-The extension ID is `tempo-labs.solar-lsp`; `forge lsp` does not require a
+The extension ID is `foundry.solar-lsp`; `forge lsp` does not require a
 Marketplace installation.
 
 ## Formatting
@@ -194,9 +194,9 @@ it to the Visual Studio Marketplace and Open VSX. Bump `version` in
 step signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credential`,
 so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
 variables for a federated identity that trusts
-`repo:foundry-rs/foundry:environment:release` and is a member of the `tempo-labs`
+`repo:foundry-rs/foundry:environment:release` and is a member of the `foundry`
 publisher. The Open VSX step needs an `OVSX_PAT` environment secret from an
-account that owns the `tempo-labs` namespace. Select `pre-release` to publish a
+account that owns the `foundry` namespace. Select `pre-release` to publish a
 pre-release version.
 
 ## Protocol tracing and CodeLens

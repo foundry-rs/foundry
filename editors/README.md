@@ -114,7 +114,7 @@ Zed's tree-sitter grammar remains pinned in `extension.toml`.
 Public identities are retained: VS Code `solar-lsp`, Solidity language ID,
 `solarLsp.*` settings and commands, server-returned `solar.*` commands, and
 Zed extension/server ID `solar`. The VS Code extension ID is
-`tempo-labs.solar-lsp`. In particular, `solar.copySelector`,
+`foundry.solar-lsp`. In particular, `solar.copySelector`,
 `solar.showReferences` and `solar.showTypeHierarchy` remain registered by the
 VS Code client.
 
