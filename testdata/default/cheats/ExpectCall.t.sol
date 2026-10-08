@@ -218,6 +218,22 @@ contract ExpectCallTest is Test {
         vm.expectDelegateCall(address(simpleCall), data);
         proxyWithDelegateCall.delegateCall(simpleCall);
     }
+
+    function testExpectStaticCall() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+        vm.expectStaticCall(address(inner), abi.encodeWithSelector(inner.numberA.selector));
+        target.sum();
+    }
+
+    function testExpectCallAndStaticCallForSameCalldata() public {
+        Contract inner = new Contract();
+        NestedContract target = new NestedContract(inner);
+        bytes memory data = abi.encodeWithSelector(inner.numberB.selector);
+        vm.expectCall(address(inner), data);
+        vm.expectStaticCall(address(inner), data);
+        target.sum();
+    }
 }
 
 contract ExpectCallCountTest is Test {
