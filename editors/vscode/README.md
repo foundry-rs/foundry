@@ -194,9 +194,11 @@ step signs in to Azure with GitHub OIDC and runs `vsce publish --azure-credentia
 so the `release` environment needs `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`
 variables for a federated identity that trusts
 `repo:foundry-rs/foundry:environment:release` and is a member of the `foundry`
-publisher. The Open VSX step needs an `OVSX_PAT` environment secret from an
-account that owns the `foundry` namespace. Select `pre-release` to publish a
-pre-release version.
+publisher. The Open VSX step uses trusted publishing, so the `foundry` namespace
+needs a trusted publisher for this workflow and the `release` environment in
+`foundry-rs/foundry`, registered at
+<https://open-vsx.org/user-settings/trusted-publishers>. Select `pre-release` to
+publish a pre-release version.
 
 ## Protocol tracing and CodeLens
 

@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
     environment: release
     permissions:
-      id-token: write # Sign in to Azure for the Marketplace.
+      id-token: write # Sign in to Azure and Open VSX.
       contents: read
     defaults:
       run:
@@ -48,6 +48,4 @@ jobs:
       - name: Publish to the Visual Studio Marketplace
         run: npx vsce publish --packagePath bundle/forge.vsix --azure-credential ${PRE_RELEASE:+"$PRE_RELEASE"}
       - name: Publish to Open VSX
-        run: npx ovsx publish bundle/forge.vsix ${PRE_RELEASE:+"$PRE_RELEASE"}
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish bundle/forge.vsix --trusted-publishing ${PRE_RELEASE:+"$PRE_RELEASE"}
