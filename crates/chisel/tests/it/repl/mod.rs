@@ -612,3 +612,23 @@ repl_test!(chisel_can_run_with_live_logs_flag, "--live-logs", init = true, |repl
     repl.expect("Hello, World!"); // old log is also printed
     repl.expect("Goodbye, World!");
 });
+
+// A user-defined `run` overload must not shadow the generated `run()` entrypoint.
+repl_test!(run_overload_does_not_shadow_entrypoint, |repl| {
+    repl.sendln("function run(uint256 x) public pure returns (uint256) { return x; }");
+    repl.sendln("uint256 y = 7");
+
+    repl.sendln("y");
+    repl.expect("Decimal: 7");
+
+    repl.sendln("run(3)");
+    repl.expect("Decimal: 3");
+});
+
+// Assembly in a user-defined `run` overload must not affect the generated `run()` entrypoint.
+repl_test!(run_overload_assembly_does_not_shadow_entrypoint, |repl| {
+    repl.sendln("function run(uint256) public pure { assembly { return(0, 0) } }");
+
+    repl.sendln("uint256(7)");
+    repl.expect("Decimal: 7");
+});
