@@ -316,7 +316,6 @@ contract BroadcastRawTransactionTest is Test {
         assertEq(sender.balance, 1 ether - gasUsed * 100);
         assertEq(FAILING_TARGET.balance, 0);
         assertEq(vm.load(FAILING_TARGET, bytes32(0)), bytes32(0));
-        assertEq(revertedMintToken.balanceOf(address(this)), nested && !revertParent ? 1 : 0);
 
         // The next transaction must see the committed nonce and remain usable after the failure.
         vm.etch(FAILING_TARGET, "");
@@ -324,6 +323,9 @@ contract BroadcastRawTransactionTest is Test {
         assertEq(vm.getNonce(sender), 2);
         assertEq(sender.balance, 1 ether - (gasUsed + 21_000) * 100 - 17);
         assertEq(FAILING_TARGET.balance, 17);
+        // Check after the follow-up transaction reloads journaled accounts from the backend.
+        // Reading the token earlier would load it into the journal and mask a leaked parent write.
+        assertEq(revertedMintToken.balanceOf(address(this)), nested && !revertParent ? 1 : 0);
     }
 
     function signTransfer(bytes memory nonce) internal pure returns (bytes memory) {
