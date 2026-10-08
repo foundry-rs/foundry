@@ -8,10 +8,10 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then install `foundry.solar-lsp` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=foundry.solar-lsp)
+[Foundry](https://getfoundry.sh), then install `foundry.forge-lsp` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=foundry.forge-lsp)
 or, for Cursor, VSCodium and other VS Code forks,
-[Open VSX](https://open-vsx.org/extension/foundry/solar-lsp).
+[Open VSX](https://open-vsx.org/extension/foundry/forge-lsp).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
@@ -71,10 +71,9 @@ watchers, including nested projects.
 `solarLsp.serverPath` formerly selected standalone Solar. It is deprecated and
 ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
-are never reinterpreted as Forge paths. The package name `solar-lsp`, language
-ID `solidity`, `solarLsp.*` setting keys and `solar.*` commands remain unchanged.
-The extension ID is `foundry.solar-lsp`; `forge lsp` does not require a
-Marketplace installation.
+are never reinterpreted as Forge paths. The language ID `solidity`, `solarLsp.*`
+setting keys and `solar.*` commands remain unchanged. The extension ID is
+`foundry.forge-lsp`; `forge lsp` does not require a Marketplace installation.
 
 ## Formatting
 
@@ -173,7 +172,7 @@ From `editors/vscode`, run:
 
 ```bash
 npm run package
-code --install-extension bundle/solar-lsp.vsix --force
+code --install-extension bundle/forge-lsp.vsix --force
 ```
 
 Packaging runs the compiler and stages the runtime dependencies, grammars and

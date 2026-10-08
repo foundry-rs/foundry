@@ -1,5 +1,5 @@
 {
-  "name": "solar-lsp",
+  "name": "forge-lsp",
   "displayName": "Solar LSP",
   "description": "Solidity language support powered by forge lsp and forge fmt",
   "version": "0.1.0",

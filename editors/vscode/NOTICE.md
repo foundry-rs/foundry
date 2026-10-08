@@ -10,6 +10,6 @@ The client is dual licensed under MIT or Apache-2.0; the license files link to
 the repository root texts. The Solidity grammar originates from Juan Blanco's
 VS Code Solidity extension; see `syntaxes/README.md` and `syntaxes/LICENSE`.
 
-The package name `solar-lsp`, language and command IDs, `solarLsp.*` settings and
-initialization protocol remain unchanged. The source manifest had no publisher;
-Foundry publishes it as `foundry.solar-lsp`.
+The language and command IDs, `solarLsp.*` settings and initialization protocol
+remain unchanged. The source package `solar-lsp` had no publisher; Foundry
+publishes it as `foundry.forge-lsp`.
