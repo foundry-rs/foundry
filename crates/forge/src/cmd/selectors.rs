@@ -14,6 +14,7 @@ use foundry_common::{
         PathOrContractInfo, ProjectCompiler, compile_abi_project, compile_abi_project_cached,
     },
     external_compiler::is_external_artifact,
+    fs::canonicalize_path,
     selectors::{SelectorImportData, import_selectors},
     shell,
 };
@@ -203,12 +204,12 @@ impl SelectorsSubcommands {
                 }
 
                 if let Some(contract_path) = &mut first_contract.path {
-                    let target_path = dunce::canonicalize(&*contract_path)?;
+                    let target_path = canonicalize_path(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
                     compiler = compiler.target_files([target_path]);
                 }
                 if let Some(contract_path) = &mut second_contract.path {
-                    let target_path = dunce::canonicalize(&*contract_path)?;
+                    let target_path = canonicalize_path(&*contract_path)?;
                     *contract_path = target_path.to_string_lossy().to_string();
                     compiler = compiler.target_files([target_path]);
                 }

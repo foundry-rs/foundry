@@ -1,11 +1,73 @@
 // CLI integration tests for mutation testing
 
+use alloy_primitives::{U256, address};
+use anvil::{NodeConfig, spawn};
 use foundry_compilers::artifacts::Remapping;
-use foundry_test_utils::{str, util::OutputExt};
+use foundry_test_utils::{rpc::spawn_rpc_proxy_recording_method, str, util::OutputExt};
 use std::{fs, str::FromStr};
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
+}
+
+#[forgetest_init]
+async fn mutation_fork_backend_is_shared_by_baseline_and_workers(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    api.anvil_set_balance(address!("0000000000000000000000000000000000001234"), U256::from(42))
+        .await
+        .unwrap();
+    api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+    let (endpoint, blocks) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_getBlockByNumber").await;
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+contract Counter {
+    uint256 public number;
+    function increment() public { number++; }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+import "../src/Counter.sol";
+contract CounterTest {
+    function testIncrement() public {
+        require(address(0x1234).balance == 42, "wrong remote state");
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    );
+    cmd.args([
+        "test",
+        "--fork-url",
+        &endpoint,
+        "--mutate",
+        "src/Counter.sol",
+        "--mutation-jobs",
+        "4",
+        "--threads",
+        "1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Running mutation tests with 4 parallel workers...
+...
+3 mutants killed
+...
+"#]]);
+    assert_eq!(
+        blocks.lock().unwrap().len(),
+        1,
+        "baseline and mutants must use one prepared backend"
+    );
 }
 
 #[forgetest_init]
@@ -1921,14 +1983,14 @@ MUTATION TESTING RESULTS
 ╞══════════╪═══════════╪════════════╡
 │ Survived ┆ 3         ┆ 5.7%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 48        ┆ 90.6%      │
+│ Killed   ┆ 50        ┆ 94.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ Invalid  ┆ 0         ┆ 0.0%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 2         ┆ 3.8%       │
+│ Skipped  ┆ 0         ┆ 0.0%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 94.1% (48/51 mutants killed); [ELAPSED]
+Mutation Score: 94.3% (50/53 mutants killed); [ELAPSED]
 ...
 "#]]);
 }
@@ -1990,4 +2052,209 @@ MUTATION TESTING RESULTS
 ════════════════════════════════════════════════════════════
 ...
 "#]]);
+}
+
+// Mutants on nested and shared spans must give the same results for every worker count and
+// schedule.
+#[forgetest_init]
+fn mutation_testing_results_do_not_depend_on_worker_count(prj: _, cmd: _) {
+    prj.add_source(
+        "Nested.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Nested {
+    function mix(uint256 a, uint256 b) public pure returns (uint256) {
+        return (a + b) * (a > b ? a - b : b - a) + (a * 3) / (b + 1);
+    }
+
+    function clamp(uint256 x, uint256 lo, uint256 hi) public pure returns (uint256) {
+        if (x < lo) return lo + (hi - lo) * 0;
+        if (x > hi) return hi - (hi - lo) * 0;
+        return x;
+    }
+
+    function score(uint256 x) public pure returns (uint256) {
+        return (x % 7 == 0 ? x / 7 : x * 2) + (x > 100 ? 1 : 0);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Nested.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Nested.sol";
+
+contract NestedTest {
+    Nested private nested = new Nested();
+
+    function testWeak() public view {
+        assert(nested.clamp(5, 1, 10) == 5);
+        assert(nested.mix(2, 2) > 0);
+    }
+}
+"#,
+    );
+
+    let mut run = |jobs: &str| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Nested.sol", "--mutation-jobs", jobs, "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut result = serde_json::from_str::<serde_json::Value>(output.trim()).unwrap();
+        result["summary"].as_object_mut().unwrap().remove("duration_secs");
+        result
+    };
+    let serial = run("1");
+    assert!(serial["summary"]["survived"].as_u64().unwrap() > 0, "{serial}");
+    assert_eq!(run("4"), serial);
+    assert_eq!(run("8"), serial);
+}
+
+// Mutant paths must be relative to the project root, also if a parent directory of the project
+// has a well-known name such as `src`.
+#[forgetest]
+fn mutation_paths_are_relative_to_project_root(prj: _, cmd: _) {
+    let root = prj.root().join("src/project");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(root.join("test")).unwrap();
+    fs::write(root.join("foundry.toml"), "[profile.default]\n").unwrap();
+    fs::write(
+        root.join("src/Counter.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("test/Counter.t.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.current_dir(&root)
+        .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"summary":{"total":4,"killed":3,"survived":1,"invalid":0,"skipped":0,"timed_out":0,"mutation_score":75.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":9,"column":9,"original":"number++","mutant":"++number"}]}}
+
+"#]]);
+}
+
+// A per-mutant timeout must not turn a run-limited invariant campaign into a time-based one.
+#[forgetest]
+fn mutation_timeout_keeps_invariant_run_limit(prj: _, cmd: _) {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number = number + 1;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract Handler {
+    Counter public counter;
+    uint256 public calls;
+
+    constructor(Counter counter_) {
+        counter = counter_;
+    }
+
+    function increment() public {
+        counter.increment();
+        calls++;
+    }
+}
+
+contract CounterInvariantTest {
+    Counter counter;
+    Handler handler;
+
+    function setUp() public {
+        counter = new Counter();
+        handler = new Handler(counter);
+    }
+
+    function targetContracts() public view returns (address[] memory targets) {
+        targets = new address[](1);
+        targets[0] = address(handler);
+    }
+
+    /// forge-config: default.invariant.runs = 4
+    /// forge-config: default.invariant.depth = 4
+    /// forge-config: default.invariant.shrink_run_limit = 0
+    function invariant_countsCalls() public view {
+        require(counter.number() == handler.calls(), "count mismatch");
+    }
+}
+"#,
+    );
+
+    let mut run = |args: &[&str]| {
+        let _ = fs::remove_dir_all(prj.root().join("cache"));
+        let output = cmd
+            .forge_fuse()
+            .args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "4", "--json"])
+            .args(args)
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let mut summary = mutation_summary(&output);
+        summary.as_object_mut().unwrap().remove("duration_secs");
+        summary
+    };
+    let unbounded = run(&[]);
+    assert_eq!(
+        unbounded,
+        serde_json::json!({
+            "total": 10,
+            "killed": 9,
+            "survived": 1,
+            "invalid": 0,
+            "skipped": 0,
+            "timed_out": 0,
+            "mutation_score": 90.0,
+        })
+    );
+    assert_eq!(run(&["--mutation-timeout", "5"]), unbounded);
 }

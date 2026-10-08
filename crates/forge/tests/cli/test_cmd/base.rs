@@ -212,7 +212,7 @@ fn base_execute_transaction_rejects_eip8130(prj: _, cmd: _) {
     let signature = signer
         .sign_hash_sync(&unsigned.as_eip8130().unwrap().tx().sender_signature_hash())
         .unwrap();
-    envelope["senderAuth"] = json!(Bytes::from(signature.as_bytes().to_vec()));
+    envelope["senderAuth"] = json!(Bytes::from(signature.as_bytes()));
     let signed = serde_json::from_value::<TxEnvelopeFor<BaseEvmNetwork>>(envelope).unwrap();
     assert_eq!(signed.recover_signer().unwrap(), signer.address());
     let mut raw = Vec::new();

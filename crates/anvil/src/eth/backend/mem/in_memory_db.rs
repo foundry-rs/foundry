@@ -178,7 +178,7 @@ impl HistoricalStateCache {
 
             let info = account_info_with_code(&account.info, &db.inner.cache.contracts);
             if let Some(code) = &info.code {
-                state.contracts.insert(info.code_hash, code.clone());
+                state.contracts.insert(info.code_hash(), code.clone());
             }
             state.accounts.insert(
                 address,
@@ -290,7 +290,7 @@ impl PersistentStateDb {
 fn account_info_with_code(info: &AccountInfo, contracts: &B256Map<Bytecode>) -> AccountInfo {
     let mut info = info.clone();
     if info.code.is_none() {
-        info.code = contracts.get(&info.code_hash).cloned();
+        info.code = contracts.get(&info.code_hash()).cloned();
     }
     info
 }
@@ -353,7 +353,7 @@ impl MaybeFullDatabase for PersistentStateDb {
             .into_iter()
             .map(|(address, info)| {
                 if let Some(code) = &info.code {
-                    contracts.insert(info.code_hash, code.clone());
+                    contracts.insert(info.code_hash(), code.clone());
                 }
                 let storage = storage
                     .remove(&address)
@@ -482,6 +482,10 @@ impl Db for StateRootDb {
         reverted
     }
 
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        Db::delete_state_snapshot(&mut self.inner, id)
+    }
+
     fn maybe_state_root(&self) -> Option<B256> {
         Some(self.state_root.lock().root(&self.inner.inner.cache.accounts))
     }
@@ -575,7 +579,7 @@ impl Db for MemDb {
                 let code = if let Some(code) = v.info.code {
                     code
                 } else {
-                    self.inner.code_by_hash_ref(v.info.code_hash)?
+                    self.inner.code_by_hash_ref(v.info.code_hash())?
                 };
                 Ok((
                     k,
@@ -622,6 +626,10 @@ impl Db for MemDb {
             warn!(target: "backend::memdb", "No state snapshot to revert for {}", id);
             false
         }
+    }
+
+    fn delete_state_snapshot(&mut self, id: U256) -> bool {
+        self.state_snapshots.remove_at(id).is_some()
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
@@ -710,7 +718,7 @@ mod tests {
         let loaded_account = load_db.basic_ref(test_addr).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, U256::from(123456));
-        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
     }
@@ -759,7 +767,7 @@ mod tests {
             test_addr,
             SerializableAccountRecord {
                 balance: U256::from(100100),
-                code: contract_code.bytes()[..contract_code.len()].to_vec().into(),
+                code: contract_code.original_bytes(),
                 nonce: 100,
                 storage: new_storage,
             },
@@ -773,7 +781,7 @@ mod tests {
         assert_eq!(loaded_account2.nonce, 1);
 
         assert_eq!(loaded_account.balance, U256::from(100100));
-        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(db.code_by_hash_ref(loaded_account.code_hash()).unwrap(), contract_code);
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::ONE);
         assert_eq!(db.storage_ref(test_addr, U256::from(1234568)).unwrap(), U256::from(5));

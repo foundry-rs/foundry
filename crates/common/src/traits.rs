@@ -305,7 +305,7 @@ impl TestFunctionKind {
     /// Returns `true` if this function kind is known.
     #[inline]
     pub const fn is_known(&self) -> bool {
-        !matches!(self, Self::Unknown)
+        !self.is_unknown()
     }
 
     /// Returns `true` if this function kind is unknown.

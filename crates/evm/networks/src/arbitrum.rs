@@ -27,7 +27,7 @@ pub fn is_arbitrum_chain(chain_id: u64) -> bool {
 
 /// Returns the ABI-encoded result for `ArbSys.arbBlockNumber()`.
 pub fn arb_block_number_output(block_number: u64) -> Bytes {
-    Bytes::copy_from_slice(&U256::from(block_number).to_be_bytes::<32>())
+    U256::from(block_number).to_be_bytes::<32>().into()
 }
 
 /// Returns the gas cost and ABI-encoded result for `ArbSys.arbBlockNumber()`.
@@ -51,7 +51,7 @@ fn arb_sys_precompile_call(input: PrecompileInput<'_>, block_number: u64) -> Pre
         ));
     }
 
-    let Some((gas_cost, output)) = arb_block_number_call(input.gas, block_number) else {
+    let Some((gas_cost, output)) = arb_block_number_call(input.gas(), block_number) else {
         return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
     };
 

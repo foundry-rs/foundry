@@ -450,30 +450,63 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let mut map = Map::new();
+        let mut map = self.0.data()?;
         let solc_env = std::env::var("FOUNDRY_SOLC_VERSION")
             .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
             .map(Value::from)
             .ok();
-        for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = solc_env.clone() {
-                // ENV var takes precedence over config file
-                dict.insert("solc".to_string(), v);
-            } else if let Some(v) = dict.remove("solc_version") {
-                // only insert older variant if not already included
-                if !dict.contains_key("solc") {
-                    dict.insert("solc".to_string(), v);
+        for (profile, dict) in &mut map {
+            if profile.as_str().as_str() == Config::PROFILE_SECTION {
+                for value in dict.values_mut() {
+                    if let Value::Dict(_, dict) = value {
+                        rewrite_legacy_profile_keys(dict, solc_env.as_ref());
+                    }
                 }
+            } else if !Config::STANDALONE_SECTIONS.contains(&profile.as_ref()) {
+                rewrite_legacy_profile_keys(dict, solc_env.as_ref());
             }
-            if let Some(v) = dict.remove("deny_warnings")
-                && !dict.contains_key("deny")
-            {
-                dict.insert("deny".to_string(), v);
-            }
-
-            map.insert(profile, dict);
         }
         normalize_legacy_labels(&mut map);
+        Ok(map)
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.0.profile()
+    }
+}
+
+/// Applies compiler overrides and legacy key rewrites to a profile dictionary.
+fn rewrite_legacy_profile_keys(dict: &mut Dict, solc_env: Option<&Value>) {
+    if let Some(v) = solc_env {
+        // ENV var takes precedence over config file.
+        dict.insert("solc".to_string(), v.clone());
+    } else if let Some(v) = dict.remove("solc_version") {
+        // Only insert the older variant if not already included.
+        dict.entry("solc".to_string()).or_insert(v);
+    }
+    if let Some(v) = dict.remove("deny_warnings") {
+        dict.entry("deny".to_string()).or_insert(v);
+    }
+}
+
+/// Drops the top-level `root` key from config file profiles.
+///
+/// The project root is selected by the caller, not by config files.
+pub(crate) struct IgnoreRootProvider<P>(pub(crate) P);
+
+impl<P: Provider> Provider for IgnoreRootProvider<P> {
+    fn metadata(&self) -> Metadata {
+        self.0.metadata()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = self.0.data()?;
+        for (profile, dict) in &mut map {
+            // `[profile]` keys are profile names, so `[profile.root]` must be kept.
+            if profile.as_str().as_str() != Config::PROFILE_SECTION {
+                dict.remove("root");
+            }
+        }
         Ok(map)
     }
 

@@ -1120,10 +1120,7 @@ mod tests {
     use foundry_evm_hardforks::TempoHardfork;
     use revm::database::EmptyDB;
     use std::num::NonZeroU64;
-    use tempo_alloy::primitives::{
-        AASigned, TempoSignature, TempoTransaction,
-        transaction::{Call, PrimitiveSignature},
-    };
+    use tempo_alloy::primitives::{TempoSignature, TempoTransaction, transaction::Call};
     use tempo_evm::TempoEvmFactory;
     use tempo_revm::ExecutionContext;
 
@@ -1482,10 +1479,7 @@ mod tests {
             sponsor.sign_hash_sync(&tempo_tx.fee_payer_signature_hash(sender.address())).unwrap(),
         );
         let signature = sender.sign_hash_sync(&tempo_tx.signature_hash()).unwrap();
-        let aa_signed = AASigned::new_unhashed(
-            tempo_tx,
-            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-        );
+        let aa_signed = tempo_tx.into_signed(signature.into());
         let tx_hash = *aa_signed.hash();
         let unique_tx_identifier = aa_signed.expiring_nonce_hash(sender.address());
 
@@ -1496,7 +1490,7 @@ mod tests {
         );
         let any_tx: AnyRpcTransaction =
             serde_json::from_value(serde_json::to_value(&rpc_tx).unwrap()).unwrap();
-        assert!(matches!(&*any_tx.inner.inner, AnyTxEnvelope::Unknown(_)));
+        assert!((*any_tx.inner.inner).is_unknown());
 
         let tx_env = TempoTxEnv::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(tx_env.inner.tx_type, TEMPO_TX_TYPE_ID);
@@ -1550,7 +1544,7 @@ mod tests {
         );
         // Expiring nonces are replay-protected by this sender-scoped identifier.
         assert_eq!(
-            tx_env.unique_tx_identifier(),
+            tx_env.channel_open_context_hash(),
             Some(b256!("0xadb35ee9830a691a8dbd8f42208a1553d9a242b8750a218d841cc78a0dea20ca"))
         );
 
@@ -1631,7 +1625,7 @@ mod tests {
         );
         // Expiring nonces are replay-protected by this sender-scoped identifier.
         assert_eq!(
-            tx_env.unique_tx_identifier(),
+            tx_env.channel_open_context_hash(),
             Some(b256!("0xdb2722c83d8893c1637bbabfe2ad924bcc044653f6c9fa91d472d70ddfa97de3"))
         );
 

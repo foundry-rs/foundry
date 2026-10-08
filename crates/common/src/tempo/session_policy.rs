@@ -45,10 +45,10 @@ pub struct PreparedSessionAuthorization {
 impl SessionAuthorizationRequest {
     /// Validate this request and build the unsigned Tempo [`KeyAuthorization`].
     pub fn prepare(&self, now: u64) -> eyre::Result<PreparedSessionAuthorization> {
-        ensure!(self.session_id != B256::ZERO, "session id cannot be zero");
-        ensure!(self.root_account != Address::ZERO, "session root account cannot be zero");
+        ensure!(!self.session_id.is_zero(), "session id cannot be zero");
+        ensure!(!self.root_account.is_zero(), "session root account cannot be zero");
         ensure!(self.chain_id != 0, "session chain id cannot be zero");
-        ensure!(self.key_address != Address::ZERO, "session key address cannot be zero");
+        ensure!(!self.key_address.is_zero(), "session key address cannot be zero");
         ensure!(
             self.key_address != self.root_account,
             "session key address must differ from the root account"
@@ -179,7 +179,7 @@ fn session_scopes_to_entry(scope: &[CallScope]) -> Vec<SessionCallScope> {
     scope
         .iter()
         .map(|scope| SessionCallScope {
-            target: scope.target,
+            target: scope.target(),
             selector_rules: session_selector_rules_to_entry(&scope.selector_rules),
         })
         .collect()
@@ -189,7 +189,7 @@ fn session_selector_rules_to_entry(rules: &[SelectorRule]) -> Vec<SessionSelecto
     rules
         .iter()
         .map(|rule| SessionSelectorRule {
-            selector: rule.selector.into(),
+            selector: rule.selector().into(),
             recipients: rule.recipients.clone(),
         })
         .collect()
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(prepared.authorization.key_type, SignatureType::Secp256k1);
         assert_eq!(prepared.authorization.key_id, key);
         assert_eq!(prepared.authorization.expiry.map(NonZeroU64::get), Some(1_700_000_600));
-        assert_eq!(prepared.authorization.witness, Some(session_id));
+        assert_eq!(prepared.authorization.witness(), Some(session_id));
         assert_eq!(
             prepared.authorization.limits,
             Some(vec![TokenLimit { token, limit: U256::ZERO, period: 0 }])

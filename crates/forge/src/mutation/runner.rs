@@ -5,9 +5,8 @@
 
 use crate::{
     MultiContractRunnerBuilder,
-    cmd::test::{FilterArgs, RerunFailure, dispatch_network},
+    cmd::test::{FilterArgs, RerunFailure},
     mutation::{
-        SurvivedSpans,
         mutant::{Mutant, MutationResult},
         progress::MutationProgress,
     },
@@ -15,19 +14,15 @@ use crate::{
     workspace,
 };
 use eyre::Result;
-use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
+use foundry_common::{compile::ProjectCompiler, fs::canonicalize_path, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-    },
+    backend::Backend,
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork},
     executors::ExecutorBuilder,
-    fork::ResolvedFork,
     opts::EvmOpts,
 };
-use foundry_evm_networks::NetworkVariant;
-use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
     fs,
@@ -39,18 +34,9 @@ use std::{
         mpsc,
     },
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
-
-#[cfg(feature = "base")]
-use foundry_evm::core::evm::BaseEvmNetwork;
-
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
-
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 
 const MUTATION_STACK_SIZE: usize = 16 * 1024 * 1024;
 
@@ -77,16 +63,15 @@ pub struct MutationBatchResult {
 
 /// Immutable EVM inputs shared by the baseline and every mutation worker.
 #[derive(Clone)]
-pub struct MutationEvmConfig {
+pub struct MutationEvmConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub opts: EvmOpts,
-    pub resolved_fork: Option<ResolvedFork>,
+    pub backend: Backend<FEN>,
+    pub executor_builder: ExecutorBuilder<FEN>,
     pub create2_deployer_available: bool,
 }
 
-/// Tracks progress and adaptive span skipping across parallel workers.
+/// Tracks progress, cancellation, and timed-out workers across parallel workers.
 pub struct SharedMutationState {
-    /// Spans where mutations have survived - shared across workers for adaptive skipping.
-    pub survived_spans: Mutex<SurvivedSpans>,
     /// Progress counter.
     pub completed: AtomicUsize,
     pub total: AtomicUsize,
@@ -107,13 +92,12 @@ pub struct SharedMutationState {
 }
 
 impl SharedMutationState {
-    pub fn new(
+    pub const fn new(
         cancelled: Arc<AtomicBool>,
         silent: bool,
         progress: Option<MutationProgress>,
     ) -> Self {
         Self {
-            survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
             cancelled,
@@ -132,18 +116,6 @@ impl SharedMutationState {
         self.cancelled.store(true, Ordering::SeqCst);
         if let Some(ref progress) = self.progress {
             progress.cancel();
-        }
-    }
-
-    pub fn should_skip_span(&self, span: solar::ast::Span) -> bool {
-        // Handle mutex poisoning gracefully - don't skip if we can't check
-        self.survived_spans.lock().map(|guard| guard.should_skip_in_live_run(span)).unwrap_or(false)
-    }
-
-    pub fn mark_span_survived(&self, span: solar::ast::Span) {
-        // Handle mutex poisoning gracefully - just skip marking if poisoned
-        if let Ok(mut guard) = self.survived_spans.lock() {
-            guard.mark_survived(span);
         }
     }
 
@@ -190,12 +162,12 @@ impl Default for SharedMutationState {
 
 /// Run mutation tests in parallel with optional progress display.
 #[allow(clippy::too_many_arguments)]
-pub fn run_mutations_parallel_with_progress(
+pub fn run_mutations_parallel_with_progress<FEN: FoundryEvmNetwork>(
     mutants: Vec<Mutant>,
     source_path: PathBuf,
     original_source: Arc<String>,
     config: Arc<Config>,
-    evm: MutationEvmConfig,
+    evm: MutationEvmConfig<FEN>,
     num_workers: usize,
     progress: Option<MutationProgress>,
     silent: bool,
@@ -251,7 +223,7 @@ pub fn run_mutations_parallel_with_progress(
     // temp root as well so explicit compiler inputs, project-local remappings, and the project
     // root all use the same path spelling (notably `/private/var` rather than `/var` on macOS).
     let temp_root = std::env::temp_dir();
-    let temp_root = dunce::canonicalize(&temp_root).map_err(|err| {
+    let temp_root = canonicalize_path(&temp_root).map_err(|err| {
         eyre::eyre!("failed to canonicalize mutation temp root {}: {err}", temp_root.display())
     })?;
 
@@ -269,12 +241,19 @@ pub fn run_mutations_parallel_with_progress(
     let filter_args = Arc::new(filter_args);
     let rerun_failures = Arc::new(rerun_failures);
 
-    pool.install(|| {
-        mutants.into_par_iter().for_each(|mutant| {
-            // Skip if cancelled
+    // Each worker pulls mutants from a shared queue. Do not use a parallel iterator here: a worker
+    // that waits on another pool (for example solar's parser pool in `Session::enter`) steals
+    // queued jobs from this pool. If those jobs are mutants, they nest on one stack, and each
+    // waiting mutant keeps its compiler session and thread pool alive until the run ends.
+    let queue = Mutex::new(mutants.into_iter());
+    pool.broadcast(|_| {
+        loop {
             if shared_state.is_cancelled() {
-                return;
+                break;
             }
+            let Some(mutant) = queue.lock().ok().and_then(|mut queue| queue.next()) else {
+                break;
+            };
 
             // Wrap in catch_unwind to prevent one panic from aborting the entire run
             let mutant_clone = mutant.clone();
@@ -308,7 +287,7 @@ pub fn run_mutations_parallel_with_progress(
             if let Ok(mut results) = completed_results.lock() {
                 results.push(test_result);
             }
-        });
+        }
     });
 
     // Extract results
@@ -324,8 +303,8 @@ pub fn run_mutations_parallel_with_progress(
     //
     // We intentionally block: by this point all rayon work is done, the
     // wall-clock budget has already been spent, and the only thing left to do
-    // is reclaim cleanup. The inner `fuzz.timeout` / `invariant.timeout`
-    // values we propagated earlier bound how long any individual worker can
+    // is reclaim cleanup. Each worker stops its test run at the same deadline
+    // (see `compile_and_test`), which bounds how long any individual worker can
     // actually run.
     let pending = shared_state
         .pending_workers
@@ -358,12 +337,12 @@ pub fn run_mutations_parallel_with_progress(
 
 /// Test a single mutant in an isolated temporary workspace.
 #[allow(clippy::too_many_arguments)]
-fn test_single_mutant_isolated(
+fn test_single_mutant_isolated<FEN: FoundryEvmNetwork>(
     mutant: Mutant,
     source_relative: &PathBuf,
     original_source: &Arc<String>,
     config: &Arc<Config>,
-    evm: &MutationEvmConfig,
+    evm: &MutationEvmConfig<FEN>,
     shared_state: &Arc<SharedMutationState>,
     temp_root: &Path,
     filter_args: &Arc<FilterArgs>,
@@ -371,22 +350,6 @@ fn test_single_mutant_isolated(
     selected_sources_relative: &Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutantTestResult {
-    // Check if we should skip this mutant based on adaptive span tracking
-    if shared_state.should_skip_span(mutant.span) {
-        if let Some(ref progress) = shared_state.progress {
-            progress.complete_mutant(&mutant, &MutationResult::Skipped);
-        } else if !shared_state.silent {
-            let completed = shared_state.increment_completed();
-            let total = shared_state.total.load(Ordering::SeqCst);
-            let _ = sh_println!(
-                "[{}/{}] Skipping mutant (adaptive: span already has surviving mutation)",
-                completed,
-                total
-            );
-        }
-        return MutantTestResult { mutant, result: MutationResult::Skipped };
-    }
-
     // Show progress or log
     if let Some(ref progress) = shared_state.progress {
         progress.start_mutant(&mutant);
@@ -419,9 +382,10 @@ fn test_single_mutant_isolated(
         return MutantTestResult { mutant, result: MutationResult::Invalid };
     }
 
-    let temp_path = temp_dir.path().to_path_buf();
-    let temp_config = temp_config_for_mutation(config, &temp_path);
-    let temp_config = Arc::new(temp_config);
+    // Start from the already materialized baseline config instead of reloading
+    // `foundry.toml`, so CLI overrides and runtime normalization stay identical
+    // between the baseline run and every mutant run.
+    let temp_config = Arc::new(workspace::rebase_config_paths(config, temp_dir.path()));
 
     // Compile and test, optionally bounded by a wall-clock timeout.
     //
@@ -458,6 +422,7 @@ fn test_single_mutant_isolated(
                 rerun_failures.as_ref().as_deref(),
                 selected_sources_relative,
                 isolate,
+                None,
             ) {
                 Ok(true) => MutationResult::Dead,
                 Ok(false) => MutationResult::Alive,
@@ -467,12 +432,6 @@ fn test_single_mutant_isolated(
             res
         }
     };
-
-    // Track adaptive survived spans only for genuinely Alive mutants; TimedOut
-    // is unresolved and must not mask other mutations on the same span.
-    if matches!(result, MutationResult::Alive) {
-        shared_state.mark_span_survived(mutant.span);
-    }
 
     // Update progress
     if let Some(ref progress) = shared_state.progress {
@@ -486,14 +445,17 @@ fn test_single_mutant_isolated(
 /// to complete. Returns `TimedOut` on overrun and `Invalid` on infrastructure
 /// errors / panics.
 ///
+/// The worker stops its test run at the same deadline, so a timed-out worker
+/// does not keep running fuzz or invariant campaigns in the background.
+///
 /// The worker takes ownership of `temp_dir` so the underlying workspace
 /// directory is only dropped when the worker thread actually exits. On
 /// timeout the `JoinHandle` is parked in `shared_state.pending_workers`
 /// and joined at the end of the parallel run.
 #[allow(clippy::too_many_arguments)]
-fn run_compile_and_test_with_timeout(
+fn run_compile_and_test_with_timeout<FEN: FoundryEvmNetwork>(
     config: Arc<Config>,
-    evm: &MutationEvmConfig,
+    evm: &MutationEvmConfig<FEN>,
     budget: Duration,
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
@@ -502,6 +464,7 @@ fn run_compile_and_test_with_timeout(
     selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutationResult {
+    let deadline = Instant::now() + budget;
     let (tx, rx) = mpsc::channel::<Result<bool>>();
     let evm = evm.clone();
     // Move `temp_dir` into the worker so its `Drop` only runs after the worker
@@ -528,6 +491,7 @@ fn run_compile_and_test_with_timeout(
                         rerun_for_worker.as_ref().as_deref(),
                         &selected_sources_for_worker,
                         isolate,
+                        Some(deadline),
                     )
                 })
             }))
@@ -544,7 +508,13 @@ fn run_compile_and_test_with_timeout(
         Err(_) => return MutationResult::Invalid,
     };
 
-    match rx.recv_timeout(budget) {
+    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        // The worker stops its tests at the deadline, so a result that arrives
+        // after it can come from an incomplete test run.
+        Ok(_) if Instant::now() >= deadline => {
+            let _ = handle.join();
+            MutationResult::TimedOut
+        }
         Ok(Ok(true)) => {
             // Worker finished and sent a result; join briefly so the TempDir
             // is actually cleaned up before we return.
@@ -638,66 +608,21 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
     Ok(())
 }
 
-/// Build the config used inside a per-mutant temp workspace.
+/// Compiles and tests a mutant using the campaign's already selected EVM and remote backend.
 ///
-/// Start from the already materialized baseline config instead of reloading
-/// `foundry.toml`, so CLI overrides and runtime normalization stay identical
-/// between the baseline run and every mutant run.
-fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
-    let mut temp_config = workspace::rebase_config_paths(config, temp_path);
-
-    // Propagate the per-mutant timeout into the inner fuzz/invariant harness
-    // so the hot test loop itself bails out at the deadline. Without this the
-    // outer `recv_timeout` would only stop *waiting* — the leaked worker
-    // thread would keep running expensive fuzz/invariant runs and starve the
-    // pool. We never raise an existing user-configured value.
-    if let Some(mutation_timeout) = config.mutation.timeout {
-        temp_config.fuzz.timeout = Some(match temp_config.fuzz.timeout {
-            Some(existing) => existing.min(mutation_timeout),
-            None => mutation_timeout,
-        });
-        temp_config.invariant.timeout = Some(match temp_config.invariant.timeout {
-            Some(existing) => existing.min(mutation_timeout),
-            None => mutation_timeout,
-        });
-    }
-
-    temp_config
-}
-
-/// Compile the project and run tests, returning true if any test failed (mutant killed).
-///
-/// Dispatches to the correct network type based on `evm_opts.networks`.
-fn compile_and_test(
+/// If `deadline` is set, the test run stops at the deadline like an interrupted `forge test`.
+/// This keeps fuzz and invariant run limits unchanged, because their `timeout` settings would
+/// turn a run-limited campaign into a time-based one.
+fn compile_and_test<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
-    evm: &MutationEvmConfig,
+    evm: &MutationEvmConfig<FEN>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
-) -> Result<bool> {
-    dispatch_network!(&evm.opts, |Net| compile_and_test_inner::<Net>(
-        config,
-        evm,
-        filter_args,
-        rerun_failures,
-        selected_sources_relative,
-        isolate,
-        ExecutorBuilder::<Net>::new(),
-    ))
-}
-
-fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
-    config: &Arc<Config>,
-    evm: &MutationEvmConfig,
-    filter_args: &FilterArgs,
-    rerun_failures: Option<&[RerunFailure]>,
-    selected_sources_relative: &[PathBuf],
-    isolate: bool,
-    executor_builder: ExecutorBuilder<FEN>,
+    deadline: Option<Instant>,
 ) -> Result<bool> {
     let evm_opts = &evm.opts;
-    let resolved_fork = evm.resolved_fork.as_ref();
     // Compile
     let files = selected_sources_relative
         .iter()
@@ -731,12 +656,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env) = evm_opts
-            .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(resolved_fork)
-            .await?;
-        let fork_context = resolved_fork.map(ResolvedFork::context);
-        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
-        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        let (evm_env, tx_env) = evm.backend.env(evm_opts).await?;
 
         // Build test runner mirroring the canonical `forge test` runner: same
         // isolation flag, same fail-fast semantics for mutation, and same
@@ -746,9 +666,6 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork_resolved(config, evm_env.cfg_env.chain_id, resolved_fork))
-            .with_fork_chain_id(fork_chain_id)
-            .with_fork_hardfork(fork_hardfork)
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(evm.create2_deployer_available)
@@ -757,8 +674,17 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
                 evm_env,
                 tx_env,
                 evm_opts.clone(),
-                executor_builder,
+                evm.backend.clone_with_fork_scope()?,
+                evm.executor_builder.clone(),
             )?;
+
+        if let Some(deadline) = deadline {
+            let early_exit = runner.tcfg.early_exit.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep_until(deadline.into()).await;
+                early_exit.record_ctrl_c();
+            });
+        }
 
         runner.test_collect(&filter)
     })?;
@@ -792,7 +718,8 @@ mod tests {
             let config = Arc::new(config);
             let evm = MutationEvmConfig {
                 opts: EvmOpts::default(),
-                resolved_fork: None,
+                backend: Backend::<EthEvmNetwork>::spawn(None).unwrap(),
+                executor_builder: ExecutorBuilder::<EthEvmNetwork>::new(),
                 create2_deployer_available: false,
             };
             let shared_state = Arc::new(SharedMutationState::default());
@@ -883,8 +810,8 @@ mod tests {
         config.invariant.failure_persist_dir = Some(root.join("custom-cache/invariant"));
         config.mutation.timeout = Some(5);
 
-        let temp_config = temp_config_for_mutation(&config, temp.path());
-        let expected_root = dunce::canonicalize(temp.path()).unwrap();
+        let temp_config = workspace::rebase_config_paths(&config, temp.path());
+        let expected_root = canonicalize_path(temp.path()).unwrap();
 
         assert_eq!(temp_config.root, expected_root);
         assert_eq!(temp_config.src, expected_root.join("contracts"));
@@ -909,7 +836,7 @@ mod tests {
         assert!(temp_config.dynamic_test_linking);
         assert!(temp_config.cache);
         assert_eq!(temp_config.fuzz.seed, Some(U256::from(42)));
-        assert_eq!(temp_config.fuzz.timeout, Some(5));
-        assert_eq!(temp_config.invariant.timeout, Some(5));
+        assert_eq!(temp_config.fuzz.timeout, Some(90));
+        assert_eq!(temp_config.invariant.timeout, Some(80));
     }
 }

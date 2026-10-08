@@ -6,6 +6,7 @@ use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
+use foundry_common::fs::canonicalize_path;
 use foundry_config::{Config, impl_figment_convert_basic};
 use std::path::{Path, PathBuf};
 use yansi::Paint;
@@ -116,7 +117,7 @@ impl UpdateArgs {
             git.submodule_foreach(false, "git submodule update --init --progress --recursive")?;
         }
 
-        let canonical_root = dunce::canonicalize(&root)?;
+        let canonical_root = canonicalize_path(&root)?;
         let mut checkout_paths = foundry_lock
             .iter()
             .map(|(path, _)| path)

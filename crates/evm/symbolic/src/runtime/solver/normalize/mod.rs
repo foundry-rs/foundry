@@ -585,7 +585,7 @@ impl ConstraintContext {
         };
         root_candidate
             || expr.contains_udiv()
-            || expr.visit_unique_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
+            || expr.visit_bool(|word| matches!(word.kind(), SymExprKind::Ite(_, _, _)))
     }
 
     fn normalize_bool(
@@ -595,7 +595,7 @@ impl ConstraintContext {
         context_free_changed: bool,
     ) -> SymBoolExpr {
         let may_normalize_word = !self.is_exact_value_constraint(&expr)
-            && expr.visit_unique_bool(|word| self.may_normalize_word(word));
+            && expr.visit_bool(|word| self.may_normalize_word(word));
         let expr = if may_normalize_word {
             let expr = expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr));
             normalize_bool_for_solver(cx, expr)
@@ -848,10 +848,10 @@ impl ConstraintContext {
                     && self.interval(amount).is_some_and(|range| range.max <= signed_max)
                 {
                     // For a,b in [0, int256::MAX], signed(a + (-b)) < 0 iff a < b.
-                    return Some(SymBoolExpr::cmp(
+                    return Some(SymBoolExpr::cmp_word_expr(
                         cx,
                         SymCmpOp::Ult,
-                        positive.clone(),
+                        positive,
                         amount.clone(),
                     ));
                 }
@@ -916,10 +916,7 @@ impl ConstraintContext {
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = expr.kind() else {
             return None;
         };
-        right
-            .as_const()
-            .map(|factor| (left, factor))
-            .or_else(|| left.as_const().map(|factor| (right, factor)))
+        const_side_bound(left, right)
     }
 
     fn is_exact_value_constraint(&self, constraint: &SymBoolExpr) -> bool {
@@ -952,10 +949,7 @@ impl ConstraintContext {
         let SymExprKind::BinOp(SymBinOp::And, left, right) = masked.kind() else {
             return None;
         };
-        let (source, mask) = right
-            .as_const()
-            .map(|mask| (left, mask))
-            .or_else(|| left.as_const().map(|mask| (right, mask)))?;
+        let (source, mask) = const_side_bound(left, right)?;
         let bits = mask_low_bits(mask)?;
         (source == value).then_some(bits)
     }
@@ -1274,7 +1268,7 @@ impl ConstraintContext {
         let scaled_threshold = SymExpr::binop(cx, SymBinOp::Mul, threshold, denominator.clone());
         Some(if quotient_on_left {
             // `n / d < k => n < k * d`; `n / d <= k => n < (k + 1) * d`.
-            SymBoolExpr::cmp(cx, SymCmpOp::Ult, numerator.clone(), scaled_threshold)
+            SymBoolExpr::cmp_word_expr(cx, SymCmpOp::Ult, numerator, scaled_threshold)
         } else {
             // `k <= n / d => k * d <= n`; `k < n / d => (k + 1) * d <= n`.
             SymBoolExpr::cmp(cx, SymCmpOp::Ule, scaled_threshold, numerator.clone())
@@ -1572,7 +1566,7 @@ impl SymBoolExpr {
         Some(if overflow {
             Self::cmp(cx, SymCmpOp::Ult, limit, increment.clone())
         } else {
-            Self::cmp(cx, SymCmpOp::Ule, increment.clone(), limit)
+            Self::cmp_word_expr(cx, SymCmpOp::Ule, increment, limit)
         })
     }
 
@@ -1597,9 +1591,9 @@ impl SymBoolExpr {
         }
         // Unsigned modular subtraction wraps exactly when the subtrahend exceeds the minuend.
         Some(if underflow {
-            Self::cmp(cx, SymCmpOp::Ult, base.clone(), subtrahend.clone())
+            Self::cmp_word_expr(cx, SymCmpOp::Ult, base, subtrahend.clone())
         } else {
-            Self::cmp(cx, SymCmpOp::Ule, subtrahend.clone(), base.clone())
+            Self::cmp_word_expr(cx, SymCmpOp::Ule, subtrahend, base.clone())
         })
     }
 
@@ -1705,7 +1699,7 @@ impl SymBoolExpr {
         Some(if complement {
             Self::cmp(cx, SymCmpOp::Ult, threshold, value.clone())
         } else {
-            Self::cmp(cx, SymCmpOp::Ule, value.clone(), threshold)
+            Self::cmp_word_expr(cx, SymCmpOp::Ule, value, threshold)
         })
     }
 

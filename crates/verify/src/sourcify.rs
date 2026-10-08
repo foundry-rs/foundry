@@ -368,14 +368,12 @@ impl SourcifyVerificationProvider {
                     let creation_exact = contract_response
                         .creation_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     let runtime_exact = contract_response
                         .runtime_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     Ok(creation_exact && runtime_exact)
                 } else {
@@ -449,7 +447,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_config::Config;
-    use foundry_test_utils::forgetest;
+    use foundry_test_utils::{forgetest, util::SOLC_VERSION};
     use serde_json::json;
     use std::{
         io::{Read, Write},
@@ -598,7 +596,7 @@ mod tests {
             "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
             "src/Counter.sol:Counter",
             "--compiler-version",
-            "0.8.19",
+            SOLC_VERSION,
             "--root",
             &prj.root().to_string_lossy(),
         ]);
@@ -607,7 +605,7 @@ mod tests {
         let provider = SourcifyVerificationProvider::default();
         let request = provider.prepare_verify_request(&args, &context).await.unwrap();
 
-        assert_eq!(request.compiler_version, "0.8.19+commit.7dd6d404");
+        assert_eq!(request.compiler_version, "0.8.35+commit.47b9dedd");
         assert_eq!(request.contract_identifier, "src/Counter.sol:Counter");
         assert!(request.creation_transaction_hash.is_none());
 

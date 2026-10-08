@@ -11,13 +11,14 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
+        miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
     },
     mem::{self, in_memory_db::StateRootDb},
 };
 use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
-use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
@@ -25,10 +26,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
 };
 use alloy_provider::Provider;
-use alloy_rpc_types::{
-    BlockNumberOrTag,
-    anvil::{Metadata, NodeInfo},
-};
+use alloy_rpc_types::anvil::{Metadata, NodeInfo};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
@@ -257,6 +255,8 @@ pub struct NodeConfig {
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
+    /// Window for grouping ready transactions in auto mining; zero disables coalescing.
+    pub transaction_coalescing_window: Duration,
     /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
@@ -553,7 +553,7 @@ Genesis Number
 
         for wallet in &self.genesis_accounts {
             available_accounts.push(format!("{:?}", wallet.address()));
-            private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
+            private_keys.push(hex::encode_prefixed(wallet.credential().to_bytes()));
         }
 
         if let Some(generator) = &self.account_generator {
@@ -661,6 +661,7 @@ impl Default for NodeConfig {
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
+            transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
@@ -1046,6 +1047,13 @@ impl NodeConfig {
     ) -> Self {
         self.block_time = block_time.map(Into::into);
         self.mixed_mining = mixed_mining;
+        self
+    }
+
+    /// Sets the auto-mining coalescing window. Zero disables the delay.
+    #[must_use]
+    pub const fn with_transaction_coalescing_window(mut self, window: Duration) -> Self {
+        self.transaction_coalescing_window = window;
         self
     }
 
@@ -1459,8 +1467,8 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::default();
-        cfg.spec = self.get_hardfork().into();
+        let mut cfg = CfgEnv::new();
+        cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1796,7 +1804,7 @@ impl NodeConfig {
                 "cannot set Anvil's fork provider to its own RPC endpoint"
             );
             let block = provider
-                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to confirm active fork block on replacement endpoint")?;
             let after =
@@ -1842,7 +1850,7 @@ impl NodeConfig {
                 )
             };
             let block = provider
-                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to get fork block")?;
             let gas_price = if let Some(gas_price) = fork_overrides.gas_price {
@@ -1881,7 +1889,7 @@ impl NodeConfig {
             let before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             let block = provider
-                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to confirm fork block context")?;
             let after =
@@ -2709,6 +2717,7 @@ mod tests {
         config.fork_urls.push("https://mirror.example/private-api-key?token=secret".to_string());
 
         let fork = api.backend.get_fork().unwrap();
+        let node_info = api.anvil_node_info().await.unwrap();
         let output = config.as_string(Some(&fork));
         let temp = tempfile::tempdir().unwrap();
         let config_out = temp.path().join("config.json");
@@ -2723,6 +2732,7 @@ mod tests {
         assert!(!output.contains("private-api-key"));
         assert!(!output.contains("secret"));
         assert_eq!(json["endpoint"], redact_url(&fork_url));
+        assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&fork_url)));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
     }
@@ -2759,9 +2769,8 @@ mod tests {
             .with_chain_id(Some(1u64));
         let block = 42;
         config.fork_source_chain_id = Some(143);
-        let expected = Config::foundry_block_cache_file(143, block).map(|path| {
-            path.with_file_name(format!("storage-{}.json", hex::encode(keccak256(rpc_url))))
-        });
+        let expected = Config::foundry_block_cache_file(143, block)
+            .map(|path| path.with_file_name(format!("storage-{:x}.json", keccak256(rpc_url))));
 
         assert_eq!(config.block_cache_path(block), expected);
         assert_ne!(

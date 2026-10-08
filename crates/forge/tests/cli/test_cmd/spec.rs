@@ -3,7 +3,7 @@ use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 #[cfg(feature = "monad")]
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 
 #[cfg(feature = "monad")]
 async fn rpc_request(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
@@ -64,11 +64,6 @@ fn address_and_flags(address: alloy_primitives::Address, flags: u64) -> alloy_pr
     bytes[..20].copy_from_slice(address.as_slice());
     bytes[20..28].copy_from_slice(&flags.to_be_bytes());
     alloy_primitives::U256::from_be_bytes(bytes)
-}
-
-#[cfg(feature = "monad")]
-fn storage_value(value: alloy_primitives::U256) -> alloy_primitives::B256 {
-    alloy_primitives::B256::from(value.to_be_bytes::<32>())
 }
 
 #[cfg(feature = "monad")]
@@ -1855,28 +1850,28 @@ async fn transact_replays_monad_protocol_system_target_forks(prj: _, cmd: _) {
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_id_key(BLOCK_AUTHOR),
-        storage_value(left_aligned_u64(VALIDATOR_ID)),
+        left_aligned_u64(VALIDATOR_ID).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 0),
-        storage_value(alloy_primitives::U256::from(100) * mon),
+        (alloy_primitives::U256::from(100) * mon).into(),
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x04, VALIDATOR_ID, 1),
-        alloy_primitives::B256::ZERO,
+        B256::ZERO,
     )
     .await
     .unwrap();
     api.anvil_set_storage_at(
         STAKING_ADDRESS,
         monad_staking_validator_key(0x09, VALIDATOR_ID, 6),
-        storage_value(address_and_flags(VALIDATOR_AUTH, 0)),
+        address_and_flags(VALIDATOR_AUTH, 0).into(),
     )
     .await
     .unwrap();

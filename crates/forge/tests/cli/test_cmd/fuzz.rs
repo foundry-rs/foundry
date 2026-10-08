@@ -1,6 +1,7 @@
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, bytes, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, bytes, hex, keccak256};
+use anvil::{NodeConfig, spawn};
 use foundry_config::fs_permissions::PathPermission;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
@@ -43,12 +44,12 @@ fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
 
 fn calldata_for(abi: &JsonAbi, function_name: &str, arg: u64) -> String {
     let function = abi.functions().find(|function| function.name == function_name).unwrap();
-    format!("0x{}{:064x}", hex::encode(function.selector()), arg)
+    format!("{:#x}{:064x}", function.selector(), arg)
 }
 
 fn calldata_for_args(abi: &JsonAbi, function_name: &str, args: &[DynSolValue]) -> String {
     let function = abi.functions().find(|function| function.name == function_name).unwrap();
-    format!("0x{}", hex::encode(function.abi_encode_input(args).unwrap()))
+    hex::encode_prefixed(function.abi_encode_input(args).unwrap())
 }
 
 fn output_calldata_args(
@@ -970,24 +971,28 @@ contract ForgeFuzzReplayFailureTest {
         prj.root().join("cache/fuzz/failures/ForgeFuzzReplayFailureTest/testFuzz_reverts");
     let mut failure: Value =
         serde_json::from_str(&std::fs::read_to_string(&failure_path).unwrap()).unwrap();
+    let persisted = serde_json::from_value::<BaseCounterExample>(failure.clone()).unwrap();
+    let persisted_value = U256::from_be_slice(&persisted.calldata[4..]);
     let failure = failure.as_object_mut().unwrap();
     failure.remove("sender");
     failure.remove("addr");
     failure.remove("value");
     std::fs::write(&failure_path, serde_json::to_vec_pretty(failure).unwrap()).unwrap();
 
-    let replay = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
-        .assert_failure();
-    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.contains("[FAIL: EvmError: Revert; counterexample: calldata=0x")
-            && stdout.contains("args=[200]] testFuzz_reverts(uint256) (runs: 0,"),
-        "{stdout}"
-    );
-    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
-    assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+        .assert_failure()
+        .stdout_eq(format!(
+            r#"...
+[FAIL: EvmError: Revert; counterexample: calldata={calldata} args=[{persisted_value}]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+Traces:
+  [[..]] ForgeFuzzReplayFailureTest::testFuzz_reverts({persisted_value})
+...
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
+...
+"#,
+            calldata = persisted.calldata,
+        ));
 }
 
 #[forgetest_init]
@@ -1171,22 +1176,31 @@ contract ForgeFuzzReplayAssumeRejectTest {
 
     cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayAssumeRejectTest", "-q"]).assert_failure();
 
+    let failure_path =
+        prj.root().join("cache/fuzz/failures/ForgeFuzzReplayAssumeRejectTest/testFuzz_reverts");
+    let failure =
+        serde_json::from_slice::<BaseCounterExample>(&std::fs::read(failure_path).unwrap())
+            .unwrap();
+    let persisted_value = U256::from_be_slice(&failure.calldata[4..]);
+
     prj.add_test(
         "ForgeFuzzReplayAssumeReject.t.sol",
-        r#"
-interface Vm {
+        &format!(
+            r#"
+interface Vm {{
     function assume(bool) external;
-}
+}}
 
-contract ForgeFuzzReplayAssumeRejectTest {
+contract ForgeFuzzReplayAssumeRejectTest {{
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-    function testFuzz_reverts(uint256 value) public {
-        vm.assume(value != 200);
+    function testFuzz_reverts(uint256 value) public {{
+        vm.assume(value != {persisted_value});
         require(false, "fresh unrelated failure");
-    }
-}
-   "#,
+    }}
+}}
+   "#
+        ),
     );
 
     cmd.forge_fuse()
@@ -3969,11 +3983,8 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
         "out/ForgeFuzzInvariantFailOnRevertReplay.t.sol/ForgeFuzzInvariantFailOnRevertReplayTest.json",
     );
     let revert_handler = calldata_for(&abi, "revertHandler", 1);
-    let break_invariant = format!(
-        "0x{}",
-        hex::encode(
-            abi.functions().find(|function| function.name == "breakInvariant").unwrap().selector()
-        )
+    let break_invariant = hex::encode_prefixed(
+        abi.functions().find(|function| function.name == "breakInvariant").unwrap().selector(),
     );
     let corpus = prj.root().join("invariant_corpus");
     std::fs::create_dir_all(&corpus).unwrap();
@@ -6171,6 +6182,133 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]],
     );
+}
+
+const FUZZ_CASE_ISOLATION: &str = r#"
+import {Test} from "forge-std/Test.sol";
+
+abstract contract FuzzCaseIsolation is Test {
+    address constant TARGET = address(0x10000);
+    address constant PRANK = address(0x20000);
+    uint256 counter;
+
+    function setUp() public virtual {
+        counter = 7;
+        vm.warp(123);
+        vm.roll(456);
+    }
+
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+
+    function testFuzzAcceptedCaseIsolation(uint256) public {
+        checkAndMutate();
+    }
+
+    function testFuzzRejectedCaseIsolation(bool accept) public {
+        checkAndMutate();
+        // Rejection must discard both EVM writes and cheatcode environment and prank changes.
+        vm.assume(accept);
+    }
+
+    function checkAndMutate() internal {
+        require(counter == 7, "case storage leaked");
+        require(block.timestamp == 123, "case timestamp leaked");
+        require(block.number == 456, "case block leaked");
+        require(this.sender() == address(this), "case prank leaked");
+        (bool ok, bytes memory output) = TARGET.staticcall("");
+        require(ok && abi.decode(output, (uint256)) == 41, "backing storage leaked");
+
+        counter = 8;
+        vm.store(TARGET, bytes32(0), bytes32(uint256(99)));
+        (ok, output) = TARGET.staticcall("");
+        require(ok && abi.decode(output, (uint256)) == 99, "case write missing");
+        vm.warp(124);
+        vm.roll(457);
+        vm.startPrank(PRANK);
+        require(this.sender() == PRANK, "case prank missing");
+        // Leave the prank and environment changes active at the end of the case.
+    }
+}
+
+contract LocalFuzzCaseIsolationTest is FuzzCaseIsolation {
+    function setUp() public override {
+        super.setUp();
+        // Returns storage slot zero for any calldata.
+        vm.etch(TARGET, hex"60005460005260206000f3");
+        vm.store(TARGET, bytes32(0), bytes32(uint256(41)));
+    }
+}
+
+// The fork supplies TARGET's code and storage.
+contract ForkFuzzCaseIsolationTest is FuzzCaseIsolation {}
+"#;
+
+// Each stateless fuzz case starts from the post-setup state, whether the previous case was
+// accepted or rejected by `vm.assume`.
+#[forgetest_init]
+fn fuzz_cases_start_from_setup_state(prj: _, cmd: _) {
+    prj.add_test("FuzzCaseIsolation.t.sol", FUZZ_CASE_ISOLATION);
+
+    cmd.args([
+        "test",
+        "--mc",
+        "^LocalFuzzCaseIsolationTest$",
+        "--fuzz-runs",
+        "16",
+        "--fuzz-seed",
+        "1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/FuzzCaseIsolation.t.sol:LocalFuzzCaseIsolationTest
+[PASS] testFuzzAcceptedCaseIsolation(uint256) (runs: 16, [AVG_GAS])
+[PASS] testFuzzRejectedCaseIsolation(bool) (runs: 16, [AVG_GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+}
+
+// Same as `fuzz_cases_start_from_setup_state`, with the target's code and storage read from a
+// fork.
+#[forgetest_init]
+async fn fuzz_cases_start_from_setup_state_fork(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let target = Address::from_word(B256::from(U256::from(0x10000)));
+    api.anvil_set_code(target, bytes!("60005460005260206000f3")).await.unwrap();
+    api.anvil_set_storage_at(target, U256::ZERO, B256::from(U256::from(41))).await.unwrap();
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+
+    prj.add_test("FuzzCaseIsolation.t.sol", FUZZ_CASE_ISOLATION);
+
+    cmd.args([
+        "test",
+        "--mc",
+        "^ForkFuzzCaseIsolationTest$",
+        "--fuzz-runs",
+        "16",
+        "--fuzz-seed",
+        "1",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--fork-block-number",
+        "1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/FuzzCaseIsolation.t.sol:ForkFuzzCaseIsolationTest
+[PASS] testFuzzAcceptedCaseIsolation(uint256) (runs: 16, [AVG_GAS])
+[PASS] testFuzzRejectedCaseIsolation(bool) (runs: 16, [AVG_GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 }
 
 fn random_failure_reason(stdout: &str) -> String {

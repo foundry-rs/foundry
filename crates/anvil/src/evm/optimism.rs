@@ -14,11 +14,10 @@ mod tests {
     use op_revm::{OpSpecId, OpTransaction};
     use revm::{
         context::{BlockEnv, CfgEnv, TxEnv},
-        database::{EmptyDB, EmptyDBTyped},
+        database::EmptyDB,
         inspector::NoOpInspector,
         primitives::hardfork::SpecId,
     };
-    use std::convert::Infallible;
 
     // A precompile activated in the `Isthmus` spec.
     const OP_ISTHMUS_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
@@ -27,7 +26,7 @@ mod tests {
     fn create_op_evm(
         _spec: SpecId,
         op_spec: OpSpecId,
-    ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
+    ) -> (OpTx, OpEvm<EmptyDB, NoOpInspector, PrecompilesMap, OpTx>) {
         let tx = OpTx(OpTransaction::<TxEnv> {
             base: TxEnv {
                 kind: TxKind::Call(PRECOMPILE_ADDR),

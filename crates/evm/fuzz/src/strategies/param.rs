@@ -57,7 +57,7 @@ fn fuzz_param_inner(
     let fuzz_fixtures = fuzz_fixtures.map(|(f, _)| f);
 
     let value = || {
-        let default_strategy = DynSolValue::type_strategy(param);
+        let default_strategy = param.value_strategy();
         if let Some(fixtures) = fuzz_fixtures {
             proptest::prop_oneof![
                 50 => {
@@ -81,11 +81,11 @@ fn fuzz_param_inner(
         DynSolType::Uint(n @ 8..=256) => super::UintStrategy::new(n, fuzz_fixtures)
             .prop_map(move |x| DynSolValue::Uint(x, n))
             .boxed(),
-        DynSolType::Function | DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::Function | DynSolType::Bool => param.value_strategy().boxed(),
         DynSolType::Bytes => value(),
         DynSolType::FixedBytes(_size @ 1..=32) => value(),
         DynSolType::String => {
-            let default_strategy = DynSolValue::type_strategy(param).prop_map(move |value| {
+            let default_strategy = param.value_strategy().prop_map(move |value| {
                 DynSolValue::String(
                     value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
                 )
@@ -184,7 +184,7 @@ pub(crate) fn fuzz_param_from_state(
                 DynSolValue::FixedBytes(B256::from(v), size)
             })
             .boxed(),
-        DynSolType::Bool => DynSolValue::type_strategy(param).boxed(),
+        DynSolType::Bool => param.value_strategy().boxed(),
         DynSolType::String => {
             let state = state.clone();
             (proptest::bool::weighted(0.3), any::<prop::sample::Index>())
@@ -202,7 +202,8 @@ pub(crate) fn fuzz_param_from_state(
                     }
 
                     // Fallback to random string generation
-                    DynSolValue::type_strategy(&DynSolType::String)
+                    DynSolType::String
+                        .value_strategy()
                         .prop_map(|value| {
                             DynSolValue::String(
                                 value.as_str().unwrap().trim().trim_end_matches('\0').to_string(),
@@ -252,7 +253,7 @@ pub(crate) fn fuzz_param_from_state(
             1..=31 => value()
                 .prop_map(move |value| {
                     // Extract lower N bits
-                    let uint_n = U256::from_be_bytes(value.0) % U256::ONE.wrapping_shl(n);
+                    let uint_n = Into::<U256>::into(value) % U256::ONE.wrapping_shl(n);
                     // Interpret as signed int (two's complement) --> check sign bit (bit N-1).
                     let sign_bit = U256::ONE << (n - 1);
                     let num = if uint_n >= sign_bit {
@@ -270,12 +271,10 @@ pub(crate) fn fuzz_param_from_state(
             _ => unreachable!(),
         },
         DynSolType::Uint(n @ 8..=256) => match n / 8 {
-            32 => value()
-                .prop_map(move |value| DynSolValue::Uint(U256::from_be_bytes(value.0), 256))
-                .boxed(),
+            32 => value().prop_map(move |value| DynSolValue::Uint(value.into(), 256)).boxed(),
             1..=31 => value()
                 .prop_map(move |value| {
-                    let uint = U256::from_be_bytes(value.0) % U256::ONE.wrapping_shl(n);
+                    let uint = Into::<U256>::into(value) % U256::ONE.wrapping_shl(n);
                     DynSolValue::Uint(uint, n)
                 })
                 .boxed(),
@@ -561,7 +560,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::TestRunner,
     };
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::database::InMemoryDB;
     use std::collections::HashSet;
 
     #[test]
@@ -596,7 +595,7 @@ mod tests {
     fn can_fuzz_from_zero_capacity_dictionary() {
         let state = EvmFuzzState::new(
             &[],
-            &CacheDB::<EmptyDB>::default(),
+            &InMemoryDB::default(),
             FuzzDictionaryConfig { max_fuzz_dictionary_values: 0, ..Default::default() },
             None,
         );

@@ -383,7 +383,7 @@ fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
         seed
     } else {
         let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-        U256::from_be_bytes(keccak256(seed_data).0)
+        keccak256(seed_data).into()
     }
 }
 
@@ -1081,11 +1081,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for (worker_output, _) in worker_outputs {
             aggregator.push(worker_output);
         }
-        let result = if campaign_state.is_timed_campaign() {
+        let mut result = if campaign_state.is_timed_campaign() {
             aggregator.finish_partial()?
         } else {
             aggregator.finish_campaign()?
         };
+        result.interrupted = campaign_state.interrupted(result.runs, self.config.runs);
         persist_campaign_optimization(
             &self.config.corpus,
             result.optimization_best_value,
@@ -2407,11 +2408,7 @@ mod tests {
         strategy::{Strategy, ValueTree},
         test_runner::Config,
     };
-    use revm::{
-        bytecode::Bytecode,
-        context::Block,
-        database::{CacheDB, EmptyDB},
-    };
+    use revm::{bytecode::Bytecode, context::Block, database::InMemoryDB};
     use serde_json::json;
     use std::{sync::mpsc, thread};
 
@@ -2900,12 +2897,8 @@ mod tests {
         let config =
             InvariantConfig { runs: 1, depth: 1, show_metrics: false, ..Default::default() };
         let campaign_state = InvariantCampaignState::new(EarlyExit::new(false), None);
-        let fuzz_state = EvmFuzzState::new(
-            &[],
-            &CacheDB::<EmptyDB>::default(),
-            FuzzDictionaryConfig::default(),
-            None,
-        );
+        let fuzz_state =
+            EvmFuzzState::new(&[], &InMemoryDB::default(), FuzzDictionaryConfig::default(), None);
         let setup_contracts = ContractsByAddress::default();
         let project_contracts = ContractsByArtifact::default();
         let (result_tx, result_rx) = mpsc::channel();

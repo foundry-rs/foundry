@@ -4,6 +4,7 @@ use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
     progress::ScriptProgress,
+    receipts::is_mined_receipt_for,
     recovery::{AttemptKind, DelegatedStatus},
     sequence::{ScriptSequenceKind, completed_transaction_prefix},
     session::{
@@ -50,8 +51,6 @@ use foundry_evm::{
     core::{
         constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
         evm::{FoundryEvmNetwork, TempoEvmNetwork},
-        fork::ResolvedFork,
-        opts::EvmOpts,
     },
     traces::CallKind,
 };
@@ -1417,11 +1416,8 @@ impl BundledState<TempoEvmNetwork> {
 
         // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
-        let needs_factory = sequence
-            .transactions
-            .iter()
-            .skip(batch_start)
-            .any(|tx| matches!(tx.call_kind, CallKind::Create | CallKind::Create2));
+        let needs_factory =
+            sequence.transactions.iter().skip(batch_start).any(|tx| tx.call_kind.is_any_create());
         if needs_factory {
             let code = provider.get_code_at(create2_deployer).await?;
             if keccak256(&code) != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
@@ -1703,6 +1699,7 @@ async fn wait_for_batch_receipt<N: Network>(
 ) -> Result<Option<N::ReceiptResponse>> {
     loop {
         if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+            && is_mined_receipt_for(&receipt, tx_hash)
             && let Some(receipt_block) = receipt.block_number()
         {
             let latest_block = provider.get_block_number().await?;
@@ -1739,15 +1736,6 @@ where
             / 100,
     );
     Ok(())
-}
-
-/// Returns `caller`'s nonce at an already resolved fork block.
-pub(super) async fn next_nonce_resolved(
-    caller: Address,
-    evm_opts: &EvmOpts,
-    fork: &ResolvedFork,
-) -> eyre::Result<u64> {
-    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
 }
 
 fn reject_access_key_create<N: Network>(
@@ -1791,13 +1779,14 @@ fn fee_totals(receipts: impl IntoIterator<Item = (u64, u128)>) -> (u64, Option<u
 mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope};
-    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, Bloom, address, hex};
+    use alloy_provider::mock::Asserter;
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
     use foundry_common::tempo::PATH_USD_ADDRESS;
+    use foundry_evm::{backend::Backend, core::evm::EthEvmNetwork, opts::EvmOpts};
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1832,23 +1821,18 @@ mod tests {
             fork_block_number: Some(block_number),
             ..Default::default()
         };
-        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
-        assert_eq!(next_nonce_resolved(sender, &evm_opts, &fork).await.unwrap(), 1);
+        let backend =
+            Backend::<EthEvmNetwork>::spawn(evm_opts.get_fork(&Config::default(), 31337, None))
+                .unwrap();
+        assert_eq!(backend.transaction_count(sender).await.unwrap(), 1);
 
         provider
             .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
             .await
             .unwrap();
-        assert_eq!(
-            provider
-                .get_transaction_count(sender)
-                .block_id(BlockId::number(block_number))
-                .await
-                .unwrap(),
-            0
-        );
+        assert_eq!(provider.get_transaction_count(sender).number(block_number).await.unwrap(), 0);
 
-        match next_nonce_resolved(sender, &evm_opts, &fork).await {
+        match backend.transaction_count(sender).await {
             Ok(0) => panic!("the exact lookup fell back to the replacement block"),
             Ok(1) | Err(_) => {}
             Ok(nonce) => panic!("unexpected nonce: {nonce}"),
@@ -2202,6 +2186,45 @@ mod tests {
             fee_totals(receipts),
             (60_000_000, Some(1_500 * gwei), 90_000_000_000_000_000_000)
         );
+    }
+
+    #[tokio::test]
+    async fn batch_receipt_watcher_rejects_foreign_or_incomplete_receipts() {
+        let hash = B256::repeat_byte(0x42);
+        let receipt = |field: &str, value: serde_json::Value| {
+            let mut receipt = serde_json::json!({
+                "type": "0x02", "status": "0x1", "cumulativeGasUsed": "0x5208", "logs": [],
+                "transactionHash": hash, "logsBloom": format!("{:#x}", Bloom::ZERO),
+                "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x10",
+                "gasUsed": "0x5208", "effectiveGasPrice": "0x1",
+                "from": Address::ZERO, "to": Address::ZERO, "contractAddress": null
+            });
+            receipt[field] = value;
+            receipt
+        };
+        // Bad receipts fall through to the transaction lookup; valid ones to the block number.
+        let wait = async |receipt: serde_json::Value, next: serde_json::Value| {
+            let asserter = Asserter::new();
+            let provider: RootProvider<Ethereum> =
+                alloy_provider::ProviderBuilder::default().connect_mocked_client(asserter.clone());
+            asserter.push_success(&receipt);
+            asserter.push_success(&next);
+            wait_for_batch_receipt(&provider, hash, 1).await.unwrap()
+        };
+
+        for (field, value) in [
+            ("transactionHash", serde_json::json!(B256::repeat_byte(0x99))),
+            ("blockHash", serde_json::Value::Null),
+            ("transactionIndex", serde_json::Value::Null),
+            ("blockNumber", serde_json::Value::Null),
+        ] {
+            let result = wait(receipt(field, value), serde_json::Value::Null).await;
+            assert!(result.is_none(), "accepted receipt with bad {field}");
+        }
+        let accepted =
+            wait(receipt("status", serde_json::json!("0x1")), serde_json::json!("0x10")).await;
+        let accepted = accepted.unwrap();
+        assert_eq!(accepted.transaction_hash(), hash);
     }
 
     fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {

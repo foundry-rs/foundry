@@ -87,7 +87,7 @@ impl StateRootCache {
 
         for (address, account) in accounts {
             let dirty = self.dirty.entry(*address).or_default();
-            if account.account_state == AccountState::StorageCleared {
+            if account.account_state.is_storage_cleared() {
                 dirty.reset_storage = true;
             } else {
                 dirty.storage.extend(account.storage.keys().copied());
@@ -522,7 +522,7 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &U256Map<U256>) -> Vec<u8> 
 /// Returns the RLP for this account with an already computed storage root.
 fn trie_account_rlp_with_storage_root(info: &AccountInfo, storage_root: B256) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
-    let list: [&dyn Encodable; 4] = [&info.nonce, &info.balance, &storage_root, &info.code_hash];
+    let list: [&dyn Encodable; 4] = [&info.nonce, &info.balance, &storage_root, &info.code_hash()];
 
     alloy_rlp::encode_list::<_, dyn Encodable>(&list, &mut out);
 
@@ -540,10 +540,8 @@ mod tests {
         assert_eq!(storage_root(&storage), EMPTY_ROOT_HASH);
 
         let mut accounts = AddressMap::default();
-        accounts.insert(
-            alloy_primitives::Address::with_last_byte(1),
-            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
+        accounts
+            .insert(alloy_primitives::Address::with_last_byte(1), DbAccount::new_not_existing());
         assert_eq!(state_root(&accounts), EMPTY_ROOT_HASH);
         assert_eq!(StateRootCache::default().root(&accounts), EMPTY_ROOT_HASH);
     }
@@ -592,10 +590,7 @@ mod tests {
         check(&overlay, &full);
 
         // A deleted account must lose both its account leaf and its storage trie.
-        overlay.insert(
-            address,
-            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
-        );
+        overlay.insert(address, DbAccount::new_not_existing());
         full.remove(&address);
         check(&overlay, &full);
 
@@ -636,7 +631,7 @@ mod tests {
             )]);
             // Retain every overlay key when losing StorageCleared: the newly exposed base slot
             // still requires a rebuild. NotExisting likewise has no keys to lose.
-            let storage = if account_state == AccountState::StorageCleared {
+            let storage = if account_state.is_storage_cleared() {
                 previous[&address].storage.clone()
             } else {
                 U256Map::default()

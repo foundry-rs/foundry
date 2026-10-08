@@ -1,4 +1,5 @@
 use eyre::Result;
+use foundry_common::fs::canonicalize_path;
 use foundry_compilers::{
     CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{Source, Sources},
@@ -79,7 +80,7 @@ fn configure_pcx_with_sources(
         Some(targets) => {
             let mut sources = Sources::new();
             for t in targets {
-                let path = dunce::canonicalize(t)?;
+                let path = canonicalize_path(t)?;
                 let source = Source::read(&path)?;
                 sources.insert(path, source);
             }
@@ -179,7 +180,7 @@ pub fn get_solar_sources_from_compile_output(
     {
         let mut source_paths = HashSet::new();
         for path in targets.iter().filter_map(|path| {
-            is_solidity_file(path).then(|| dunce::canonicalize(path).ok()).flatten()
+            is_solidity_file(path).then(|| canonicalize_path(path).ok()).flatten()
         }) {
             if source_paths.insert(path.clone()) {
                 // `imports` already includes transitive dependencies.
@@ -210,7 +211,7 @@ pub fn get_solar_sources_from_compile_output(
     let (version, sources) = {
         let (mut max_version, mut sources) = (MIN_SOLIDITY_VERSION, Sources::new());
         for (id, _) in output.artifact_ids() {
-            if let Ok(path) = dunce::canonicalize(&id.source)
+            if let Ok(path) = canonicalize_path(&id.source)
                 && source_paths.remove(&path)
             {
                 if id.version < MIN_SOLIDITY_VERSION {

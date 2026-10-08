@@ -50,7 +50,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{Database, DatabaseCommit, DatabaseRef},
-    interpreter::{InstructionResult, return_ok},
+    interpreter::{InstructionResult, gas::InitialAndFloorGas},
     primitives::hardfork::SpecId,
 };
 use sancov::SancovGuard;
@@ -518,9 +518,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Set the code of an account.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.code_hash = keccak256(code.original_byte_slice());
-        account.code = Some(code);
+        let account = self.backend().basic_ref(address)?.unwrap_or_default().with_code(code);
         self.backend_mut().insert_account_info(address, account);
         Ok(())
     }
@@ -558,18 +556,15 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         for (address, account_state) in prestate {
             let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
-            let info = revm::state::AccountInfo {
-                nonce: account_state.nonce.unwrap_or_default(),
-                balance: account_state.balance.unwrap_or_default(),
-                code_hash: keccak256(code.original_byte_slice()),
-                code: Some(code),
-                account_id: Default::default(),
-            };
+            let info = revm::state::AccountInfo::default()
+                .with_balance(account_state.balance.unwrap_or_default())
+                .with_nonce(account_state.nonce.unwrap_or_default())
+                .with_code(code);
             backend.insert_account_info(address, info);
 
             for (slot, value) in account_state.storage {
-                let slot = U256::from_be_bytes(slot.0);
-                let value = U256::from_be_bytes(value.0);
+                let slot = slot.into();
+                let value = value.into();
                 backend.insert_account_storage(address, slot, value)?;
             }
         }
@@ -578,7 +573,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
 
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
+        Ok(self.backend().basic_ref(address)?.is_none_or(|acc| acc.is_empty_code_hash()))
     }
 
     #[inline]
@@ -648,11 +643,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         chain_context: ChainFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        assert!(
-            matches!(tx_env.kind(), TxKind::Create),
-            "Expected create transaction, got {:?}",
-            tx_env.kind()
-        );
+        assert!(tx_env.kind().is_create(), "Expected create transaction, got {:?}", tx_env.kind());
         trace!(sender=%tx_env.caller(), "deploying contract");
 
         let mut result = self.transact_with_env_and_context(evm_env, tx_env, chain_context)?;
@@ -811,7 +802,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         parent_beacon_block_root: alloy_primitives::B256,
     ) -> eyre::Result<()> {
-        let calldata = Bytes::copy_from_slice(parent_beacon_block_root.as_slice());
+        let calldata = Bytes::from(parent_beacon_block_root);
         let mut evm_env = self.evm_env.clone();
         let inspector = self.inspector().clone();
         let mut state = {
@@ -1682,12 +1673,19 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
 }
 
 pub(crate) fn calculate_stipend(tx_env: &impl Transaction, cfg: &impl Cfg) -> u64 {
+    calculate_initial_gas(tx_env, cfg).initial_total_gas()
+}
+
+/// Returns the intrinsic gas and EIP-7623 calldata floor of a transaction.
+pub(crate) fn calculate_initial_gas(
+    tx_env: &impl Transaction,
+    cfg: &impl Cfg,
+) -> InitialAndFloorGas {
     let eip2780 = cfg.is_amsterdam_eip2780_enabled().then(|| Eip2780TxInfo {
         value: tx_env.value(),
         is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
     });
     revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, cfg.spec().into(), eip2780)
-        .initial_total_gas()
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
@@ -1712,7 +1710,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let stipend = calculate_stipend(&tx_env, &evm_env.cfg_env);
+    let stipend = calculate_stipend(&tx_env, evm_env.cfg_env());
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),
@@ -1756,7 +1754,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
         execution_cancelled,
-        reverted: !matches!(exit_reason, return_ok!()),
+        reverted: !exit_reason.is_ok(),
         has_state_snapshot_failure,
         result,
         gas_used,
@@ -1909,6 +1907,11 @@ impl EvmExecutionCancellation {
         if let Self::Campaign { stop, .. } = self {
             stop.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// Returns whether a campaign stop was requested or its deadline was observed.
+    pub(crate) fn stop_requested(&self) -> bool {
+        matches!(self, Self::Campaign { stop, .. } if stop.load(Ordering::Relaxed))
     }
 
     pub(crate) const fn early_exit_ref(&self) -> &EarlyExit {

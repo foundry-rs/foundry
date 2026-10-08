@@ -95,7 +95,7 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
     let mut script_config = script_config.clone();
-    script_config.set_fork_url(rpc.clone());
+    script_config.select_rpc(rpc.clone()).await?;
     let runner = script_config._get_runner(None, false, false).await?;
     let decoder = build_trace_decoder_for_context(
         args,
@@ -117,8 +117,7 @@ async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, CallTraceDecoder)> {
     let mut script_config = script_config.clone();
-    script_config.set_fork_url(rpc.clone());
-    let _ = script_config.resolve_execution_env().await?;
+    script_config.resolve_rpc_execution_spec(rpc.clone()).await?;
     let decoder = build_trace_decoder_for_context(
         args,
         &script_config,

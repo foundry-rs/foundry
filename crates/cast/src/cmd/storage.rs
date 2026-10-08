@@ -104,7 +104,7 @@ impl StorageArgs {
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = base_slot {
-            let slot = U256::from_be_bytes(slot.0).saturating_add(offset);
+            let slot = Into::<U256>::into(slot).saturating_add(offset);
             sh_println!(
                 "{}",
                 B256::from(
@@ -427,7 +427,7 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
             &slot.slot,
             &slot.offset.to_string(),
             storage_type.map_or("?", |t| &t.number_of_bytes),
-            &U256::from_be_bytes(value.0).to_string(),
+            &Into::<U256>::into(value).to_string(),
             &value.to_string(),
             &slot.contract,
         ]);

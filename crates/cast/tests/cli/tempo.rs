@@ -7,6 +7,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolEvent, SolValue};
 use anvil::NodeConfig;
+use foundry_cli::utils::parse_json;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::util::OutputExt;
 use tempo_contracts::precompiles::{
@@ -17,8 +18,7 @@ use tempo_contracts::precompiles::{
 use tempo_hardfork::TempoHardfork;
 
 fn json_success_data(output: &str) -> serde_json::Value {
-    let envelope: serde_json::Value =
-        serde_json::from_str(output.trim()).expect("command emits JSON");
+    let envelope: serde_json::Value = parse_json(output.trim()).expect("command emits JSON");
     assert_eq!(envelope["success"], true, "unexpected JSON envelope: {envelope}");
     envelope["data"].clone()
 }
@@ -61,7 +61,7 @@ async fn receive_policy_receipt_json_and_claim_flow(cmd: _) {
     let claim_target = accounts[3];
     let recovery_wallet = handle.dev_wallets().nth(2).unwrap();
     assert_eq!(recovery_wallet.address(), recovery);
-    let recovery_pk = format!("0x{}", hex::encode(recovery_wallet.credential().to_bytes()));
+    let recovery_pk = hex::encode_prefixed(recovery_wallet.credential().to_bytes());
     let amount = U256::from(77_000u64);
     let path_usd = PATH_USD_ADDRESS.to_string();
     let sender_arg = sender.to_string();
@@ -242,7 +242,7 @@ async fn receive_policy_claim_and_burn_require_t6(cmd: _) {
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
 
     let receipt = IReceivePolicyGuard::ClaimReceiptV1::new(
         PATH_USD_ADDRESS,
@@ -256,7 +256,7 @@ async fn receive_policy_claim_and_burn_require_t6(cmd: _) {
         B256::ZERO,
     )
     .abi_encode();
-    let receipt_arg = format!("0x{}", hex::encode(&receipt));
+    let receipt_arg = hex::encode_prefixed(&receipt);
 
     let claim_err = cmd
         .cast_fuse()
@@ -309,7 +309,7 @@ async fn tip403_policy_lifecycle(cmd: _) {
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -389,8 +389,7 @@ async fn tip403_create_warns_on_virtual_member(cmd: _) {
     let (_, handle) =
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
-    let pk =
-        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+    let pk = hex::encode_prefixed(handle.dev_wallets().next().unwrap().credential().to_bytes());
 
     // A TIP-1022 virtual address (bytes [4:14] == 0xFD) is rejected on-chain on T3+; cast warns
     // and lets the chain enforce rather than hard-failing client-side.
@@ -422,7 +421,7 @@ async fn tip403_blacklist_semantics(cmd: _) {
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -498,7 +497,7 @@ async fn tip403_create_with_members(cmd: _) {
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -535,7 +534,7 @@ async fn tip403_works_pre_t6(cmd: _) {
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let admin = wallet.address();
     let member = handle.dev_wallets().nth(1).unwrap().address();
 
@@ -588,7 +587,7 @@ async fn storage_credits_reads_and_writes(cmd: _) {
         anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T7.into()))).await;
     let rpc = handle.http_endpoint();
     let wallet = handle.dev_wallets().next().unwrap();
-    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let pk = hex::encode_prefixed(wallet.credential().to_bytes());
     let account = wallet.address();
 
     // A fresh account starts with no credits, the default `refund` mode, and a zero budget.
@@ -651,8 +650,7 @@ async fn storage_credits_require_t7(cmd: _) {
     let rpc = handle.http_endpoint();
     let account = handle.dev_wallets().next().unwrap().address();
 
-    let pk =
-        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+    let pk = hex::encode_prefixed(handle.dev_wallets().next().unwrap().credential().to_bytes());
     let expected = "requires a Tempo T7-capable StorageCredits RPC";
 
     let read_err = cmd
@@ -807,10 +805,10 @@ async fn send_with_presigned_sponsor_signature_keeps_digest_stable(cmd: _) {
     let recipient = accounts[3];
     let sender_wallet = handle.dev_wallets().next().unwrap();
     assert_eq!(sender_wallet.address(), sender);
-    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sender_pk = hex::encode_prefixed(sender_wallet.credential().to_bytes());
     let sponsor_wallet = handle.dev_wallets().nth(1).unwrap();
     assert_eq!(sponsor_wallet.address(), sponsor);
-    let sponsor_pk = format!("0x{}", hex::encode(sponsor_wallet.credential().to_bytes()));
+    let sponsor_pk = hex::encode_prefixed(sponsor_wallet.credential().to_bytes());
     let token = PATH_USD_ADDRESS.to_string();
     let recipient_arg = recipient.to_string();
     let sponsor_arg = sponsor.to_string();
@@ -909,7 +907,7 @@ async fn send_with_presigned_sponsor_signature_keeps_digest_stable(cmd: _) {
     );
 
     let receipt: serde_json::Value =
-        serde_json::from_str(output.stdout_lossy().trim()).expect("receipt should be JSON");
+        parse_json(output.stdout_lossy().trim()).expect("receipt should be JSON");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
     let fee_payer: Address =
         receipt["feePayer"].as_str().expect("receipt has feePayer").parse().unwrap();
@@ -927,10 +925,10 @@ async fn send_with_presigned_sponsor_signature_rejects_stale_digest(cmd: _) {
     let recipient = accounts[2];
     let sender_wallet = handle.dev_wallets().next().unwrap();
     assert_eq!(sender_wallet.address(), sender);
-    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sender_pk = hex::encode_prefixed(sender_wallet.credential().to_bytes());
     let sponsor_wallet = handle.dev_wallets().nth(1).unwrap();
     assert_eq!(sponsor_wallet.address(), sponsor);
-    let sponsor_pk = format!("0x{}", hex::encode(sponsor_wallet.credential().to_bytes()));
+    let sponsor_pk = hex::encode_prefixed(sponsor_wallet.credential().to_bytes());
     let token = PATH_USD_ADDRESS.to_string();
     let recipient_arg = recipient.to_string();
     let sponsor_arg = sponsor.to_string();
@@ -1017,7 +1015,7 @@ async fn send_with_sponsor_url_uses_anvil_builtin_fee_payer(cmd: _) {
     let recipient = accounts[3];
     let sender_wallet = handle.dev_wallets().next().unwrap();
     assert_eq!(sender_wallet.address(), sender);
-    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sender_pk = hex::encode_prefixed(sender_wallet.credential().to_bytes());
     let token = PATH_USD_ADDRESS.to_string();
     let recipient_arg = recipient.to_string();
     let amount = U256::from(1000u64);
@@ -1357,7 +1355,7 @@ Error: --callback-data requires a nonzero --callback-gas-limit
 /// Returns the address and private key of the dev account at `index`.
 fn dev_account(handle: &anvil::NodeHandle, index: usize) -> (Address, String) {
     let wallet = handle.dev_wallets().nth(index).unwrap();
-    (wallet.address(), format!("0x{}", hex::encode(wallet.credential().to_bytes())))
+    (wallet.address(), hex::encode_prefixed(wallet.credential().to_bytes()))
 }
 
 /// Creates a TIP-20 token administered by the first dev account and returns its address.
