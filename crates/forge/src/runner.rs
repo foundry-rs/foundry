@@ -556,6 +556,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let mut pending_account_diffs = Vec::new();
         match self.mcr.library_deployment {
             LibraryDeployment::Nonce => {
+                // Fork state may carry a nonzero deployer nonce.
+                if !self.mcr.libs_to_deploy.is_empty() {
+                    self.executor.set_account_nonce(LIBRARY_DEPLOYER, 0)?;
+                }
                 for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
                     // Libraries are linked from nonce zero in the same order they are deployed.
                     let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);

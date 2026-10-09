@@ -4,6 +4,7 @@ use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, B256, Bytes, U256, address};
 use alloy_provider::Provider;
 use anvil::{EthereumHardfork, NodeConfig, spawn};
+use foundry_common::LIBRARY_DEPLOYER;
 use foundry_config::{CompilationRestrictions, SettingsOverrides, filter::GlobMatcher};
 use foundry_test_utils::{
     TestCommand, assert_data_eq,
@@ -7856,6 +7857,58 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 
 "#]]);
     }
+}
+
+// Nonce-linked libraries must deploy at their linked addresses even if the fork reports a nonzero
+// library deployer nonce.
+#[forgetest]
+async fn fork_test_ignores_library_deployer_nonce(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_nonce(LIBRARY_DEPLOYER, U256::ONE).await.unwrap();
+
+    prj.add_source(
+        "Lib.sol",
+        r"
+library Lib {
+    function answer() external pure returns (uint256) {
+        return 42;
+    }
+}
+",
+    );
+    prj.add_test(
+        "Lib.t.sol",
+        r#"
+import {Lib} from "src/Lib.sol";
+
+contract LibTest {
+    function testLinkedLibrary() public pure {
+        require(Lib.answer() == 42);
+    }
+}
+"#,
+    );
+
+    cmd.args([
+        "test",
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--create2-deployer",
+        &Address::ZERO.to_string(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Lib.t.sol:LibTest
+[PASS] testLinkedLibrary() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/11632>
