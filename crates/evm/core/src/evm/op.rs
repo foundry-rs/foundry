@@ -158,7 +158,7 @@ fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<Data
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{backend::Backend, evm::EvmEnvFor};
+    use crate::backend::Backend;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
     use op_revm::constants::L1_FEE_RECIPIENT;
     use revm::{context::TxEnv, inspector::NoOpInspector, state::AccountInfo};
@@ -176,7 +176,7 @@ mod tests {
         {
             let mut evm = factory.create_foundry_evm_with_inspector(
                 &mut db,
-                EvmEnvFor::<OpEvmNetwork>::default(),
+                EvmEnv::<OpSpecId>::default(),
                 NoOpInspector,
             );
             *evm.chain_mut() = chain.clone();
@@ -186,7 +186,7 @@ mod tests {
         }
         let mut evm = factory.create_nested_evm_with_inspector(
             &mut db,
-            EvmEnvFor::<OpEvmNetwork>::default(),
+            EvmEnv::<OpSpecId>::default(),
             NoOpInspector,
         );
         *evm.chain_mut() = chain.clone();
@@ -203,7 +203,7 @@ mod tests {
         let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
         db.insert_account_info(caller, AccountInfo { balance: U256::MAX, ..Default::default() });
 
-        let mut evm_env = EvmEnvFor::<OpEvmNetwork>::default();
+        let mut evm_env = EvmEnv::<OpSpecId>::default();
         evm_env.cfg_env.spec = OpSpecId::REGOLITH;
         evm_env.cfg_env.disable_fee_charge = false;
         let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);
@@ -236,7 +236,7 @@ mod tests {
         let mut db = Backend::<OpEvmNetwork>::spawn(None).unwrap();
         db.insert_account_info(caller, AccountInfo { balance: U256::MAX, ..Default::default() });
 
-        let mut evm_env = EvmEnvFor::<OpEvmNetwork>::default();
+        let mut evm_env = EvmEnv::<OpSpecId>::default();
         evm_env.cfg_env.spec = OpSpecId::REGOLITH;
         evm_env.cfg_env.disable_fee_charge = true;
         let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);

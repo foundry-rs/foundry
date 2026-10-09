@@ -43,9 +43,8 @@ use foundry_evm::{
     core::{
         FoundryChain, FromAnyRpcTransaction,
         evm::{
-            EvmEnvFor, MonadBlockParticipants, MonadEvmNetwork, monad_block_participants,
-            monad_context_from_participants, protocol_system_call,
-            try_transact_monad_system_replay,
+            MonadBlockParticipants, monad_block_participants, monad_context_from_participants,
+            protocol_system_call, try_transact_monad_system_replay,
         },
     },
     hardfork::FoundryHardfork,
@@ -881,7 +880,7 @@ impl<N: Network> Backend<N> {
     pub(super) fn build_monad_evm_env(
         evm_env: &EvmEnv,
         hardfork: MonadHardfork,
-    ) -> EvmEnvFor<MonadEvmNetwork> {
+    ) -> EvmEnv<MonadHardfork> {
         EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
             evm_env.block_env.clone(),
