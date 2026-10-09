@@ -1118,11 +1118,11 @@ struct StateSnapshot {
     fees: FeeSnapshot,
     time: TimeSnapshot,
     next_block: NextBlockOverrides,
-    /// Whether the head block already had a post-block state when the snapshot was taken.
+    /// The head block's post-block state when the snapshot was taken, restored on revert.
     ///
-    /// If it did not, any post-block state recorded afterwards belongs to overrides this snapshot
-    /// discards, so reverting must drop it again.
-    head_post_block_state: bool,
+    /// Holding it keeps it alive even if history retention evicts it, and `None` drops any
+    /// post-block state recorded afterwards for overrides the revert discards.
+    head_post_block_state: Option<Arc<StateDb>>,
 }
 
 #[cfg(test)]
@@ -2050,7 +2050,7 @@ impl<N: Network> Backend<N> {
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
-        let head_post_block_state = self.states.read().get_post_block_state(&hash).is_some();
+        let head_post_block_state = self.states.write().share_post_block_state(&hash);
         self.active_state_snapshots.lock().insert(
             id,
             StateSnapshot {
@@ -5615,7 +5615,7 @@ impl<N: Network> Backend<N> {
                     snapshot.fees,
                     snapshot.time,
                     snapshot.next_block,
-                    snapshot.head_post_block_state,
+                    snapshot.head_post_block_state.clone(),
                 )
             })
         else {
@@ -5637,10 +5637,7 @@ impl<N: Network> Backend<N> {
         {
             let mut states = self.states.write();
             states.remove_block_states(&removed_hashes);
-            // The overrides that split the restored head's state are gone with the revert.
-            if !head_post_block_state {
-                states.remove_post_block_state(&hash);
-            }
+            states.restore_post_block_state(hash, head_post_block_state);
         }
         if !removed_logs.is_empty() {
             self.notify_on_removed_logs(removed_logs);
@@ -11813,6 +11810,32 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn reverted_head_keeps_its_post_block_state() {
+        // Enough blocks to move the head's states out of the memory tier, or to evict them.
+        for (config, blocks) in [
+            (NodeConfig::test(), 1000u64),
+            (NodeConfig::test().set_pruned_history(Some(Some(1))), 2),
+        ] {
+            let (api, _handle) = spawn(config).await;
+            let account = Address::repeat_byte(0x11);
+
+            api.backend.set_balance(account, U256::from(1)).await.unwrap();
+            api.mine_one().await.unwrap();
+            let block = api.backend.best_number();
+            api.backend.set_balance(account, U256::from(2)).await.unwrap();
+            let snapshot = api.backend.create_state_snapshot().await;
+            api.anvil_mine(Some(U256::from(blocks)), None).await.unwrap();
+            assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+            api.backend.set_balance(account, U256::from(3)).await.unwrap();
+            api.mine_one().await.unwrap();
+
+            assert_eq!(api.balance(account, Some(block.into())).await.unwrap(), U256::from(1));
+            let child = Some((block + 1).into());
+            assert_eq!(api.balance(account, child).await.unwrap(), U256::from(3));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn snapshot_after_rollback_keeps_the_spilled_post_block_state() {
         let (api, _handle) = spawn(NodeConfig::test()).await;
         let account = Address::repeat_byte(0x11);
 
@@ -11820,14 +11843,13 @@ mod tests {
         api.mine_one().await.unwrap();
         let block = api.backend.best_number();
         api.backend.set_balance(account, U256::from(2)).await.unwrap();
-        let snapshot = api.backend.create_state_snapshot().await;
-        // Enough blocks to move the head's states out of the memory tier.
+        // Spill block's states to the secondary tier, then make it the head again.
         api.anvil_mine(Some(U256::from(1000)), None).await.unwrap();
+        api.anvil_rollback(Some(1000)).await.unwrap();
+        let snapshot = api.backend.create_state_snapshot().await;
         assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
-        api.backend.set_balance(account, U256::from(3)).await.unwrap();
         api.mine_one().await.unwrap();
 
         assert_eq!(api.balance(account, Some(block.into())).await.unwrap(), U256::from(1));
-        assert_eq!(api.balance(account, Some((block + 1).into())).await.unwrap(), U256::from(3));
     }
 }

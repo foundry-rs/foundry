@@ -71,8 +71,9 @@ pub struct InMemoryBlockStates {
     disk_cache: DiskStateCache,
     /// Post-block states of blocks whose state was modified before their child was mined.
     ///
-    /// For those blocks, `states` holds the state the child was executed on.
-    post_block_states: B256HashMap<StateDb>,
+    /// For those blocks, `states` holds the state the child was executed on. Shared so that a
+    /// state snapshot taken on the head can restore it after history retention evicted it.
+    post_block_states: B256HashMap<Arc<StateDb>>,
     /// Post-block states that moved to the secondary tier along with their block's state.
     on_disk_post_block_states: B256HashMap<StateDb>,
 }
@@ -205,7 +206,15 @@ impl InMemoryBlockStates {
 
     /// Moves the post-block state of `hash` into the secondary tier, mirroring its block's state.
     fn spill_post_block_state(&mut self, hash: B256) {
-        let Some(mut state) = self.post_block_states.remove(&hash) else { return };
+        let Some(state) = self.post_block_states.remove(&hash) else { return };
+        // A state snapshot still shares this state, so it stays resident either way.
+        let mut state = match Arc::try_unwrap(state) {
+            Ok(state) => state,
+            Err(state) => {
+                self.post_block_states.insert(hash, state);
+                return;
+            }
+        };
         if state.is_persistent() {
             self.on_disk_post_block_states.insert(hash, state);
             return;
@@ -218,7 +227,7 @@ impl InMemoryBlockStates {
         } else {
             // Dropping it would make historical reads of the block see the later overrides, so
             // keep it in memory rather than lose it.
-            self.post_block_states.insert(hash, state);
+            self.post_block_states.insert(hash, Arc::new(state));
         }
     }
 
@@ -237,7 +246,22 @@ impl InMemoryBlockStates {
 
     /// Returns the post-block state for the given `hash` if it differs from the stored state.
     pub fn get_post_block_state(&self, hash: &B256) -> Option<&StateDb> {
-        self.post_block_states.get(hash)
+        self.post_block_states.get(hash).map(Arc::as_ref)
+    }
+
+    /// Returns a shared handle to the post-block state for the given `hash`, if any, moving it back
+    /// into the memory tier first.
+    pub fn share_post_block_state(&mut self, hash: &B256) -> Option<Arc<StateDb>> {
+        if !self.post_block_states.contains_key(hash)
+            && self.get_on_disk_post_block_state(hash).is_some()
+            && let Some(state) = self.on_disk_post_block_states.remove(hash)
+        {
+            if !state.is_persistent() {
+                self.disk_cache.remove(*hash, CacheSlot::PostBlock);
+            }
+            self.post_block_states.insert(*hash, Arc::new(state));
+        }
+        self.post_block_states.get(hash).cloned()
     }
 
     /// Number of tracked post-block states, including those moved to the secondary tier.
@@ -255,13 +279,16 @@ impl InMemoryBlockStates {
     /// Records the post-block state for the given `hash`, unless either tier already holds one.
     pub fn insert_post_block_state_with(&mut self, hash: B256, state: impl FnOnce() -> StateDb) {
         if !self.on_disk_post_block_states.contains_key(&hash) {
-            self.post_block_states.entry(hash).or_insert_with(state);
+            self.post_block_states.entry(hash).or_insert_with(|| Arc::new(state()));
         }
     }
 
-    /// Drops the post-block state recorded for the given `hash`, if any.
-    pub fn remove_post_block_state(&mut self, hash: &B256) {
-        self.evict_post_block_state(hash);
+    /// Replaces the post-block state of `hash` with `state`, or drops it if `state` is `None`.
+    pub fn restore_post_block_state(&mut self, hash: B256, state: Option<Arc<StateDb>>) {
+        self.evict_post_block_state(&hash);
+        if let Some(state) = state {
+            self.post_block_states.insert(hash, state);
+        }
     }
 
     /// Returns on-disk state for the given `hash` if present
@@ -344,13 +371,13 @@ impl InMemoryBlockStates {
     /// Serialize all states to a list of serializable historical states
     pub fn serialized_states(&mut self) -> SerializableHistoricalStates {
         let states = Self::serialize_tier(
-            &mut self.states,
+            &self.states,
             &mut self.on_disk_states,
             &mut self.disk_cache,
             CacheSlot::ChildExecution,
         );
         let post_block_states = Self::serialize_tier(
-            &mut self.post_block_states,
+            self.post_block_states.iter().map(|(hash, state)| (hash, state.as_ref())),
             &mut self.on_disk_post_block_states,
             &mut self.disk_cache,
             CacheSlot::PostBlock,
@@ -360,15 +387,15 @@ impl InMemoryBlockStates {
     }
 
     /// Serializes one memory tier together with its secondary tier, sorted by block hash.
-    fn serialize_tier(
-        in_memory: &mut B256HashMap<StateDb>,
+    fn serialize_tier<'a>(
+        in_memory: impl IntoIterator<Item = (&'a B256, &'a StateDb)>,
         secondary: &mut B256HashMap<StateDb>,
         disk_cache: &mut DiskStateCache,
         slot: CacheSlot,
     ) -> SerializedBlockStates {
         let mut states = in_memory
-            .iter_mut()
-            .map(|(hash, state)| (*hash, state.serialize_state()))
+            .into_iter()
+            .map(|(hash, state)| (*hash, state.read_as_state_snapshot()))
             .collect::<Vec<_>>();
 
         for (hash, state) in secondary {
@@ -388,7 +415,7 @@ impl InMemoryBlockStates {
         // Record the post-block states first so that inserting their blocks moves them through the
         // disk-cache lifecycle just like a running node would.
         for (hash, state_snapshot) in post_block_states {
-            self.post_block_states.insert(hash, load_state_db(state_snapshot));
+            self.post_block_states.insert(hash, Arc::new(load_state_db(state_snapshot)));
         }
         for (hash, state_snapshot) in states {
             self.insert(hash, load_state_db(state_snapshot));
