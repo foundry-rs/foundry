@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
     outputs:
       version: ${{ steps.release_info.outputs.version }}
@@ -68,6 +69,7 @@ jobs:
             metadata=$(python3 .github/scripts/tag-release.py validate-tag --ref "$REF" \
               --commit "$COMMIT" --expected-commit "$EXPECTED_COMMIT")
             version=$(jq -r '.version' <<< "$metadata")
+            python3 .github/scripts/tag-release.py ci --version "$version" --commit "$COMMIT"
             tag_name=$(jq -r '.tag_name' <<< "$metadata")
             release_tag_name="$tag_name"
             release_name=$(jq -r '.release_name' <<< "$metadata")

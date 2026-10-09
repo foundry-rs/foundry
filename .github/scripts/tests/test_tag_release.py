@@ -166,7 +166,8 @@ class ReleaseBuildTests(unittest.TestCase):
             def git(*args):
                 return subprocess.check_output([
                     "git", "-C", tmp, "-c", "user.name=Release test", "-c",
-                    "user.email=release-test@example.invalid", *args,
+                    "user.email=release-test@example.invalid", "-c", "commit.gpgsign=false",
+                    "-c", "tag.gpgsign=false", *args,
                 ], text=True, stderr=subprocess.PIPE).strip()
 
             git("init", "--quiet")
@@ -195,7 +196,172 @@ class ReleaseBuildTests(unittest.TestCase):
             self.assertIn("must resolve to the tested commit", moved.stderr)
 
 
+class WorkspaceTests(unittest.TestCase):
+    def test_cli_validates_real_workspace_and_lockfile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = pathlib.Path(tmp)
+            (directory / "member/src").mkdir(parents=True)
+            (directory / "member/src/lib.rs").write_text("")
+            (directory / "Cargo.toml").write_text(
+                '[workspace]\nmembers=["member"]\nresolver="2"\n'
+                '[workspace.package]\nversion="1.9.0"\n'
+            )
+            member = directory / "member/Cargo.toml"
+            member.write_text('[package]\nname="member"\nversion.workspace=true\nedition="2021"\n')
+            subprocess.run(["cargo", "generate-lockfile", "--manifest-path", str(directory / "Cargo.toml")],
+                           check=True, capture_output=True)
+
+            def git(*args):
+                return subprocess.check_output([
+                    "git", "-C", tmp, "-c", "user.name=Release test", "-c",
+                    "user.email=release-test@example.invalid", "-c", "commit.gpgsign=false", *args,
+                ], text=True, stderr=subprocess.PIPE).strip()
+
+            git("init", "--quiet")
+            git("add", ".")
+            git("commit", "--quiet", "-m", "test: prepare workspace")
+            git("tag", "v1.8.3")
+            command = [
+                sys.executable, str(SCRIPT.resolve()), "validate", "--directory", tmp,
+                "--ref", "refs/heads/release-1.9.0", "--version", "1.9.0", "--commit", git("rev-parse", "HEAD"),
+            ]
+            valid = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+            member.write_text(member.read_text().replace("version.workspace=true", 'version="0.1.0"'))
+            subprocess.run(["cargo", "generate-lockfile", "--manifest-path", str(directory / "Cargo.toml")],
+                           check=True, capture_output=True)
+            mismatch = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("member=0.1.0", mismatch.stderr)
+            (directory / "Cargo.lock").write_text("not a valid lockfile")
+            invalid_lock = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(invalid_lock.returncode, 0)
+            self.assertIn("lock file", invalid_lock.stderr)
+
+    def test_checks_every_member_but_not_dependencies(self):
+        metadata = {
+            "workspace_members": ["member"],
+            "packages": [
+                {"id": "member", "name": "member", "version": "1.9.0"},
+                {"id": "dependency", "name": "dependency", "version": "0.1.0"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest(tmp, "1.9.0")
+            with patch.object(MODULE, "output", side_effect=[SHA, json.dumps(metadata)]) as output:
+                MODULE.validate_workspace(pathlib.Path(tmp), "1.9.0", SHA)
+            self.assertIn("--locked", output.call_args_list[1].args[0])
+            metadata["packages"][0]["version"] = "0.1.0"
+            with patch.object(MODULE, "output", side_effect=[SHA, json.dumps(metadata)]):
+                with self.assertRaisesRegex(MODULE.ReleaseError, "member=0.1.0"):
+                    MODULE.validate_workspace(pathlib.Path(tmp), "1.9.0", SHA)
+
+    def test_rejects_wrong_sha_version_and_locked_metadata_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest(tmp, "1.9.0")
+            directory = pathlib.Path(tmp)
+            for version, sha in (("1.9.0", "master"), ("01.9.0", SHA)):
+                with self.subTest(version=version), patch.object(MODULE, "output") as output:
+                    with self.assertRaises(MODULE.ReleaseError):
+                        MODULE.validate_workspace(directory, version, sha)
+                    output.assert_not_called()
+            with patch.object(MODULE, "output", return_value="b" * 40):
+                with self.assertRaisesRegex(MODULE.ReleaseError, "checked-out commit"):
+                    MODULE.validate_workspace(directory, "1.9.0", SHA)
+            with patch.object(MODULE, "output", return_value=SHA):
+                with self.assertRaisesRegex(MODULE.ReleaseError, "workspace version"):
+                    MODULE.validate_workspace(directory, "1.9.1", SHA)
+            with patch.object(MODULE, "output", side_effect=[SHA, MODULE.ReleaseError("lockfile needs updating")]):
+                with self.assertRaisesRegex(MODULE.ReleaseError, "lockfile needs updating"):
+                    MODULE.validate_workspace(directory, "1.9.0", SHA)
+
+
+def ci_run(run_id=1, event="workflow_dispatch", branch="release-1.9.0", sha=SHA,
+           status="completed", conclusion="success"):
+    return {
+        "id": run_id, "event": event, "head_branch": branch, "head_sha": sha,
+        "status": status, "conclusion": conclusion, "run_attempt": 2,
+    }
+
+
+class CiTests(unittest.TestCase):
+    def test_uses_latest_exact_sha_full_run_across_pages(self):
+        pages = [{"workflow_runs": [ci_run(1, "push", "master")]}, {"workflow_runs": [
+            ci_run(2), ci_run(3, "pull_request"), ci_run(4, branch="feature"),
+            ci_run(5, sha="b" * 40), ci_run(6, status="queued", conclusion=None),
+        ]}]
+        with patch.object(MODULE, "output", return_value=json.dumps(pages)):
+            self.assertEqual(MODULE.latest_ci("repo", "1.9.0", SHA)["id"], 6)
+
+    def test_requires_aggregate_and_complete_platform_matrix(self):
+        matrix = json.loads(MODULE.output([
+            "env", "EVENT_NAME=workflow_dispatch", sys.executable, str(SCRIPT.with_name("matrices.py")),
+        ]))
+        names = ["ci-success", "test / build matrices", "touch-id link (macOS)"]
+        names.extend(f"test / test {case['name']}" for case in matrix["include"])
+        jobs = [{"name": name, "conclusion": "success"} for name in names]
+        with patch.object(MODULE, "output", side_effect=[json.dumps([{"jobs": jobs}]), json.dumps(matrix)]) as output:
+            self.assertEqual(MODULE.verify_ci("repo", ci_run()), 1)
+            self.assertIn("/attempts/2/jobs", output.call_args_list[0].args[0][-1])
+        for conclusion in ("failure", "cancelled", "skipped", None):
+            with self.subTest(conclusion=conclusion):
+                failed = [*jobs[:-1], {"name": names[-1], "conclusion": conclusion}]
+                with patch.object(MODULE, "output", side_effect=[json.dumps([{"jobs": failed}]), json.dumps(matrix)]):
+                    with self.assertRaisesRegex(MODULE.ReleaseError, "unsuccessful jobs"):
+                        MODULE.verify_ci("repo", ci_run())
+        for name in ("ci-success", "touch-id link (macOS)", names[-1]):
+            missing = [job for job in jobs if job["name"] != name]
+            with patch.object(MODULE, "output", side_effect=[json.dumps([{"jobs": missing}]), json.dumps(matrix)]):
+                with self.assertRaisesRegex(MODULE.ReleaseError, "missing or unsuccessful"):
+                    MODULE.verify_ci("repo", ci_run())
+
+    def test_recheck_blocks_missing_pending_or_failed_ci_without_dispatch(self):
+        for ci in (None, ci_run(status="in_progress", conclusion=None), ci_run(conclusion="failure")):
+            with self.subTest(ci=ci), patch.object(MODULE, "latest_ci", return_value=ci):
+                with patch.object(MODULE, "output") as output:
+                    with self.assertRaises(MODULE.ReleaseError):
+                        MODULE.require_ci("repo", "1.9.0", SHA)
+                    output.assert_not_called()
+
+    def test_dispatches_only_missing_ci_and_waits_for_selected_sha(self):
+        with patch.object(MODULE, "latest_ci", side_effect=[None, None, ci_run()]):
+            with patch.object(MODULE, "output", return_value=SHA) as output:
+                with patch.object(MODULE.time, "sleep"), patch.object(MODULE, "verify_ci", return_value=1):
+                    self.assertEqual(MODULE.require_ci("repo", "1.9.0", SHA, dispatch=True), 1)
+            self.assertEqual(output.call_args_list[1].args[0], [
+                "gh", "workflow", "run", "ci.yml", "--repo", "repo", "--ref", "release-1.9.0",
+            ])
+        with patch.object(MODULE, "latest_ci", return_value=ci_run(conclusion="failure")):
+            with patch.object(MODULE, "output") as output:
+                with self.assertRaises(MODULE.ReleaseError):
+                    MODULE.require_ci("repo", "1.9.0", SHA, dispatch=True)
+                output.assert_not_called()
+
+    def test_does_not_dispatch_a_moved_branch_or_wait_forever(self):
+        with patch.object(MODULE, "latest_ci", return_value=None):
+            with patch.object(MODULE, "output", return_value="b" * 40) as output:
+                with self.assertRaisesRegex(MODULE.ReleaseError, "points to"):
+                    MODULE.require_ci("repo", "1.9.0", SHA, dispatch=True)
+                self.assertEqual(output.call_count, 1)
+        with patch.object(MODULE, "latest_ci", return_value=ci_run(status="queued", conclusion=None)):
+            with patch.object(MODULE.time, "monotonic", side_effect=[0, 5401]):
+                with self.assertRaisesRegex(MODULE.ReleaseError, "timed out"):
+                    MODULE.require_ci("repo", "1.9.0", SHA, dispatch=True)
+
+
 class TagTests(unittest.TestCase):
+    def test_retry_resolves_nested_annotated_tags(self):
+        responses = [
+            subprocess.CompletedProcess([], 1, "", "already exists"),
+            subprocess.CompletedProcess([], 0, json.dumps({"object": {"type": "tag", "sha": "b" * 40}}), ""),
+            subprocess.CompletedProcess([], 0, json.dumps({"object": {"type": "tag", "sha": "c" * 40}}), ""),
+            subprocess.CompletedProcess([], 0, json.dumps({"object": {"type": "commit", "sha": SHA}}), ""),
+        ]
+        with patch.object(MODULE.subprocess, "run", side_effect=responses) as run:
+            MODULE.create_or_verify_tag("repo", "1.9.0", SHA)
+        self.assertEqual(run.call_count, 4)
+        self.assertTrue(all("--method" not in call.args[0] for call in run.call_args_list[1:]))
+
     def test_creates_tag_at_exact_commit(self):
         created = subprocess.CompletedProcess([], 0, "", "")
         resolved = subprocess.CompletedProcess(

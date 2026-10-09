@@ -71,14 +71,22 @@ functionality from `RUST_FEATURES` in `.github/workflows/release.yml` and
 root `Makefile` so published binaries expose the same surface as local release builds.
 
 Maintainers select stable and release-candidate versions, update the workspace version and
-`Cargo.lock` on the corresponding `release-X.Y.Z` or `release-X.Y.Z-rcN` branch, and run the
-[tag release workflow](../../.github/workflows/tag-release.yml) from that branch. It validates the version,
-runs the full test matrix, creates the matching `vX.Y.Z` or `vX.Y.Z-rcN` tag at the tested commit,
-and dispatches the [release workflow](../../.github/workflows/release.yml) on that tag with the tested
-SHA. The release workflow checks the tag and commit before building, signing, attesting, and generating
-PR-based notes in a draft GitHub release. This separate run preserves `refs/tags/vX.Y.Z[-rcN]` in the
-cosign identity and attestation source ref. After reviewing the
-notes and successful build, run the
+`Cargo.lock` on the corresponding `release-X.Y.Z` or `release-X.Y.Z-rcN` branch, then dispatch the
+[tag release workflow](../../.github/workflows/tag-release.yml) from `master` with the chosen `version`
+and exact 40-character lowercase `commit` SHA. It checks the selected checkout, workspace and member
+versions, and `cargo metadata --locked`. It reuses the latest full CI run for that SHA, or dispatches
+`ci.yml` on the release branch if no eligible run exists. The branch must still point to the requested
+SHA when CI is dispatched. PR CI is not eligible because it uses a reduced platform matrix. Failed,
+canceled, missing, or unexpectedly skipped required checks block tagging; rerun the latest failed CI run explicitly.
+
+After approval in `release-tag`, the workflow repeats validation and checks the latest CI attempt
+before creating the immutable `vX.Y.Z[-rcN]` tag at the selected SHA. Existing tags are accepted only
+when they resolve to that SHA, including annotated tags. Stable versions must exceed existing stable
+tags; newer RC tags do not block stable maintenance releases. RC versions must exceed all release tags.
+The coordinator then dispatches the [release workflow](../../.github/workflows/release.yml) on the tag.
+That workflow requires the same full CI evidence before building, signing, attesting, and generating
+PR-based notes in a draft GitHub release. The separate run preserves the tag ref in signing identities
+and provenance. After reviewing the notes and successful build, run the
 [finalization workflow](../../.github/workflows/finalize-release.yml) from `master` with that exact
 tag. It verifies the release workflow and recorded Docker digest before publishing and promoting
 eligible Docker aliases. Nightlies continue through the scheduled release workflow.
@@ -87,6 +95,21 @@ To retry a tagged build, rerun its release workflow run, or dispatch `release.ym
 `expected_commit` set to the full tested SHA. A successful tag workflow only confirms the build was
 dispatched; finalization requires the tag's release workflow to succeed. Both workflow files must be
 present on the default branch before dispatching them.
+
+Before enabling this flow, repository administrators must install a dedicated GitHub App on this
+repository with only Contents write permission. Configure the `release-tag` environment to allow
+only `master`, require maintainer approval, and prevent self-review. Store its App ID as environment
+variable `RELEASE_APP_ID` and its private key as environment secret `RELEASE_APP_PRIVATE_KEY`.
+The workflow mints a short-lived token scoped to this repository only after validation and approval;
+the ordinary workflow token handles CI/build dispatch and cannot create routine release tags.
+
+Keep the existing tag update/deletion restrictions without a bypass for this App. Add a separate
+active tag creation ruleset for `refs/tags/v*.*.*`, restricting creation to the App as its sole bypass
+actor. Separate rulesets let the App create tags without allowing it to move or delete them. Nightly
+tags remain outside the creation restriction. For an emergency, an administrator may temporarily
+grant a designated maintainer bypass of the creation-only ruleset, verify the version, locked metadata,
+and full CI at the exact SHA, create the tag, then remove that bypass. Never relax update/deletion
+restrictions or move an existing release tag. Direct tagged builds still require successful full CI.
 
 For contribution policy and support channels, see [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
