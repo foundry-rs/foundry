@@ -2,7 +2,7 @@ use crate::sequence::{SequenceData, completed_transaction_prefix};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, keccak256};
 use eyre::{ContextCompat, Result, WrapErr, bail};
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
@@ -961,8 +961,10 @@ where
         || planned.chain_id() != Some(chain)
         || transaction.nonce() != planned.nonce().context("delegated request has no nonce")?
         || planned_tempo_aa != resolved_tempo_aa
+        // A missing `to` and `TxKind::Create` both describe a contract creation.
         || (!planned_tempo_aa
-            && (resolved.kind() != planned.kind()
+            && (resolved.kind().unwrap_or(TxKind::Create)
+                != planned.kind().unwrap_or(TxKind::Create)
                 || resolved.value().unwrap_or_default() != planned.value().unwrap_or_default()
                 || resolved.input().unwrap_or_default() != planned.input().unwrap_or_default()))
         || transaction.authorization_list().unwrap_or_default()
@@ -1056,10 +1058,11 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::{
-        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, transaction::Recovered,
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
+        TxEnvelope, transaction::Recovered,
     };
     use alloy_network::Ethereum;
-    use alloy_primitives::{Bloom, TxKind, U256, hex};
+    use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
@@ -1330,6 +1333,111 @@ mod tests {
 
         let (other, _) = delegated_transaction(OTHER_SIGNED_TX);
         assert!(validate_delegated_transaction::<Ethereum>(&transaction, &other, 1, hash).is_err());
+    }
+
+    #[test]
+    fn delegated_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 1,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request: TransactionRequest = transaction(to).inner.into_inner().into();
+            request.from = Some(from);
+            serde_json::from_value::<TransactionRequest>(serde_json::to_value(request).unwrap())
+                .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction, planned: &TransactionRequest| {
+            validate_delegated_transaction::<Ethereum>(
+                transaction,
+                planned,
+                1,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).to, None);
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
+        assert!(validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x33)))).is_err());
+    }
+
+    #[test]
+    fn delegated_tempo_resolution_matches_creations_by_kind() {
+        let from = Address::repeat_byte(0x11);
+        let transaction = |to: TxKind| {
+            let envelope = TempoTxEnvelope::Eip1559(
+                TxEip1559 {
+                    chain_id: 4217,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    max_priority_fee_per_gas: 1,
+                    to,
+                    input: Bytes::from_static(&[0x60, 0x00]),
+                    ..Default::default()
+                }
+                .into_signed(Signature::test_signature()),
+            );
+            RpcTransaction {
+                inner: Recovered::new_unchecked(envelope, from),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }
+        };
+        // Serialize the planned request the same way the recovery snapshot stores it.
+        let planned = |to: TxKind| {
+            let mut request = <TempoTransactionRequest as From<_>>::from(transaction(to));
+            request.inner.from = Some(from);
+            serde_json::from_value::<TempoTransactionRequest>(
+                serde_json::to_value(request).unwrap(),
+            )
+            .unwrap()
+        };
+        let validate = |transaction: &RpcTransaction<TempoTxEnvelope>,
+                        planned: &TempoTransactionRequest| {
+            validate_delegated_transaction::<TempoNetwork>(
+                transaction,
+                planned,
+                4217,
+                transaction.tx_hash(),
+            )
+        };
+        let create = transaction(TxKind::Create);
+        let call = transaction(TxKind::Call(Address::repeat_byte(0x22)));
+        assert_eq!(planned(TxKind::Create).inner.to, None);
+        assert!(!planned(TxKind::Create).is_tempo_aa());
+
+        validate(&create, &planned(TxKind::Create)).unwrap();
+        validate(&call, &planned(TxKind::Call(Address::repeat_byte(0x22)))).unwrap();
+        assert!(validate(&create, &planned(TxKind::Call(Address::repeat_byte(0x22)))).is_err());
+        assert!(validate(&call, &planned(TxKind::Create)).is_err());
     }
 
     #[test]

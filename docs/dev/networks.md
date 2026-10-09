@@ -251,3 +251,18 @@ User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
+
+### Anvil CIP-64 compatibility
+
+Anvil in Celo mode accepts CIP-64 (`0x7b`) envelopes and preserves `feeCurrency` in
+transaction and receipt RPC responses. `eth_fillTransaction` returns a CIP-64 envelope
+when a fee currency is supplied. This is a compatibility mode for local payload execution
+and client integration testing: it uses native EIP-1559 fee accounting, interpreting the
+numeric fee fields as native currency amounts without exchange-rate conversion. Senders
+need native funds. Fee tokens are not debited, and Celo fee-hook gas and logs are not
+reproduced. Local receipts use the ordinary receipt payload with the CIP-64 type byte.
+
+This mode does not initialize Celo core contracts or provide protocol-accurate fee-currency
+simulation. A signed transaction priced for a live fee currency can fail native base-fee
+or balance checks. Other Anvil execution profiles reject CIP-64 submission and imported
+CIP-64 block history.

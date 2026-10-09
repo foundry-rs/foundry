@@ -5,6 +5,7 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
+use foundry_cli::utils::parse_json;
 use foundry_evm::{core::evm::FoundryEvmNetwork, executors::ExecutorBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -44,7 +45,7 @@ pub struct ChiselSession<FEN: FoundryEvmNetwork> {
 // ChiselSession Common Associated Functions
 impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     fn deserialize_cached(contents: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
-        let mut session: Self = serde_json::from_str(contents)?;
+        let mut session: Self = parse_json(contents)?;
         session.source.config.clear_credentials();
         // A session load must not run project cleanup requested by cached configuration.
         session.source.config.foundry_config.force = false;

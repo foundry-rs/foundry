@@ -84,6 +84,7 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for BaseTransaction<TxEnv> {
                 Self::from_encoded_tx(&envelope, caller, encoded)
             }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo transaction in Base context"),
+            FoundryTxEnvelope::Celo(_) => unreachable!("CIP-64 transaction in base context"),
         }
     }
 }

@@ -1,5 +1,6 @@
 //! External compiler adapter protocol and process transport.
 
+use crate::fs::canonicalize_path;
 use alloy_primitives::hex;
 use eyre::{Context, ContextCompat, Result, bail, ensure};
 use foundry_compilers::{
@@ -789,7 +790,7 @@ fn normalize_root_path(path: &Path) -> Result<&Path> {
 
 fn resolve_file(root: &Path, path: &Path) -> Result<PathBuf> {
     let path = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
-    let path = dunce::canonicalize(&path)
+    let path = canonicalize_path(&path)
         .wrap_err_with(|| format!("failed to canonicalize {}", path.display()))?;
     ensure!(path.is_file(), "external compiler input is not a file: {}", path.display());
     Ok(path)

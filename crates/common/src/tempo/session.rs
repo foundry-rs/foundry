@@ -171,9 +171,9 @@ pub(crate) fn validate_signed_session_authorization(
         );
     }
     ensure!(
-        auth.witness == Some(session.session_id),
+        auth.witness() == Some(session.session_id),
         "session authorization witness is {:?}, expected {}",
-        auth.witness,
+        auth.witness(),
         session.session_id
     );
     ensure!(
@@ -272,7 +272,7 @@ fn canonical_authorization_scope(scopes: &[CallScope]) -> Vec<CanonicalCallScope
     let mut scopes = scopes
         .iter()
         .map(|scope| CanonicalCallScope {
-            target: scope.target,
+            target: scope.target(),
             selector_rules: canonical_authorization_selector_rules(&scope.selector_rules),
         })
         .collect::<Vec<_>>();
@@ -299,7 +299,7 @@ fn canonical_authorization_selector_rules(rules: &[SelectorRule]) -> Vec<Canonic
         .map(|rule| {
             let mut recipients = rule.recipients.clone();
             recipients.sort();
-            CanonicalSelectorRule { selector: rule.selector, recipients }
+            CanonicalSelectorRule { selector: rule.selector(), recipients }
         })
         .collect::<Vec<_>>();
     rules.sort();
@@ -398,12 +398,12 @@ fn read_session_entries(now: u64) -> eyre::Result<Option<Vec<SessionEntry>>> {
                     scopes
                         .iter()
                         .map(|scope| SessionCallScope {
-                            target: scope.target,
+                            target: scope.target(),
                             selector_rules: scope
                                 .selector_rules
                                 .iter()
                                 .map(|rule| SessionSelectorRule {
-                                    selector: rule.selector.into(),
+                                    selector: rule.selector().into(),
                                     recipients: rule.recipients.clone(),
                                 })
                                 .collect(),

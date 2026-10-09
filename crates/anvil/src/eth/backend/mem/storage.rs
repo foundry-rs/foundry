@@ -173,7 +173,7 @@ impl InMemoryBlockStates {
                     continue;
                 }
 
-                let state_snapshot = state.read_as_state_snapshot();
+                let state_snapshot = state.serialize_state();
                 if self.disk_cache.write(hash, CacheSlot::ChildExecution, &state_snapshot) {
                     state.clear();
                     // Write succeeded, move state to on-disk tracking
@@ -211,7 +211,7 @@ impl InMemoryBlockStates {
             return;
         }
 
-        let state_snapshot = state.read_as_state_snapshot();
+        let state_snapshot = state.serialize_state();
         if self.disk_cache.write(hash, CacheSlot::PostBlock, &state_snapshot) {
             state.clear();
             self.on_disk_post_block_states.insert(hash, state);

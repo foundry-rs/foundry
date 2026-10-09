@@ -2,7 +2,7 @@ use super::{
     data::{ContractData, PreprocessorData, deploy_helper_path},
     span_to_range,
 };
-use crate::fs::normalize_path;
+use crate::fs::{canonicalize_path, normalize_path};
 use foundry_compilers::{
     ProjectPathsConfig, Updates,
     artifacts::{SolcLanguage, remappings::Remapping},
@@ -633,8 +633,8 @@ fn is_path_in_dir(path: &Path, dir: &Path, root_dir: &Path) -> bool {
     let path = normalize_path(&root_dir.join(path));
     let dir = normalize_path(&root_dir.join(dir));
     path.starts_with(&dir)
-        || dunce::canonicalize(path)
-            .is_ok_and(|path| dunce::canonicalize(dir).is_ok_and(|dir| path.starts_with(dir)))
+        || canonicalize_path(path)
+            .is_ok_and(|path| canonicalize_path(dir).is_ok_and(|dir| path.starts_with(dir)))
 }
 
 /// Returns whether a generated import would be redirected by `remapping`.
