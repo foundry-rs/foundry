@@ -1473,13 +1473,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth) {
+        if let Some(prank) = self.get_prank(curr_depth).copied() {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
             if prank.delegate_call && curr_depth == prank.depth && call.scheme.is_delegate_call() {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
                 if let Some(new_origin) = prank.new_origin {
                     ecx.tx_mut().set_caller(new_origin);
+                }
+                if let Some(used) = prank.first_time_applied() {
+                    self.pranks.insert(curr_depth, used);
                 }
             }
 

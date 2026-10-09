@@ -1104,7 +1104,7 @@ async fn flaky_test_reorg() {
         let to = accounts[i + 1].address();
         for j in 0..5 {
             let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
-            txs.push((TransactionData::JSON(tx), i as u64));
+            txs.push((TransactionData::JSON(tx.into()), i as u64));
         }
     }
 
@@ -1198,7 +1198,7 @@ async fn flaky_test_reorg() {
     let res = api
         .anvil_reorg(ReorgOptions {
             depth: 1,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 10)],
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default().into()), 10)],
         })
         .await;
     assert!(res.is_err());
@@ -1563,7 +1563,7 @@ async fn test_reorg_zero_depth_with_transactions_is_rejected() {
     let err = api
         .anvil_reorg(ReorgOptions {
             depth: 0,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 0)],
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default().into()), 0)],
         })
         .await
         .unwrap_err();
@@ -1573,7 +1573,7 @@ async fn test_reorg_zero_depth_with_transactions_is_rejected() {
     let err = api
         .anvil_reorg(ReorgOptions {
             depth: 1,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 1)],
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default().into()), 1)],
         })
         .await
         .unwrap_err();
@@ -1606,7 +1606,7 @@ async fn test_reorg_blockhash_opcode_consistency() {
     let tx = TransactionRequest::default();
     api.anvil_reorg(ReorgOptions {
         depth: 5,
-        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
     })
     .await
     .unwrap();
@@ -1662,7 +1662,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     let tx = TransactionRequest::default();
     api.anvil_reorg(ReorgOptions {
         depth: 50,
-        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
     })
     .await
     .unwrap();

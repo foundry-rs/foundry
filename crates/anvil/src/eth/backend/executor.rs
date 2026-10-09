@@ -178,6 +178,12 @@ impl FoundryReceiptBuilder {
                 logs_bloom: receipt.logs_bloom,
             }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+            FoundryTxType::Celo => {
+                FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
+                    inner: receipt,
+                    r#type: foundry_primitives::CIP64_TX_TYPE,
+                })
+            }
         }
     }
 
