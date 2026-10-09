@@ -1852,15 +1852,20 @@ where
                         "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
                     );
                 }
-                let request = match tx {
+                let expiring = match tx {
                     TransactionMaybeSigned::Unsigned(request) => {
-                        let mut request = request.clone();
-                        tempo.apply::<N>(&mut request, None);
-                        request
+                        request.supports_fee_token()
+                            && (tempo.expiring_nonce
+                                || tempo.expires.is_some()
+                                || tempo.nonce_key.or(request.nonce_key())
+                                    == Some(TEMPO_EXPIRING_NONCE_KEY))
                     }
-                    TransactionMaybeSigned::Signed { tx, .. } => tx.clone().into(),
+                    TransactionMaybeSigned::Signed { tx, .. } => {
+                        <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
+                            == Some(TEMPO_EXPIRING_NONCE_KEY)
+                    }
                 };
-                if request.nonce_key() == Some(TEMPO_EXPIRING_NONCE_KEY) && tx.to().is_some() {
+                if expiring && tx.to().is_some() {
                     called.insert(scope);
                 }
             }
@@ -2321,6 +2326,23 @@ mod tests {
             "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
         );
         reject_expiring_call_before_create(&sequences, &TempoOpts::default()).unwrap();
+        for tempo in [
+            TempoOpts { expires: Some(30), ..Default::default() },
+            TempoOpts { nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY), ..Default::default() },
+        ] {
+            assert!(reject_expiring_call_before_create(&sequences, &tempo).is_err());
+        }
+        let TransactionMaybeSigned::Unsigned(request) = sequences[0].transactions[0].tx_mut()
+        else {
+            unreachable!()
+        };
+        request.set_nonce_key(TEMPO_EXPIRING_NONCE_KEY);
+        assert!(reject_expiring_call_before_create(&sequences, &TempoOpts::default()).is_err());
+        reject_expiring_call_before_create(
+            &sequences,
+            &TempoOpts { nonce_key: Some(U256::ZERO), ..Default::default() },
+        )
+        .unwrap();
         sequences[2].chain = 4219;
         reject_expiring_call_before_create(&sequences, &tempo).unwrap();
         sequences[2].chain = 4217;
@@ -2329,20 +2351,18 @@ mod tests {
         sequences[2].transactions[0] =
             transaction(sender, Some(TxKind::Call(Address::with_last_byte(2))));
         reject_expiring_call_before_create(&sequences, &tempo).unwrap();
-        let mut discriminators = Vec::new();
-        for (i, sequence) in sequences.iter().enumerate() {
-            for (index, transaction) in sequence.transactions.iter().enumerate() {
-                let TransactionMaybeSigned::Unsigned(mut request) = transaction.tx().clone() else {
-                    unreachable!()
-                };
-                tempo.apply::<TempoNetwork>(
-                    &mut request,
-                    Some(operation_ordinal(&sequences, i, index) as u64),
-                );
-                discriminators.push(request.nonce().unwrap());
-            }
-        }
-        assert_eq!(discriminators, [0, 1, 2]);
+
+        let mut ethereum = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [script_tx(sender), script_tx(sender)].into(),
+            ..Default::default()
+        };
+        ethereum.transactions[0]
+            .tx_mut()
+            .as_unsigned_mut()
+            .unwrap()
+            .set_to(Address::with_last_byte(2));
+        reject_expiring_call_before_create(&[ethereum], &tempo).unwrap();
     }
 
     #[test]

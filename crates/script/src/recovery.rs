@@ -310,9 +310,10 @@ where
         {
             if !attempt.members.contains(&id)
                 && let AttemptKind::Signed { payload, .. } = &attempt.kind
-                && (payload.hash == signed.hash
-                    || (replay_hash.is_some()
-                        && expiring_replay_hash(&payload.payload)? == replay_hash))
+                && match replay_hash {
+                    Some(hash) => expiring_replay_hash(&payload.payload)? == Some(hash),
+                    None => payload.hash == signed.hash,
+                }
             {
                 bail!(
                     "transaction {index} is identical to an earlier transaction of this script ({}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)",
@@ -1126,6 +1127,7 @@ mod tests {
     use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
+    use forge_script_sequence::ScriptSequence;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
     use tempo_primitives::{
         AASigned, TempoSignature,
@@ -1138,6 +1140,9 @@ mod tests {
     const OTHER_SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
     );
+
+    const ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     fn sequence(dir: &Path) -> SequenceData<Ethereum> {
         let mut transaction = TransactionWithMetadata::from_tx_request(
@@ -1201,37 +1206,14 @@ mod tests {
 
     #[test]
     fn expiring_signed_payload_accepts_complete_plan_ordinal_and_legacy_index() {
-        let signer = foundry_wallets::utils::create_local_signer(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        )
-        .unwrap();
-        let request = TempoTransactionRequest {
-            inner: TransactionRequest {
-                from: Some(signer.address()),
-                to: Some(TxKind::Call(Address::with_last_byte(2))),
-                chain_id: Some(4217),
-                nonce: Some(8),
-                gas: Some(100_000),
-                max_fee_per_gas: Some(10),
-                max_priority_fee_per_gas: Some(1),
-                ..Default::default()
-            },
-            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
-            valid_before: std::num::NonZeroU64::new(100),
-            ..Default::default()
-        };
+        let signer = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        let request = expiring_request(signer.address(), 4217, 8);
         let planned =
             TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request.clone()));
         for nonce in [0, 1, 3, 4] {
             let mut request = request.clone();
             request.inner.nonce = Some(nonce);
-            let tx = request.build_aa().unwrap();
-            let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
-            let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(
-                tx,
-                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-            ));
-            let payload = Bytes::from(envelope.encoded_2718());
+            let payload = sign_tempo_payload(request, &signer);
             assert_eq!(
                 validate_signed_payload::<TempoNetwork>(payload, &planned, 4217, 1, 3).is_ok(),
                 nonce != 4
@@ -1242,52 +1224,25 @@ mod tests {
     #[test]
     fn identical_expiring_payload_is_rejected_across_same_chain_sequences() {
         let dir = tempfile::tempdir().unwrap();
-        let signer = foundry_wallets::utils::create_local_signer(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        )
-        .unwrap();
-        let request = |chain_id, nonce| TempoTransactionRequest {
-            inner: TransactionRequest {
-                from: Some(signer.address()),
-                to: Some(TxKind::Call(Address::with_last_byte(2))),
-                chain_id: Some(chain_id),
-                nonce: Some(nonce),
-                gas: Some(100_000),
-                max_fee_per_gas: Some(10),
-                max_priority_fee_per_gas: Some(1),
-                ..Default::default()
-            },
-            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
-            valid_before: std::num::NonZeroU64::new(100),
-            ..Default::default()
-        };
+        let signer = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
         // A -> B -> A: the planned nonce on A advances, the signed expiring nonce stays 0.
-        let deployments =
-            [(4217, 0), (4218, 0), (4217, 1)]
-                .map(|(chain, nonce)| forge_script_sequence::ScriptSequence {
-                    chain,
-                    transactions: [TransactionWithMetadata::from_tx_request(
-                        TransactionMaybeSigned::<TempoNetwork>::new(request(chain, nonce)),
-                    )]
-                    .into(),
-                    ..Default::default()
-                })
-                .into();
+        let deployments = [(4217, 0), (4218, 0), (4217, 1)]
+            .map(|(chain, nonce)| ScriptSequence::<TempoNetwork> {
+                chain,
+                transactions: [TransactionWithMetadata::from_tx_request(
+                    TransactionMaybeSigned::new(expiring_request(signer.address(), chain, nonce)),
+                )]
+                .into(),
+                ..Default::default()
+            })
+            .into();
         let data = SequenceData::Multi(MultiChainSequence {
             deployments,
             path: dir.path().join("broadcast.json"),
             sensitive_path: dir.path().join("cache.json"),
             timestamp: 0,
         });
-        let tx = request(4217, 0).build_aa().unwrap();
-        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
-        let payload = Bytes::from(
-            TempoTxEnvelope::AA(AASigned::new_unhashed(
-                tx,
-                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-            ))
-            .encoded_2718(),
-        );
+        let payload = sign_tempo_payload(expiring_request(signer.address(), 4217, 0), &signer);
 
         let mut store = RecoveryStore::create(data, false).unwrap();
         let hash = store.persist_signed_payload(0, 0, payload.clone()).unwrap();
@@ -1909,35 +1864,18 @@ mod tests {
     #[test]
     fn expiring_replay_guard_ignores_sponsor_changes_and_keeps_discriminators() {
         let dir = tempfile::tempdir().unwrap();
-        let sender = foundry_wallets::utils::create_local_signer(
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        )
-        .unwrap();
+        let sender = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
         let sponsor = foundry_wallets::utils::create_local_signer(
             "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
         )
         .unwrap();
-        let request = |nonce| TempoTransactionRequest {
-            inner: TransactionRequest {
-                from: Some(sender.address()),
-                to: Some(TxKind::Call(Address::with_last_byte(2))),
-                chain_id: Some(4217),
-                nonce: Some(nonce),
-                gas: Some(100_000),
-                max_fee_per_gas: Some(10),
-                max_priority_fee_per_gas: Some(1),
-                ..Default::default()
-            },
-            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
-            valid_before: std::num::NonZeroU64::new(100),
-            ..Default::default()
-        };
+        let request = |nonce| expiring_request(sender.address(), 4217, nonce);
         let data = SequenceData::Multi(MultiChainSequence {
             deployments: [0, 1]
-                .map(|nonce| forge_script_sequence::ScriptSequence {
+                .map(|nonce| ScriptSequence::<TempoNetwork> {
                     chain: 4217,
                     transactions: [TransactionWithMetadata::from_tx_request(
-                        TransactionMaybeSigned::<TempoNetwork>::new(request(nonce)),
+                        TransactionMaybeSigned::new(request(nonce)),
                     )]
                     .into(),
                     ..Default::default()
@@ -1950,15 +1888,7 @@ mod tests {
         let payload = |nonce, sponsor: &_| {
             let mut request = request(nonce);
             sign_tempo_sponsor(&mut request, sender.address(), sponsor);
-            let tx = request.build_aa().unwrap();
-            let signature = sender.sign_hash_sync(&tx.signature_hash()).unwrap();
-            Bytes::from(
-                TempoTxEnvelope::AA(AASigned::new_unhashed(
-                    tx,
-                    TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
-                ))
-                .encoded_2718(),
-            )
+            sign_tempo_payload(request, &sender)
         };
         let first = payload(0, &sender);
         let duplicate = payload(0, &sponsor);
@@ -2000,5 +1930,35 @@ mod tests {
         let distinct_hash = signed_payload_hash::<TempoNetwork>(&distinct).unwrap();
         assert_eq!(store.persist_signed_payload(1, 0, distinct).unwrap(), distinct_hash);
         assert_eq!(store.signed_payload(1, 0).unwrap().hash, distinct_hash);
+    }
+
+    fn expiring_request(from: Address, chain_id: u64, nonce: u64) -> TempoTransactionRequest {
+        TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(from),
+                to: Some(TxKind::Call(Address::with_last_byte(2))),
+                chain_id: Some(chain_id),
+                nonce: Some(nonce),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
+            valid_before: std::num::NonZeroU64::new(100),
+            ..Default::default()
+        }
+    }
+
+    fn sign_tempo_payload(request: TempoTransactionRequest, signer: &impl SignerSync) -> Bytes {
+        let tx = request.build_aa().unwrap();
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        Bytes::from(
+            TempoTxEnvelope::AA(AASigned::new_unhashed(
+                tx,
+                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+            ))
+            .encoded_2718(),
+        )
     }
 }

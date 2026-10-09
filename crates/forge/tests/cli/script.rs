@@ -6604,7 +6604,7 @@ contract IdenticalTransfers is Script {
 }
 "#;
 
-// TIP-1106: from T12 each expiring nonce transaction carries its sequence index as discriminator,
+// TIP-1106: from T12 each expiring nonce transaction carries its complete-plan ordinal,
 // which keeps identical transactions distinct.
 #[forgetest_init]
 async fn tempo_script_assigns_expiring_nonce_discriminators(prj: _, cmd: _) {

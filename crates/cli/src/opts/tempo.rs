@@ -158,8 +158,8 @@ pub struct TempoOpts {
     /// The nonce is not sequential in this mode and defaults to 0. From the T12 hardfork
     /// (TIP-1106) an explicitly supplied nonce is kept as an opaque discriminator, so otherwise
     /// identical transactions with different nonces are distinct. Earlier hardforks reject any
-    /// nonce other than 0. `forge script` takes no nonce and from T12 uses the index of each
-    /// transaction in the broadcast sequence instead.
+    /// nonce other than 0. `forge script` takes no nonce and from T12 uses each transaction's
+    /// ordinal across the complete script plan, including completed transactions on resume.
     #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
