@@ -6677,6 +6677,8 @@ async fn tempo_script_rejects_identical_expiring_nonce_transactions_before_t12(p
         "30",
     ]);
     cmd.assert_failure().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
 Error: transaction 1 is identical to an earlier transaction of this script ([..]) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)
 
 "#]]);
