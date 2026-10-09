@@ -5,7 +5,7 @@ use alloy_primitives::{
     B256,
     map::{B256HashMap, HashMap},
 };
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
@@ -188,9 +188,9 @@ impl ScriptProgress {
     /// confirmed, we push the receipt (if successful) or push an error (if
     /// revert). If the transaction has not confirmed, but can be found in the
     /// node's mempool, we wait for its receipt to be available. If the transaction
-    /// has not confirmed, and cannot be found in the mempool, we remove it from
-    /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
-    /// later steps.
+    /// has not confirmed, and cannot be found in the mempool, we stop polling
+    /// and keep its hash pending so later steps can rebroadcast it without
+    /// waiting indefinitely on still-visible successors.
     pub async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
@@ -221,6 +221,7 @@ impl ScriptProgress {
 
         let mut errors: Vec<String> = vec![];
         let mut discarded_transactions = false;
+        let mut dropped = false;
 
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
@@ -249,23 +250,25 @@ impl ScriptProgress {
                     }
                 }
                 Ok(TxStatus::Dropped) => {
-                    if replayable_hashes.contains(&tx_hash) {
-                        deployment_sequence.remove_pending(tx_hash);
-                        discarded_transactions = true;
-                    } else if durable_hashes.contains(&tx_hash) {
+                    if durable_hashes.contains(&tx_hash) && !replayable_hashes.contains(&tx_hash) {
                         errors.push(format!(
                             "Durable submission {tx_hash:?} is not currently visible; refusing to discard its recovery identity"
                         ));
                     } else {
-                        // We want to remove it from pending so it will be re-broadcast.
-                        deployment_sequence.remove_pending(tx_hash);
                         discarded_transactions = true;
                     }
+                    // Keep the dropped hash pending so resume detects it before waiting on
+                    // still-visible successors, then rebroadcasts it using the saved attempt.
 
                     let msg = format!(
                         "Transaction {tx_hash:?} is not currently visible to the RPC endpoint."
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+
+                    // A later nonce may remain visible indefinitely without this transaction.
+                    // Stop polling so the caller can checkpoint and either abort or replay it.
+                    dropped = true;
+                    break;
                 }
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");
@@ -294,6 +297,22 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
+                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
+                }
+            }
+        }
+
+        // The break above skipped hashes that may already have failed on-chain; surface those
+        // failures like the polling loop does.
+        if dropped {
+            let receipts = futures::stream::iter(deployment_sequence.pending.clone())
+                .map(|hash| provider.get_transaction_receipt(hash))
+                .buffer_unordered(10)
+                .collect::<Vec<_>>()
+                .await;
+            for receipt in receipts.into_iter().flatten().flatten() {
+                if !receipt.status() && receipt.block_number().is_some() {
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
                     errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
                 }
             }

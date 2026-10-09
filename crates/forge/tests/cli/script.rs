@@ -30,7 +30,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
@@ -1330,6 +1330,204 @@ contract InterruptedResume is Script {
     let second_address =
         sequence["transactions"][1]["contractAddress"].as_str().unwrap().parse().unwrap();
     assert!(!provider.get_code_at(second_address).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
+async fn broadcast_warns_after_dropped_predecessor(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "DroppedPredecessor.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract DroppedPredecessorTarget {}
+
+contract DroppedPredecessor is Script {
+    function run() external {
+        vm.startBroadcast();
+        new DroppedPredecessorTarget();
+        new DroppedPredecessorTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let (rpc, submissions) =
+        spawn_rpc_proxy_recording_method(handle.http_endpoint(), "eth_sendRawTransaction").await;
+    let hidden_hash = Arc::new(Mutex::new(Value::Null));
+    let rpc = spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionByHash", {
+        let hidden_hash = hidden_hash.clone();
+        move |params, result| {
+            if params.get(0) == Some(&*hidden_hash.lock().unwrap()) { Value::Null } else { result }
+        }
+    })
+    .await;
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let path = prj.root().join("broadcast/DroppedPredecessor.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let sequence = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && sequence["pending"].as_array().is_some_and(|pending| pending.len() == 2)
+            {
+                break sequence;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both submitted transactions were not checkpointed");
+    let first_hash = sequence["transactions"][0]["hash"].as_str().unwrap().parse().unwrap();
+    let second_hash = sequence["transactions"][1]["hash"].as_str().unwrap().parse().unwrap();
+    // Some RPC endpoints forget one transaction while still returning its queued successor.
+    // Anvil also hides successors when a predecessor is dropped, so model that RPC response.
+    *hidden_hash.lock().unwrap() = serde_json::json!(first_hash);
+    let provider = handle.http_provider();
+    assert!(provider.get_transaction_by_hash(second_hash).await.unwrap().is_some());
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("receipt polling hung on the visible successor of a dropped transaction");
+    let output = child.kill_and_wait();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stdout.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"), "{stdout}");
+    assert!(
+        stderr.contains(&format!(
+            "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\nchain 31337: {first_hash}, {second_hash}\n"
+        )),
+        "{stderr}"
+    );
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    let pending = sequence["pending"].as_array().unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(pending.contains(&serde_json::json!(first_hash)));
+    assert!(pending.contains(&serde_json::json!(second_hash)));
+    assert!(sequence["receipts"].as_array().unwrap().is_empty());
+    let original_submissions = submissions.lock().unwrap().clone();
+    assert_eq!(original_submissions.len(), 2);
+
+    api.anvil_drop_transaction(first_hash).await.unwrap();
+    *hidden_hash.lock().unwrap() = Value::Null;
+    api.anvil_set_auto_mine(true).await.unwrap();
+    cmd.forge_fuse().arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        private_key,
+        "--resume",
+    ]);
+    cmd.assert_success();
+    let sequence: Value = foundry_common::fs::read_json_file(&path).unwrap();
+    assert_eq!(sequence["receipts"].as_array().unwrap().len(), 2);
+    assert!(sequence["pending"].as_array().unwrap().is_empty());
+    let submissions = submissions.lock().unwrap();
+    assert_eq!(submissions.len(), 4);
+    for original in original_submissions {
+        assert!(submissions[2..].contains(&original));
+    }
+}
+
+#[forgetest_init]
+async fn broadcast_reports_revert_after_dropped_predecessors(prj: _, cmd: _) {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    // Runtime that reverts once storage slot 0 is set.
+    let gate = address!("0x000000000000000000000000000000000000bEEF");
+    api.anvil_set_code(gate, hex!("60005415600b57600080fd5b00").into()).await.unwrap();
+    let script = prj.add_script(
+        "RevertAfterDropped.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract RevertAfterDropped is Script {
+    function run() external {
+        vm.startBroadcast();
+        for (uint256 i; i < 11; i++) {
+            (bool success,) = address(0x000000000000000000000000000000000000bEEF).call("");
+            require(success);
+        }
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let hidden = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let hide = |hidden: Arc<Mutex<Vec<Value>>>| {
+        move |params: &Value, result| {
+            if params.get(0).is_some_and(|hash| hidden.lock().unwrap().contains(hash)) {
+                Value::Null
+            } else {
+                result
+            }
+        }
+    };
+    let rpc = spawn_rpc_proxy_mapping_method(
+        handle.http_endpoint(),
+        "eth_getTransactionByHash",
+        hide(hidden.clone()),
+    )
+    .await;
+    let rpc =
+        spawn_rpc_proxy_mapping_method(rpc, "eth_getTransactionReceipt", hide(hidden.clone()))
+            .await;
+    let path = prj.root().join("broadcast/RevertAfterDropped.s.sol/31337/run-latest.json");
+    prj.update_config(|config| config.transaction_timeout = 1);
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &rpc,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ]);
+    let mut child = KillOnDrop::spawn(cmd.cmd());
+    let pending = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(sequence) = foundry_common::fs::read_json_file::<Value>(&path)
+                && let Some(pending) = sequence["pending"].as_array()
+                && pending.len() == 11
+            {
+                break pending.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("submitted transactions were not checkpointed");
+
+    // The first ten polled hashes look dropped; the 11th, polled only after one of them settles,
+    // already has a reverted receipt.
+    *hidden.lock().unwrap() = pending[..10].to_vec();
+    api.anvil_set_storage_at(gate, U256::ZERO, B256::with_last_byte(1)).await.unwrap();
+    api.mine_one().await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while child.is_running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Forge did not finish");
+    let output = child.kill_and_wait();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(&format!("Transaction Failure: {}", pending[10].as_str().unwrap())),
+        "{stderr}"
+    );
 }
 
 #[forgetest]

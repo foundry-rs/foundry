@@ -1038,7 +1038,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             self.sequence.submission_hashes(i);
                         sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-                        progress
+                        let result = progress
                             .wait_for_pending(
                                 i,
                                 sequence,
@@ -1047,7 +1047,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 self.args.confirmations,
                                 (&durable_hashes, &replayable_hashes),
                             )
-                            .await?;
+                            .await;
+                        self.sequence.save(true, false)?;
+                        result?;
                         self.sequence.ensure_delegated_outcomes_known(i)?;
                     }
                     // Checkpoint save
@@ -1078,8 +1080,33 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             seq_progress.inner.write().finish();
         }
 
+        // A submitted transaction that the endpoint stopped returning has no receipt, so the
+        // broadcast must not be reported as successful.
+        let unresolved = (0..self.sequence.sequences().len())
+            .filter_map(|i| {
+                let deployment = &self.sequence.sequences()[i];
+                let hashes = remaining_operation_indices(&self.sequence, i)
+                    .into_iter()
+                    .filter_map(|index| {
+                        self.sequence
+                            .signed_payload(i, index)
+                            .map(|signed| signed.hash)
+                            .or(deployment.transactions[index].hash)
+                    })
+                    .collect::<Vec<_>>();
+                (!hashes.is_empty())
+                    .then(|| format!("chain {}: {}", deployment.chain, hashes.iter().format(", ")))
+            })
+            .collect::<Vec<_>>();
         if !shell::is_json() {
             sh_println!("\n\n==========================")?;
+        }
+        if !unresolved.is_empty() {
+            sh_warn!(
+                "ONCHAIN EXECUTION INCOMPLETE: submitted transactions have no receipt:\n{}\nAdd `--resume` to your command to retry them.",
+                unresolved.join("\n")
+            )?;
+        } else if !shell::is_json() {
             sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
         }
 
