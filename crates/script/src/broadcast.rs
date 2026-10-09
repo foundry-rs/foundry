@@ -592,8 +592,8 @@ impl<N: Network> SendTransactionsKind<N> {
 }
 
 /// State after we have bundled all
-/// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
-/// single [`ScriptSequenceKind`] object containing one or more script sequences.
+/// [`TransactionWithMetadata`] objects into a single [`ScriptSequenceKind`] object containing one
+/// or more script sequences.
 pub struct BundledState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig<FEN>,
