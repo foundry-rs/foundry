@@ -3,8 +3,8 @@ use super::{
     snapshot::GasSnapshotArgs, test::TestArgs,
 };
 use crate::opts::Forge;
-use alloy_primitives::map::HashSet;
-use clap::{ArgAction, Command as ClapCommand, CommandFactory, Parser};
+use alloy_primitives::map::{HashMap, HashSet};
+use clap::{CommandFactory, Parser};
 use eyre::Result;
 use foundry_cli::utils::{self, FoundryPathExt, LoadConfig};
 use foundry_config::Config;
@@ -579,18 +579,44 @@ enum WatchFlag {
 #[instrument(level = "debug", ret)]
 fn clean_cmd_args(cmd_args: Vec<OsString>) -> Vec<OsString> {
     let mut cleaned = Vec::with_capacity(cmd_args.len());
-    let value_less_short_flags = value_less_short_flags(&cmd_args);
+    let (value_less_short_flags, variable_options) = command_options(&cmd_args);
     let mut args = cmd_args.into_iter().peekable();
+    cleaned.extend(args.next());
+    let mut deferred = Vec::new();
 
     while let Some(arg) = args.next() {
         if arg == "--" {
+            cleaned.append(&mut deferred);
             cleaned.push(arg);
             cleaned.extend(args);
             break;
         }
 
         match watch_flag(&arg, &value_less_short_flags) {
-            WatchFlag::Other => cleaned.push(arg),
+            WatchFlag::Other => {
+                let option = arg.as_encoded_bytes().strip_prefix(b"--").map(|bytes| {
+                    let end = bytes.iter().position(|&byte| byte == b'=').unwrap_or(bytes.len());
+                    (&bytes[..end], end < bytes.len())
+                });
+                if let Some((name, attached)) = option
+                    && let Ok(name) = std::str::from_utf8(name)
+                    && let Some(&max_values) = variable_options.get(name)
+                {
+                    // Keep greedy options and their original values together at the end, so
+                    // removing watch cannot make them consume a previously positional argument.
+                    deferred.push(arg);
+                    if !attached {
+                        for _ in 0..max_values {
+                            if !args.peek().is_some_and(|next| !looks_like_option(next)) {
+                                break;
+                            }
+                            deferred.extend(args.next());
+                        }
+                    }
+                } else {
+                    cleaned.push(arg);
+                }
+            }
             WatchFlag::Inline(kept) => cleaned.extend(kept),
             WatchFlag::Bare(kept) => {
                 cleaned.extend(kept);
@@ -603,6 +629,7 @@ fn clean_cmd_args(cmd_args: Vec<OsString>) -> Vec<OsString> {
         }
     }
 
+    cleaned.extend(deferred);
     cleaned
 }
 
@@ -648,40 +675,33 @@ fn looks_like_option(arg: &OsStr) -> bool {
     bytes.len() > 1 && bytes.starts_with(b"-")
 }
 
-/// Returns the valueless short flags supported by the active command and its global options.
-fn value_less_short_flags(cmd_args: &[OsString]) -> HashSet<char> {
-    fn collect_flags(
-        command: &ClapCommand,
-        matches: &clap::ArgMatches,
-        flags: &mut HashSet<char>,
-        is_root: bool,
-    ) {
+/// Returns valueless short flags and variable-arity long options for the active command.
+fn command_options(cmd_args: &[OsString]) -> (HashSet<char>, HashMap<String, usize>) {
+    let mut command = Forge::command();
+    let mut flags = HashSet::default();
+    let mut variable_options = HashMap::default();
+    if let Ok(matches) = command.try_get_matches_from_mut(cmd_args)
+        && let Some((name, _)) = matches.subcommand()
+        && let Some(command) = command.find_subcommand(name)
+    {
+        // Parsing builds the selected subcommand, including inherited global arguments.
         for arg in command.get_arguments() {
-            if (!is_root || arg.is_global_set())
-                && matches!(
-                    arg.get_action(),
-                    ArgAction::SetTrue | ArgAction::SetFalse | ArgAction::Count
-                )
-            {
+            let range = arg.get_num_args().unwrap_or_default();
+            if range.max_values() == 0 {
                 flags.extend(arg.get_short());
                 flags.extend(arg.get_all_short_aliases().unwrap_or_default());
+            } else if arg.get_id() != "watch"
+                && range.min_values() != range.max_values()
+                && let Some(long) = arg.get_long()
+            {
+                variable_options.insert(long.to_owned(), range.max_values());
+                for alias in arg.get_all_aliases().unwrap_or_default() {
+                    variable_options.insert(alias.to_owned(), range.max_values());
+                }
             }
         }
-
-        if let Some((name, sub_matches)) = matches.subcommand()
-            && let Some(subcommand) = command.find_subcommand(name)
-        {
-            collect_flags(subcommand, sub_matches, flags, false);
-        }
     }
-
-    let command = Forge::command();
-    let Ok(matches) = command.clone().try_get_matches_from(cmd_args.to_vec()) else {
-        return HashSet::default();
-    };
-    let mut flags = HashSet::default();
-    collect_flags(&command, &matches, &mut flags, true);
-    flags
+    (flags, variable_options)
 }
 
 #[cfg(test)]
@@ -723,11 +743,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_cmd_args() {
-        assert_eq!(clean(&["forge", "build", "-vw"]), ["forge", "build", "-v"]);
-    }
-
-    #[test]
     fn locked_survives_cleaning_watch_args() {
         assert_eq!(
             clean(&["forge", "build", "--locked", "--watch", "src", "test"]),
@@ -742,6 +757,7 @@ mod tests {
 
     #[test]
     fn watch_spellings_survive_cleaning_watch_args() {
+        assert_eq!(clean(&["forge", "build", "-vw"]), ["forge", "build", "-v"]);
         assert_eq!(clean(&["forge", "test", "--watch", "src"]), ["forge", "test"]);
         assert_eq!(clean(&["forge", "test", "--watch=src"]), ["forge", "test"]);
         assert_eq!(clean(&["forge", "test", "-w", "src"]), ["forge", "test"]);
@@ -779,6 +795,7 @@ mod tests {
     fn command_specific_short_flags_survive_cleaning_watch_args() {
         assert_eq!(clean(&["forge", "build", "-qw", "src"]), ["forge", "build", "-q"]);
         assert_eq!(clean(&["forge", "fmt", "-rw", "src"]), ["forge", "fmt", "-r"]);
+        assert_eq!(clean(&["forge", "b", "-vw"]), ["forge", "b", "-v"]);
     }
 
     #[test]
@@ -801,19 +818,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn non_unicode_watch_suffixes_and_options_are_preserved() {
-        let args = ["forge", "fmt"]
-            .map(OsString::from)
-            .into_iter()
-            .chain([OsStr::from_bytes(b"--watch=src/\xff").to_os_string()])
-            .collect();
-        assert_eq!(clean_cmd_args(args), ["forge", "fmt"]);
-
-        let args = ["forge", "fmt"]
-            .map(OsString::from)
-            .into_iter()
-            .chain([OsStr::from_bytes(b"-wsrc/\xff").to_os_string()])
-            .collect();
-        assert_eq!(clean_cmd_args(args), ["forge", "fmt"]);
+        for path in [b"--watch=src/\xff".as_slice(), b"-wsrc/\xff".as_slice()] {
+            let args = ["forge", "fmt"]
+                .map(OsString::from)
+                .into_iter()
+                .chain([OsStr::from_bytes(path).to_os_string()])
+                .collect();
+            assert_eq!(clean_cmd_args(args), ["forge", "fmt"]);
+        }
 
         let args = ["forge", "build", "-w", "src"]
             .map(OsString::from)
@@ -838,5 +850,57 @@ mod tests {
         let Program::Exec { prog, args } = command.program else { panic!("expected exec program") };
         assert_eq!(prog, PathBuf::from(OsStr::from_bytes(b"forge\xff")));
         assert_eq!(args, ["build"]);
+    }
+
+    #[test]
+    fn watch_cleanup_preserves_argument_values() {
+        for args in [
+            vec!["forge", "build", "--optimize", "--watch=src", "src/Counter.sol", "--sizes"],
+            vec!["forge", "snapshot", "--check", "--watch=src", "test/Counter.t.sol"],
+            vec!["forge", "snapshot", "--optimize", "--check", "-wsrc", "test/Counter.t.sol"],
+            vec![
+                "forge",
+                "snapshot",
+                "--check",
+                "--watch=src",
+                "test/Counter.t.sol",
+                "--snap",
+                "custom",
+            ],
+            vec!["forge", "build", "--skip", "test", "script", "--watch=src", "src/Counter.sol"],
+            vec![
+                "forge",
+                "build",
+                "--skip",
+                "test",
+                "--watch=src",
+                "src/Counter.sol",
+                "--skip=script",
+            ],
+            vec!["forge", "build", "--optimize", "--watch=src", "--", "src/Counter.sol"],
+        ] {
+            let mut command = Forge::command();
+            let parent = command.try_get_matches_from_mut(&args).unwrap();
+            let child = Forge::command().try_get_matches_from(clean(&args)).unwrap();
+            let (name, parent) = parent.subcommand().unwrap();
+            let (_, child) = child.subcommand().unwrap();
+            assert!(child.get_raw("watch").is_none(), "{args:?}");
+            for arg in command.find_subcommand(name).unwrap().get_arguments() {
+                let id = arg.get_id();
+                if id == "watch" {
+                    continue;
+                }
+                assert_eq!(
+                    parent.get_raw(id.as_str()).map(|values| values.collect::<Vec<_>>()),
+                    child.get_raw(id.as_str()).map(|values| values.collect::<Vec<_>>()),
+                    "{args:?}: {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn watch_cleanup_preserves_program_name() {
+        assert_eq!(clean(&["--watch=forge", "fmt", "--watch", "src"]), ["--watch=forge", "fmt"]);
     }
 }
