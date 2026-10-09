@@ -76,6 +76,7 @@ tempo-precompiles.workspace = true
 tempo-primitives.workspace = true
 
 [dev-dependencies]
+tempo-alloy.workspace = true
 tempfile.workspace = true
 tempo-precompiles = { workspace = true, features = ["test-utils"] }
 

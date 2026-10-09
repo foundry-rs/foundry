@@ -55,7 +55,16 @@ use std::path::PathBuf;
 use foundry_evm::core::evm::BaseEvmNetwork;
 
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+use alloy_network::Ethereum;
+#[cfg(feature = "monad")]
+use foundry_evm::{
+    EvmEnv,
+    core::evm::{BlockContext, MonadEvmNetwork},
+};
+#[cfg(feature = "monad")]
+use monad_revm::{MonadChainContext, MonadHardfork};
+#[cfg(feature = "monad")]
+use revm::context::TxEnv;
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
@@ -1012,8 +1021,8 @@ async fn replay_monad_block_transactions(
     block_number: u64,
     target_hash: B256,
     executor: &mut Executor<MonadEvmNetwork>,
-    evm_env: &EvmEnvFor<MonadEvmNetwork>,
-) -> Result<Option<ChainFor<MonadEvmNetwork>>> {
+    evm_env: &EvmEnv<MonadHardfork>,
+) -> Result<Option<MonadChainContext>> {
     let block = block.ok_or_else(|| {
         eyre::eyre!("block {block_number} is required to reconstruct transaction context")
     })?;
@@ -1032,7 +1041,7 @@ async fn replay_monad_block_transactions(
             break;
         }
 
-        let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
+        let tx_env = TxEnv::from_any_rpc_transaction(tx)?;
         let chain_context = block_context.transaction(index);
         if is_known_system_sender(tx.from())
             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
@@ -1086,9 +1095,7 @@ async fn monad_block_context(
     config: &Config,
     block_number: u64,
 ) -> Result<BlockContext<MonadEvmNetwork>> {
-    let provider =
-        ProviderBuilder::<<MonadEvmNetwork as FoundryEvmNetwork>::Network>::from_config(config)?
-            .build()?;
+    let provider = ProviderBuilder::<Ethereum>::from_config(config)?.build()?;
     let block = provider.get_block(block_number.into()).full().await?.ok_or_else(|| {
         eyre::eyre!("block {block_number} is required to reconstruct transaction context")
     })?;
@@ -1105,6 +1112,11 @@ mod tests {
         spawn_rpc_proxy_canned_method, spawn_rpc_proxy_method_not_found_before,
     };
     use std::sync::atomic::Ordering;
+
+    #[cfg(not(feature = "monad"))]
+    use foundry_evm::EvmEnv;
+    #[cfg(not(feature = "monad"))]
+    use revm::context::TxEnv;
 
     fn replay_block(transactions: Vec<AnyRpcTransaction>) -> AnyRpcBlock {
         AnyRpcBlock::new(
@@ -1137,10 +1149,10 @@ mod tests {
         let caller = Address::with_last_byte(0x42);
         let recipient = Address::with_last_byte(0x43);
         let target = B256::with_last_byte(2);
-        let env = EvmEnvFor::<EthEvmNetwork>::default();
+        let env = EvmEnv::default();
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
             env.clone(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             Default::default(),
         );
@@ -1167,10 +1179,10 @@ mod tests {
     #[test]
     fn replay_missing_target_does_not_execute_prefix() {
         let caller = Address::with_last_byte(0x42);
-        let env = EvmEnvFor::<EthEvmNetwork>::default();
+        let env = EvmEnv::default();
         let mut executor = ExecutorBuilder::<EthEvmNetwork>::new().build(
             env.clone(),
-            TxEnvFor::<EthEvmNetwork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             Default::default(),
         );
