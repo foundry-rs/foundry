@@ -66,7 +66,8 @@ export const sidebar = [
 #[forgetest_init]
 fn outside_root_library_links_match_generated_pages(prj: _, cmd: _) {
     let library = tempfile::tempdir().unwrap();
-    let library_path = fs::canonicalize(library.path()).unwrap();
+    // Avoid verbatim Windows prefixes, whose backslashes become Solidity string escapes.
+    let library_path = dunce::canonicalize(library.path()).unwrap();
     let source = library_path.join("vendor/package/External.sol");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(&source, "pragma solidity ^0.8.0; contract External {}\n").unwrap();
@@ -78,7 +79,7 @@ fn outside_root_library_links_match_generated_pages(prj: _, cmd: _) {
             source.to_slash_lossy()
         ),
     );
-    cmd.args(["doc", "--include-libraries"]).assert_success();
+    cmd.args(["doc", "--include-libraries"]).assert_success().stderr_eq(str![""]);
     assert!(prj.root().join("docs/src/pages/lib/vendor/package/contract.External.mdx").is_file());
     prj.assert_doc_page(
         "src/contract.Consumer.mdx",
