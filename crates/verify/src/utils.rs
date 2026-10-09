@@ -587,8 +587,11 @@ mod tests {
     use foundry_test_utils::{TestProject, util::SOLC_VERSION};
 
     #[cfg(feature = "monad")]
-    fn monad_env(timestamp: u64) -> EvmEnvFor<foundry_evm::core::evm::MonadEvmNetwork> {
-        let mut env = EvmEnvFor::<foundry_evm::core::evm::MonadEvmNetwork>::default();
+    use foundry_evm::{EvmEnv, hardforks::MonadHardfork};
+
+    #[cfg(feature = "monad")]
+    fn monad_env(timestamp: u64) -> EvmEnv<MonadHardfork> {
+        let mut env = EvmEnv::<MonadHardfork>::default();
         env.cfg_env.chain_id = NamedChain::Monad as u64;
         env.block_env.set_timestamp(U256::from(timestamp));
         env

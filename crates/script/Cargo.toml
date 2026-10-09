@@ -60,6 +60,9 @@ thiserror.workspace = true
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 
+# monad
+monad-revm = { workspace = true, optional = true }
+
 [dev-dependencies]
 anvil.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
@@ -67,6 +70,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 [features]
 default = ["optimism"]
 monad = [
+    "dep:monad-revm",
     "anvil/monad",
     "foundry-config/monad",
     "foundry-evm/monad",

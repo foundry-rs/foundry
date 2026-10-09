@@ -5,7 +5,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use alloy_primitives::{Address, B256, Bytes, map::HashMap as AlloyHashMap};
+use alloy_primitives::{Address, B256, Bytes, hex::FromHexError, map::HashMap as AlloyHashMap};
 use foundry_compilers::{
     Artifact, ArtifactId,
     artifacts::{CompactBytecode, CompactContractBytecodeCow, Libraries},
@@ -29,7 +29,7 @@ pub enum LinkerError {
     #[error("target artifact is not present in provided artifacts set")]
     MissingTargetArtifact,
     #[error(transparent)]
-    InvalidAddress(<Address as std::str::FromStr>::Err),
+    InvalidAddress(FromHexError),
     #[error("cyclic dependency found, can't link libraries via CREATE2")]
     CyclicDependency,
     #[error("failed linking {artifact}")]

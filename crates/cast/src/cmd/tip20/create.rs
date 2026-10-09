@@ -4,13 +4,13 @@ use crate::{
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInputKind;
 use alloy_sol_types::{SolCall, SolError};
 use eyre::Result;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_contracts::precompiles::{
     TIP20_FACTORY_ADDRESS, UnknownFunctionSelector, createTokenCall, createTokenWithLogoCall,
     is_iso4217_currency,
@@ -93,7 +93,7 @@ async fn ensure_t5_create_logo_supported<P: Provider<TempoNetwork>>(
     provider: &P,
     call: &createTokenWithLogoCall,
 ) -> Result<()> {
-    let mut tx = <TempoNetwork as Network>::TransactionRequest::default();
+    let mut tx = TempoTransactionRequest::default();
     tx.set_kind(TIP20_FACTORY_ADDRESS.into());
     tx.set_input_kind(call.abi_encode(), TransactionInputKind::Both);
 

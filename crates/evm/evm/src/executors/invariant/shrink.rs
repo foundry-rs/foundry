@@ -1118,22 +1118,17 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LIVE_SHRINK_SEQUENCE_EDGE_CALLS, SequenceShrink, ShrinkCandidateKeys, ShrinkErrorPolicy,
-        ShrinkProgress, ShrinkRun, build_shrunk_sequence, check_sequence_value,
-        format_shrink_progress_message, run_shrink_loop, shrink_sequence_by_removing,
-    };
-    use crate::executors::{EarlyExit, ExecutorBuilder};
-    use alloy_primitives::{Address, Bytes, I256, U256, hex};
+    use super::*;
+    use crate::executors::ExecutorBuilder;
+    use alloy_evm::EvmEnv;
+    use alloy_primitives::hex;
     use foundry_cheatcodes::CheatsConfig;
-    use foundry_config::InvariantConfig;
-    use foundry_evm_core::{
-        FoundryBlock,
-        backend::Backend,
-        evm::{EthEvmNetwork, EvmEnvFor, TxEnvFor},
+    use foundry_evm_core::{FoundryBlock, backend::Backend, evm::EthEvmNetwork};
+    use foundry_evm_fuzz::CallDetails;
+    use revm::{
+        bytecode::Bytecode,
+        context::{Block, TxEnv},
     };
-    use foundry_evm_fuzz::{BasicTxDetails, CallDetails};
-    use revm::{bytecode::Bytecode, context::Block};
     use std::sync::Arc;
 
     fn tx(warp: Option<u64>, roll: Option<u64>) -> BasicTxDetails {
@@ -1196,12 +1191,7 @@ mod tests {
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(Arc::new(CheatsConfig::default())))
             .gas_limit(1 << 24)
-            .build(
-                EvmEnvFor::<EthEvmNetwork>::default(),
-                TxEnvFor::<EthEvmNetwork>::default(),
-                backend,
-                Default::default(),
-            );
+            .build(EvmEnv::default(), TxEnv::default(), backend, Default::default());
         // Returns `(block.number << 128) + block.timestamp`.
         let test_address = Address::repeat_byte(0x11);
         let code = hex!("4360801b420160005260206000f3");
