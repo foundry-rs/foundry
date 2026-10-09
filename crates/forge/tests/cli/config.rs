@@ -3444,3 +3444,51 @@ error: the argument '--root <PATH>' cannot be used with '--config-path <FILE>'
 ...
 "#]]);
 }
+
+#[forgetest]
+fn contextual_remapping_bytecode_is_independent_of_project_root(prj: _, cmd: _) {
+    let mut artifacts = Vec::new();
+    for name in ["first", "second"] {
+        let project = prj.root().join(name);
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::create_dir_all(project.join("lib/dependency")).unwrap();
+        fs::write(
+            project.join(Config::FILE_NAME),
+            r#"
+[profile.default]
+auto_detect_remappings = false
+remappings = ["lib/dependency/:unused/=lib/dependency/"]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            project.join("src/Counter.sol"),
+            "// SPDX-License-Identifier: MIT\npragma solidity >=0.8.0;\ncontract Counter { uint256 public number; }\n",
+        )
+        .unwrap();
+        cmd.forge_fuse()
+            .current_dir(&project)
+            .args(["build", "--no-lint", "--use", SOLC_VERSION])
+            .assert_success();
+        let artifact: Value = serde_json::from_slice(
+            &fs::read(project.join("out/Counter.sol/Counter.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            artifact["metadata"]["settings"]["remappings"],
+            serde_json::json!(["lib/dependency/:unused/=lib/dependency/"])
+        );
+        artifacts.push(artifact);
+    }
+    for field in ["bytecode", "deployedBytecode"] {
+        let bytecodes = artifacts
+            .iter()
+            .map(|artifact| {
+                let bytecode = artifact[field]["object"].as_str().expect("missing bytecode object");
+                assert!(!bytecode.is_empty() && bytecode != "0x", "empty {field} object");
+                bytecode
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bytecodes[0], bytecodes[1], "{field} differs between project roots");
+    }
+}

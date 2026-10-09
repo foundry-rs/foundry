@@ -1727,7 +1727,7 @@ impl Config {
         self.remappings.iter().map(|m| m.clone().into())
     }
 
-    /// Returns project remappings with absolute aliases for relative filesystem contexts.
+    /// Returns project remappings with absolute aliases for relative external filesystem contexts.
     fn project_remappings(&self) -> Vec<Remapping> {
         let remappings = self.get_all_remappings().collect::<Vec<_>>();
         let mut adjusted = Vec::with_capacity(remappings.len());
@@ -1754,6 +1754,9 @@ impl Config {
             // slash conversion for compiler source-unit names.
             #[cfg(windows)]
             let context_path = PathBuf::from_slash(context_path.to_string_lossy());
+            if context_path.starts_with(&self.root) {
+                continue;
+            }
             let mut context_path = context_path.display().to_string();
             if context.ends_with(['/', '\\']) && !context_path.ends_with(['/', '\\']) {
                 context_path.push(std::path::MAIN_SEPARATOR);
@@ -3417,6 +3420,10 @@ mod tests {
     #[test]
     fn project_remappings_alias_relative_filesystem_contexts_in_place() {
         let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let internal_dependency = project.join("dependency");
+        fs::create_dir(&internal_dependency).unwrap();
         let dependency = root.path().join("dependency");
         let absolute_dependency = root.path().join("absolute-dependency");
         fs::create_dir(&dependency).unwrap();
@@ -3428,7 +3435,7 @@ mod tests {
             path: "lib/global-before/".into(),
         };
         let relative = Remapping {
-            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            context: Some(format!("../dependency{}", std::path::MAIN_SEPARATOR)),
             name: "relative/".into(),
             path: "lib/relative/".into(),
         };
@@ -3451,9 +3458,15 @@ mod tests {
             name: "global-after/".into(),
             path: "lib/global-after/".into(),
         };
-        let mut config = Config::with_root(root.path());
+        let internal = Remapping {
+            context: Some(format!("dependency{}", std::path::MAIN_SEPARATOR)),
+            name: "internal/".into(),
+            path: "lib/internal/".into(),
+        };
+        let mut config = Config::with_root(&project);
         config.remappings = [
             global_before.clone(),
+            internal.clone(),
             relative.clone(),
             absolute.clone(),
             missing.clone(),
@@ -3463,7 +3476,7 @@ mod tests {
         .into();
 
         let mut absolute_alias = relative.clone();
-        let absolute_context = config.root.join("dependency");
+        let absolute_context = config.root.parent().unwrap().join("dependency");
         #[cfg(windows)]
         let absolute_context = PathBuf::from_slash(absolute_context.to_string_lossy());
         let mut absolute_context = absolute_context.display().to_string();
@@ -3471,7 +3484,15 @@ mod tests {
         absolute_alias.context = Some(absolute_context);
         assert_eq!(
             config.project_remappings(),
-            vec![global_before, relative, absolute_alias, absolute, missing, global_after]
+            vec![
+                global_before,
+                internal,
+                relative,
+                absolute_alias,
+                absolute,
+                missing,
+                global_after
+            ]
         );
     }
 
