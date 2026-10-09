@@ -289,6 +289,7 @@ interface Vm {
     function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
+    function expectRegularCall(address callee, bytes calldata data) external;
     function expectRevert() external;
     function expectRevert(bytes4 revertData) external;
     function expectRevert(bytes4 revertData, address reverter, uint64 count) external;
@@ -303,6 +304,7 @@ interface Vm {
     function expectRevert(address reverter, uint64 count) external;
     function expectSafeMemory(uint64 min, uint64 max) external;
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
+    function expectStaticCall(address callee, bytes calldata data) external;
     function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
