@@ -1,5 +1,5 @@
 {
-  "name": "forge-lsp",
+  "name": "foundry",
   "displayName": "Solar LSP",
   "description": "Solidity language support powered by the Foundry toolchain: diagnostics, hover, references and CodeLens from forge lsp, formatting with forge fmt, and linting with forge lint",
   "version": "0.1.0",
