@@ -1,6 +1,6 @@
 //! Sequential Monad simulation owns its block cursor independently of local script execution.
 
-use super::{PreSimulationState, RpcContexts, RpcSimulationContext, context_for_rpc};
+use super::{PreSimulationState, RpcSimulationContext};
 use crate::{
     ScriptResult,
     runner::{GasSearch, ScriptRunner, needs_more_gas},
@@ -25,10 +25,7 @@ use foundry_evm::{
         interpreter::return_ok,
     },
 };
-use futures::future::join_all;
 use monad_revm::{MonadChainContext, MonadHardfork};
-use parking_lot::RwLock;
-use std::sync::Arc;
 
 struct MonadSimulation {
     runner: ScriptRunner<MonadEvmNetwork>,
@@ -155,20 +152,19 @@ impl PreSimulationState<MonadEvmNetwork> {
             contexts.insert(
                 rpc,
                 RpcSimulationContext {
-                    runner: RwLock::new(MonadSimulation::new(context.runner.into_inner())?),
+                    runner: MonadSimulation::new(context.runner)?,
                     decoder: context.decoder,
                 },
             );
         }
-        let contexts = Arc::new(contexts);
         let transactions =
-            self.transaction_metadata(&RpcContexts::Simulation(Arc::clone(&contexts)))?;
-        let futs = transactions
+            self.transaction_metadata(|rpc| &contexts.get(rpc).expect("invalid rpc url").decoder)?;
+        self.show_simulation_header()?;
+        let results = transactions
             .into_iter()
-            .map(|mut transaction| async {
+            .map(|mut transaction| {
                 let rpc = transaction.rpc.clone();
-                let context = context_for_rpc(&contexts, &rpc);
-                let mut simulation = context.runner.write();
+                let simulation = &mut contexts.get_mut(&rpc).expect("invalid rpc url").runner;
                 let tx = transaction.tx_mut();
                 let to = tx.to();
                 let result = simulation
@@ -203,8 +199,7 @@ impl PreSimulationState<MonadEvmNetwork> {
                 eyre::Ok((rpc, Some(transaction), is_noop, result.traces))
             })
             .collect::<Vec<_>>();
-        self.show_simulation_header()?;
-        let transactions = self.collect_simulation_results(join_all(futs).await, &contexts).await?;
+        let transactions = self.collect_simulation_results(results, &contexts).await?;
         Ok(self.into_filled(transactions))
     }
 }
