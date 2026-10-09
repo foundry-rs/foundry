@@ -621,7 +621,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
-        let now = self.backend.time().current_call_timestamp();
+        let now = self.backend.time().current_wall_timestamp();
         self.backend.time().set_time(timestamp);
 
         // number of seconds between the given timestamp and the current time.

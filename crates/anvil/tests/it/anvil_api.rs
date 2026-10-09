@@ -1885,7 +1885,8 @@ async fn test_mine_blocks_increase_after_time_jump() {
         timestamps.push(block.header.timestamp);
     }
 
-    assert_eq!(timestamps[0], init_block.header.timestamp + 10_000);
+    // A positive interval also adds to the wall-clock offset, so a slow run may add a second.
+    assert!(timestamps[0] >= init_block.header.timestamp + 10_000, "{timestamps:#?}");
     assert!(timestamps.windows(2).all(|window| window[0] < window[1]), "{timestamps:#?}");
 }
 

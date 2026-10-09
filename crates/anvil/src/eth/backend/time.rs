@@ -230,7 +230,11 @@ impl TimeManager {
                 if temporary_interval.is_some() { state.time_increase } else { 0 };
             (last_timestamp.saturating_add(interval).saturating_add(pending_increase), false)
         } else {
-            (current.saturating_add(state.offset) as u64, false)
+            // A burst of blocks within one wall-clock second leaves `last_timestamp` ahead of
+            // `wall + offset`; keep a pending explicit increase on top of the logical clock so the
+            // monotonicity clamp below does not swallow it.
+            let wall = current.saturating_add(state.offset) as u64;
+            (wall.max(last_timestamp.saturating_add(state.time_increase)), false)
         };
         // Equal timestamps are only allowed when explicitly requested (exact override or
         // interval, e.g. `anvil_setBlockTimestampInterval(0)`). On the default path timestamps must
@@ -335,6 +339,12 @@ impl TimeManager {
         pending.timestamp
     }
 
+    /// Returns `now + offset` without the next-block monotonicity floor.
+    pub(crate) fn current_wall_timestamp(&self) -> u64 {
+        let current = duration_since_unix_epoch().as_secs() as i128;
+        current.saturating_add(self.state.read().offset) as u64
+    }
+
     /// Returns the current timestamp for a call that does _not_ update the value
     pub fn current_call_timestamp(&self) -> u64 {
         self.prepare_next_timestamp(None).timestamp
@@ -427,6 +437,42 @@ mod tests {
         let state = TimeState { offset: 10_000, last_timestamp: 11_000, ..Default::default() };
 
         assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, None).0, 11_001);
+    }
+
+    #[test]
+    fn default_path_preserves_time_increase_after_burst() {
+        // A burst within one wall-clock second leaves `last_timestamp` ahead of wall time.
+        let state = TimeState {
+            offset: 10,
+            last_timestamp: 1_099,
+            time_increase: 10,
+            ..Default::default()
+        };
+
+        assert_eq!(TimeManager::compute_next_timestamp(&state, 1_000, None).0, 1_109);
+    }
+
+    #[test]
+    fn burst_then_increase_time_keeps_full_increase() {
+        let time = TimeManager::new(1_000);
+        for _ in 0..100 {
+            time.next_timestamp();
+        }
+        let last = time.next_timestamp();
+
+        let _ = time.apply_time_increase(10);
+        assert_eq!(time.next_timestamp(), last + 10);
+        // the increase is consumed: a plain block advances by one second again
+        assert_eq!(time.next_timestamp(), last + 11);
+    }
+
+    #[test]
+    fn wall_timestamp_has_no_next_block_floor() {
+        let time = TimeManager::new(1_000);
+        time.state.write().last_timestamp = 5_000;
+
+        assert_eq!(time.current_call_timestamp(), 5_001);
+        assert!(time.current_wall_timestamp() < 1_100);
     }
 
     #[test]
