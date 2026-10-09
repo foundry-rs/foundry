@@ -24,6 +24,7 @@ pub mod evm;
 pub mod fork;
 mod history;
 pub mod impersonation;
+mod ipc;
 mod launcher;
 pub mod logging;
 mod miner;

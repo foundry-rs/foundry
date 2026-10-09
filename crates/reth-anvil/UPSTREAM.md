@@ -73,6 +73,11 @@ lookup retry remain until the pinned reth revision includes the required fixes.
 | Answers a state read at a block below the `--prune-history` window with anvil's `BlockOutOfRangeError`, from an RPC middleware: reth keeps every state | `src/history.rs` | ~150 | A history pruning mode in reth with anvil's error |
 | Leaves the console precompile out of `eth_config` | `src/node.rs` | ~15 | An `eth_config` hook for node-specific precompiles |
 
+The IPC listener uses reth's request dispatch and streaming codec locally because the upstream
+server fixes its codec internally. The codec emits unmatched closing delimiters for a JSON-RPC
+parse error and resets its scanner before the next request. Connection, subscription, and byte
+limits stay at reth's defaults. A configurable codec on reth's IPC server would remove this adapter.
+
 ## Gaps that are not hooks
 
 These are not yet implemented here and do not need a reth change to be implemented, but would also

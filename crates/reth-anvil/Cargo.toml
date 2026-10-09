@@ -77,6 +77,7 @@ chrono.workspace = true
 eyre.workspace = true
 flate2.workspace = true
 futures.workspace = true
+interprocess = { version = "2.4.4", features = ["tokio"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
 k256.workspace = true
 parking_lot.workspace = true
@@ -87,6 +88,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
 tokio-stream.workspace = true
+tokio-util = { workspace = true, features = ["codec", "rt"] }
 tower.workspace = true
 tower-http = { workspace = true, features = ["cors"] }
 tracing.workspace = true

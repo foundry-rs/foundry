@@ -67,7 +67,6 @@ async fn dropping_handle_closes_ipc_connections() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth\'s IPC codec waits for a complete JSON value instead of answering a parse error"]
 async fn malformed_delimiter_does_not_corrupt_ipc_connection() {
     let (_dir, config) = ipc_config();
     let (_api, handle) = spawn(config).await;
@@ -77,7 +76,10 @@ async fn malformed_delimiter_does_not_corrupt_ipc_connection() {
     let mut response = String::new();
 
     writer.write_all(b"}").await.unwrap();
-    reader.read_line(&mut response).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
     let malformed = serde_json::from_str::<serde_json::Value>(&response).unwrap();
     assert_eq!(malformed["error"]["code"], -32700);
 
@@ -86,7 +88,10 @@ async fn malformed_delimiter_does_not_corrupt_ipc_connection() {
         .write_all(br#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#)
         .await
         .unwrap();
-    reader.read_line(&mut response).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
     let valid = serde_json::from_str::<serde_json::Value>(&response).unwrap();
     assert_eq!(valid["result"], "0x7a69");
 }

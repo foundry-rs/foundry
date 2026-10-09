@@ -26,7 +26,6 @@ use jsonrpsee::{
     types::{ErrorObjectOwned, Params, Response, ResponsePayload, error::INTERNAL_ERROR_CODE},
 };
 use parking_lot::RwLock;
-use reth_ethereum::rpc::builder::{IpcRpcServiceBuilder, IpcServerBuilder};
 use serde_json::value::RawValue;
 use std::{
     net::SocketAddr,
@@ -137,17 +136,13 @@ impl RpcServer {
         let address = server.local_addr()?;
         let http = server.start(methods.clone());
         let ipc = match settings.ipc_path {
-            Some(path) => Some(
-                IpcServerBuilder::default()
-                    .set_rpc_middleware(
-                        IpcRpcServiceBuilder::new()
-                            .layer(NodeInfoLayer::new(logging))
-                            .layer(PruneHistoryLayer::new(settings.prune_history, shared.clone())),
-                    )
-                    .build(path)
-                    .start(methods)
-                    .await?,
-            ),
+            Some(path) => Some(crate::ipc::start(
+                &path,
+                methods,
+                logging,
+                settings.prune_history,
+                shared.clone(),
+            )?),
             None => None,
         };
         Ok(Self { address, http, ipc })
