@@ -1088,6 +1088,11 @@ enum HistoricalState {
 impl HistoricalState {
     fn select<'a>(&self, states: &'a InMemoryBlockStates, hash: &B256) -> Option<&'a StateDb> {
         match self {
+            // A post-block state in the secondary tier must not be shadowed by the in-memory
+            // child-execution state, which mining re-inserts after a revert.
+            Self::PostBlock if states.has_on_disk_post_block_state(hash) => {
+                states.get_post_block_state(hash)
+            }
             Self::PostBlock => states.get_post_block_state(hash).or_else(|| states.get_state(hash)),
             Self::ChildExecution => states.get_state(hash),
         }
@@ -11804,5 +11809,25 @@ mod tests {
         assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
 
         assert_eq!(api.backend.states.read().post_block_state_count(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reverted_head_keeps_its_post_block_state() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+        let account = Address::repeat_byte(0x11);
+
+        api.backend.set_balance(account, U256::from(1)).await.unwrap();
+        api.mine_one().await.unwrap();
+        let block = api.backend.best_number();
+        api.backend.set_balance(account, U256::from(2)).await.unwrap();
+        let snapshot = api.backend.create_state_snapshot().await;
+        // Enough blocks to move the head's states out of the memory tier.
+        api.anvil_mine(Some(U256::from(1000)), None).await.unwrap();
+        assert!(api.backend.revert_state_snapshot(snapshot).await.unwrap());
+        api.backend.set_balance(account, U256::from(3)).await.unwrap();
+        api.mine_one().await.unwrap();
+
+        assert_eq!(api.balance(account, Some(block.into())).await.unwrap(), U256::from(1));
+        assert_eq!(api.balance(account, Some((block + 1).into())).await.unwrap(), U256::from(3));
     }
 }

@@ -252,9 +252,11 @@ impl InMemoryBlockStates {
         self.post_block_states.len()
     }
 
-    /// Records the post-block state for the given `hash`, unless one was already recorded.
+    /// Records the post-block state for the given `hash`, unless either tier already holds one.
     pub fn insert_post_block_state_with(&mut self, hash: B256, state: impl FnOnce() -> StateDb) {
-        self.post_block_states.entry(hash).or_insert_with(state);
+        if !self.on_disk_post_block_states.contains_key(&hash) {
+            self.post_block_states.entry(hash).or_insert_with(state);
+        }
     }
 
     /// Drops the post-block state recorded for the given `hash`, if any.
