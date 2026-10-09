@@ -539,6 +539,7 @@ exit 0
 fi
 grep -q '"likely_equivalent": "the comparisons agree when the operand is unsigned"' "$1"
 grep -q '"check_command"' "$1"
+grep -q 'context-marker: rounding notes' "$1"
 grep -q 'CANDIDATE_JSON' "$1"
 cat > "$2" <<'JSON'
 {
@@ -583,6 +584,8 @@ contract FeeTest {
     );
     let brief = prj.root().join("brief.md");
     fs::write(&brief, "Check the documented fee cap.").unwrap();
+    let context = prj.root().join("context.md");
+    fs::write(&context, "context-marker: rounding notes").unwrap();
     let generator = prj.root().join("generator.sh");
     fs::write(&generator, GENERATOR).unwrap();
     let mut permissions = fs::metadata(&generator).unwrap().permissions();
@@ -597,6 +600,8 @@ contract FeeTest {
         "src/Fee.sol",
         "--brief",
         brief.to_str().unwrap(),
+        "--context",
+        context.to_str().unwrap(),
         "--generator",
         generator.to_str().unwrap(),
         "--seed",

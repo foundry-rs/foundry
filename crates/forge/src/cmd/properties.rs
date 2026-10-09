@@ -73,6 +73,12 @@ pub struct PropertiesArgs {
     #[arg(long, required_unless_present = "check", value_name = "PATH")]
     brief: Option<PathBuf>,
 
+    /// Extra reference material for the generator, such as a threat model or bug-class notes.
+    ///
+    /// Each file is added to the prompt with its path. Can be given more than once.
+    #[arg(long, value_name = "PATH")]
+    context: Vec<PathBuf>,
+
     /// Executable that receives PROMPT_JSON and OUTPUT_JSON as its final arguments.
     #[arg(long, required_unless_present = "check", value_name = "PATH")]
     generator: Option<PathBuf>,
@@ -125,12 +131,21 @@ struct CandidateFile {
     content: String,
 }
 
+/// Reference material that the user supplied with `--context`.
+#[derive(Debug, Serialize)]
+struct PromptContext {
+    path: PathBuf,
+    content: String,
+}
+
 #[derive(Debug, Serialize)]
 struct GeneratorPrompt<'a> {
     schema: &'static str,
     round: usize,
     project: &'a Path,
     brief: &'a str,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    context: &'a [PromptContext],
     guidance: &'static [&'static str],
     mutate: &'a [PathBuf],
     seeds: &'a [U256],
@@ -310,6 +325,15 @@ impl PropertiesArgs {
             eyre::bail!("--brief and --generator are required");
         };
         let brief = fs::read_to_string(brief).wrap_err("failed to read campaign brief")?;
+        let context = self
+            .context
+            .iter()
+            .map(|path| {
+                let content = fs::read_to_string(path)
+                    .wrap_err_with(|| format!("failed to read context {}", path.display()))?;
+                Ok(PromptContext { path: path.clone(), content })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let generator = generator.canonicalize().wrap_err("failed to resolve generator")?;
         let contract_filter = self
             .match_contract
@@ -367,6 +391,7 @@ impl PropertiesArgs {
                 round,
                 project: &config.root,
                 brief: &brief,
+                context: &context,
                 guidance: &GUIDANCE,
                 mutate: &self.mutate,
                 seeds: &self.seed,
