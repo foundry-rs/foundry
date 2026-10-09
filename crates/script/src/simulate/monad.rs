@@ -8,6 +8,7 @@ use crate::{
     transaction::ScriptTransactionBuilder,
 };
 use alloy_eips::eip7702::SignedAuthorization;
+use alloy_evm::EvmEnv;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, TxKind, U256, map::HashMap};
 use eyre::{Result, WrapErr};
@@ -15,12 +16,17 @@ use foundry_evm::{
     backend::DatabaseExt,
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{BlockContext, ChainFor, EvmEnvFor, MonadEvmNetwork, TxEnvFor},
+        evm::{BlockContext, MonadEvmNetwork},
     },
     executors::{DeployResult, EvmError},
-    revm::{context::Transaction, context_interface::result::Output, interpreter::return_ok},
+    revm::{
+        context::{Transaction, TxEnv},
+        context_interface::result::Output,
+        interpreter::return_ok,
+    },
 };
 use futures::future::join_all;
+use monad_revm::{MonadChainContext, MonadHardfork};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -35,14 +41,14 @@ impl MonadSimulation {
         Ok(Self { runner, cursor })
     }
 
-    fn context(&self, tx: &TxEnvFor<MonadEvmNetwork>) -> Result<ChainFor<MonadEvmNetwork>> {
+    fn context(&self, tx: &TxEnv) -> Result<MonadChainContext> {
         self.cursor.as_ref().map_or_else(
             || self.runner.executor.backend().chain_context_for_synthetic_transaction(tx),
             |cursor| Ok(cursor.next_transaction(tx)),
         )
     }
 
-    fn record(&mut self, tx: TxEnvFor<MonadEvmNetwork>) {
+    fn record(&mut self, tx: TxEnv) {
         if let Some(cursor) = &mut self.cursor {
             cursor.record_transaction(tx);
         }
@@ -55,7 +61,7 @@ impl MonadSimulation {
         calldata: Bytes,
         value: U256,
         authorization_list: Option<Vec<SignedAuthorization>>,
-    ) -> (EvmEnvFor<MonadEvmNetwork>, TxEnvFor<MonadEvmNetwork>) {
+    ) -> (EvmEnv<MonadHardfork>, TxEnv) {
         let (env, mut tx) = self.runner.executor.prepare_call_env(from, to.into(), calldata, value);
         if let Some(authorization_list) = authorization_list {
             tx.set_signed_authorization(authorization_list);
@@ -212,12 +218,12 @@ mod tests {
     use foundry_evm_networks::NetworkConfigs;
 
     fn simulation() -> MonadSimulation {
-        let mut env = EvmEnvFor::<MonadEvmNetwork>::default();
+        let mut env = EvmEnv::<MonadHardfork>::default();
         // Match the simulation environment produced by EvmOpts.
         env.cfg_env.disable_nonce_check = true;
         let executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
             env,
-            TxEnvFor::<MonadEvmNetwork>::default(),
+            TxEnv::default(),
             Backend::spawn(None).unwrap(),
             NetworkConfigs::with_monad(),
         );

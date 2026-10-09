@@ -9,7 +9,7 @@
 extern crate tracing;
 
 use crate::{cache::StorageCachingConfig, etherscan::EtherscanEnvProvider};
-use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
+use alloy_primitives::{Address, B256, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
@@ -822,7 +822,7 @@ impl Config {
     pub const DEFAULT_SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Default salt for create2 library deployments
-    pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
+    pub const DEFAULT_CREATE2_LIBRARY_SALT: B256 = B256::ZERO;
 
     /// Default create2 deployer
     pub const DEFAULT_CREATE2_DEPLOYER: Address =

@@ -1,7 +1,7 @@
 //! Deposits to Tempo L1 portals and authenticated zone withdrawals.
 
 use crate::tempo::tempo_provider;
-use alloy_network::{EthereumWallet, Network, primitives::ReceiptResponse};
+use alloy_network::{EthereumWallet, primitives::ReceiptResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
 use alloy_rpc_types::BlockId;
@@ -12,7 +12,7 @@ use foundry_cli::{json::print_scalar, opts::RpcOpts, utils::LoadConfig};
 use foundry_common::{sh_status, shell};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use std::time::Duration;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{TempoNetwork, rpc::TempoTransactionReceipt};
 use tempo_contracts::precompiles::{ITIP20, PATH_USD_ADDRESS};
 
 mod abi;
@@ -314,7 +314,7 @@ impl WithdrawArgs {
 async fn submitted_receipt(
     action: &str,
     pending: PendingTransactionBuilder<TempoNetwork>,
-) -> Result<<TempoNetwork as Network>::ReceiptResponse> {
+) -> Result<TempoTransactionReceipt> {
     let hash = *pending.tx_hash();
     let receipt = pending.with_timeout(Some(Duration::from_secs(120))).get_receipt();
     tokio::time::timeout(Duration::from_secs(120), receipt)
