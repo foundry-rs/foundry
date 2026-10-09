@@ -1,7 +1,7 @@
 {
   "name": "forge-lsp",
   "displayName": "Solar LSP",
-  "description": "Solidity language support powered by forge lsp and forge fmt",
+  "description": "Solidity language support powered by the Foundry toolchain: diagnostics, hover, references and CodeLens from forge lsp, formatting with forge fmt, and linting with forge lint",
   "version": "0.1.0",
   "publisher": "paradigm",
   "icon": "icon.png",
@@ -18,6 +18,15 @@
   "engines": {
     "vscode": "^1.93.0"
   },
+  "keywords": [
+    "solidity",
+    "foundry",
+    "forge",
+    "ethereum",
+    "evm",
+    "smart contracts",
+    "lsp"
+  ],
   "categories": [
     "Formatters",
     "Programming Languages"
