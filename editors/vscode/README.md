@@ -8,8 +8,8 @@ needed or searched for.
 ## Installation and configuration
 
 Install [VS Code](https://code.visualstudio.com/) and a recent
-[Foundry](https://getfoundry.sh), then install `paradigm.forge` from the
-[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge).
+[Foundry](https://getfoundry.sh), then install `paradigm.forge-lsp` from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=paradigm.forge-lsp).
 
 To try the extension without installing it, run this in your Solidity project's
 terminal:
@@ -71,7 +71,7 @@ ignored, with a migration warning when explicitly configured. Remove it and set
 `solarLsp.forgePath` to a **Forge** executable if necessary. Existing Solar paths
 are never reinterpreted as Forge paths. The language ID `solidity`, `solarLsp.*`
 setting keys and `solar.*` commands remain unchanged. The extension ID is
-`paradigm.forge`; `forge lsp` does not require a Marketplace installation.
+`paradigm.forge-lsp`; `forge lsp` does not require a Marketplace installation.
 
 ## Formatting
 
