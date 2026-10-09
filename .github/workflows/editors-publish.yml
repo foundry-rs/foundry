@@ -1,0 +1,60 @@
+name: Publish VS Code extension
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pre-release:
+        description: Publish as a pre-release version
+        type: boolean
+        default: false
+      dry-run:
+        description: Check Marketplace publish rights without publishing
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  vscode:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      id-token: write # Sign in to Azure and Open VSX.
+      contents: read
+    defaults:
+      run:
+        working-directory: editors/vscode
+    env:
+      PRE_RELEASE: ${{ inputs.pre-release && '--pre-release' || '' }}
+    steps:
+      - name: Secure runner
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run check && npm test && npm run package -- ${PRE_RELEASE:+"$PRE_RELEASE"}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Check Marketplace publish rights
+        if: inputs.dry-run
+        run: npx vsce verify-pat --azure-credential
+      - name: Publish to the Visual Studio Marketplace
+        if: ${{ !inputs.dry-run }}
+        run: npx vsce publish --packagePath bundle/forge.vsix --azure-credential ${PRE_RELEASE:+"$PRE_RELEASE"}
+      - name: Publish to Open VSX
+        if: ${{ !inputs.dry-run && vars.OPEN_VSX_PUBLISH == 'true' }}
+        run: npx ovsx publish bundle/forge.vsix --trusted-publishing

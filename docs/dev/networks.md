@@ -251,3 +251,10 @@ User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
+
+### CIP-64 transaction types
+
+Foundry's shared transaction types encode and decode CIP-64 (`0x7b`) envelopes,
+including `feeCurrency`. Receipt envelopes retain the CIP-64 type byte. This does not
+provide Celo execution or fee-currency accounting in reth-anvil. Celo execution belongs
+in a network extension through `AnvilNetwork`.
