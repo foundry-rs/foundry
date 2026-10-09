@@ -293,6 +293,42 @@ where
             kind => kind,
         })
     }
+
+    /// CREATE uses the protocol account nonce even when the signed nonce is a discriminator.
+    async fn validate_expiring_create_nonce(
+        &self,
+        provider: &RootProvider<N>,
+        planned: &TransactionMaybeSigned<N>,
+    ) -> Result<()> {
+        if planned.to().is_some() {
+            return Ok(());
+        }
+        let nonce_key = match self {
+            Self::Raw(tx, _)
+            | Self::Unlocked(tx)
+            | Self::Browser(tx, _)
+            | Self::AccessKey(tx, _) => tx.nonce_key(),
+            Self::Signed(tx) => {
+                <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
+            }
+            Self::PreparedRaw(payload, _) => <N::TransactionRequest as From<N::TxEnvelope>>::from(
+                N::TxEnvelope::decode_2718_exact(payload)?,
+            )
+            .nonce_key(),
+        };
+        if nonce_key == Some(TEMPO_EXPIRING_NONCE_KEY) {
+            let expected =
+                planned.nonce().context("CREATE is missing its planned account nonce")?;
+            let sender = planned.from().context("CREATE is missing its planned sender")?;
+            let actual = provider.get_transaction_count(sender).await?;
+            if actual != expected {
+                bail!(
+                    "EOA nonce changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider."
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 fn is_definite_browser_non_submission(error: &eyre::Report) -> bool {
@@ -917,6 +953,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     if !batch.is_empty() {
                         let mut prepared = Vec::with_capacity(batch.len());
                         for (kind, is_fixed_gas_limit, index) in batch {
+                            kind.validate_expiring_create_nonce(
+                                &provider,
+                                self.sequence.sequences()[i].transactions[*index].tx(),
+                            )
+                            .await?;
                             let mut kind = kind
                                 .clone()
                                 .prepare_for_durable_send(
@@ -2391,5 +2432,70 @@ mod tests {
             to: None,
             contract_address: None,
         }
+    }
+
+    #[tokio::test]
+    async fn expiring_create_checks_planned_nonce_including_durable_payloads() {
+        let request = TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(Address::with_last_byte(1)),
+                to: Some(TxKind::Create),
+                nonce: Some(7),
+                chain_id: Some(4217),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
+            valid_before: NonZeroU64::new(100),
+            ..Default::default()
+        };
+        let planned = TransactionMaybeSigned::<TempoNetwork>::new(request.clone());
+        let mut request = request;
+        // The discriminator differs from the planned protocol nonce.
+        request.inner.nonce = Some(0);
+        let envelope = TempoTxEnvelope::AA(
+            request
+                .clone()
+                .build_aa()
+                .unwrap()
+                .into_signed(tempo_primitives::TempoSignature::default()),
+        );
+        let kinds = [
+            SendTransactionKind::Unlocked(request.clone()),
+            SendTransactionKind::Signed(envelope.clone()),
+            SendTransactionKind::PreparedRaw(
+                Bytes::from(envelope.encoded_2718()),
+                envelope.trie_hash(),
+            ),
+        ];
+        for kind in kinds {
+            for actual in [6, 7, 8] {
+                let asserter = Asserter::new();
+                let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+                    .connect_mocked_client(asserter.clone());
+                asserter.push_success(&format!("{actual:#x}"));
+                let result = kind.validate_expiring_create_nonce(&provider, &planned).await;
+                if actual == 7 {
+                    result.unwrap();
+                } else {
+                    assert_eq!(
+                        result.unwrap_err().to_string(),
+                        format!(
+                            "EOA nonce changed unexpectedly while sending transactions. Expected 7 got {actual} from provider."
+                        )
+                    );
+                }
+            }
+        }
+        // Expiring CALLs have no protocol nonce to synchronize.
+        request.inner.to = Some(TxKind::Call(Address::with_last_byte(2)));
+        let provider = alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+            .connect_mocked_client(Asserter::new());
+        SendTransactionKind::Unlocked(request.clone())
+            .validate_expiring_create_nonce(&provider, &TransactionMaybeSigned::new(request))
+            .await
+            .unwrap();
     }
 }

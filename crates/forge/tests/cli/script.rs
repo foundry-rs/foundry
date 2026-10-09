@@ -6685,6 +6685,61 @@ Error: transaction 1 is identical to an earlier transaction of this script ([..]
 }
 
 #[forgetest_init]
+async fn tempo_expiring_create_resume_rejects_changed_account_nonce(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "ExpiringCreate.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract ExpiringCreateTarget {}
+
+contract ExpiringCreate is Script {
+    function run() external {
+        vm.startBroadcast();
+        new ExpiringCreateTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ]);
+    cmd.assert_success();
+
+    // An intervening transaction invalidates the deployment address saved by the dry-run.
+    provider
+        .send_transaction(
+            <Ethereum as Network>::TransactionRequest::default()
+                .with_from(sender)
+                .with_to(sender)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    assert_eq!(nonce, 1);
+    cmd.args(["--resume", "--tempo.expires", "30"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: EOA nonce changed unexpectedly while sending transactions. Expected 0 got 1 from provider.
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
+    assert!(provider.get_code_at(sender.create(0)).await.unwrap().is_empty());
+    assert!(provider.get_code_at(sender.create(1)).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
 async fn tempo_sponsored_resume_needs_no_credentials(prj: _, cmd: _) {
     let script = prj.add_script(
         "DeploySponsoredTempoAA.s.sol",
