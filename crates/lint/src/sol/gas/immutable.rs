@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{for_each_lhs_var, is_contract_cast, loop_stmts},
+        analysis::{for_each_lhs_var, is_contract_cast, loop_stmts, write_target},
     },
 };
 use solar::{
@@ -148,12 +148,7 @@ impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
-        let lvalue = match &expr.kind {
-            ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
-            ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
-            _ => None,
-        };
-        if let Some(lvalue) = lvalue {
+        if let Some(lvalue) = write_target(expr) {
             for_each_lhs_var(self.gcx, lvalue, &mut |v| {
                 self.writes.insert(v);
             });
@@ -173,7 +168,8 @@ fn is_compile_time_constant(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
         ExprKind::Binary(lhs, _, rhs) => is_const(lhs) && is_const(rhs),
         ExprKind::Ternary(c, t, f) => is_const(c) && is_const(t) && is_const(f),
         ExprKind::Tuple(exprs) => exprs.iter().flatten().all(|e| is_const(e)),
-        ExprKind::Call(callee, args, opts) => {
+        ExprKind::Call(callee, args) => {
+            let (callee, opts) = callee.split_call_options();
             is_constant_call(gcx, callee)
                 && args.exprs().all(is_const)
                 && opts.is_none_or(|opts| opts.args.iter().all(|arg| is_const(&arg.value)))

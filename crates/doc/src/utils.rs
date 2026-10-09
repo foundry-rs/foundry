@@ -7,9 +7,10 @@
 use alloy_primitives::Address;
 use path_slash::PathExt;
 use serde::Deserialize;
+use solar::ast::ContractKind;
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 // ── git source ────────────────────────────────────────────────────────────────
@@ -94,4 +95,36 @@ pub fn read_deployments(
         })
     });
     out
+}
+
+/// Map a source to its documentation location, retaining the legacy external-library layout.
+pub(crate) fn relative_source_path(root: &Path, source: &Path) -> PathBuf {
+    source.strip_prefix(root).map(Path::to_path_buf).unwrap_or_else(|_| {
+        let components = source.components().collect::<Vec<_>>();
+        PathBuf::from("lib")
+            .join(components[components.len().saturating_sub(3)..].iter().collect::<PathBuf>())
+    })
+}
+
+/// Whether joining a generated path can stay within the documentation directory.
+pub(crate) fn is_safe_output_path(path: &Path) -> bool {
+    !path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+        })
+}
+
+/// The filename prefix used for a contract page.
+pub(crate) const fn contract_kind_str(kind: ContractKind) -> &'static str {
+    match kind {
+        ContractKind::Contract => "contract",
+        ContractKind::AbstractContract => "abstract",
+        ContractKind::Interface => "interface",
+        ContractKind::Library => "library",
+    }
+}
+
+/// Construct an item page beside its source in the documentation tree.
+pub(crate) fn page_path(source: &Path, prefix: &str, name: &str) -> PathBuf {
+    source.parent().unwrap_or(Path::new("")).join(format!("{prefix}.{name}.mdx"))
 }

@@ -118,7 +118,8 @@ impl Cheatcode for randomUint_2Call {
 
 impl Cheatcode for randomAddressCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
-        Ok(DynSolValue::type_strategy(&DynSolType::Address)
+        Ok(DynSolType::Address
+            .value_strategy()
             .new_tree(state.test_runner())
             .unwrap()
             .current()
@@ -323,14 +324,15 @@ fn random_uint<FEN: FoundryEvmNetwork>(
         let exclusive_modulo = max - min;
         let mut random_number: U256 = state.rng().random();
         if exclusive_modulo != U256::MAX {
-            let inclusive_modulo = exclusive_modulo + U256::from(1);
+            let inclusive_modulo = exclusive_modulo + U256::ONE;
             random_number %= inclusive_modulo;
         }
         random_number += min;
         return Ok(random_number.abi_encode());
     }
 
-    Ok(DynSolValue::type_strategy(&DynSolType::Uint(256))
+    Ok(DynSolType::Uint(256)
+        .value_strategy()
         .new_tree(state.test_runner())
         .unwrap()
         .current()

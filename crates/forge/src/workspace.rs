@@ -10,6 +10,7 @@ use std::{
 
 use alloy_primitives::keccak256;
 use eyre::Result;
+use foundry_common::fs::{canonicalize_path, normalize_path};
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use foundry_config::{
     Config, fs_permissions::FsAccessKind, providers::relative_remapping_preserving_context_boundary,
@@ -41,22 +42,6 @@ pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
 fn resolve_against_root(root: &Path, path: &Path) -> PathBuf {
     let path = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     normalize_existing_ancestor(&path)
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
 
 /// Build a config for a copied temp workspace from an already materialized config.
@@ -183,7 +168,7 @@ fn is_covered_by_symlinked_project_root(config: &Config, rel: &Path) -> bool {
 
 fn normalize_existing_ancestor(path: &Path) -> PathBuf {
     if path.exists() {
-        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        return canonicalize_path(path).unwrap_or_else(|_| path.to_path_buf());
     }
 
     let mut ancestor = path;
@@ -196,7 +181,7 @@ fn normalize_existing_ancestor(path: &Path) -> PathBuf {
         ancestor = parent;
     }
 
-    let mut normalized = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    let mut normalized = canonicalize_path(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
     for component in missing.iter().rev() {
         normalized.push(component);
     }
@@ -800,7 +785,7 @@ mod tests {
         };
         copy_project(&config, &alias).unwrap();
         let config = rebase_config_paths(&config, &alias).sanitized();
-        let canonical_root = dunce::canonicalize(&workspace).unwrap();
+        let canonical_root = canonicalize_path(&workspace).unwrap();
         assert_eq!(config.root, canonical_root);
         assert_eq!(config.src, canonical_root.join("src"));
         assert_eq!(config.test, canonical_root.join("test"));
@@ -1343,11 +1328,11 @@ mod tests {
         assert_eq!(temp_config.root, workspace);
         assert_eq!(
             temp_config.fs_permissions.permissions[0].path,
-            dunce::canonicalize(workspace.join("writes")).unwrap()
+            canonicalize_path(workspace.join("writes")).unwrap()
         );
         assert_eq!(
             temp_config.fs_permissions.permissions[1].path,
-            dunce::canonicalize(workspace.join("logs/sub")).unwrap().join("a.txt")
+            canonicalize_path(workspace.join("logs/sub")).unwrap().join("a.txt")
         );
     }
 

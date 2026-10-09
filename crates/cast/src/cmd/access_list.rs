@@ -94,7 +94,7 @@ impl AccessListArgs {
             Some(chain) => chain.id(),
             None => provider.get_chain_id().await?,
         };
-        let (sender, _) = read_only_sender::<N>(&browser, wallet, &tx.tempo, chain_id).await?;
+        let (sender, _) = read_only_sender::<N>(&browser, wallet, &tx, chain_id).await?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
@@ -112,6 +112,9 @@ impl AccessListArgs {
         let access_list = if shell::is_json() {
             serde_json::to_string(&access_list)?
         } else {
+            if let Some(error) = &access_list.error {
+                sh_warn!("access list generated from a failed execution: {error}")?;
+            }
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {

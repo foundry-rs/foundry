@@ -247,7 +247,7 @@ impl Precompile for Ecpairing {
             for tmp in &mut tmp {
                 *tmp = decoder.take_word()?;
             }
-            values.push(iter_to_string(tmp.iter().map(|x| U256::from_be_bytes(x.0))));
+            values.push(iter_to_string(tmp.iter().map(|x| Into::<U256>::into(**x))));
         }
         Ok(values)
     }
@@ -663,12 +663,7 @@ mod tests {
             None,
             None
         ));
-        assert!(!is_known_precompile(
-            address!("0x0000000000000000000000000000000000000012"),
-            None,
-            None,
-            None
-        ));
+        assert!(!is_known_precompile(Address::with_last_byte(0x12), None, None, None));
     }
 
     #[cfg(feature = "base")]

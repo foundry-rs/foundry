@@ -1,6 +1,7 @@
 // Tests in which we want to assert failures.
 
-forgetest!(test_fail_deprecation, |prj, cmd| {
+#[forgetest]
+fn test_fail_deprecation(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -37,9 +38,10 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
-});
+}
 
-forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
+#[forgetest]
+fn expect_revert_tests_should_fail(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     let expect_revert_failure_tests = include_str!("../fixtures/ExpectRevertFailures.t.sol");
@@ -113,9 +115,10 @@ Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#);
-});
+}
 
-forgetest!(expect_call_tests_should_fail, |prj, cmd| {
+#[forgetest]
+fn expect_call_tests_should_fail(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -128,6 +131,7 @@ forgetest!(expect_call_tests_should_fail, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 ...
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc290d6910000000000000000000000000000000000000000000000000000000000000002, value 1 to be called 1 time, but was called 0 times] testShouldFailExpectCallValue() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 1 time, but the call reverted instead; ensure you're testing the happy path when using `expectCall`] testShouldFailExpectCallWhenTestHalts() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithData() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000003 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithMoreParameters() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongGas() ([GAS])
@@ -137,7 +141,7 @@ forgetest!(expect_call_tests_should_fail, |prj, cmd| {
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectInnerCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 3 times, but was called 2 times] testShouldFailExpectMultipleCallsWithDataAdditive() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 to be called 1 time, but was called 0 times] testShouldFailExpectSelectorCall() ([GAS])
-Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
@@ -171,9 +175,10 @@ Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
-});
+}
 
-forgetest!(expect_create_tests_should_fail, |prj, cmd| {
+#[forgetest]
+fn expect_create_tests_should_fail(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -195,9 +200,10 @@ Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
 ...
 
 "#]]);
-});
+}
 
-forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
+#[forgetest]
+fn flaky_expect_emit_tests_should_fail(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -244,9 +250,10 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
-});
+}
 
-forgetest!(flaky_expect_emit_params_tests_should_fail, |prj, cmd| {
+#[forgetest]
+fn flaky_expect_emit_params_tests_should_fail(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.update_config(|config| {
@@ -280,9 +287,10 @@ Encountered a total of 8 failing tests, 1 tests succeeded
 ...
 "#,
     );
-});
+}
 
-forgetest!(expect_emit_params_decode_project_abi_without_selector_cache, |prj, cmd| {
+#[forgetest]
+fn expect_emit_params_decode_project_abi_without_selector_cache(prj: _, cmd: _) {
     prj.insert_vm();
 
     prj.add_source(
@@ -322,9 +330,10 @@ contract ExpectEmitProjectAbiFailureTest {
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(expect_emit_decodes_stable_project_abi_collision, |prj, cmd| {
+#[forgetest]
+fn expect_emit_decodes_stable_project_abi_collision(prj: _, cmd: _) {
     prj.insert_vm();
 
     prj.add_source(
@@ -369,9 +378,10 @@ contract ZIndexedCollisionEmitter {
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
-});
+}
 
-forgetest!(mem_safety_test_should_fail, |prj, cmd| {
+#[forgetest]
+fn mem_safety_test_should_fail(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
 
@@ -408,9 +418,10 @@ Suite result: FAILED. 0 passed; 21 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
-});
+}
 
-forgetest!(ds_style_test_failing, |prj, cmd| {
+#[forgetest]
+fn ds_style_test_failing(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -450,9 +461,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
-});
+}
 
-forgetest!(failing_setup, |prj, cmd| {
+#[forgetest]
+fn failing_setup(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -484,9 +496,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#
     ]]);
-});
+}
 
-forgetest!(multiple_after_invariants, |prj, cmd| {
+#[forgetest]
+fn multiple_after_invariants(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -518,9 +531,10 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#
     ]]);
-});
+}
 
-forgetest!(multiple_setups, |prj, cmd| {
+#[forgetest]
+fn multiple_setups(prj: _, cmd: _) {
     prj.insert_ds_test();
 
     prj.add_source(
@@ -549,9 +563,10 @@ contract MultipleSetup is DSTest {
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ..."#
     ]]);
-});
+}
 
-forgetest!(emit_diff_anonymous, |prj, cmd| {
+#[forgetest]
+fn emit_diff_anonymous(prj: _, cmd: _) {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.add_source(
@@ -596,12 +611,13 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]],
     );
-});
+}
 
 // An `assumeNoRevert` partial-match reason shorter than a selector must not match revert data
 // that is also shorter than 4 bytes; the revert should surface as a failure instead of being
 // discarded as anticipated.
-forgetest_init!(assume_no_revert_short_partial_should_fail, |prj, cmd| {
+#[forgetest_init]
+fn assume_no_revert_short_partial_should_fail(prj: _, cmd: _) {
     prj.add_test(
         "AssumeShortPartial.t.sol",
         r#"
@@ -642,4 +658,4 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]],
     );
-});
+}

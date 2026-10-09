@@ -37,3 +37,12 @@ returns (function(bytes memory) pure fnOut)
            }
         }
 }
+
+contract FnTypeTrailingComment {
+    function f(function(bytes memory) pure external /*g*/) public pure {}
+}
+
+library FnTypeTrailingCommentInLibrary {
+    function f(function(uint) internal returns (uint) /*x*/) pure internal {
+    }
+}

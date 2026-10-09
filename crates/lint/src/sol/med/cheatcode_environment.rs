@@ -772,7 +772,7 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                     inner,
                     binary,
                     value.scalar,
-                    Some(Scalar::Uint(U256::from(1))),
+                    Some(Scalar::Uint(U256::ONE)),
                     state,
                 );
                 value.cheatcode = false;
@@ -848,7 +848,8 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                 value.cheatcode = false;
                 value
             }
-            ExprKind::Call(callee, args, opts) => {
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
                 let mut receiver = if let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
                 {
                     self.expr(receiver, state)
@@ -1024,13 +1025,15 @@ impl<'gcx> Checker<'_, '_, 'gcx> {
                 .and_then(|init| self.constant_word(init, depth + 1));
         }
         match &expr.kind {
-            ExprKind::Call(callee, args, None) if args.exprs().count() == 1 => {
+            ExprKind::Call(callee, args)
+                if callee.split_call_options().1.is_none() && args.exprs().count() == 1 =>
+            {
                 let arg = args.exprs().next()?;
                 if self.gcx.resolved_builtin(callee) == Some(Builtin::Keccak256) {
                     let ConstValue::String(bytes) = self.gcx.try_eval_const_value(arg).ok()? else {
                         return None;
                     };
-                    return Some(U256::from_be_bytes(keccak256(bytes.as_byte_str()).0));
+                    return Some(keccak256(bytes.as_byte_str()).into());
                 }
                 let bits = self.cast_bits(callee)?;
                 let value = self.constant_word(arg, depth + 1)?;

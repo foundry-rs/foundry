@@ -1,6 +1,7 @@
 mod session;
 use chisel::session::ChiselSession as CachedChiselSession;
 use foundry_evm::core::evm::EthEvmNetwork;
+use foundry_test_utils::util::{OTHER_SOLC_VERSION, SOLC_VERSION};
 use session::ChiselSession;
 use std::{
     fs,
@@ -337,14 +338,44 @@ repl_test!(trailing_whitespace, |repl| {
 });
 
 // Issue #4652: Test that solc flags are respected.
-repl_test!(solc_flags, "--use 0.8.23", |repl| {
-    repl.sendln("pragma solidity 0.8.24;");
+repl_test!(solc_flags, &format!("--use {OTHER_SOLC_VERSION}"), |repl| {
+    repl.sendln(&format!("pragma solidity ={SOLC_VERSION};"));
     repl.expect("invalid compiler version");
 });
 
 // Issue #4915: `chisel eval`
 repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
+});
+
+// Issue #17125: external function references display their address and selector.
+repl_test!(external_function_references, |repl| {
+    repl.sendln_raw(
+        "interface IProbe { function value() external view returns (uint256); function pair() external view returns (uint256, bool); function ping() external; }",
+    );
+    repl.expect_prompt();
+
+    repl.sendln("IProbe(address(0x1234)).value");
+    repl.expect("Type: function");
+    repl.expect("Address: 0x0000000000000000000000000000000000001234");
+    repl.expect("Selector: 0x3fa4f245");
+
+    repl.sendln("IProbe(address(0x1234)).pair");
+    repl.expect("Type: function");
+    repl.expect("Address: 0x0000000000000000000000000000000000001234");
+    repl.expect("Selector: 0xa8aa1b31");
+
+    repl.sendln("IProbe(address(0x1234)).ping");
+    repl.expect("Type: function");
+    repl.expect("Address: 0x0000000000000000000000000000000000001234");
+    repl.expect("Selector: 0x5c36b186");
+
+    repl.sendln("uint256(1)");
+    repl.sendln("[IProbe(address(0x1234)).ping]");
+    repl.expect("Type: function");
+    repl.expect("Selector: 0x5c36b186");
+    repl.sendln("$_");
+    repl.expect("no previous result");
 });
 
 // Issue #4963: inspect the value of the final inline assembly expression.
@@ -581,4 +612,24 @@ repl_test!(chisel_can_run_with_live_logs_flag, "--live-logs", init = true, |repl
     repl.sendln("console.log('Goodbye, World!');");
     repl.expect("Hello, World!"); // old log is also printed
     repl.expect("Goodbye, World!");
+});
+
+// A user-defined `run` overload must not shadow the generated `run()` entrypoint.
+repl_test!(run_overload_does_not_shadow_entrypoint, |repl| {
+    repl.sendln("function run(uint256 x) public pure returns (uint256) { return x; }");
+    repl.sendln("uint256 y = 7");
+
+    repl.sendln("y");
+    repl.expect("Decimal: 7");
+
+    repl.sendln("run(3)");
+    repl.expect("Decimal: 3");
+});
+
+// Assembly in a user-defined `run` overload must not affect the generated `run()` entrypoint.
+repl_test!(run_overload_assembly_does_not_shadow_entrypoint, |repl| {
+    repl.sendln("function run(uint256) public pure { assembly { return(0, 0) } }");
+
+    repl.sendln("uint256(7)");
+    repl.expect("Decimal: 7");
 });

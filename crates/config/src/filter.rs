@@ -290,9 +290,11 @@ mod tests {
         assert!(matcher.is_match(Path::new("/home/user/projects/project/test/Contract.t.sol")));
 
         // Absolute path that should not match the pattern
-        assert!(!matcher.is_match(Path::new("/home/user/other/project/test/Contract.t.sol")));
+        assert!(
+            matcher.is_match_exclude(Path::new("/home/user/other/project/test/Contract.t.sol"))
+        );
 
         // Relative path that should not match an absolute pattern
-        assert!(!matcher.is_match(Path::new("projects/project/test/Contract.t.sol")));
+        assert!(matcher.is_match_exclude(Path::new("projects/project/test/Contract.t.sol")));
     }
 }

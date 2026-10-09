@@ -1,3 +1,4 @@
+use super::{CIP64_TX_TYPE, TxCip64};
 use alloy_consensus::{
     SignableTransaction, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
     TxType, Typed2718,
@@ -89,6 +90,9 @@ pub enum FoundryTxEnvelope {
     /// See <https://docs.tempo.xyz/protocol/transactions>.
     #[envelope(ty = 0x76, typed = TempoTransaction)]
     Tempo(AASigned),
+    /// Celo CIP-64 dynamic fee transaction.
+    #[envelope(ty = 0x7b)]
+    Celo(Signed<TxCip64>),
 }
 
 impl FoundryTxEnvelope {
@@ -159,7 +163,7 @@ impl FoundryTxEnvelope {
             Self::PostExec(_) => Err(self),
             #[cfg(feature = "base")]
             Self::Eip8130(_) => Err(self),
-            Self::Tempo(_) => Err(self),
+            Self::Tempo(_) | Self::Celo(_) => Err(self),
         }
     }
 
@@ -207,6 +211,7 @@ impl FoundryTxEnvelope {
             Self::Legacy(tx) => tx.recover_signer()?,
             Self::Eip2930(tx) => tx.recover_signer()?,
             Self::Eip1559(tx) => tx.recover_signer()?,
+            Self::Celo(tx) => tx.recover_signer()?,
             Self::Eip4844(tx) => tx.recover_signer()?,
             Self::Eip7702(tx) => tx.recover_signer()?,
             #[cfg(any(feature = "base", feature = "optimism"))]
@@ -283,6 +288,11 @@ impl FoundryTxType {
     pub const fn is_tempo(&self) -> bool {
         matches!(self, Self::Tempo)
     }
+
+    /// Returns `true` if this is a Celo CIP-64 transaction type.
+    pub const fn is_celo(&self) -> bool {
+        matches!(self, Self::Celo)
+    }
 }
 
 impl FoundryTypedTx {
@@ -299,6 +309,7 @@ impl FoundryTypedTx {
             Self::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
             Self::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
             Self::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
+            Self::Celo(tx) => FoundryTxEnvelope::Celo(tx.into_signed(signature)),
             Self::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
             Self::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
             #[cfg(any(feature = "base", feature = "optimism"))]
@@ -348,6 +359,7 @@ impl TxHashRef for FoundryTxEnvelope {
             Self::Legacy(t) => t.hash(),
             Self::Eip2930(t) => t.hash(),
             Self::Eip1559(t) => t.hash(),
+            Self::Celo(t) => t.hash(),
             Self::Eip4844(t) => t.hash(),
             Self::Eip7702(t) => t.hash(),
             #[cfg(any(feature = "base", feature = "optimism"))]
@@ -430,8 +442,14 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                 TxEnvelope::Eip7702(tx) => Ok(Self::Eip7702(tx)),
             },
             AnyTxEnvelope::Unknown(tx) => {
-                // Anvil rebuilds its own mined Tempo transactions into this shape, and Tempo
-                // endpoints report them the same way.
+                if tx.ty() == CIP64_TX_TYPE {
+                    let mut fields = tx.inner.fields;
+                    fields.insert("hash".into(), serde_json::to_value(tx.hash).unwrap());
+                    return fields
+                        .deserialize_into::<Signed<TxCip64>>()
+                        .map(Self::Celo)
+                        .map_err(|err| ConversionError::Custom(err.to_string()));
+                }
                 if tx.ty() == TEMPO_TX_TYPE_ID {
                     let tempo_tx = tx.inner.fields.deserialize_into::<AASigned>().map_err(|e| {
                         ConversionError::Custom(format!("Failed to deserialize tempo tx: {e}"))
@@ -529,6 +547,10 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
             FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            // Anvil preserves the CIP-64 envelope but executes with native EIP-1559 fees.
+            FoundryTxEnvelope::Celo(signed_tx) => {
+                Self::from_recovered_tx(&signed_tx.tx().inner, caller)
+            }
             FoundryTxEnvelope::Eip4844(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             #[cfg(any(feature = "base", feature = "optimism"))]
@@ -597,6 +619,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TempoTxEnv {
                 unreachable!("EIP-8130 transaction in Tempo context")
             }
             FoundryTxEnvelope::Tempo(aa_signed) => Self::from_recovered_tx(aa_signed, caller),
+            FoundryTxEnvelope::Celo(_) => unreachable!("CIP-64 transaction in Tempo context"),
         }
     }
 }
@@ -622,6 +645,7 @@ impl std::fmt::Display for FoundryTxType {
             #[cfg(feature = "base")]
             Self::Eip8130 => write!(f, "eip8130"),
             Self::Tempo => write!(f, "tempo"),
+            Self::Celo => write!(f, "celo"),
         }
     }
 }
@@ -647,12 +671,13 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
             FoundryTxEnvelope::Eip4844(signed_tx) => Self::Eip4844(signed_tx.strip_signature()),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::Eip7702(signed_tx.strip_signature()),
             #[cfg(any(feature = "base", feature = "optimism"))]
-            FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.into_inner()),
+            FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.unseal()),
             #[cfg(feature = "optimism")]
-            FoundryTxEnvelope::PostExec(sealed_tx) => Self::PostExec(sealed_tx.into_inner()),
+            FoundryTxEnvelope::PostExec(sealed_tx) => Self::PostExec(sealed_tx.unseal()),
             #[cfg(feature = "base")]
             FoundryTxEnvelope::Eip8130(signed_tx) => Self::Eip8130(signed_tx.into_tx()),
             FoundryTxEnvelope::Tempo(signed_tx) => Self::Tempo(signed_tx.strip_signature()),
+            FoundryTxEnvelope::Celo(signed_tx) => Self::Celo(signed_tx.strip_signature()),
         }
     }
 }
@@ -660,7 +685,7 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{TxKind, U256, b256, hex};
+    use alloy_primitives::{TxKind, U256, address, b256, hex};
     use alloy_rlp::Decodable;
     use std::str::FromStr;
 
@@ -812,8 +837,8 @@ mod tests {
             panic!("expected legacy transaction");
         };
 
-        assert_eq!(tx.signature().r(), U256::from(1));
-        assert_eq!(tx.signature().s(), U256::from(1));
+        assert_eq!(tx.signature().r(), U256::ONE);
+        assert_eq!(tx.signature().s(), U256::ONE);
         assert!(!tx.signature().v());
     }
 
@@ -865,13 +890,11 @@ mod tests {
 
         assert_eq!(
             tx.hash(),
-            &"0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f"
-                .parse::<B256>()
-                .unwrap()
+            &b256!("0x86718885c4b4218c6af87d3d0b0d83e3cc465df2a05c048aa4db9f1a6f9de91f")
         );
         assert_eq!(
             tx.recover_signer().unwrap(),
-            "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse::<Address>().unwrap()
+            address!("0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5")
         );
     }
 
@@ -921,17 +944,14 @@ mod tests {
         assert_eq!(tx.tx().gas_limit, 21000);
         assert_eq!(tx.tx().nonce, 0);
         if let TxKind::Call(to) = tx.tx().to {
-            assert_eq!(
-                to,
-                "0x095e7baea6a6c7c4c2dfeb977efac326af552d87".parse::<Address>().unwrap()
-            );
+            assert_eq!(to, address!("0x095e7baea6a6c7c4c2dfeb977efac326af552d87"));
         } else {
             panic!("expected a call transaction");
         }
         assert_eq!(tx.tx().value, U256::from(0x0au64));
         assert_eq!(
             tx.recover_signer().unwrap(),
-            "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse::<Address>().unwrap()
+            address!("0f65fe9276bc9a24ae7083ae28e2660ef72df99e")
         );
     }
 
@@ -993,9 +1013,8 @@ mod tests {
         use alloy_primitives::address;
         use tempo_primitives::TEMPO_TX_TYPE_ID;
 
-        let tx_hash: TxHash = "0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd"
-            .parse::<TxHash>()
-            .unwrap();
+        let tx_hash: TxHash =
+            b256!("0x6d6d8c102064e6dee44abad2024a8b1d37959230baab80e70efbf9b0c739c4fd");
 
         // Raw transaction from Tempo testnet via eth_getRawTransactionByHash
         let raw_tx = hex::decode(

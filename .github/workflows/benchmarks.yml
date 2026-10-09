@@ -34,7 +34,7 @@ jobs:
       FOUNDRY_BENCH_LOCAL_BUILD_BINS: forge
     steps:
       - name: Secure runner
-        uses: tempoxyz/gh-actions/actions/secure-runner@ce5deead22108ccc6aafba0ca47d2a9e6d1a40e8
+        uses: tempoxyz/gh-actions/actions/secure-runner@d5402286a7abdfb7232173b3228d56473feb8a66
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,7 +48,7 @@ jobs:
           sudo apt-get install -y build-essential pkg-config z3
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
         with:
           toolchain: stable
 

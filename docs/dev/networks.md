@@ -88,6 +88,19 @@ Do not encode protocol behavior only as a chain-ID branch in a tool. Put executi
 network factory or context, selection in the network configuration layer, and tool-specific workflow
 behavior in the relevant tool.
 
+Fork creation is the boundary between a request and selected remote state. `CreateFork` contains
+only the request; `MultiFork` prepares the client, block, and identity and owns them with the remote
+backend. Scripts, tests, Chisel, and tracing create a pristine `Backend<FEN>` before preflight and
+clone it for execution. Nonce reads, CREATE2 checks, and environments use that backend's selected
+block. They do not carry a separate resolved snapshot alongside it. `EvmOpts` retains the requested
+selector, so preparing `latest` does not rewrite the request.
+
+Changing a script RPC explicitly selects another backend through the same fork manager. Exact
+identity governs remote-cache reuse; each runner retains its own mutable execution state. Mutation
+testing dispatches once for the campaign and shares the pristine typed backend across its baseline
+and workers. Each mutation run scopes its fork registry so cheatcode-created forks are released
+when the run finishes. Endpoint checks still reject resets and execution-profile changes.
+
 ## Adding an execution family
 
 Start by writing down which parts differ from Ethereum: RPC envelopes, transaction validation,
@@ -117,6 +130,23 @@ state. Then implement the integration in layers.
 Large integrations should be split into reviewable layers when possible: hardfork and configuration,
 core execution, individual tool surfaces, then CI and documentation. Each layer should retain working
 non-custom execution paths.
+
+## Compiler targets and execution hardforks
+
+Keep the Solidity compiler target (`evm_version`), execution family (`network`), and protocol
+revision (`hardfork`) distinct. A Tempo revision uses an Osaka instruction-set baseline with
+Tempo's own gas schedule, precompiles, and transaction rules; an Ethereum version name does not
+identify a Tempo revision.
+
+`vm.setEvmVersion` selects execution rules using the active network's version mappings; it does
+not change the Solidity compiler target. Existing Ethereum aliases and native Tempo revision names
+remain accepted. On Tempo, runtime changes do not rebuild instructions or precompiles; configure
+`hardfork = "tempo:T7"` (or the required revision) before execution to select a different revision.
+
+Execution-time gas refreshes pass through the selected `FoundryEvmFactory`. The default delegates
+to the existing context/configuration behavior, preserving downstream `FoundryCfg` implementations
+and its blanket implementation for `CfgEnv<SPEC>`. Tempo overrides the factory method to use its
+own gas parameters instead of Ethereum prices derived from its instruction-set baseline.
 
 ## State lifecycle
 
@@ -173,6 +203,26 @@ Ethereum and other enabled families must continue to use their existing path. On
 selected a concrete FEN, helpers used by that workflow must not accept a second runtime execution
 profile.
 
+### Script recovery
+
+The requirements in this subsection are proposed and are not guarantees of the current script
+broadcaster. Network integrations must satisfy them as the durable recovery architecture is
+implemented.
+
+Custom transaction fields remain owned by the selected Alloy `Network` and concrete execution
+family, but `forge script` must carry their final values through durable submission and resume. A
+network integration that changes transaction preparation is incomplete until it identifies every
+field that can change transaction identity or semantics, preserves those fields in script recovery
+state, and tests interrupted submission with that network's real envelope type.
+
+Do not reconstruct a custom transaction from family-neutral Ethereum fields during resume. Persist
+the final typed or encoded payload at the transaction boundary, including fee assets, validity
+windows, sponsorship, authorization, auxiliary calls, or signer metadata required by that family.
+Locally signed payloads must be recoverable without the signer; delegated signing with an ambiguous
+outcome must stop rather than silently request a second signature. See the
+[Forge scripting recovery contract](./scripting.md#recovery-contract) for the shared lifecycle and
+failure-injection requirements.
+
 ## Tests and CI
 
 Use a layered test plan:
@@ -201,3 +251,18 @@ User-facing selection, configuration, and workflows belong in the
 [Foundry Book](https://getfoundry.sh). CLI option text belongs in the Clap definitions and is
 generated into the book. Trait, context, and state invariants belong in Rustdoc next to their
 implementation. Cross-crate integration guidance belongs here.
+
+### Anvil CIP-64 compatibility
+
+Anvil in Celo mode accepts CIP-64 (`0x7b`) envelopes and preserves `feeCurrency` in
+transaction and receipt RPC responses. `eth_fillTransaction` returns a CIP-64 envelope
+when a fee currency is supplied. This is a compatibility mode for local payload execution
+and client integration testing: it uses native EIP-1559 fee accounting, interpreting the
+numeric fee fields as native currency amounts without exchange-rate conversion. Senders
+need native funds. Fee tokens are not debited, and Celo fee-hook gas and logs are not
+reproduced. Local receipts use the ordinary receipt payload with the CIP-64 type byte.
+
+This mode does not initialize Celo core contracts or provide protocol-accurate fee-currency
+simulation. A signed transaction priced for a live fee currency can fail native base-fee
+or balance checks. Other Anvil execution profiles reject CIP-64 submission and imported
+CIP-64 block history.

@@ -12,6 +12,10 @@ use std::{
 };
 
 #[cfg(unix)]
+use anvil::{NodeConfig, spawn};
+#[cfg(unix)]
+use foundry_config::ExternalCompiler;
+#[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 fn git(root: &Path, args: &[&str]) -> String {
@@ -34,7 +38,343 @@ fn add_local_submodule(root: &Path, path: &str) -> String {
 }
 
 #[cfg(unix)]
-forgetest!(local_compiler_runs_without_warning, |prj, cmd| {
+#[forgetest]
+async fn external_compiler_builds_and_caches_native_project(prj: _, cmd: _) {
+    let native = prj.root().join("native");
+    fs::create_dir_all(native.join("src")).unwrap();
+    fs::write(native.join("fe.toml"), "[ingot]\nname = \"app\"\nversion = \"1.0.0\"\n").unwrap();
+    fs::write(native.join("src/lib.fe"), "pub contract Counter {}\n").unwrap();
+    fs::write(native.join("src/other.fe"), "pub contract Other {}\n").unwrap();
+
+    let adapter = prj.root().join("adapter.sh");
+    fs::write(
+        &adapter,
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' '{"id":1,"result":{"protocol":"1.0"}}'
+read -r discover
+app='{"id":"app","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/fe.toml","native/src/lib.fe"],"capabilities":["build/1"],"effectiveSettings":{"optimization":"s"},"cacheable":true}'
+other='{"id":"other","compiler":{"name":"fe","version":"26.3.0"},"inputs":["native/src/other.fe"],"capabilities":["build/1"],"cacheable":true}'
+case "$discover" in
+    *'.sol'*) units='' ;;
+    *'lib.fe'*) units="$app" ;;
+    *) units="$app"; [ ! -e native/src/other.fe ] || units="$app,$other" ;;
+esac
+printf '{"id":2,"result":{"units":[%s]}}\n' "$units"
+id=3
+while read -r compile; do
+    source=lib.fe; name=Counter
+    case "$compile" in *'"unit":"other"'*) source=other.fe; name=Other ;; esac
+    : > "$0.compiled"
+    diagnostics='[]'
+    if [ -e "$0.warning" ]; then
+        diagnostics='[{"severity":"warning","message":"fixture warning"}]'
+    fi
+    printf '%s\n' "{\"id\":$id,\"result\":{\"diagnostics\":$diagnostics,\"artifacts\":[{\"source\":\"native/src/$source\",\"name\":\"$name\",\"metadata\":{\"language\":\"Fe\"},\"contract\":{\"abi\":[{\"type\":\"function\",\"name\":\"run\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"testExternalArtifactIsDeployable\",\"inputs\":[],\"outputs\":[],\"stateMutability\":\"nonpayable\"}],\"evm\":{\"bytecode\":{\"object\":\"0x6001600c60003960016000f300\"},\"deployedBytecode\":{\"object\":\"0x00\"}}}},{\"source\":\"native/src/$source\",\"name\":\"CreationOnly\",\"sourceId\":1,\"contract\":{\"evm\":{\"bytecode\":{\"object\":\"0x00\"}}}}]}}"
+    id=$((id + 1))
+done
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&adapter).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&adapter, permissions).unwrap();
+    prj.update_config(|config| {
+        config.external_compilers.push(ExternalCompiler {
+            id: "fixture".to_string(),
+            command: adapter.clone(),
+            args: Vec::new(),
+            roots: vec!["native".into()],
+            settings: [("optimization".to_string(), "s".into())].into_iter().collect(),
+        });
+    });
+
+    let output = cmd.forge_fuse().args(["build", "native", "--json"]).assert_success();
+    let build_json: serde_json::Value =
+        serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let external_source = native.join("src/lib.fe");
+    let counter = &build_json["contracts"][external_source.to_string_lossy().as_ref()]["Counter"]
+        [0]["contract"];
+    assert_eq!(counter["abi"][0]["name"], "run");
+    assert_eq!(counter["evm"]["bytecode"]["object"], "6001600c60003960016000f300");
+
+    let builtin = prj.add_source("Builtin.sol", "contract Builtin {}");
+    let output = cmd.forge_fuse().args(["build", "--json", "--force"]).assert_success();
+    let build_json: serde_json::Value =
+        serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert!(
+        !build_json["contracts"][external_source.to_string_lossy().as_ref()]["Counter"].is_null()
+    );
+    assert!(!build_json["contracts"][builtin.to_string_lossy().as_ref()]["Builtin"].is_null());
+
+    let invoked = adapter.with_extension("sh.compiled");
+    assert!(invoked.exists());
+    let artifact = prj.root().join("out/.external/fixture/app/native/src/lib.fe/Counter.json");
+    let artifact_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&artifact).unwrap()).unwrap();
+    assert_eq!(artifact_json["bytecode"]["object"], "0x6001600c60003960016000f300");
+    assert_eq!(artifact_json["rawMetadata"], r#"{"language":"Fe"}"#);
+
+    let retained_cache = prj.root().join("cache/external-compilers/fixture/other.json");
+    let retained_artifact =
+        prj.root().join("out/.external/fixture/other/native/src/other.fe/Other.json");
+    let cache_before = fs::read(&retained_cache).unwrap();
+    let artifact_before = fs::read(&retained_artifact).unwrap();
+    fs::remove_file(&invoked).unwrap();
+    cmd.forge_fuse().args(["build", "native/src/lib.fe"]).assert_success();
+    assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+    assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["test", "--list"]).assert_success();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(!invoked.exists(), "switching Forge commands unexpectedly recompiled the units");
+    assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+    assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+
+    fs::remove_file(native.join("src/other.fe")).unwrap();
+    let read_only_commands = [
+        vec!["inspect", "native/src/lib.fe:Counter", "abi"],
+        vec!["inspect", "native/src/lib.fe:Counter", "artifact"],
+        vec!["inspect", "native/src/lib.fe:Counter", "bytecode"],
+        vec!["inspect", "native/src/lib.fe:Counter", "deployedBytecode"],
+        vec!["test", "--list"],
+        vec!["selectors", "list"],
+        vec!["selectors", "find", "c0406226"],
+        vec!["selectors", "collision", "Counter", "Counter"],
+        vec!["selectors", "collision", "Counter", "Counter", "--extra-output", "metadata"],
+    ];
+    let counter_before = fs::read(&artifact).unwrap();
+    for build_info in [false, true] {
+        prj.update_config(|config| config.build_info = build_info);
+        for args in &read_only_commands {
+            cmd.forge_fuse().args(args).assert_success();
+            assert!(!invoked.exists(), "read-only command recompiled cached units: {args:?}");
+            assert_eq!(fs::read(&retained_cache).unwrap(), cache_before);
+            assert_eq!(fs::read(&retained_artifact).unwrap(), artifact_before);
+            assert_eq!(fs::read(&artifact).unwrap(), counter_before);
+        }
+    }
+    prj.update_config(|config| config.build_info = false);
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(!retained_cache.exists(), "complete discovery retained a stale cache entry");
+    assert!(!retained_artifact.exists(), "complete discovery retained a stale artifact");
+
+    fs::write(native.join("src/lib.fe"), "pub contract Counter { pub fn value() -> u256 { 1 } }\n")
+        .unwrap();
+    cmd.forge_fuse().arg("build").assert_success();
+    assert!(invoked.exists(), "source change did not invalidate external compiler cache");
+
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    prj.update_config(|config| config.build_info = true);
+    for args in &read_only_commands {
+        fs::remove_file(&invoked).unwrap();
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(invoked.exists(), "read-only command did not compile an uncached unit: {args:?}");
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+    }
+    cmd.forge_fuse().arg("build").assert_success();
+    let cache = prj.root().join("cache/external-compilers/fixture/app.json");
+    let cache_before = fs::read(&cache).unwrap();
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_file(&invoked).unwrap();
+    for args in &read_only_commands {
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!invoked.exists(), "read-only command did not reuse the external cache: {args:?}");
+        assert!(!prj.root().join("out/.external").exists());
+        assert_eq!(fs::read(&cache).unwrap(), cache_before);
+    }
+
+    prj.update_config(|config| config.build_info = false);
+    cmd.forge_fuse().args(["bind", "--select", "^Counter$"]).assert_success();
+    assert!(prj.root().join("out/bindings/src/counter.rs").is_file());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "native/src/lib.fe:Counter",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--unlocked",
+            "--from",
+            &handle.dev_accounts().next().unwrap().to_string(),
+            "--broadcast",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[..]
+Deployer: [..]
+Deployed to: [..]
+[TX_HASH]
+
+"#]]);
+
+    let output = cmd.forge_fuse().args(["selectors", "list", "--no-group"]).assert_success();
+    assert!(output.get_output().stdout_lossy().contains("run()"));
+    cmd.forge_fuse().args(["script", "native/src/lib.fe:Counter"]).assert_success();
+
+    prj.add_script(
+        "UseExternal.s.sol",
+        r#"interface Vm {
+    function getCode(string calldata artifact) external returns (bytes memory);
+}
+
+contract UseExternal {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function run() external {
+        bytes memory code = vm.getCode("Counter");
+        address deployed;
+        assembly ("memory-safe") {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0) && deployed.code.length == 1);
+    }
+}
+"#,
+    );
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().args(["script", "script/UseExternal.s.sol:UseExternal"]).assert_success();
+
+    cmd.forge_fuse()
+        .args(["test", "--list", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"{}"#]].is_json());
+
+    fs::create_dir_all(prj.root().join("test")).unwrap();
+    fs::write(
+        prj.root().join("test/ExternalArtifact.t.sol"),
+        r#"pragma solidity >=0.8.0;
+
+interface Vm {
+    function getCode(string calldata artifact) external returns (bytes memory);
+}
+
+contract ExternalArtifactTest {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testExternalArtifactIsDeployable() public {
+        bytes memory code = vm.getCode("Counter");
+        address deployed;
+        assembly ("memory-safe") {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0) && deployed.code.length == 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+    fs::remove_dir_all(prj.root().join("out/.external")).unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testExternalArtifactIsDeployable"])
+        .assert_success();
+
+    for _ in 0..2 {
+        cmd.forge_fuse().args(["coverage", "--report", "lcov"]).assert_success();
+    }
+    let coverage = fs::read_to_string(prj.root().join("lcov.info")).unwrap();
+    assert!(coverage.contains("SF:script/UseExternal.s.sol"), "{coverage}");
+    assert!(!coverage.contains("native/"));
+
+    let adapter_script = fs::read_to_string(&adapter).unwrap();
+    fs::write(
+        &adapter,
+        adapter_script.replacen(r#"["build/1"]"#, r#"["build/1","forge-tests/1"]"#, 1),
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["test", "--match-contract", "^Counter$"]).assert_success().stdout_eq(
+        str![[r#"
+[..]
+
+Ran 1 test for native/src/lib.fe:Counter
+[PASS] testExternalArtifactIsDeployable() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+    for name in ["Counter.V1", "Counter-V1"] {
+        fs::write(&adapter, adapter_script.replace("name=Counter", &format!("name={name}")))
+            .unwrap();
+        cmd.forge_fuse().arg("build").assert_failure().stderr_eq(format!(
+            "Error: external compiler contract name must contain only ASCII letters, digits, or underscores: {name}\n"
+        ));
+    }
+    fs::write(&adapter, adapter_script.replace("source=lib.fe", "source=missing.fe")).unwrap();
+    cmd.forge_fuse().arg("build").assert_failure().stderr_eq(str![[r#"
+Error: failed to canonicalize [..]/native/src/missing.fe
+
+Context:
+- [..]
+
+"#]]);
+    fs::write(&adapter, &adapter_script).unwrap();
+
+    let warning = adapter.with_extension("sh.warning");
+    fs::write(&warning, "").unwrap();
+    fs::remove_dir_all(prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    cmd.forge_fuse().args(["build", "--deny", "never"]).assert_success();
+    fs::remove_file(&invoked).unwrap();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    assert!(!invoked.exists(), "cached diagnostics unexpectedly recompiled the external unit");
+
+    fs::remove_file(warning).unwrap();
+    for malformed in [false, true] {
+        if malformed {
+            fs::write(&cache, "not json").unwrap();
+            cmd.forge_fuse().arg("build").assert_failure();
+        }
+        cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+        cmd.forge_fuse().arg("build").assert_success();
+        assert!(invoked.exists(), "clean retained the external compiler cache");
+        fs::remove_file(&invoked).unwrap();
+    }
+    for args in &read_only_commands {
+        prj.update_config(|config| config.force = true);
+        cmd.forge_fuse().args(args).assert_success();
+        assert!(!prj.root().join("out/.external").exists());
+        assert!(!prj.root().join("cache/external-compilers").exists());
+        prj.update_config(|config| config.force = false);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+
+    cmd.forge_fuse().arg("clean").assert_success();
+    let external = tempfile::tempdir().unwrap();
+    let sentinel = external.path().join("keep");
+    fs::write(&sentinel, "unchanged").unwrap();
+    fs::create_dir_all(prj.root().join("cache")).unwrap();
+    symlink(external.path(), prj.root().join("cache/external-compilers")).unwrap();
+    cmd.forge_fuse().arg("clean").assert_success().stderr_eq("");
+    assert!(prj.root().join("cache/external-compilers").symlink_metadata().is_err());
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "unchanged");
+
+    for (response, error) in [
+        ("", "adapter exited before responding to `initialize`"),
+        (
+            r#"{"id":1,"result":{"protocol":"2.0"}}"#,
+            "external compiler `fixture` selected unsupported protocol `2.0`",
+        ),
+    ] {
+        fs::write(&adapter, format!(
+            "#!/bin/sh\nread -r initialize\nprintf '%s\\n' 'native compiler diagnostic' >&2\nprintf '%s' '{response}'\n"
+        )).unwrap();
+        cmd.forge_fuse().arg("build").assert_failure().stderr_eq(format!(
+            "Error: adapter stderr: native compiler diagnostic\n\nContext:\n- {error}\n"
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[forgetest]
+fn local_compiler_runs_without_warning(prj: _, cmd: _) {
     let solc = prj.root().join("payload");
     let invoked = prj.root().join("payload.invoked");
     fs::write(
@@ -62,9 +402,10 @@ exit 1
     let stderr = output.get_output().stderr_lossy();
     assert!(!stderr.contains("configured to use a local compiler executable"), "{stderr}");
     assert!(invoked.exists(), "local compiler did not run");
-});
+}
 
-forgetest!(project_dotenv_loads_without_warning, |prj, cmd| {
+#[forgetest]
+fn project_dotenv_loads_without_warning(prj: _, cmd: _) {
     fs::write(prj.root().join(".env"), "FOUNDRY_SRC=dotenv-src").unwrap();
 
     let output = cmd.args(["config", "--json"]).assert_success();
@@ -72,32 +413,31 @@ forgetest!(project_dotenv_loads_without_warning, |prj, cmd| {
     assert!(!stderr.contains("Warning: loading project dotenv"), "{stderr}");
     let config: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
     assert_eq!(config["src"], "dotenv-src");
-});
+}
 
-forgetest!(
-    #[cfg(unix)]
-    can_build_physical_and_symlinked_dependency_configs,
-    |prj, cmd| {
-        let external = tempfile::tempdir().unwrap();
-        let physical = prj.root().join("lib/linked");
-        let linked = external.path().join("cache/actual-package");
-        let write_dependency = |dependency: &std::path::Path| {
-            fs::create_dir_all(dependency.join("custom-source")).unwrap();
-            fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
-            fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
-            fs::write(
-                dependency.join("foundry.toml"),
-                r#"
+#[forgetest]
+#[cfg(unix)]
+fn can_build_physical_and_symlinked_dependency_configs(prj: _, cmd: _) {
+    let external = tempfile::tempdir().unwrap();
+    let physical = prj.root().join("lib/linked");
+    let linked = external.path().join("cache/actual-package");
+    let write_dependency = |dependency: &std::path::Path| {
+        fs::create_dir_all(dependency.join("custom-source")).unwrap();
+        fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
+        fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
+        fs::write(
+            dependency.join("foundry.toml"),
+            r#"
 [profile.default]
 src = "custom-source"
 remappings = ["special-alias/=vendor/inner/src/"]
 "#,
-            )
-            .unwrap();
-            fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
-            fs::write(
-                dependency.join("custom-source/Dep.sol"),
-                r#"
+        )
+        .unwrap();
+        fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
+        fs::write(
+            dependency.join("custom-source/Dep.sol"),
+            r#"
 pragma solidity >=0.8.0;
 
 import {Thing} from "special-alias/Thing.sol";
@@ -105,109 +445,105 @@ import {FromFile} from "file-alias/FromFile.sol";
 
 contract Dep is Thing, FromFile {}
 "#,
-            )
-            .unwrap();
-            fs::write(
-                dependency.join("vendor/inner/src/Thing.sol"),
-                r#"
+        )
+        .unwrap();
+        fs::write(
+            dependency.join("vendor/inner/src/Thing.sol"),
+            r#"
 pragma solidity >=0.8.0;
 
 contract Thing {}
 "#,
-            )
-            .unwrap();
-            fs::write(
-                dependency.join("vendor/file/src/FromFile.sol"),
-                r#"
+        )
+        .unwrap();
+        fs::write(
+            dependency.join("vendor/file/src/FromFile.sol"),
+            r#"
 pragma solidity >=0.8.0;
 
 contract FromFile {}
 "#,
-            )
-            .unwrap();
-        };
+        )
+        .unwrap();
+    };
 
-        write_dependency(&physical);
-        write_dependency(&linked);
-        prj.add_raw_source(
-            "Root.sol",
-            r#"
+    write_dependency(&physical);
+    write_dependency(&linked);
+    prj.add_raw_source(
+        "Root.sol",
+        r#"
 pragma solidity >=0.8.0;
 
 import {Dep} from "linked/Dep.sol";
 
 contract Root is Dep {}
 "#,
-        );
+    );
 
-        let remappings = str![[r#"
+    let remappings = str![[r#"
 file-alias/=lib/linked/vendor/file/src/
 linked/=lib/linked/custom-source/
 special-alias/=lib/linked/vendor/inner/src/
 
 "#]];
-        cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
-        cmd.forge_fuse().arg("build").assert_success();
+    cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
+    cmd.forge_fuse().arg("build").assert_success();
 
-        fs::remove_dir_all(&physical).unwrap();
-        symlink(&linked, &physical).unwrap();
-        cmd.forge_fuse().arg("clean").assert_success();
-        cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(remappings);
-        cmd.forge_fuse().arg("build").assert_success();
-    }
-);
+    fs::remove_dir_all(&physical).unwrap();
+    symlink(&linked, &physical).unwrap();
+    cmd.forge_fuse().arg("clean").assert_success();
+    cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(remappings);
+    cmd.forge_fuse().arg("build").assert_success();
+}
 
-forgetest!(
-    #[cfg(unix)]
-    can_build_symlinked_dependency_with_existing_standard_source,
-    |prj, cmd| {
-        let external = tempfile::tempdir().unwrap();
-        let dependency = external.path().join("dependency");
-        fs::create_dir_all(dependency.join("src")).unwrap();
-        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"src\"\n").unwrap();
-        fs::write(dependency.join("src/Dep.sol"), "pragma solidity >=0.8.0; contract Dep {}\n")
-            .unwrap();
-        prj.update_config(|config| config.libs = vec!["node_modules".into()]);
-        fs::create_dir_all(prj.root().join("node_modules")).unwrap();
-        symlink(&dependency, prj.root().join("node_modules/linked")).unwrap();
-        prj.add_raw_source(
-            "Root.sol",
-            r#"
+#[forgetest]
+#[cfg(unix)]
+fn can_build_symlinked_dependency_with_existing_standard_source(prj: _, cmd: _) {
+    let external = tempfile::tempdir().unwrap();
+    let dependency = external.path().join("dependency");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"src\"\n").unwrap();
+    fs::write(dependency.join("src/Dep.sol"), "pragma solidity >=0.8.0; contract Dep {}\n")
+        .unwrap();
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+    fs::create_dir_all(prj.root().join("node_modules")).unwrap();
+    symlink(&dependency, prj.root().join("node_modules/linked")).unwrap();
+    prj.add_raw_source(
+        "Root.sol",
+        r#"
 pragma solidity >=0.8.0;
 
 import {Dep} from "linked/src/Dep.sol";
 
 contract Root is Dep {}
 "#,
-        );
+    );
 
-        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
 linked/=node_modules/linked/
 
 "#]]);
-        cmd.forge_fuse().arg("build").assert_success();
-    }
-);
+    cmd.forge_fuse().arg("build").assert_success();
+}
 
-forgetest!(
-    #[cfg(unix)]
-    can_build_multiple_aliases_to_symlinked_dependency_config,
-    |prj, cmd| {
-        let external = tempfile::tempdir().unwrap();
-        let dependency = external.path().join("dependency");
-        fs::create_dir_all(dependency.join("custom-source")).unwrap();
-        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n")
-            .unwrap();
-        fs::write(
-            dependency.join("custom-source/Dep.sol"),
-            "pragma solidity >=0.8.0; contract Dep {}\n",
-        )
+#[forgetest]
+#[cfg(unix)]
+fn can_build_multiple_aliases_to_symlinked_dependency_config(prj: _, cmd: _) {
+    let external = tempfile::tempdir().unwrap();
+    let dependency = external.path().join("dependency");
+    fs::create_dir_all(dependency.join("custom-source")).unwrap();
+    fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n")
         .unwrap();
-        symlink(&dependency, prj.root().join("lib/a-alias")).unwrap();
-        symlink(&dependency, prj.root().join("lib/z-alias")).unwrap();
-        prj.add_raw_source(
-            "Root.sol",
-            r#"
+    fs::write(
+        dependency.join("custom-source/Dep.sol"),
+        "pragma solidity >=0.8.0; contract Dep {}\n",
+    )
+    .unwrap();
+    symlink(&dependency, prj.root().join("lib/a-alias")).unwrap();
+    symlink(&dependency, prj.root().join("lib/z-alias")).unwrap();
+    prj.add_raw_source(
+        "Root.sol",
+        r#"
 pragma solidity >=0.8.0;
 
 import {Dep as ADep} from "a-alias/Dep.sol";
@@ -218,18 +554,18 @@ contract Root {
     ZDep private z;
 }
 "#,
-        );
+    );
 
-        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
 a-alias/=lib/a-alias/custom-source/
 z-alias/=lib/z-alias/custom-source/
 
 "#]]);
-        cmd.forge_fuse().arg("build").assert_success();
-    }
-);
+    cmd.forge_fuse().arg("build").assert_success();
+}
 
-forgetest_init!(can_parse_build_filters, |prj, cmd| {
+#[forgetest_init]
+fn can_parse_build_filters(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.clear();
 
@@ -243,9 +579,10 @@ Compiler run successful!
 
 "#]
     ]);
-});
+}
 
-forgetest!(throws_on_conflicting_args, |prj, cmd| {
+#[forgetest]
+fn throws_on_conflicting_args(prj: _, cmd: _) {
     prj.clear();
 
     cmd.args(["compile", "--format-json", "--quiet"]).assert_failure().stderr_eq(str![[r#"
@@ -256,10 +593,11 @@ Usage: forge[..] build --json [PATHS]...
 For more information, try '--help'.
 
 "#]]);
-});
+}
 
 // tests that json is printed when --format-json is passed
-forgetest!(compile_json, |prj, cmd| {
+#[forgetest]
+fn compile_json(prj: _, cmd: _) {
     prj.add_source(
         "jsonError",
         r"
@@ -305,9 +643,10 @@ contract Dummy {
         .assert_failure()
         .stderr_eq("")
         .stdout_eq(expected);
-});
+}
 
-forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
+#[forgetest]
+fn initcode_size_exceeds_limit(prj: _, cmd: _) {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -320,6 +659,15 @@ Compiler run successful!
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--quiet"])
+        .assert_failure()
+        .stdout_eq("")
+        .stderr_eq(str![[r#"
+Error: some contracts exceed the initcode size limit (EIP-3860: 49152 bytes)
 
 "#]]);
 
@@ -392,9 +740,10 @@ No files changed, compilation skipped
 
 
 "#]]);
-});
+}
 
-forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
+#[forgetest]
+fn build_sizes_respects_configured_code_size_limit(prj: _, cmd: _) {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     prj.update_config(|config| {
         config.code_size_limit = Some(64_000);
@@ -413,10 +762,11 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 #[cfg(feature = "monad")]
-forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
+#[forgetest]
+fn build_sizes_respects_monad_network_code_size_limit(prj: _, cmd: _) {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     prj.update_config(|config| {
         config.networks = foundry_evm_networks::NetworkConfigs::with_monad();
@@ -435,9 +785,10 @@ forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
-forgetest!(build_sizes_respects_amsterdam_code_size_limits, |prj, cmd| {
+#[forgetest]
+fn build_sizes_respects_amsterdam_code_size_limits(prj: _, cmd: _) {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     prj.update_config(|config| {
         config.evm_version = EvmVersion::Amsterdam;
@@ -456,10 +807,11 @@ forgetest!(build_sizes_respects_amsterdam_code_size_limits, |prj, cmd| {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests build output is as expected
-forgetest_init!(exact_build_output, |prj, cmd| {
+#[forgetest_init]
+fn exact_build_output(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -467,9 +819,10 @@ forgetest_init!(exact_build_output, |prj, cmd| {
 Compiler run successful!
 
 "#]]);
-});
+}
 
-forgetest_init!(verbose_build_displays_compiler_profiles_in_combined_output, |prj, cmd| {
+#[forgetest_init]
+fn verbose_build_displays_compiler_profiles_in_combined_output(prj: _, cmd: _) {
     prj.add_source("Default.sol", "contract Default {}");
     prj.add_source("NoMetadata.sol", "contract NoMetadata {}");
     prj.update_config(|config| {
@@ -527,13 +880,14 @@ Compiler settings (profile: default): optimizer=true, optimizer_runs=777, via_ir
 Compiler settings (profile: no-metadata): optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
 "#]],
     );
-});
+}
 
 // tests build output is as expected
-forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
+#[forgetest_init]
+fn build_sizes_no_forge_std(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 27)));
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 26)));
     });
 
     cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
@@ -571,10 +925,11 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 
 
 "#]]);
-});
+}
 
 // tests build output --sizes handles multiple contracts with the same name
-forgetest_init!(build_sizes_multiple_contracts, |prj, cmd| {
+#[forgetest_init]
+fn build_sizes_multiple_contracts(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_source(
         "Foo",
@@ -638,10 +993,11 @@ contract Counter {
 
 
 "#]]);
-});
+}
 
 // tests build output --sizes --json handles multiple contracts with the same name
-forgetest_init!(build_sizes_multiple_contracts_json, |prj, cmd| {
+#[forgetest_init]
+fn build_sizes_multiple_contracts_json(prj: _, cmd: _) {
     prj.initialize_default_contracts();
     prj.add_source(
         "Foo",
@@ -706,12 +1062,13 @@ contract Counter {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that `--sizes` filters out internal libraries (libraries without any external/public
 // functions), which are never deployed on their own.
 // <https://github.com/foundry-rs/foundry/issues/1356>
-forgetest!(build_sizes_filters_internal_libraries, |prj, cmd| {
+#[forgetest]
+fn build_sizes_filters_internal_libraries(prj: _, cmd: _) {
     prj.add_source(
         "Libraries",
         r"
@@ -781,12 +1138,13 @@ contract Consumer {
 "#]]
         .is_json(),
     );
-});
+}
 
 // tests that when a filtered internal library shares a name with a kept contract, the survivor is
 // unique and prints without the `(path)` disambiguation suffix.
 // <https://github.com/foundry-rs/foundry/issues/1356>
-forgetest!(build_sizes_filtered_internal_library_frees_unique_name, |prj, cmd| {
+#[forgetest]
+fn build_sizes_filtered_internal_library_frees_unique_name(prj: _, cmd: _) {
     prj.add_source(
         "a/Foo",
         r"
@@ -819,10 +1177,11 @@ contract Foo {
 
 
 "#]]);
-});
+}
 
 // tests that skip key in config can be used to skip non-compilable contract
-forgetest_init!(test_can_skip_contract, |prj, cmd| {
+#[forgetest_init]
+fn test_can_skip_contract(prj: _, cmd: _) {
     prj.add_source(
         "InvalidContract",
         r"
@@ -844,10 +1203,11 @@ contract ValidContract {}
     });
 
     cmd.args(["build"]).assert_success();
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/11149>
-forgetest_init!(test_consistent_build_output, |prj, cmd| {
+#[forgetest_init]
+fn test_consistent_build_output(prj: _, cmd: _) {
     prj.add_source(
         "AContract.sol",
         r#"
@@ -885,11 +1245,12 @@ with remappings:
 [SOLC_VERSION] [ELAPSED]
 
 "#]]);
-});
+}
 
 // <https://github.com/foundry-rs/foundry/issues/12458>
 // <https://github.com/foundry-rs/foundry/issues/12496>
-forgetest!(build_with_invalid_natspec, |prj, cmd| {
+#[forgetest]
+fn build_with_invalid_natspec(prj: _, cmd: _) {
     prj.add_source(
         "ContractWithInvalidNatspec.sol",
         r#"
@@ -930,30 +1291,34 @@ warning[6546]: invalid natspec tag '@note', custom tags must use format '@custom
 
 "#
     ]]);
-});
+}
 
 // tests that build succeeds without warning when no soldeer.lock exists
-forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
+#[forgetest_init]
+fn build_no_warning_without_soldeer_lock(prj: _, cmd: _) {
     let soldeer_lock = prj.root().join("soldeer.lock");
     // soldeer.lock should not exist in a fresh project
     assert!(!soldeer_lock.exists());
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
-});
+}
 
-forgetest_init!(build_locked_succeeds_when_dependencies_match, |_prj, cmd| {
+#[forgetest_init]
+fn build_locked_succeeds_when_dependencies_match(cmd: _) {
     cmd.args(["build", "--locked"]).assert_success();
-});
+}
 
-forgetest!(build_locked_succeeds_without_lockfile_or_dependencies, |prj, cmd| {
+#[forgetest]
+fn build_locked_succeeds_without_lockfile_or_dependencies(prj: _, cmd: _) {
     assert!(!prj.root().join("foundry.lock").exists());
 
     cmd.args(["build"]).assert_success().stderr_eq("");
     cmd.forge_fuse().args(["build", "--locked"]).assert_success().stderr_eq("");
-});
+}
 
-forgetest!(build_locked_rejects_lockfile_outside_git_repository, |prj, cmd| {
+#[forgetest]
+fn build_locked_rejects_lockfile_outside_git_repository(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.lock"), "{}").unwrap();
 
     let output = cmd.args(["build", "--locked"]).assert_failure();
@@ -962,9 +1327,10 @@ forgetest!(build_locked_rejects_lockfile_outside_git_repository, |prj, cmd| {
         "{}",
         output.get_output().stderr_lossy()
     );
-});
+}
 
-forgetest!(build_locked_honors_git_environment, |prj, cmd| {
+#[forgetest]
+fn build_locked_honors_git_environment(prj: _, cmd: _) {
     let project = prj.root().join("nested");
     fs::create_dir(&project).unwrap();
     let repository = prj.root().join("repository");
@@ -998,18 +1364,20 @@ Error: foundry.lock does not match installed dependencies:
   lib/dep: dependency submodule is not initialized
 
 "#]]);
-});
+}
 
-forgetest!(locked_is_build_only, |_prj, cmd| {
+#[forgetest]
+fn locked_is_build_only(cmd: _) {
     let output = cmd.args(["config", "--locked"]).assert_failure();
     assert!(
         output.get_output().stderr_lossy().contains("unexpected argument '--locked'"),
         "{}",
         output.get_output().stderr_lossy()
     );
-});
+}
 
-forgetest_init!(build_locked_rejects_malformed_lockfile, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_rejects_malformed_lockfile(prj: _, cmd: _) {
     fs::write(prj.root().join("foundry.lock"), "not json").unwrap();
 
     cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
@@ -1019,9 +1387,10 @@ Context:
 - expected ident at line 1 column 2
 
 "#]]);
-});
+}
 
-forgetest_init!(build_checks_foundry_lock_only_when_locked, |prj, cmd| {
+#[forgetest_init]
+fn build_checks_foundry_lock_only_when_locked(prj: _, cmd: _) {
     let foundry_lock = prj.root().join("foundry.lock");
     let lockfile = r#"{
   "lib/forge-std": {
@@ -1042,9 +1411,10 @@ Error: foundry.lock does not match installed dependencies:
 "#
     ]]);
     assert_eq!(fs::read_to_string(foundry_lock).unwrap(), lockfile);
-});
+}
 
-forgetest_init!(build_locked_reports_uninitialized_dependency_without_installing, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_reports_uninitialized_dependency_without_installing(prj: _, cmd: _) {
     let root = prj.root();
     let foundry_lock = fs::read(root.join("foundry.lock")).unwrap();
     let status = std::process::Command::new("git")
@@ -1065,9 +1435,10 @@ Error: foundry.lock does not match installed dependencies:
     assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
     assert_eq!(fs::read(root.join(".git/config")).unwrap(), git_config);
     assert!(!root.join("lib/forge-std/.git").exists());
-});
+}
 
-forgetest_init!(build_locked_preserves_uninitialized_state_without_lock_entry, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_preserves_uninitialized_state_without_lock_entry(prj: _, cmd: _) {
     let root = prj.root();
     fs::remove_file(root.join("foundry.lock")).unwrap();
     let status = std::process::Command::new("git")
@@ -1085,9 +1456,10 @@ Error: foundry.lock does not match installed dependencies:
 "#]]);
     assert!(!root.join("foundry.lock").exists());
     assert!(!root.join("lib/forge-std/.git").exists());
-});
+}
 
-forgetest_init!(build_locked_preserves_conflict_without_lock_entry, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_preserves_conflict_without_lock_entry(prj: _, cmd: _) {
     let root = prj.root();
     let submodule = root.join("lib/forge-std");
     let rev = |args: &[&str]| {
@@ -1127,9 +1499,10 @@ Error: foundry.lock does not match installed dependencies:
 
 "#]]);
     assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
-});
+}
 
-forgetest_init!(build_locked_reports_stale_lockfile_entries, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_reports_stale_lockfile_entries(prj: _, cmd: _) {
     let foundry_lock = prj.root().join("foundry.lock");
     let mut lockfile: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
@@ -1143,9 +1516,10 @@ Error: foundry.lock does not match installed dependencies:
   lib/stale: dependency submodule is missing (expected 0000000000000000000000000000000000000000)
 
 "#]]);
-});
+}
 
-forgetest!(build_locked_supports_projects_nested_in_parent_repository, |prj, cmd| {
+#[forgetest]
+fn build_locked_supports_projects_nested_in_parent_repository(prj: _, cmd: _) {
     cmd.git_init();
     cmd.args(["init", "nested", "--use-parent-git"]).assert_success();
 
@@ -1171,9 +1545,10 @@ forgetest!(build_locked_supports_projects_nested_in_parent_repository, |prj, cmd
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
     cmd.forge_fuse().args(["build", "--locked", "--no-lint", "--root", "nested"]).assert_success();
-});
+}
 
-forgetest_init!(build_locked_supports_dependency_paths_with_spaces, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_supports_dependency_paths_with_spaces(prj: _, cmd: _) {
     let root = prj.root();
     git(root, &["mv", "lib/forge-std", "lib/forge std"]);
 
@@ -1185,18 +1560,20 @@ forgetest_init!(build_locked_supports_dependency_paths_with_spaces, |prj, cmd| {
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
     cmd.args(["build", "--locked"]).assert_success();
-});
+}
 
-forgetest_init!(build_locked_accepts_modified_submodule_when_head_matches_lock, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_accepts_modified_submodule_when_head_matches_lock(prj: _, cmd: _) {
     let root = prj.root();
     let submodule = root.join("lib/forge-std");
     let previous = git(&submodule, &["rev-parse", "HEAD^"]);
     git(root, &["update-index", "--cacheinfo", "160000", &previous, "lib/forge-std"]);
 
     cmd.args(["build", "--locked"]).assert_success();
-});
+}
 
-forgetest_init!(build_locked_reports_all_mismatches_in_path_order, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_reports_all_mismatches_in_path_order(prj: _, cmd: _) {
     let root = prj.root();
     add_local_submodule(root, "lib/second");
     let foundry_lock = root.join("foundry.lock");
@@ -1216,9 +1593,10 @@ Error: foundry.lock does not match installed dependencies:
   lib/stale: dependency submodule is missing (expected 1111111111111111111111111111111111111111)
 
 "#]]);
-});
+}
 
-forgetest_init!(build_locked_supports_custom_dependency_directory, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_supports_custom_dependency_directory(prj: _, cmd: _) {
     let root = prj.root();
     fs::create_dir(root.join("dependencies")).unwrap();
     git(root, &["mv", "lib/forge-std", "dependencies/forge-std"]);
@@ -1232,15 +1610,17 @@ forgetest_init!(build_locked_supports_custom_dependency_directory, |prj, cmd| {
     fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
     cmd.args(["build", "--locked"]).assert_success();
-});
+}
 
-forgetest_init!(build_locked_supports_project_root_as_dependency_directory, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_supports_project_root_as_dependency_directory(prj: _, cmd: _) {
     prj.update_config(|config| config.libs = vec![".".into()]);
 
     cmd.args(["build", "--locked"]).assert_success();
-});
+}
 
-forgetest_init!(build_locked_matches_submodules_outside_dependency_directory, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_matches_submodules_outside_dependency_directory(prj: _, cmd: _) {
     let root = prj.root();
     add_local_submodule(root, "vendor/second");
 
@@ -1254,9 +1634,10 @@ forgetest_init!(build_locked_matches_submodules_outside_dependency_directory, |p
     fs::write(root.join("foundry.lock"), serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
 
     cmd.forge_fuse().args(["build", "--locked"]).assert_success();
-});
+}
 
-forgetest_init!(build_locked_aggregates_missing_submodule_mapping, |prj, cmd| {
+#[forgetest_init]
+fn build_locked_aggregates_missing_submodule_mapping(prj: _, cmd: _) {
     let root = prj.root();
     let head = git(&root.join("lib/forge-std"), &["rev-parse", "HEAD"]);
     git(root, &["update-index", "--add", "--cacheinfo", "160000", &head, "lib/unmapped"]);
@@ -1278,4 +1659,25 @@ Error: foundry.lock does not match installed dependencies:
   lib/unmapped: dependency submodule is missing from .gitmodules
 
 "#]]);
-});
+}
+
+#[forgetest]
+fn deny_warnings_checks_warm_cache(prj: _, cmd: _) {
+    prj.add_source(
+        "Warn.sol",
+        r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+contract Warn {
+    function f(uint256 a) public pure returns (uint256) {
+        uint256 unused;
+        return a;
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().args(["build", "--deny", "warnings"]).assert_failure();
+    cmd.forge_fuse().args(["test", "--deny", "warnings"]).assert_failure();
+    prj.update_config(|config| config.deny = foundry_config::DenyLevel::Warnings);
+    cmd.forge_fuse().arg("build").assert_failure();
+}

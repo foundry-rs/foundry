@@ -1,12 +1,9 @@
 use alloy_primitives::{Bytes, U256};
-
-use foundry_evm_traces::CallTraceArena;
-use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use revm_inspectors::tracing::types::{
-    CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
+use foundry_evm_traces::{
+    CallTraceArena, CallTraceNode, CallTraceStep, RecordedMemory, TraceMemberOrder,
 };
+use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use spec::Vm::DebugStep;
 
 // Context for a CallTraceStep, includes depth and contract address.
@@ -163,7 +160,7 @@ mod tests {
 
     #[test]
     fn stack_inputs_are_taken_from_the_top() {
-        let stack = [U256::from(1), U256::from(2), U256::from(3)];
+        let stack = [U256::ONE, U256::from(2), U256::from(3)];
         assert_eq!(
             get_stack_inputs_for_opcode(opcode::ADD, Some(&stack)),
             vec![U256::from(3), U256::from(2)]

@@ -56,7 +56,10 @@ impl Analyzer<'_, '_> {
             StmtKind::DeclMulti(_, expr) => self.reads(expr),
             // `emit` only logs, so unlike a call it cannot observe pending writes.
             StmtKind::Emit(expr) => match &expr.peel_parens().kind {
-                ExprKind::Call(callee, args, opts) => self.read_call_parts(callee, args, *opts),
+                ExprKind::Call(callee, args) => {
+                    let (callee, opts) = callee.split_call_options();
+                    self.read_call_parts(callee, args, opts);
+                }
                 _ => self.reads(expr),
             },
             // Terminal statements: the code after them is unreachable and can never overwrite
@@ -150,8 +153,9 @@ impl Analyzer<'_, '_> {
                 None => self.reads(inner),
             },
             // Any call may observe storage through re-entrancy or view semantics.
-            ExprKind::Call(callee, args, opts) => {
-                self.read_call_parts(callee, args, *opts);
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
+                self.read_call_parts(callee, args, opts);
                 self.pending.clear();
             }
             _ => self.reads(expr),
@@ -200,9 +204,16 @@ impl Analyzer<'_, '_> {
                 self.isolated(|this| this.reads(then_expr));
                 self.isolated(|this| this.reads(else_expr));
             }
-            ExprKind::Call(callee, args, opts) => {
-                self.read_call_parts(callee, args, *opts);
+            ExprKind::Call(callee, args) => {
+                let (callee, opts) = callee.split_call_options();
+                self.read_call_parts(callee, args, opts);
                 self.pending.clear();
+            }
+            ExprKind::CallOptions(callee, opts) => {
+                self.reads(callee);
+                for opt in opts.args {
+                    self.reads(&opt.value);
+                }
             }
             ExprKind::Binary(lhs, _, rhs) => {
                 self.reads(lhs);

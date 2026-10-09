@@ -5,7 +5,7 @@ use alloy_primitives::hex;
 use alloy_provider::ext::TraceApi;
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use foundry_cli::opts::RpcOpts;
+use foundry_cli::{opts::RpcOpts, utils::parse_json};
 use foundry_common::stdin;
 use foundry_primitives::FoundryTxEnvelope;
 
@@ -46,7 +46,7 @@ impl TraceArgs {
             // trace_rawTransaction: accepts raw hex OR JSON tx
             let trimmed = input.trim();
             let raw_bytes = if trimmed.starts_with('{') {
-                let tx: AnyRpcTransaction = serde_json::from_str(trimmed)?;
+                let tx: AnyRpcTransaction = parse_json(trimmed)?;
                 FoundryTxEnvelope::encode_rpc_2718(&tx)
                     .wrap_err_with(|| {
                         format!("Cannot EIP-2718 encode transaction type 0x{:x}", tx.ty())

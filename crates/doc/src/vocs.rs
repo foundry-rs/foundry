@@ -4,16 +4,17 @@
 //! from the emitted MDX pages.
 
 use crate::{
-    render::{code_regions, region_contains},
+    markdown::{code_regions, neutralize_esm, region_contains},
     utils::{git_raw_url, git_source_url},
 };
+use foundry_common::fs::normalize_path;
 use foundry_config::DocConfig;
 use markdown::ParseOptions;
 use path_slash::PathExt;
 use std::{
     collections::HashMap,
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 /// Map from a Solidity source file location to its vocs page URL.
@@ -67,7 +68,8 @@ pub fn write_site_files(
     } else {
         homepage_content
     };
-    let homepage_content = escape_mdx_outside_code_fences(&homepage_content);
+    let homepage_content = homepage_content.strip_prefix('\u{feff}').unwrap_or(&homepage_content);
+    let homepage_content = neutralize_esm(&escape_mdx_outside_code_fences(homepage_content));
     let index_path = out_dir.join("src").join("pages").join("index.mdx");
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)?;
@@ -524,16 +526,12 @@ fn try_rewrite_target(
     // Use raw (download) URLs for image assets so they render inline rather
     // than pointing at the GitHub blob viewer page.
     let repo = repo?;
-    let is_image = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|ext| {
-            matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico"
-            )
-        })
-        .unwrap_or(false);
+    let is_image = path.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+        matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico"
+        )
+    });
     let mut url = if is_image {
         git_raw_url(repo, commit.unwrap_or("HEAD"), root, &abs)?
     } else {
@@ -541,21 +539,6 @@ fn try_rewrite_target(
     };
     url.push_str(suffix);
     Some(url)
-}
-
-/// Lexically resolve `.` and `..` components without touching the filesystem.
-fn normalize_path(p: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for comp in p.components() {
-        match comp {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 // ── package.json ──────────────────────────────────────────────────────────────

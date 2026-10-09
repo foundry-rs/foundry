@@ -177,6 +177,15 @@ impl<T> Default for PendingTransactions<T> {
 }
 
 impl<T> PendingTransactions<T> {
+    /// Returns an independent snapshot of the pending transactions.
+    pub(super) fn snapshot(&self) -> Self {
+        Self {
+            required_markers: self.required_markers.clone(),
+            waiting_markers: self.waiting_markers.clone(),
+            waiting_queue: self.waiting_queue.clone(),
+        }
+    }
+
     /// Returns the number of transactions that are currently waiting
     pub fn len(&self) -> usize {
         self.waiting_queue.len()
@@ -261,6 +270,44 @@ impl<T> PendingTransactions<T> {
         }
         removed
     }
+
+    /// Removes transactions and their transitive dependents from the waiting pool.
+    pub fn remove_with_dependents(
+        &mut self,
+        hashes: Vec<TxHash>,
+        invalidated: impl IntoIterator<Item = TxMarker>,
+    ) -> Vec<Arc<PoolTransaction<T>>> {
+        let mut required_by = HashMap::<TxMarker, Vec<TxHash>>::default();
+        for (hash, tx) in &self.waiting_queue {
+            for marker in &tx.transaction.requires {
+                required_by.entry(marker.clone()).or_default().push(*hash);
+            }
+        }
+
+        let mut to_remove = HashSet::<TxHash>::default();
+        let mut markers = invalidated.into_iter().collect::<Vec<_>>();
+        for hash in hashes {
+            if to_remove.insert(hash)
+                && let Some(tx) = self.waiting_queue.get(&hash)
+            {
+                markers.extend(tx.transaction.provides.iter().cloned());
+            }
+        }
+
+        while let Some(marker) = markers.pop() {
+            if let Some(dependents) = required_by.remove(&marker) {
+                for hash in dependents {
+                    if to_remove.insert(hash)
+                        && let Some(tx) = self.waiting_queue.get(&hash)
+                    {
+                        markers.extend(tx.transaction.provides.iter().cloned());
+                    }
+                }
+            }
+        }
+
+        self.remove(to_remove.into_iter().collect())
+    }
 }
 
 impl<T: Transaction> PendingTransactions<T> {
@@ -306,13 +353,22 @@ impl<T: Transaction> PendingTransactions<T> {
 }
 
 /// A transaction in the pool
-#[derive(Clone)]
 pub struct PendingPoolTransaction<T> {
     pub transaction: Arc<PoolTransaction<T>>,
     /// markers required and have not been satisfied yet by other transactions in the pool
     pub missing_markers: HashSet<TxMarker>,
     /// timestamp when the tx was added
     pub added_at: Instant,
+}
+
+impl<T> Clone for PendingPoolTransaction<T> {
+    fn clone(&self) -> Self {
+        Self {
+            transaction: Arc::clone(&self.transaction),
+            missing_markers: self.missing_markers.clone(),
+            added_at: self.added_at,
+        }
+    }
 }
 
 impl<T> PendingPoolTransaction<T> {
@@ -438,6 +494,16 @@ impl<T> Default for ReadyTransactions<T> {
 }
 
 impl<T> ReadyTransactions<T> {
+    /// Returns an independent snapshot of the ready transactions.
+    pub(super) fn snapshot(&self) -> Self {
+        Self {
+            id: self.id,
+            provided_markers: self.provided_markers.clone(),
+            ready_tx: Arc::new(RwLock::new(self.ready_tx.read().clone())),
+            independent_transactions: self.independent_transactions.clone(),
+        }
+    }
+
     /// Returns an iterator over all transactions
     pub fn get_transactions(&self) -> TransactionsIterator<T> {
         TransactionsIterator {
@@ -575,7 +641,7 @@ impl<T> ReadyTransactions<T> {
         while let Some(hash) = tx_hashes.pop() {
             if let Some(mut tx) = ready.remove(&hash) {
                 let invalidated = tx.transaction.transaction.provides.iter().filter(|mark| {
-                    marker_filter.as_ref().map(|filter| !filter.contains(&**mark)).unwrap_or(true)
+                    marker_filter.as_ref().is_none_or(|filter| !filter.contains(&**mark))
                 });
 
                 let mut removed_some_marks = false;
