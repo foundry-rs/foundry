@@ -114,7 +114,10 @@ impl<'ast> State<'_, 'ast> {
             fract = fract.trim_end_matches(['0', '_']);
             (exp_sign, exp) =
                 if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", exp) };
-            exp = exp.trim_start_matches(['0', '_']);
+            // Preserve nonzero exponent prefixes: solc interprets leading-zero exponents as octal.
+            if exp.bytes().all(|b| b == b'0' || b == b'_') {
+                exp = "";
+            }
         }
 
         let mut out = String::with_capacity(source.len() * 2);
