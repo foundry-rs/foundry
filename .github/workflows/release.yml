@@ -50,6 +50,7 @@ jobs:
       - name: Compute release metadata
         id: release_info
         env:
+          GH_TOKEN: ${{ github.token }}
           COMMIT: ${{ github.sha }}
           REF: ${{ github.ref }}
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
