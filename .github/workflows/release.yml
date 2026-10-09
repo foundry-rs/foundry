@@ -35,12 +35,10 @@ jobs:
       actions: read
       contents: read
     outputs:
-      version: ${{ steps.release_info.outputs.version }}
       tag_name: ${{ steps.release_info.outputs.tag_name }}
       release_tag_name: ${{ steps.release_info.outputs.release_tag_name }}
       release_name: ${{ steps.release_info.outputs.release_name }}
       is_prerelease: ${{ steps.release_info.outputs.is_prerelease }}
-      is_nightly: ${{ steps.release_info.outputs.is_nightly }}
       from_tag: ${{ steps.release_info.outputs.from_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,12 +56,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$IS_NIGHTLY" == true ]]; then
-            version=""
             tag_name="nightly-${COMMIT}"
             release_tag_name="staging-release-${COMMIT}"
             release_name="Nightly ($(date '+%Y-%m-%d'))"
             is_prerelease=true
-            is_nightly=true
             from_tag=$(git for-each-ref --sort=-creatordate --count=1 \
               --format='%(refname:strip=2)' 'refs/tags/nightly-*')
           else
@@ -75,16 +71,13 @@ jobs:
             release_tag_name="$tag_name"
             release_name=$(jq -r '.release_name' <<< "$metadata")
             is_prerelease=$(jq -r '.is_prerelease' <<< "$metadata")
-            is_nightly=false
             from_tag=$(jq -r '.from_tag' <<< "$metadata")
           fi
           {
-            printf 'version=%s\n' "$version"
             printf 'tag_name=%s\n' "$tag_name"
             printf 'release_tag_name=%s\n' "$release_tag_name"
             printf 'release_name=%s\n' "$release_name"
             printf 'is_prerelease=%s\n' "$is_prerelease"
-            printf 'is_nightly=%s\n' "$is_nightly"
             printf 'from_tag=%s\n' "$from_tag"
           } >> "$GITHUB_OUTPUT"
 

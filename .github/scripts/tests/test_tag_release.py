@@ -22,97 +22,50 @@ def manifest(directory, version):
 
 
 class ValidationTests(unittest.TestCase):
-    def test_release_branch_matches_workspace_version(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = manifest(tmp, "1.9.0-rc2")
-            self.assertEqual(
-                MODULE.validate_release(
-                    "refs/heads/release-1.9.0-rc2", path, ["nightly", "v1.8.3", "v1.9.0-rc1"]
-                )["from_tag"],
-                "v1.9.0-rc1",
-            )
-            for ref in (
-                "refs/heads/master",
-                "refs/heads/feature",
-                "refs/heads/release-v1.9.0-rc2",
-                "refs/heads/release-1.9.0",
-                "refs/heads/release-1.9.0-rc02",
-            ):
-                with self.subTest(ref=ref), self.assertRaises(MODULE.ReleaseError):
-                    MODULE.validate_release(ref, path, ["v1.8.3"])
-
-    def test_rejects_release_named_tag_ref(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(MODULE.ReleaseError, "release branch"):
-                MODULE.validate_release(
-                    "refs/tags/release-1.9.0", manifest(tmp, "1.9.0"), ["v1.8.3"]
-                )
+    def test_requires_canonical_version(self):
+        for version in ("v1.9.0", "release-1.9.0", "01.9.0", "1.9.0-rc0", "1.9.0-rc02"):
+            with self.subTest(version=version), self.assertRaises(MODULE.ReleaseError):
+                MODULE.validate_release(version, ["v1.8.3"])
 
     def test_candidate_must_be_newer_than_latest_stable(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = manifest(tmp, "1.9.0")
-            with self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
-                MODULE.validate_release("refs/heads/release-1.9.0", path, ["v1.9.1"])
-            with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
-                MODULE.validate_release("refs/heads/release-1.9.0", path, ["v1.9.0"])
+        with self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
+            MODULE.validate_release("1.9.0", ["v1.9.1"])
+        with self.assertRaisesRegex(MODULE.ReleaseError, "already exists"):
+            MODULE.validate_release("1.9.0", ["v1.9.0"])
 
     def test_stable_maintenance_release_ignores_newer_rc(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            metadata = MODULE.validate_release(
-                "refs/heads/release-1.8.4",
-                manifest(tmp, "1.8.4"),
-                ["v1.8.3", "v1.9.0-rc1"],
-            )
-            self.assertEqual(metadata["from_tag"], "v1.8.3")
+        metadata = MODULE.validate_release("1.8.4", ["v1.8.3", "v1.9.0-rc1"])
+        self.assertEqual(metadata["from_tag"], "v1.8.3")
 
     def test_rc_candidate_must_be_newer_than_latest_release(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
-                MODULE.validate_release(
-                    "refs/heads/release-1.9.0-rc1",
-                    manifest(tmp, "1.9.0-rc1"),
-                    ["v1.8.3", "v2.0.0-rc1"],
-                )
+        with self.assertRaisesRegex(MODULE.ReleaseError, "must be newer"):
+            MODULE.validate_release("1.9.0-rc1", ["v1.8.3", "v2.0.0-rc1"])
 
     def test_versions_use_numeric_rc_ordering(self):
         tags = ["v1.8.3", "v1.9.0-rc1", "v1.9.0-rc9", "v1.9.0-rc10", "v1.9.0", "v1.9.1"]
         self.assertEqual(sorted(tags, key=MODULE.version_key), tags)
 
     def test_requires_existing_release(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict stable tag"):
-                MODULE.validate_release("refs/heads/release-1.9.0", manifest(tmp, "1.9.0"), ["nightly"])
+        with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict stable tag"):
+            MODULE.validate_release("1.9.0", ["nightly"])
 
     def test_requires_rc_predecessor(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = manifest(tmp, "1.9.0-rc2")
-            with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict RC tag"):
-                MODULE.validate_release("refs/heads/release-1.9.0-rc2", path, ["v1.8.3"])
+        with self.assertRaisesRegex(MODULE.ReleaseError, "no preceding strict RC tag"):
+            MODULE.validate_release("1.9.0-rc2", ["v1.8.3"])
 
     def test_metadata_selects_canonical_predecessor(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            stable = MODULE.validate_release(
-                "refs/heads/release-1.9.0",
-                manifest(tmp, "1.9.0"),
-                ["v1.8.2", "v1.8.3", "v1.9.0-rc1"],
-            )
-            self.assertEqual(stable["from_tag"], "v1.8.3")
-            rc = MODULE.validate_release(
-                "refs/heads/release-2.0.0-rc1", manifest(tmp, "2.0.0-rc1"), ["v1.9.0"],
-            )
-            self.assertEqual(rc["from_tag"], "v1.9.0")
+        stable = MODULE.validate_release("1.9.0", ["v1.8.2", "v1.8.3", "v1.9.0-rc1"])
+        self.assertEqual(stable["from_tag"], "v1.8.3")
+        rc = MODULE.validate_release("2.0.0-rc1", ["v1.9.0"])
+        self.assertEqual(rc["from_tag"], "v1.9.0")
+        rc = MODULE.validate_release("1.9.0-rc2", ["nightly", "v1.8.3", "v1.9.0-rc1"])
+        self.assertEqual(rc["from_tag"], "v1.9.0-rc1")
 
     def test_existing_candidate_must_match_exact_commit(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = manifest(tmp, "1.9.0")
-            metadata = MODULE.validate_release(
-                "refs/heads/release-1.9.0", path, ["v1.8.3", "v1.9.0", "v1.9.1"], SHA, SHA,
-            )
-            self.assertEqual(metadata["tag_name"], "v1.9.0")
-            with self.assertRaisesRegex(MODULE.ReleaseError, "different commit"):
-                MODULE.validate_release(
-                    "refs/heads/release-1.9.0", path, ["v1.8.3", "v1.9.0"], SHA, "b" * 40,
-                )
+        metadata = MODULE.validate_release("1.9.0", ["v1.8.3", "v1.9.0", "v1.9.1"], SHA, SHA)
+        self.assertEqual(metadata["tag_name"], "v1.9.0")
+        with self.assertRaisesRegex(MODULE.ReleaseError, "different commit"):
+            MODULE.validate_release("1.9.0", ["v1.8.3", "v1.9.0"], SHA, "b" * 40)
 
 
 class ReleaseBuildTests(unittest.TestCase):
@@ -223,7 +176,7 @@ class WorkspaceTests(unittest.TestCase):
             git("tag", "v1.8.3")
             command = [
                 sys.executable, str(SCRIPT.resolve()), "validate", "--directory", tmp,
-                "--ref", "refs/heads/release-1.9.0", "--version", "1.9.0", "--commit", git("rev-parse", "HEAD"),
+                "--version", "1.9.0", "--commit", git("rev-parse", "HEAD"),
             ]
             valid = subprocess.run(command, text=True, capture_output=True)
             self.assertEqual(valid.returncode, 0, valid.stderr)

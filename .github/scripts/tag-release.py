@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a release branch version and create its tag."""
+"""Validate a prepared release version and create its tag."""
 
 import argparse
 import json
@@ -14,9 +14,6 @@ import tomllib
 
 STABLE = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 RC = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc([1-9][0-9]*)$")
-RELEASE_BRANCH = re.compile(
-    r"^release-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc([1-9][0-9]*))?$"
-)
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -40,16 +37,7 @@ def manifest_version(manifest):
     return version
 
 
-def validate_release(ref, manifest, tags, commit=None, candidate_commit=None):
-    prefix = "refs/heads/"
-    if not ref.startswith(prefix):
-        raise ReleaseError("workflow must run from a release branch")
-    branch = ref.removeprefix(prefix)
-    if RELEASE_BRANCH.fullmatch(branch) is None:
-        raise ReleaseError("workflow must run from release-X.Y.Z[-rcN]")
-    version = manifest_version(manifest)
-    if branch != f"release-{version}":
-        raise ReleaseError(f"branch {branch} does not match workspace version {version!r}")
+def validate_release(version, tags, commit=None, candidate_commit=None):
     candidate = f"v{version}"
     candidate_key = version_key(candidate)
     releases = []
@@ -206,8 +194,7 @@ def validate_tag(ref, manifest, tags, commit, candidate_commit, expected_commit)
         raise ReleaseError("release build must match the exact tested commit")
     if tag not in tags or candidate_commit != commit:
         raise ReleaseError(f"release tag {tag} must resolve to the tested commit")
-    # Reuse predecessor selection and manifest checks after validating the actual tag ref.
-    return validate_release(f"refs/heads/release-{version}", manifest, tags, commit, candidate_commit)
+    return validate_release(version, tags, commit, candidate_commit)
 
 
 def remote_tag_commit(repo, tag):
@@ -274,27 +261,26 @@ def main():
     args = parser.parse_args()
     try:
         if args.mode in ("validate", "validate-tag"):
-            if args.ref is None or args.commit is None:
-                raise ReleaseError("validate requires --ref and --commit")
+            if args.commit is None:
+                raise ReleaseError("validate requires --commit")
             tags = subprocess.check_output(
                 ["git", "-C", str(args.directory), "tag", "--list"], text=True,
             ).splitlines()
             version = manifest_version(args.directory / "Cargo.toml")
+            tag = f"v{version}"
+            candidate_commit = local_tag_commit(args.directory, tag) if tag in tags else None
             if args.mode == "validate":
                 if args.version is None:
                     raise ReleaseError("validate requires the requested --version")
                 validate_workspace(args.directory, args.version, args.commit)
-            tag = f"v{version}"
-            validate = validate_tag if args.mode == "validate-tag" else validate_release
-            extra = {"expected_commit": args.expected_commit} if args.mode == "validate-tag" else {}
-            metadata = validate(
-                args.ref,
-                args.directory / "Cargo.toml",
-                tags,
-                args.commit,
-                local_tag_commit(args.directory, tag) if tag in tags else None,
-                **extra,
-            )
+                metadata = validate_release(version, tags, args.commit, candidate_commit)
+            else:
+                if args.ref is None:
+                    raise ReleaseError("validate-tag requires --ref")
+                metadata = validate_tag(
+                    args.ref, args.directory / "Cargo.toml", tags, args.commit,
+                    candidate_commit, args.expected_commit,
+                )
             print(json.dumps(metadata))
         elif args.mode == "ci":
             if args.version is None or args.commit is None:

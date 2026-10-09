@@ -60,7 +60,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/tag-release.py validate --ref "refs/heads/release-$VERSION" \
+          python3 .github/scripts/tag-release.py validate \
             --version "$VERSION" --commit "$COMMIT" --directory "$GITHUB_WORKSPACE/release-source"
           python3 .github/scripts/tag-release.py ci --version "$VERSION" --commit "$COMMIT" --dispatch
 
@@ -93,7 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 .github/scripts/tag-release.py validate --ref "refs/heads/release-$VERSION" \
+          python3 .github/scripts/tag-release.py validate \
             --version "$VERSION" --commit "$COMMIT" --directory "$GITHUB_WORKSPACE/release-source"
           python3 .github/scripts/tag-release.py ci --version "$VERSION" --commit "$COMMIT"
       - name: Create repository-scoped tagging token
