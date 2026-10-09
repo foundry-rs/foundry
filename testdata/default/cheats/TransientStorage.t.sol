@@ -56,6 +56,16 @@ contract TransientStorageCaller {
         vm.storeTransient(target, slot, value);
         revert("reverted");
     }
+
+    function storeAndCheckRevert(address target, bytes32 slot, bytes32 initial, bytes32 replacement)
+        external
+        returns (bytes32)
+    {
+        vm.storeTransient(target, slot, initial);
+        vm.expectRevert(bytes("reverted"));
+        this.storeAndRevert(target, slot, replacement);
+        return vm.loadTransient(target, slot);
+    }
 }
 
 abstract contract TransientStorageTestBase is Test, TransientStorageCallback {
@@ -111,10 +121,14 @@ abstract contract TransientStorageTestBase is Test, TransientStorageCallback {
     }
 
     function testStoreTransientRevertedWithFrame() public {
-        try caller.storeAndRevert(address(target), slot, bytes32(uint256(1))) {
-            fail();
-        } catch {}
-        assertEq(vm.loadTransient(address(target), slot), bytes32(0), "reverted write was kept");
+        assertEq(caller.storeAndCheckRevert(address(target), slot, bytes32(0), bytes32(uint256(1))), bytes32(0));
+        assertEq(
+            caller.storeAndCheckRevert(address(target), slot, bytes32(uint256(7)), bytes32(uint256(9))),
+            bytes32(uint256(7))
+        );
+        assertEq(
+            caller.storeAndCheckRevert(address(target), slot, bytes32(uint256(7)), bytes32(0)), bytes32(uint256(7))
+        );
     }
 
     function testStoreTransientNotAvailableOnPrecompiles() public {
@@ -147,13 +161,14 @@ contract TransientStorageTest is TransientStorageTestBase {
     }
 }
 
-/// With isolation, each top-level call runs as its own transaction and starts with empty transient
-/// storage, and its transient writes end with it.
+/// With isolation, each top-level CALL runs as its own transaction with empty transient storage.
+/// STATICCALL and DELEGATECALL stay in the surrounding transaction.
 /// forge-config: default.isolate = true
 contract TransientStorageIsolatedTest is TransientStorageTestBase {
     function testIsolatedCallStartsWithEmptyTransientStorage() public {
         assertTrue(vm.isIsolateMode());
         vm.storeTransient(address(target), slot, bytes32(uint256(1)));
+        assertTrue(target.locked());
 
         target.guarded();
         assertEq(target.count(), 1);
@@ -163,6 +178,15 @@ contract TransientStorageIsolatedTest is TransientStorageTestBase {
     function testIsolatedCallTransientWritesEndWithCall() public {
         target.tstoreSlot(slot, bytes32(uint256(42)));
         assertEq(vm.loadTransient(address(target), slot), bytes32(0));
+    }
+
+    function testDelegateCallUsesCallerTransientStorage() public {
+        vm.storeTransient(address(this), slot, bytes32(uint256(1)));
+        assertTrue(!target.locked());
+
+        (bool success, bytes memory result) = address(target).delegatecall(abi.encodeCall(target.locked, ()));
+        assertTrue(success);
+        assertTrue(abi.decode(result, (bool)));
     }
 }
 
