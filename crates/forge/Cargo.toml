@@ -108,9 +108,6 @@ soldeer-core.workspace = true
 quick-junit = "0.7.0"
 tempfile.workspace = true
 
-# base
-base-common-consensus = { workspace = true, optional = true, features = ["serde", "std"] }
-
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
 
@@ -131,6 +128,7 @@ svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+base-common-consensus = { workspace = true, features = ["serde", "std"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 rexpect.workspace = true
@@ -156,7 +154,6 @@ monad = [
     "forge-verify/monad",
 ]
 base = [
-    "dep:base-common-consensus",
     "anvil/base",
     "foundry-evm/base",
     "foundry-evm-networks/base",
