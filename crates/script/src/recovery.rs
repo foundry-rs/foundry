@@ -1,4 +1,4 @@
-use crate::sequence::{SequenceData, completed_transaction_prefix};
+use crate::sequence::{SequenceData, completed_transaction_prefix, operation_ordinal};
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_network::{Network, TransactionBuilder, TransactionResponse};
@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::NamedTempFile;
+use tempo_primitives::transaction::{TEMPO_EXPIRING_NONCE_KEY, TempoTxEnvelope};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -270,6 +271,7 @@ where
         sequence: usize,
         index: usize,
         payload: Bytes,
+        sender_scoped_replay: bool,
     ) -> Result<B256>
     where
         N::TxEnvelope: SignerRecoverable,
@@ -285,14 +287,49 @@ where
             .get(index)
             .context("signed payload operation is not in the recovery snapshot")?;
         let transaction = &self.plan.data.sequences()[sequence].transactions[index];
-        let signed = validate_signed_payload::<N>(payload, transaction, deployment.chain)?;
+        let signed = validate_signed_payload::<N>(
+            payload,
+            transaction,
+            deployment.chain,
+            index,
+            operation_ordinal(self.plan.data.sequences(), sequence, index),
+        )?;
+        let id = operation.id;
+        // From T1B, expiring replay identities exclude sponsor signatures, so different envelopes
+        // can still be replays. Compare identities across all sequences of the same chain before
+        // recording an attempt the node would reject. Keep envelope hashes for receipt tracking.
+        let replay_hash = expiring_replay_hash(&signed.payload, sender_scoped_replay)?;
+        for attempt in self
+            .plan
+            .deployments
+            .iter()
+            .enumerate()
+            .filter(|(i, other)| {
+                *i == sequence || (replay_hash.is_some() && other.chain == deployment.chain)
+            })
+            .flat_map(|(_, other)| &other.attempts)
+        {
+            if !attempt.members.contains(&id)
+                && let AttemptKind::Signed { payload, .. } = &attempt.kind
+                && match replay_hash {
+                    Some(hash) => {
+                        expiring_replay_hash(&payload.payload, sender_scoped_replay)? == Some(hash)
+                    }
+                    None => payload.hash == signed.hash,
+                }
+            {
+                bail!(
+                    "transaction {index} is identical to an earlier transaction of this script ({}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)",
+                    signed.hash
+                );
+            }
+        }
         if let Some(existing) = self.signed_payload(sequence, index) {
             if existing != &signed {
                 bail!("refusing to replace an existing signed payload");
             }
             return Ok(existing.hash);
         }
-        let id = operation.id;
         if deployment.attempts.iter().any(|attempt| attempt.members.contains(&id)) {
             bail!("refusing to replace an existing submission attempt");
         }
@@ -806,6 +843,12 @@ where
                                 payload.payload.clone(),
                                 &data.transactions[operation.id.index as usize],
                                 deployment.chain,
+                                operation.id.index as usize,
+                                operation_ordinal(
+                                    self.data.sequences(),
+                                    sequence,
+                                    operation.id.index as usize,
+                                ),
                             )?
                         } else {
                             SignedPayload {
@@ -901,6 +944,8 @@ fn validate_signed_payload<N: Network>(
     payload: Bytes,
     planned: &TransactionWithMetadata<N>,
     chain: u64,
+    index: usize,
+    ordinal: usize,
 ) -> Result<SignedPayload>
 where
     N::TxEnvelope: SignerRecoverable,
@@ -918,9 +963,18 @@ where
         }
         TransactionMaybeSigned::Unsigned(_) => envelope.chain_id() == Some(chain),
     };
+    // The planned nonce is the sender's sequential nonce. A Tempo expiring nonce transaction
+    // never reads nonce state and is signed with 0 or, from T12, with its complete-plan ordinal as
+    // the TIP-1106 discriminator. Accept sequence-local indices from older recovery snapshots
+    // too.
+    let nonce = envelope.nonce();
+    let nonce_matches = transaction.nonce() == Some(nonce)
+        || ((nonce == 0 || nonce == ordinal as u64 || nonce == index as u64)
+            && <N::TransactionRequest as From<N::TxEnvelope>>::from(envelope.clone()).nonce_key()
+                == Some(TEMPO_EXPIRING_NONCE_KEY));
     if transaction.from() != Some(signer)
         || !chain_matches
-        || transaction.nonce() != Some(envelope.nonce())
+        || !nonce_matches
         || transaction.to() != envelope.to()
         || transaction.value().unwrap_or_default() != envelope.value()
         || transaction.input().cloned().unwrap_or_default() != *envelope.input()
@@ -1054,9 +1108,24 @@ where
     Ok(())
 }
 
+/// Tempo replay protection excludes sponsor signatures from T1B onward.
+fn expiring_replay_hash(payload: &[u8], sender_scoped_replay: bool) -> Result<Option<B256>> {
+    if let Ok(TempoTxEnvelope::AA(tx)) = TempoTxEnvelope::decode_2718_exact(payload)
+        && tx.tx().is_expiring_nonce_tx()
+    {
+        return Ok(Some(if sender_scoped_replay {
+            tx.expiring_nonce_hash(tx.recover_signer()?)
+        } else {
+            *tx.hash()
+        }));
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::multi_sequence::MultiChainSequence;
     use alloy_consensus::{
         Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, TxEip1559,
         TxEnvelope, transaction::Recovered,
@@ -1065,8 +1134,12 @@ mod tests {
     use alloy_primitives::{Bloom, Signature, U256, hex};
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionReceipt, TransactionRequest};
     use alloy_signer::SignerSync;
+    use forge_script_sequence::ScriptSequence;
     use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
-    use tempo_primitives::{TempoSignature, TempoTxEnvelope, transaction::Call};
+    use tempo_primitives::{
+        AASigned, TempoSignature,
+        transaction::{Call, PrimitiveSignature},
+    };
 
     const SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a"
@@ -1074,6 +1147,9 @@ mod tests {
     const OTHER_SIGNED_TX: &[u8] = &hex!(
         "02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c001a0cce9a61187b5d18a89ecd27ec675e3b3f10d37f165627ef89a15a7fe76395ce8a07537f5bffb358ffbef22cda84b1c92f7211723f9e09ae037e81686805d3e5505"
     );
+
+    const ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     fn sequence(dir: &Path) -> SequenceData<Ethereum> {
         let mut transaction = TransactionWithMetadata::from_tx_request(
@@ -1133,6 +1209,56 @@ mod tests {
             effective_gas_price: None,
             block_timestamp: None,
         }
+    }
+
+    #[test]
+    fn expiring_signed_payload_accepts_complete_plan_ordinal_and_legacy_index() {
+        let signer = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        let request = expiring_request(signer.address(), 4217, 8);
+        let planned =
+            TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(request.clone()));
+        for nonce in [0, 1, 3, 4] {
+            let mut request = request.clone();
+            request.inner.nonce = Some(nonce);
+            let payload = sign_tempo_payload(request, &signer);
+            assert_eq!(
+                validate_signed_payload::<TempoNetwork>(payload, &planned, 4217, 1, 3).is_ok(),
+                nonce != 4
+            );
+        }
+    }
+
+    #[test]
+    fn identical_expiring_payload_is_rejected_across_same_chain_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let signer = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        // A -> B -> A: the planned nonce on A advances, the signed expiring nonce stays 0.
+        let deployments = [(4217, 0), (4218, 0), (4217, 1)]
+            .map(|(chain, nonce)| ScriptSequence::<TempoNetwork> {
+                chain,
+                transactions: [TransactionWithMetadata::from_tx_request(
+                    TransactionMaybeSigned::new(expiring_request(signer.address(), chain, nonce)),
+                )]
+                .into(),
+                ..Default::default()
+            })
+            .into();
+        let data = SequenceData::Multi(MultiChainSequence {
+            deployments,
+            path: dir.path().join("broadcast.json"),
+            sensitive_path: dir.path().join("cache.json"),
+            timestamp: 0,
+        });
+        let payload = sign_tempo_payload(expiring_request(signer.address(), 4217, 0), &signer);
+
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        let hash = store.persist_signed_payload(0, 0, payload.clone(), true).unwrap();
+        assert_eq!(
+            store.persist_signed_payload(2, 0, payload, true).unwrap_err().to_string(),
+            format!(
+                "transaction 0 is identical to an earlier transaction of this script ({hash}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)"
+            )
+        );
     }
 
     fn sign_tempo_sponsor(
@@ -1276,8 +1402,8 @@ mod tests {
         let paths = data.paths();
         let expected_hash = {
             let mut store = RecoveryStore::create(data, false).unwrap();
-            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into()).unwrap();
-            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into()).is_err());
+            let hash = store.persist_signed_payload(0, 0, SIGNED_TX.into(), true).unwrap();
+            assert!(store.persist_signed_payload(0, 0, OTHER_SIGNED_TX.into(), true).is_err());
             hash
         };
 
@@ -1292,8 +1418,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = RecoveryStore::create(signed_sequence(dir.path()), false).unwrap();
 
-        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into()).is_err());
-        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into()).is_err());
+        assert!(store.persist_signed_payload(1, 0, SIGNED_TX.into(), true).is_err());
+        assert!(store.persist_signed_payload(0, 1, SIGNED_TX.into(), true).is_err());
     }
 
     #[test]
@@ -1610,7 +1736,7 @@ mod tests {
         {
             let mut store = RecoveryStore::create(data, true).unwrap();
             store.persist_batch_signed_payload(0, 0, request.clone(), SIGNED_TX.into()).unwrap();
-            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into()).is_err());
+            assert!(store.persist_signed_payload(0, 1, OTHER_SIGNED_TX.into(), true).is_err());
         }
 
         let store = load(&paths, true).unwrap();
@@ -1740,5 +1866,109 @@ mod tests {
 
         assert!(RecoveryStore::import(data, true, RecoveryLock::acquire(&paths).unwrap()).is_err());
         assert!(!snapshot.exists());
+    }
+
+    #[test]
+    fn expiring_replay_guard_ignores_sponsor_changes_and_keeps_discriminators() {
+        let dir = tempfile::tempdir().unwrap();
+        let sender = foundry_wallets::utils::create_local_signer(ROOT_PRIVATE_KEY).unwrap();
+        let sponsor = foundry_wallets::utils::create_local_signer(
+            "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
+        )
+        .unwrap();
+        let request = |nonce| expiring_request(sender.address(), 4217, nonce);
+        let data = SequenceData::Multi(MultiChainSequence {
+            deployments: [0, 1]
+                .map(|nonce| ScriptSequence::<TempoNetwork> {
+                    chain: 4217,
+                    transactions: [TransactionWithMetadata::from_tx_request(
+                        TransactionMaybeSigned::new(request(nonce)),
+                    )]
+                    .into(),
+                    ..Default::default()
+                })
+                .into(),
+            path: dir.path().join("broadcast.json"),
+            sensitive_path: dir.path().join("cache.json"),
+            timestamp: 0,
+        });
+        let payload = |nonce, sponsor: &_| {
+            let mut request = request(nonce);
+            sign_tempo_sponsor(&mut request, sender.address(), sponsor);
+            sign_tempo_payload(request, &sender)
+        };
+        let first = payload(0, &sender);
+        let duplicate = payload(0, &sponsor);
+        assert_ne!(
+            signed_payload_hash::<TempoNetwork>(&first).unwrap(),
+            signed_payload_hash::<TempoNetwork>(&duplicate).unwrap()
+        );
+        assert_eq!(
+            expiring_replay_hash(&first, true).unwrap(),
+            expiring_replay_hash(&duplicate, true).unwrap()
+        );
+        let mut store = RecoveryStore::create(data, false).unwrap();
+        let first_hash = store.persist_signed_payload(0, 0, first, true).unwrap();
+        assert_eq!(store.signed_payload(0, 0).unwrap().hash, first_hash);
+        let snapshot = std::fs::read(&store.path).unwrap();
+        let duplicate_hash = signed_payload_hash::<TempoNetwork>(&duplicate).unwrap();
+        assert_eq!(
+            store.persist_signed_payload(1, 0, duplicate.clone(), true).unwrap_err().to_string(),
+            format!(
+                "transaction 0 is identical to an earlier transaction of this script ({duplicate_hash}) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)"
+            )
+        );
+        assert!(store.signed_payload(1, 0).is_none());
+        assert_eq!(std::fs::read(&store.path).unwrap(), snapshot);
+        // Older snapshots may already contain a conflicting durable attempt.
+        let id = store.plan.deployments[1].operations[0].id;
+        store.plan.deployments[1].attempts.push(SubmissionAttempt {
+            id: B256::random(),
+            members: vec![id],
+            kind: AttemptKind::Signed {
+                request: None,
+                payload: SignedPayload { payload: duplicate.clone(), hash: duplicate_hash },
+            },
+        });
+        assert!(store.persist_signed_payload(1, 0, duplicate.clone(), true).is_err());
+        store.plan.deployments[1].attempts.clear();
+        // T1/T1A use envelope hashes, so the differently sponsored payload is executable.
+        assert_eq!(store.persist_signed_payload(1, 0, duplicate, false).unwrap(), duplicate_hash);
+        store.plan.deployments[1].attempts.clear();
+        // T12 discriminators distinguish the second operation despite the sponsor change.
+        let distinct = payload(1, &sponsor);
+        let distinct_hash = signed_payload_hash::<TempoNetwork>(&distinct).unwrap();
+        assert_eq!(store.persist_signed_payload(1, 0, distinct, true).unwrap(), distinct_hash);
+        assert_eq!(store.signed_payload(1, 0).unwrap().hash, distinct_hash);
+    }
+
+    fn expiring_request(from: Address, chain_id: u64, nonce: u64) -> TempoTransactionRequest {
+        TempoTransactionRequest {
+            inner: TransactionRequest {
+                from: Some(from),
+                to: Some(TxKind::Call(Address::with_last_byte(2))),
+                chain_id: Some(chain_id),
+                nonce: Some(nonce),
+                gas: Some(100_000),
+                max_fee_per_gas: Some(10),
+                max_priority_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY),
+            valid_before: std::num::NonZeroU64::new(100),
+            ..Default::default()
+        }
+    }
+
+    fn sign_tempo_payload(request: TempoTransactionRequest, signer: &impl SignerSync) -> Bytes {
+        let tx = request.build_aa().unwrap();
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        Bytes::from(
+            TempoTxEnvelope::AA(AASigned::new_unhashed(
+                tx,
+                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+            ))
+            .encoded_2718(),
+        )
     }
 }

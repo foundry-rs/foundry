@@ -13,7 +13,7 @@ use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes, http::StatusCode, response::IntoResponse};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::{PathStyle, artifacts::EvmVersion};
-use foundry_evm::constants::CALLER;
+use foundry_evm::{constants::CALLER, hardfork::TempoHardfork};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{
@@ -6454,6 +6454,209 @@ contract DeploySponsoredTempoAA is Script {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.to_ascii_lowercase().contains(&format!("tempo sponsor: {sponsor}")), "{stderr}");
+}
+
+const TEMPO_IDENTICAL_TRANSFERS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+interface ITIP20Transfer {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
+contract IdenticalTransfers is Script {
+    function run() external {
+        ITIP20Transfer token = ITIP20Transfer(0x20C0000000000000000000000000000000000000);
+        // The recipient is a funded dev account, so both transfers also cost the same gas.
+        address recipient = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
+        vm.startBroadcast();
+        token.transfer(recipient, 1);
+        token.transfer(recipient, 1);
+        vm.stopBroadcast();
+    }
+}
+"#;
+
+// TIP-1106: from T12 each expiring nonce transaction carries its complete-plan ordinal,
+// which keeps identical transactions distinct.
+#[forgetest_init]
+async fn tempo_script_assigns_expiring_nonce_discriminators(prj: _, cmd: _) {
+    let script = prj.add_script("IdenticalTransfers.s.sol", TEMPO_IDENTICAL_TRANSFERS_SCRIPT);
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let provider = handle.http_provider();
+
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--tempo.expires",
+        "30",
+    ]);
+    cmd.assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("no broadcast artifact found");
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let mut transactions = Vec::new();
+    for transaction in json["transactions"].as_array().unwrap() {
+        let hash = transaction["hash"].as_str().unwrap().to_string();
+        transactions.push(
+            provider
+                .raw_request::<_, Value>("eth_getTransactionByHash".into(), (hash,))
+                .await
+                .unwrap(),
+        );
+    }
+    let nonces = transactions.iter().map(|tx| tx["nonce"].clone()).collect::<Vec<_>>();
+    assert_eq!(nonces, ["0x0", "0x1"]);
+
+    // Only the discriminator, and what is derived from it, tells the two transactions apart.
+    for transaction in &mut transactions {
+        assert_eq!(transaction["nonceKey"], format!("{:#x}", U256::MAX));
+        let fields = transaction.as_object_mut().unwrap();
+        for derived in [
+            "nonce",
+            "hash",
+            "signature",
+            "blockHash",
+            "blockNumber",
+            "blockTimestamp",
+            "transactionIndex",
+        ] {
+            fields.remove(derived);
+        }
+    }
+    assert_eq!(transactions[0], transactions[1]);
+}
+
+// Before T12 the nonce must be 0, so identical expiring nonce transactions are one transaction.
+#[forgetest_init]
+async fn tempo_script_rejects_identical_expiring_nonce_transactions_before_t12(prj: _, cmd: _) {
+    let script = prj.add_script("IdenticalTransfers.s.sol", TEMPO_IDENTICAL_TRANSFERS_SCRIPT);
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T11.into()))).await;
+
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+        "--tempo.expires",
+        "30",
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Paying gas in AlphaUSD (0x20C0000000000000000000000000000000000001)
+Error: transaction 1 is identical to an earlier transaction of this script ([..]) and would be rejected as a replay; identical Tempo expiring nonce transactions are only distinct from the T12 hardfork (TIP-1106)
+
+"#]]);
+}
+
+#[forgetest_init]
+async fn tempo_expiring_create_resume_rejects_changed_account_nonce(prj: _, cmd: _) {
+    let script = prj.add_script(
+        "ExpiringCreate.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract ExpiringCreateTarget {}
+
+contract ExpiringCreate is Script {
+    function run() external {
+        vm.startBroadcast();
+        new ExpiringCreateTarget();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    cmd.arg("script").arg(&script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ]);
+    cmd.assert_success();
+
+    // An intervening transaction invalidates the deployment address saved by the dry-run.
+    provider
+        .send_transaction(TransactionRequest::default().with_from(sender).with_to(sender).into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    assert_eq!(nonce, 1);
+    cmd.args(["--resume", "--tempo.expires", "30"]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: CREATE address changed unexpectedly while sending transactions. Expected 0x5FbDB2315678afecb367f032d93F642f64180aa3 got 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 from provider nonce.
+
+"#]]);
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
+    assert!(provider.get_code_at(sender.create(0)).await.unwrap().is_empty());
+    assert!(provider.get_code_at(sender.create(1)).await.unwrap().is_empty());
+}
+
+#[forgetest_init]
+async fn tempo_presigned_expiring_create_uses_account_nonce(prj: _, cmd: _) {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T12.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let block = provider.get_block_by_number("latest".parse().unwrap()).await.unwrap().unwrap();
+    let payload = provider
+        .raw_request::<_, Bytes>(
+            "eth_signTransaction".into(),
+            (serde_json::json!({
+                "from": sender,
+                "type": "0x76",
+                "nonceKey": U256::MAX,
+                "nonce": "0x7",
+                "gas": "0x1e8480",
+                "maxFeePerGas": "0x6fc23ac00",
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "validBefore": block.header.timestamp + 25,
+                "calls": [{"to": null, "value": "0x0", "input": "0x6001600c60003960016000f300"}],
+            }),),
+        )
+        .await
+        .unwrap();
+    let script = prj.add_script(
+        "PresignedExpiringCreate.s.sol",
+        &format!(
+            r#"
+import "forge-std/Script.sol";
+
+contract PresignedExpiringCreate is Script {{
+    function run() external {{
+        vm.startBroadcast();
+        vm.broadcastRawTransaction(hex"{}");
+        vm.stopBroadcast();
+    }}
+}}
+"#,
+            hex::encode(payload),
+        ),
+    );
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--broadcast",
+    ]);
+    cmd.assert_success();
+    assert_eq!(provider.get_code_at(sender.create(0)).await.unwrap(), bytes!("00"));
+    assert!(provider.get_code_at(sender.create(7)).await.unwrap().is_empty());
 }
 
 #[forgetest_init]

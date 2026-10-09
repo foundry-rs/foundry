@@ -129,6 +129,11 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+        // The backend seeds nested transactions at outer depth + 1. Tempo AA's batch checkpoint
+        // supplies that increment before inspector callbacks, so avoid counting it twice.
+        if tx.tempo_tx_env.is_some() && self.ctx.journaled_state.inner.depth > 0 {
+            self.ctx.journaled_state.inner.depth -= 1;
+        }
         self.set_tx(tx);
 
         let mut handler = TempoEvmHandler::new();
