@@ -6,7 +6,6 @@ use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    refresh_chain_journal,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap};
@@ -144,6 +143,12 @@ pub trait FoundryEvmFactory:
     ) -> NestedEvmFor<'db, Self>
     where
         I: FoundryInspectorExt<Self::FoundryContext<'db>> + 'db;
+
+    /// Updates the execution spec and gas parameters using this family's configuration.
+    /// This does not reconstruct the instruction table or precompile registry.
+    fn set_execution_spec(context: &mut Self::FoundryContext<'_>, spec: Self::Spec) {
+        context.set_spec_and_gas_params(spec);
+    }
 }
 
 /// Object-safe EVM operations used by nested execution and fork replay.
@@ -191,7 +196,7 @@ pub trait NestedEvm {
         tx: Self::Tx,
         is_system: bool,
     ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
-        if is_system {
+        if is_system && !tx.is_deposit() {
             return Ok(None);
         }
         self.transact_raw(tx).map(Some)
@@ -293,8 +298,10 @@ where
     ecx.set_evm(evm_env);
     *ecx.chain_mut() = chain_context;
     #[cfg(feature = "monad")]
-    FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
-    refresh_chain_journal(ecx);
+    {
+        FoundryJournal::restore_reserve_balance(ecx.journal_mut(), reserve_balance);
+        refresh_chain_journal(ecx);
+    }
     Ok(())
 }
 
@@ -311,7 +318,7 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
         }
         for slot in account.storage.values_mut() {
             slot.is_cold = true;
-            slot.original_value = slot.present_value;
+            slot.original_value = slot.present_value();
         }
     }
     state
@@ -320,10 +327,19 @@ pub fn prepare_child_state(journal: &JournaledState) -> EvmState {
 /// Merges a child's returned account state into its suspended parent.
 ///
 /// Preserve parent warmth and original storage values, import child account flags and current
-/// values, and retain untouched parent accounts and slots. Newly loaded accounts and slots keep
-/// their child metadata. This operates on the EVM's returned state, not on an unfiltered write set;
-/// the caller retains responsibility for execution errors and family-specific reconciliation.
-pub fn merge_child_state(parent: &mut EvmState, child: EvmState) {
+/// values, and optionally remove parent accounts and slots absent from the child. Newly loaded
+/// accounts and slots keep their child metadata. This operates on the EVM's returned state, not on
+/// an unfiltered write set; the caller retains responsibility for execution errors and
+/// family-specific reconciliation.
+pub fn merge_child_state(parent: &mut EvmState, child: EvmState, remove_absent: bool) {
+    if remove_absent {
+        parent.retain(|address, parent_account| {
+            let Some(child_account) = child.get(address) else { return false };
+            parent_account.storage.retain(|key, _| child_account.storage.contains_key(key));
+            true
+        });
+    }
+
     for (address, mut account) in child {
         let Some(parent_account) = parent.get_mut(&address) else {
             parent.insert(address, account);
@@ -341,7 +357,7 @@ pub fn merge_child_state(parent: &mut EvmState, child: EvmState) {
                 parent_account.storage.insert(key, slot);
                 continue;
             };
-            parent_slot.present_value = slot.present_value;
+            parent_slot.present_value = slot.present_value();
             parent_slot.is_cold &= slot.is_cold;
         }
     }
@@ -382,7 +398,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
     Ok(CallInputs {
         caller: inputs.caller(),
         bytecode_address: deployer,
-        known_bytecode: (account.info.code_hash, account.info.code.clone().unwrap_or_default()),
+        known_bytecode: (account.info.code_hash(), account.info.code.clone().unwrap_or_default()),
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value()),
@@ -556,7 +572,7 @@ mod tests {
                 slot.is_cold = child_cold;
                 account.storage.insert(key, slot);
 
-                merge_child_state(&mut parent, EvmState::from_iter([(address, account)]));
+                merge_child_state(&mut parent, EvmState::from_iter([(address, account)]), false);
 
                 let account = &parent[&address];
                 assert!(account.is_created_locally());
@@ -569,5 +585,42 @@ mod tests {
                 assert_eq!(account.storage[&key].is_cold, parent_cold && child_cold);
             }
         }
+    }
+
+    #[test]
+    fn settlement_only_removes_state_absent_from_child_when_requested() {
+        let retained_address = Address::with_last_byte(0x42);
+        let removed_address = Address::with_last_byte(0x43);
+        let retained_key = U256::ONE;
+        let removed_key = U256::from(2);
+        let mut retained_account = Account::from(AccountInfo::default());
+        retained_account
+            .storage
+            .insert(retained_key, EvmStorageSlot::new(U256::ONE, TransactionId::ZERO));
+        retained_account
+            .storage
+            .insert(removed_key, EvmStorageSlot::new(U256::from(2), TransactionId::ZERO));
+        let mut parent = EvmState::from_iter([
+            (retained_address, retained_account),
+            (removed_address, Account::from(AccountInfo::default())),
+        ]);
+        let mut child_account = Account::from(AccountInfo::default());
+        child_account
+            .storage
+            .insert(retained_key, EvmStorageSlot::new(U256::ONE, TransactionId::ZERO));
+
+        let child = EvmState::from_iter([(retained_address, child_account)]);
+
+        let mut retained = parent.clone();
+        merge_child_state(&mut retained, child.clone(), false);
+
+        assert!(retained.contains_key(&removed_address));
+        assert!(retained[&retained_address].storage.contains_key(&removed_key));
+
+        merge_child_state(&mut parent, child, true);
+
+        assert!(!parent.contains_key(&removed_address));
+        assert!(parent[&retained_address].storage.contains_key(&retained_key));
+        assert!(!parent[&retained_address].storage.contains_key(&removed_key));
     }
 }

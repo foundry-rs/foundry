@@ -18,7 +18,7 @@ concurrency:
 jobs:
   validate-ref:
     name: Validate trusted ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require master
         env:
@@ -31,7 +31,7 @@ jobs:
 
   finalize:
     needs: validate-ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     permissions:
       actions: read

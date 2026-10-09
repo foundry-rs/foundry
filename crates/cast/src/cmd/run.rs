@@ -1,7 +1,11 @@
-use super::fetch_code_via_rpc;
+use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc};
 use crate::{
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
-    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
+    evm_version::probe_evm_version,
+    rpc_trace::{
+        call_frame_to_arena, call_tracer_config, is_method_not_found_error, is_missing_state_error,
+        is_missing_state_message,
+    },
     traces::TraceKind,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -11,17 +15,17 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 use alloy_eips::{BlockNumHash, eip7928::compute_block_access_list_hash};
 use alloy_network::{
-    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
-    ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope,
+    BlockResponse, Network, ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
 };
 use alloy_primitives::{
     Address, B256, Bytes, U256,
-    map::{AddressHashMap, AddressSet},
+    map::{AddressHashMap, AddressSet, B256HashMap},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockTransactions,
-    trace::geth::{CallConfig, CallFrame, GethDebugTracingOptions, GethTrace, PreStateConfig},
+    trace::geth::{CallFrame, GethDebugTracingOptions, GethTrace, PreStateConfig},
 };
 use alloy_transport::TransportError;
 use clap::Parser;
@@ -45,7 +49,7 @@ use foundry_config::{
 };
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryTransaction as _,
         env::FromAnyRpcTransaction as _,
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
@@ -54,8 +58,8 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
-use foundry_evm_networks::NetworkConfigs;
-use futures::TryFutureExt;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use futures::{StreamExt, TryFutureExt};
 use revm::{
     DatabaseRef,
     context::Block,
@@ -72,6 +76,9 @@ use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+
+/// Points at the remote trace when a transaction cannot be replayed locally.
+const REMOTE_TRACE_HINT: &str = "`--debug-trace-transaction` renders the node's own trace instead";
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -180,6 +187,12 @@ struct MonadPrepared {
     compute_units_per_second: Option<u64>,
 }
 
+/// Chain-specific gas limits for transactions replayed by `cast run`.
+enum ReplayGasLimits {
+    Unchanged,
+    Nitro(B256HashMap<u64>),
+}
+
 /// State assembled by [`RunArgs::prepare`] and consumed by the network-specific `execute_*`
 /// methods below.
 struct PreparedRun<FEN: FoundryEvmNetwork> {
@@ -194,6 +207,9 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     prestate_applied: bool,
     /// The block access list of the target's block, when the node serves one.
     block_access_list: Option<Arc<Bal>>,
+    replay_gas_limits: ReplayGasLimits,
+    /// The target's receipt, which the replay is checked against.
+    receipt: Option<AnyTransactionReceipt>,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
 }
@@ -242,42 +258,50 @@ impl RunArgs {
             return self.remote_trace(config, evm_opts).await;
         }
 
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new())
-                .await;
-        }
-
-        #[cfg(feature = "base")]
-        if evm_opts.networks.is_base() {
-            return self
-                .run_with_evm(config, evm_opts, ExecutorBuilder::<BaseEvmNetwork>::new())
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            let target = self.fetch_target(&config).await?;
-            let mut run = self
-                .prepare::<MonadEvmNetwork>(
-                    config,
-                    evm_opts,
-                    target,
-                    ExecutorBuilder::<MonadEvmNetwork>::new(),
+        self.replay(config, evm_opts).await.map_err(|err| {
+            if err.chain().any(|cause| is_missing_state_message(&cause.to_string())) {
+                err.wrap_err(
+                    "the RPC endpoint does not have the historical state for the transaction's \
+                     block; use an archive endpoint",
                 )
-                .await?;
-            let result = run.execute_monad().await?;
-            return run.finish(result).await;
-        }
+            } else {
+                err
+            }
+        })
+    }
 
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_evm(config, evm_opts, ExecutorBuilder::<OpEvmNetwork>::new())
-                .await;
+    /// Replays the transaction locally with the EVM of its network.
+    async fn replay(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
+        match evm_opts.networks.execution_network() {
+            NetworkVariant::Tempo => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new()).await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<BaseEvmNetwork>::new()).await
+            }
+            #[cfg(feature = "monad")]
+            NetworkVariant::Monad => {
+                let target = self.fetch_target(&config).await?;
+                let mut run = self
+                    .prepare::<MonadEvmNetwork>(
+                        config,
+                        evm_opts,
+                        target,
+                        ExecutorBuilder::<MonadEvmNetwork>::new(),
+                    )
+                    .await?;
+                let result = run.execute_monad().await?;
+                run.finish(result).await
+            }
+            #[cfg(feature = "optimism")]
+            NetworkVariant::Optimism => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<OpEvmNetwork>::new()).await
+            }
+            NetworkVariant::Ethereum => {
+                self.run_with_evm(config, evm_opts, ExecutorBuilder::<EthEvmNetwork>::new()).await
+            }
         }
-
-        self.run_with_evm(config, evm_opts, ExecutorBuilder::<EthEvmNetwork>::new()).await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(
@@ -287,6 +311,19 @@ impl RunArgs {
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
         let target = self.fetch_target(&config).await?;
+        let endpoint_is_anvil = evm_opts
+            .fork_endpoint
+            .as_ref()
+            .is_some_and(|identity| identity.reported_hardfork.is_some());
+        if let Some(chain) = target.tx.chain_id().map(alloy_chains::Chain::from_id)
+            && chain.is_elastic()
+            && !endpoint_is_anvil
+        {
+            eyre::bail!(
+                "{chain} executes EraVM bytecode, which cannot be replayed locally; \
+                 {REMOTE_TRACE_HINT}"
+            );
+        }
         if is_system_transaction(&target.tx) && !self.replay_system_txes {
             eyre::bail!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
@@ -317,6 +354,7 @@ impl RunArgs {
             .await
             .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {tx_hash:?}"))?;
+        ensure_requested_transaction(tx_hash, &tx)?;
         Ok(TargetFetch { tx, provider, compute_units_per_second })
     }
 
@@ -330,7 +368,7 @@ impl RunArgs {
         let tracing = self.configure_tracing(&mut config, &evm_opts);
         let with_local_artifacts = self.with_local_artifacts;
 
-        let endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let endpoint_identity = evm_opts.fork_endpoint_identity().await?;
         let tx_inclusion = tx
             .block_hash_num()
             .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
@@ -339,7 +377,7 @@ impl RunArgs {
             provider
                 .debug_trace_transaction(
                     tx_hash,
-                    GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
+                    GethDebugTracingOptions::call_tracer(call_tracer_config()),
                 )
                 .await,
             "debug_traceTransaction",
@@ -407,10 +445,13 @@ impl RunArgs {
             &endpoint_identity,
             Some(transaction_block.header().timestamp()),
         );
-        let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let final_endpoint_identity = evm_opts.fork_endpoint_identity().await?;
         ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
         let current_tx = provider.get_transaction_by_hash(tx_hash).await?;
+        if let Some(current_tx) = &current_tx {
+            ensure_requested_transaction(tx_hash, current_tx)?;
+        }
         ensure_remote_transaction_inclusion(
             tx_hash,
             tx_inclusion,
@@ -460,9 +501,12 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let (block, mut fork) = tokio::try_join!(
+        let (block, receipt, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
+            // The receipt only backs the check after the replay, so a failed lookup skips that
+            // check instead of failing the run.
+            async { Ok(provider.get_transaction_receipt(tx_hash).await.ok().flatten()) },
             TracingExecutor::<FEN>::get_fork(&mut config, evm_opts)
         )?;
         let chain = fork.context().chain();
@@ -491,15 +535,17 @@ impl RunArgs {
 
             // Unless explicitly configured, resolve the correct spec for the block using the same
             // approach as reth: walk known chain activation conditions to find the latest active
-            // fork. Falls back to a blob-gas heuristic for unknown chains.
+            // fork. For unknown chains, probe the node for the features it executes at the block,
+            // falling back to a blob-gas heuristic if the node rejects the probe.
             if evm_version.is_none()
                 && config.hardfork.is_none()
                 && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
                     .is_none()
-                && block.header().excess_blob_gas().is_some()
             {
-                // TODO: add glamsterdam header field checks in the future
-                evm_version = Some(EvmVersion::Cancun);
+                let probed = probe_evm_version(&provider, BlockId::number(tx_block_number)).await;
+                evm_version = probed.or_else(|| {
+                    block.header().excess_blob_gas().is_some().then_some(EvmVersion::Cancun)
+                });
             }
             apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
                 &mut fork.evm_env,
@@ -522,6 +568,10 @@ impl RunArgs {
             create2_deployer,
             None,
         )?;
+        // The fork is pinned to the parent block, but the replayed transactions execute in the
+        // target's block, which block queries such as Arbitrum's `ArbSys.arbBlockNumber()` must
+        // report.
+        executor.backend_mut().set_fork_block_number_override(tx_block_number);
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
@@ -569,9 +619,13 @@ impl RunArgs {
         // A block access list (BAL) records every state write of the block by transaction index,
         // so the target's prestate can be read from it instead of replaying the earlier
         // transactions. Before Cancun, SELFDESTRUCT wipes storage the list does not enumerate.
+        // Explicit execution rules must replay the prefix: canonical writes may differ under
+        // the requested EVM version or hardfork.
         let block_access_list = if !self.quick
             && !self.no_bal
             && !prestate_applied
+            && self.evm_version.is_none()
+            && config.hardfork.is_none()
             && spec_id.is_enabled_in(SpecId::CANCUN)
             && let Some(block) = &block
         {
@@ -579,6 +633,23 @@ impl RunArgs {
         } else {
             None
         };
+
+        let mut replay_tx_hashes = vec![tx_hash];
+        if !self.quick
+            && !prestate_applied
+            && block_access_list.is_none()
+            && let Some(block) = &block
+        {
+            replay_tx_hashes.extend(
+                full_transactions(block)?
+                    .iter()
+                    .take_while(|tx| tx.tx_hash() != tx_hash)
+                    .filter(|tx| !is_system_transaction(tx) || self.replay_system_txes)
+                    .map(TransactionResponse::tx_hash),
+            );
+        }
+        let replay_gas_limits =
+            ReplayGasLimits::fetch(chain.id(), &provider, replay_tx_hashes).await?;
 
         Ok(PreparedRun {
             args: self,
@@ -591,6 +662,8 @@ impl RunArgs {
             trace_context,
             prestate_applied,
             block_access_list,
+            replay_gas_limits,
+            receipt,
             #[cfg(feature = "monad")]
             monad: MonadPrepared { tx_block_number, compute_units_per_second },
         })
@@ -624,6 +697,12 @@ async fn fetch_block_access_list(
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
+    fn transaction_env(&self, tx: &AnyRpcTransaction) -> Result<TxEnvFor<FEN>> {
+        let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+        self.replay_gas_limits.apply::<FEN>(tx, &mut tx_env)?;
+        Ok(tx_env)
+    }
+
     /// Prepares the executor for the target transaction: enables tracing and, when the sender
     /// was forged, disables the balance check.
     fn prepare_target(&mut self) {
@@ -700,7 +779,12 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
     fn execute_ordinary(&mut self) -> Result<TraceResult> {
         // Decode the target transaction before replaying the block: an envelope this build
         // can't decode should fail fast.
-        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
+        let target_tx_env = self.transaction_env(&self.tx).wrap_err_with(|| {
+            format!(
+                "cannot replay transaction {:?} locally; {REMOTE_TRACE_HINT}",
+                self.tx.tx_hash()
+            )
+        })?;
         let target_index = self.target_index()?;
         self.prepare_target();
 
@@ -717,14 +801,14 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             let replay_system_txes = self.args.replay_system_txes;
             self.for_each_prefix_transaction(target_index, |_, tx| {
                 if !is_system_transaction(tx) || replay_system_txes {
-                    let tx_env =
-                        TxEnvFor::<FEN>::from_any_rpc_transaction(tx).wrap_err_with(|| {
-                            format!(
-                                "Failed to prepare transaction: {:?} in block {}",
-                                tx.tx_hash(),
-                                block_number
-                            )
-                        })?;
+                    let tx_env = self.transaction_env(tx).wrap_err_with(|| {
+                        format!(
+                            "Failed to prepare transaction: {:?} in block {}; `--quick` skips the \
+                             transactions before the target, and {REMOTE_TRACE_HINT}",
+                            tx.tx_hash(),
+                            block_number
+                        )
+                    })?;
                     replay.push((tx.tx_hash(), tx_env));
                 }
                 Ok(())
@@ -742,6 +826,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
 
     async fn finish(self, result: TraceResult) -> Result<()> {
         let contracts_bytecode = fetch_contracts_bytecode_from_trace(&self.executor, &result)?;
+        let (success, gas_used) = (result.success, result.gas_used);
         handle_traces(
             result,
             &self.config,
@@ -751,7 +836,62 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             self.args.with_local_artifacts,
             self.args.debug,
         )
-        .await
+        .await?;
+        self.warn_on_receipt_mismatch(success, gas_used)
+    }
+
+    /// Warns when the replay does not reproduce the target's receipt.
+    ///
+    /// A replay diverges when the chain applies rules the local EVM does not model or the replay
+    /// starts from different state, and the trace alone gives no sign of it.
+    fn warn_on_receipt_mismatch(&self, success: bool, gas_used: u64) -> Result<()> {
+        let Some(receipt) = &self.receipt else { return Ok(()) };
+        let outcome = |success: bool| if success { "succeeded" } else { "reverted" };
+        let mut differences = Vec::new();
+        if receipt.status() != success {
+            differences.push(format!(
+                "it {} on-chain but {} in the replay",
+                outcome(receipt.status()),
+                outcome(success)
+            ));
+        }
+        if let Some(expected) = self.expected_replay_gas(receipt)
+            && expected != gas_used
+        {
+            differences
+                .push(format!("it used {expected} gas on-chain but {gas_used} in the replay"));
+        }
+        if differences.is_empty() {
+            return Ok(());
+        }
+        let hint = if self.args.quick {
+            "`--quick` skips the transactions before it in the block, which can change the result; \
+             run without it to replay them first"
+        } else {
+            "The chain may apply rules the replay does not model; `--debug-trace-transaction` \
+             shows the node's own trace if it exposes the `debug` namespace"
+        };
+        sh_warn!(
+            "the replay does not match the transaction's receipt: {}. {hint}.",
+            differences.join(", and ")
+        )
+    }
+
+    /// Returns the gas the replay should report for `receipt`, or `None` if the receipt does not
+    /// record the gas the transaction executed.
+    fn expected_replay_gas(&self, receipt: &AnyTransactionReceipt) -> Option<u64> {
+        // Monad charges the full gas limit and reports it as the gas used.
+        if self.trace_context.networks().is_monad() {
+            return None;
+        }
+        let gas_used = receipt.gas_used();
+        if foundry_evm_networks::arbitrum::is_arbitrum_chain(self.trace_context.chain().id()) {
+            // Nitro folds the L1 posting cost into the receipt's gas used.
+            let l1_gas_used =
+                parse_nitro_l1_gas_used(receipt.other_fields().get("gasUsedForL1")).ok()?;
+            return gas_used.checked_sub(l1_gas_used);
+        }
+        Some(gas_used)
     }
 }
 
@@ -819,6 +959,63 @@ fn full_transactions(block: &AnyRpcBlock) -> Result<&[AnyRpcTransaction]> {
     Ok(txs)
 }
 
+impl ReplayGasLimits {
+    async fn fetch(chain_id: u64, provider: &RetryProvider, tx_hashes: Vec<B256>) -> Result<Self> {
+        if !foundry_evm_networks::arbitrum::is_arbitrum_chain(chain_id) {
+            return Ok(Self::Unchanged);
+        }
+
+        let mut requests = futures::stream::iter(tx_hashes)
+            .map(|tx_hash| fetch_nitro_l1_gas_used(provider, tx_hash))
+            .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
+        let mut gas_used = B256HashMap::default();
+        while let Some(result) = requests.next().await {
+            let (tx_hash, l1_gas_used) = result?;
+            gas_used.insert(tx_hash, l1_gas_used);
+        }
+        Ok(Self::Nitro(gas_used))
+    }
+
+    fn apply<FEN: FoundryEvmNetwork>(
+        &self,
+        tx: &AnyRpcTransaction,
+        tx_env: &mut TxEnvFor<FEN>,
+    ) -> Result<()> {
+        let Self::Nitro(l1_gas_used) = self else { return Ok(()) };
+        let tx_hash = tx.tx_hash();
+        let l1_gas_used = l1_gas_used
+            .get(&tx_hash)
+            .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
+        tx_env.set_gas_limit(nitro_execution_gas_limit(tx_hash, tx.gas_limit(), *l1_gas_used)?);
+        Ok(())
+    }
+}
+
+async fn fetch_nitro_l1_gas_used(provider: &RetryProvider, tx_hash: B256) -> Result<(B256, u64)> {
+    let receipt = provider
+        .get_transaction_receipt(tx_hash)
+        .await?
+        .ok_or_else(|| eyre::eyre!("receipt not found for Nitro transaction {tx_hash:?}"))?;
+    let l1_gas_used = parse_nitro_l1_gas_used(receipt.other_fields().get("gasUsedForL1"))
+        .wrap_err_with(|| format!("invalid Nitro poster gas for transaction {tx_hash:?}"))?;
+    Ok((tx_hash, l1_gas_used))
+}
+
+fn parse_nitro_l1_gas_used(field: Option<&serde_json::Value>) -> Result<u64> {
+    let field = field.ok_or_else(|| eyre::eyre!("missing `gasUsedForL1` receipt field"))?;
+    let value = serde_json::from_value::<U256>(field.clone())
+        .wrap_err("malformed `gasUsedForL1` receipt field")?;
+    value.try_into().map_err(|_| eyre::eyre!("`gasUsedForL1` value {value} exceeds u64::MAX"))
+}
+
+fn nitro_execution_gas_limit(tx_hash: B256, gas_limit: u64, l1_gas_used: u64) -> Result<u64> {
+    gas_limit.checked_sub(l1_gas_used).ok_or_else(|| {
+        eyre::eyre!(
+            "Nitro poster gas {l1_gas_used} exceeds gas limit {gas_limit} for transaction {tx_hash:?}"
+        )
+    })
+}
+
 /// Returns the number and hash of a fetched block.
 pub(super) fn block_num_hash<B: BlockResponse>(block: &B) -> BlockNumHash
 where
@@ -880,6 +1077,16 @@ fn ensure_remote_transaction_inclusion(
         );
     }
 
+    Ok(())
+}
+
+/// Ensures the RPC answered `eth_getTransactionByHash` with the requested transaction.
+fn ensure_requested_transaction(requested: B256, tx: &AnyRpcTransaction) -> Result<()> {
+    let returned = tx.tx_hash();
+    eyre::ensure!(
+        returned == requested,
+        "RPC returned transaction {returned:?} for requested {requested:?}"
+    );
     Ok(())
 }
 
@@ -995,12 +1202,31 @@ impl figment::Provider for RunArgs {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alloy_primitives::address;
+
+    #[test]
+    fn http_wrapped_method_not_found_has_trace_guidance() {
+        let error = alloy_transport::TransportErrorKind::http_error(
+            403,
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method disabled"}}"#.into(),
+        );
+        let error = call_tracer_frame(
+            Err(error),
+            "debug_traceTransaction",
+            "replay locally",
+            "this transaction",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the RPC endpoint does not support `debug_traceTransaction` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or replay locally"
+        );
+    }
 
     #[test]
     fn parses_legacy_short_label_alias() {
-        let address = address!("0x0000000000000000000000000000000000000001");
+        let address = Address::with_last_byte(1);
         let label = format!("{address}:alice");
         let args = RunArgs::parse_from(["cast run", "0x00", "-l", &label]);
 
@@ -1052,5 +1278,39 @@ mod tests {
         let config = TracingConfig { decode_internal: true, ..Default::default() };
 
         assert!(!args.resolve_tracing(&config, 0).decode_internal);
+    }
+
+    #[test]
+    fn parses_nitro_l1_gas_used() {
+        let field = serde_json::json!("0x26ed52");
+
+        assert_eq!(parse_nitro_l1_gas_used(Some(&field)).unwrap(), 2_551_122);
+        assert_eq!(nitro_execution_gas_limit(B256::ZERO, 2_733_748, 2_551_122).unwrap(), 182_626);
+    }
+
+    #[test]
+    fn rejects_invalid_nitro_gas() {
+        assert_eq!(
+            parse_nitro_l1_gas_used(None).unwrap_err().to_string(),
+            "missing `gasUsedForL1` receipt field"
+        );
+
+        let field = serde_json::json!("invalid");
+        assert_eq!(
+            parse_nitro_l1_gas_used(Some(&field)).unwrap_err().to_string(),
+            "malformed `gasUsedForL1` receipt field"
+        );
+
+        let field = serde_json::json!("0x10000000000000000");
+        assert_eq!(
+            parse_nitro_l1_gas_used(Some(&field)).unwrap_err().to_string(),
+            "`gasUsedForL1` value 18446744073709551616 exceeds u64::MAX"
+        );
+
+        let tx_hash = B256::repeat_byte(0x42);
+        assert_eq!(
+            nitro_execution_gas_limit(tx_hash, 100, 101).unwrap_err().to_string(),
+            format!("Nitro poster gas 101 exceeds gas limit 100 for transaction {tx_hash:?}")
+        );
     }
 }

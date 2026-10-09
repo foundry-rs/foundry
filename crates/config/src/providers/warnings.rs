@@ -24,6 +24,9 @@ const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
 const SETTINGS_OVERRIDES_KEYS: &[&str] =
     &["name", "via_ir", "evm_version", "optimizer", "optimizer_runs", "bytecode_hash"];
 
+/// Allowed keys for external compiler adapter entries.
+const EXTERNAL_COMPILER_KEYS: &[&str] = &["id", "command", "args", "roots", "settings"];
+
 /// Allowed keys for VyperConfig.
 /// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
 /// causing the default serialization to produce an empty dict.
@@ -138,7 +141,7 @@ impl<P: Provider> WarningsProvider<P> {
     pub fn for_figment(provider: P, figment: &Figment) -> Self {
         let old_warnings = {
             let warnings_res = figment.extract_inner(Self::WARNINGS_KEY);
-            if warnings_res.as_ref().err().map(|err| err.missing()).unwrap_or(false) {
+            if warnings_res.as_ref().err().is_some_and(|err| err.missing()) {
                 Ok(vec![])
             } else {
                 warnings_res
@@ -188,7 +191,8 @@ impl<P: Provider> WarningsProvider<P> {
         if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
             && let Some(default_dict) = default_map.get(&Config::DEFAULT_PROFILE)
         {
-            let allowed_keys: BTreeSet<String> = default_dict.keys().cloned().collect();
+            let mut allowed_keys: BTreeSet<String> = default_dict.keys().cloned().collect();
+            allowed_keys.insert("external_compilers".to_string());
             for profile_map in profiles.clone() {
                 for (profile, value) in profile_map {
                     let Some(profile_dict) = value.as_dict() else {
@@ -381,6 +385,7 @@ impl<P: Provider> WarningsProvider<P> {
             "additional_compiler_profiles" => {
                 SETTINGS_OVERRIDES_KEYS.iter().map(|s| s.to_string()).collect()
             }
+            "external_compilers" => EXTERNAL_COMPILER_KEYS.iter().map(|s| s.to_string()).collect(),
             _ => BTreeSet::new(),
         }
     }

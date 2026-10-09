@@ -95,7 +95,7 @@ async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
     let mut script_config = script_config.clone();
-    script_config.set_fork_url(rpc.clone());
+    script_config.select_rpc(rpc.clone()).await?;
     let runner = script_config._get_runner(None, false, false).await?;
     let decoder = build_trace_decoder_for_context(
         args,
@@ -117,8 +117,7 @@ async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
     execution_result: &ScriptResult<FEN::Network>,
 ) -> Result<(String, CallTraceDecoder)> {
     let mut script_config = script_config.clone();
-    script_config.set_fork_url(rpc.clone());
-    let _ = script_config.resolve_execution_env().await?;
+    script_config.resolve_rpc_execution_spec(rpc.clone()).await?;
     let decoder = build_trace_decoder_for_context(
         args,
         &script_config,
@@ -244,7 +243,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
+                    let block_number = runner.executor.evm_env().block_env.number() + U256::ONE;
                     runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
 
@@ -699,9 +698,13 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             }
 
             if !self.args.skip_simulation {
+                let is_fixed_gas_limit = tx.is_fixed_gas_limit;
                 let tx = tx.tx_mut();
 
-                if has_different_gas_calc(provider_info.chain) {
+                if !is_fixed_gas_limit
+                    && (has_different_gas_calc(provider_info.chain)
+                        || self.script_config.evm_opts.networks.is_tempo())
+                {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");
@@ -871,15 +874,21 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         }
 
         let sequence = if sequences.len() == 1 {
-            ScriptSequenceKind::Single(sequences.pop().expect("empty sequences"))
+            ScriptSequenceKind::new_single(
+                sequences.pop().expect("empty sequences"),
+                self.args.batch,
+            )?
         } else {
-            ScriptSequenceKind::Multi(MultiChainSequence::new(
-                sequences,
-                &self.args.sig,
-                &self.build_data.build_data.target,
-                &self.script_config.config,
-                !self.args.broadcast,
-            )?)
+            ScriptSequenceKind::new_multi(
+                MultiChainSequence::new(
+                    sequences,
+                    &self.args.sig,
+                    &self.build_data.build_data.target,
+                    &self.script_config.config,
+                    !self.args.broadcast,
+                )?,
+                self.args.batch,
+            )?
         };
 
         Ok(BundledState {
@@ -945,6 +954,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             libraries,
             chain,
             commit,
+            recovery_generation: None,
         };
         Ok(sequence)
     }

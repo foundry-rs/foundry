@@ -49,7 +49,7 @@ impl<'gcx> Visit<'gcx> for WeakPrngChecker<'_, '_, 'gcx> {
                     && (contains_predictable_source(self.gcx, lhs)
                         || contains_predictable_source(self.gcx, rhs))
             }
-            ExprKind::Call(callee, args, _) => {
+            ExprKind::Call(callee, args) => {
                 self.gcx.resolved_builtin(callee) == Some(Builtin::Keccak256)
                     && args.exprs().any(|arg| contains_predictable_source(self.gcx, arg))
             }
@@ -117,5 +117,5 @@ fn is_timestamp_time_bucket(gcx: Gcx<'_>, lhs: &Expr<'_>, rhs: &Expr<'_>) -> boo
             .try_eval_const(rhs)
             .ok()
             .and_then(|v| v.as_u256())
-            .is_some_and(|v| v >= SECONDS_PER_DAY && v % SECONDS_PER_DAY == U256::ZERO)
+            .is_some_and(|v| v >= SECONDS_PER_DAY && (v % SECONDS_PER_DAY).is_zero())
 }

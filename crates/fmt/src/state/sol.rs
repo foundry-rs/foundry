@@ -764,12 +764,25 @@ impl<'ast> State<'_, 'ast> {
     ) {
         match map.remove(&span.lo()) {
             Some((pre_cmnts, inner_cmnts, post_cmnts)) => {
-                // Print preceding comments.
+                // Print preceding comments. The separator before the attribute is printed below,
+                // so a mixed comment must not add one of its own or the two become a blank line.
+                let mut previous_mixed = false;
                 for cmnt in pre_cmnts {
+                    // A line comment after a mixed comment becomes isolated once the header wraps.
+                    if previous_mixed
+                        && cmnt.style.is_trailing()
+                        && matches!(cmnt.kind, ast::CommentKind::Line)
+                    {
+                        self.hardbreak_if_not_bol();
+                    }
+                    previous_mixed = cmnt.style.is_mixed();
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
                         continue;
                     };
-                    self.print_comment(cmnt, CommentConfig::default());
+                    self.print_comment(
+                        cmnt,
+                        CommentConfig::default().mixed_no_break_post().mixed_prev_space(),
+                    );
                 }
                 // Push the inner comments back to the queue, so that they are printed in their
                 // intended place.
@@ -884,10 +897,16 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Check if the total expression overflows but the RHS would fit alone on a new line.
         // This helps keep the RHS together on a single line when possible.
-        let rhs_size = if matches!(rhs.kind, ast::ExprKind::Binary(..))
+        let rhs_size = if is_binary_expr(&rhs.kind)
             && !self.has_comment_between(rhs.span.lo(), rhs.span.hi())
         {
             self.estimate_binary_size(rhs)
+        } else if assignment_member_depth(rhs) >= 2
+            && self.peek_comment_before(rhs.span.lo()).is_none()
+        {
+            // These chains can break before a member after collapsing their terminal delimiters.
+            // Size that collapsed form before choosing the assignment break instead.
+            self.estimate_assignment_size(rhs.span)
         } else {
             self.estimate_size(rhs.span)
         };
@@ -961,7 +980,7 @@ impl<'ast> State<'_, 'ast> {
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
                         // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                        if is_call(&lhs.kind) {
                             self.s.ibox(-self.ind);
                             print_inline(self);
                             self.end();
@@ -1262,9 +1281,9 @@ impl<'ast> State<'_, 'ast> {
                 // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
                 // To be more conservative, we use 18 to decide whether to force a break or not.
                 else if 18
-                    + self.estimate_size(key.span)
+                    + self.estimate_type_size(key)
                     + key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0)
-                    + self.estimate_size(value.span)
+                    + self.estimate_type_size(value)
                     + value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0)
                     >= self.space_left()
                 {
@@ -1433,7 +1452,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_member_or_call_chain(
                     call_expr,
                     MemberOrCallArgs::CallArgs(
-                        self.estimate_size(call_args.span),
+                        self.estimate_call_args_size(call_args.span),
                         self.has_comments_between_elements(call_args.span, call_args.exprs()),
                     ),
                     |s| {
@@ -1578,6 +1597,16 @@ impl<'ast> State<'_, 'ast> {
 
         let space_left = self.space_left();
         let lhs_size = self.estimate_size(lhs.span);
+        // Normalize only indexes that the existing layout keeps together. Longer indexes keep
+        // their own breaks, so their source delimiter padding remains relevant to that layout.
+        let lhs_size = if matches!(lhs.kind, ast::ExprKind::Index(..))
+            && lhs_size + 2 <= space_left
+            && !self.has_comment_between(lhs.span.lo(), rhs.span.lo())
+        {
+            self.estimate_assignment_size(lhs.span)
+        } else {
+            lhs_size
+        };
         self.print_expr(lhs);
         self.word(" =");
         self.print_assign_rhs(rhs, lhs_size + 2, space_left, None, cache);
@@ -2381,7 +2410,7 @@ impl<'ast> State<'_, 'ast> {
             let is_simple = matches!(expr.kind, ast::ExprKind::Lit(..) | ast::ExprKind::Ident(..));
             let allow_break = overflows && fits_alone;
 
-            self.return_bin_expr = matches!(expr.kind, ast::ExprKind::Binary(..));
+            self.return_bin_expr = is_binary_expr(&expr.kind);
             self.s.ibox(if is_simple || allow_break { self.ind } else { 0 });
 
             self.print_word("return");
@@ -2543,6 +2572,16 @@ impl<'ast> State<'_, 'ast> {
                 && self.peek_comment_before(then.span.hi()).is_none()
             {
                 self.neverbreak();
+                self.print_sep(Separator::Nbsp);
+            } else if inline
+                && is_call(&cond.kind)
+                && matches!(
+                    self.config.single_line_statement_blocks,
+                    config::SingleLineBlockStyle::Preserve
+                )
+            {
+                // Keep the body beside a wrapped call condition so Preserve sees the same
+                // layout on the next pass.
                 self.print_sep(Separator::Nbsp);
             } else {
                 self.print_sep(Separator::Space);
@@ -3419,9 +3458,7 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
                 }
 
                 // Chainned calls are not traversed, and instead just the member identifier is used
-                ast::ExprKind::Member(child, ..)
-                    if !matches!(&child.kind, ast::ExprKind::Call(..)) =>
-                {
+                ast::ExprKind::Member(child, ..) if !is_call(&child.kind) => {
                     get_callee_head_size(base) + 1 + member_ident.as_str().len()
                 }
                 _ => member_ident.as_str().len(),
@@ -3430,6 +3467,17 @@ pub(super) fn get_callee_head_size(callee: &ast::Expr<'_>) -> usize {
         ast::ExprKind::Binary(lhs, _, _) => get_callee_head_size(lhs),
 
         // If the callee is not an identifier or member access, it has no "head"
+        _ => 0,
+    }
+}
+
+/// Counts member links in an assignment RHS, through calls and indexes.
+fn assignment_member_depth(expr: &ast::Expr<'_>) -> usize {
+    match &expr.kind {
+        ast::ExprKind::Member(child, _) => 1 + assignment_member_depth(child),
+        ast::ExprKind::Call(child, _) | ast::ExprKind::Index(child, _) => {
+            assignment_member_depth(child)
+        }
         _ => 0,
     }
 }

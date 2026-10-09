@@ -6,8 +6,8 @@ use crate::{
         tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
     },
     tempo::{
-        apply_fee_payment, is_tempo_hardfork_active, print_expires, require_hardfork, sponsor_hash,
-        tempo_provider,
+        active_tempo_hardfork, apply_fee_payment, is_tempo_hardfork_active, print_expires,
+        require_hardfork, sponsor_hash, tempo_provider,
     },
     tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
 };
@@ -25,7 +25,7 @@ use eyre::Result;
 use foundry_cli::{
     json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, now, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, now, parse_fee_token_address, parse_json, resolve_lane},
 };
 use foundry_common::{
     provider::ProviderBuilder,
@@ -173,7 +173,8 @@ pub enum KeychainSubcommand {
         #[arg(long = "scope", value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
-        /// Call scope restrictions as a JSON array.
+        /// Call scope restrictions as a JSON array. An empty array denies all calls.
+        /// Requires a Tempo T3-capable chain.
         /// Format: `[{"target":"0x...","selectors":["transfer"]}]` or
         /// `[{"target":"0x...","selectors":[{"selector":"transfer","recipients":["0x..."]}]}]`
         #[arg(long = "scopes", value_parser = parse_scopes_json_wrapped, conflicts_with = "scope")]
@@ -663,7 +664,7 @@ struct JsonSelectorWithRecipients {
 /// Parse `--scopes` JSON flag value.
 fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     let entries: Vec<JsonCallScope> =
-        serde_json::from_str(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
+        parse_json(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
     entries
         .into_iter()
         .map(|entry| {
@@ -1015,7 +1016,7 @@ async fn run_inspect(
     let (_, provider) = tempo_provider(&rpc)?;
 
     let info = provider.get_keychain_key(root_account, key_address).await?;
-    let provisioned = info.keyId != Address::ZERO;
+    let provisioned = !info.keyId.is_zero();
     let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
     // On T6, `isAdminKey` is authoritative for the root/admin distinction.
     let is_admin = is_tempo_hardfork_active(&provider, TempoHardfork::T6).await?
@@ -1089,7 +1090,7 @@ async fn run_inspect(
 async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
     let (_, provider) = tempo_provider(&rpc)?;
     let info = provider.get_keychain_key(wallet_address, key_address).await?;
-    let provisioned = info.keyId != Address::ZERO;
+    let provisioned = !info.keyId.is_zero();
     let signature_type = abi_key_type(info.signatureType).map_or("unknown", key_type_name);
 
     if shell::is_json() {
@@ -1462,7 +1463,7 @@ impl Doctor {
 
         // Step 5: on-chain key state.
         let registration = match provider.get_keychain_key(root_account, key_address).await {
-            Ok(info) if info.keyId != Address::ZERO => {
+            Ok(info) if !info.keyId.is_zero() => {
                 let key_type = abi_key_type(info.signatureType).map_or("unknown", key_type_label);
                 self.steps.push(DoctorStep::pass(
                     KEY_REGISTRATION,
@@ -1522,8 +1523,9 @@ impl Doctor {
         self.check(expiry)?;
 
         // Steps 8-10: hardfork detection, spending limits, allowed calls (TIP-1011, T3+ only).
-        let (step, is_t3) = check_hardfork(&provider).await;
+        let (step, hardfork) = check_hardfork(&provider).await;
         self.steps.push(step);
+        let is_t3 = hardfork.map(|hardfork| hardfork.is_t3());
         let fee_token = self.context.fee_token;
         let (limits, pending) = match &registration {
             KeyRegistration::OnChain(info) => {
@@ -1540,7 +1542,12 @@ impl Doctor {
         );
 
         // Transaction-option diagnostics that affect access-key sends.
-        self.steps.push(check_expiring_nonce(tempo, resolved_expires_at, &chain_timestamp));
+        self.steps.push(check_expiring_nonce(
+            tempo,
+            resolved_expires_at,
+            &chain_timestamp,
+            hardfork,
+        ));
 
         let (sponsorship, fee_payer) = check_sponsorship(tempo, root_account).await;
         let sponsor_failed = sponsorship.status == DoctorStatus::Fail;
@@ -1898,11 +1905,15 @@ fn check_expiry(
     }
 }
 
-async fn check_hardfork<P: Provider<TempoNetwork>>(provider: &P) -> (DoctorStep, Option<bool>) {
-    match is_tempo_hardfork_active(provider, TempoHardfork::T3).await {
-        Ok(true) => (DoctorStep::pass(HARDFORK, "Tempo T3 active"), Some(true)),
-        Ok(false) => {
-            (DoctorStep::pass(HARDFORK, "pre-T3; TIP-1011 scopes not enforced"), Some(false))
+async fn check_hardfork<P: Provider<TempoNetwork>>(
+    provider: &P,
+) -> (DoctorStep, Option<TempoHardfork>) {
+    match active_tempo_hardfork(provider).await {
+        Ok(hardfork) if hardfork.is_t3() => {
+            (DoctorStep::pass(HARDFORK, "Tempo T3 active"), Some(hardfork))
+        }
+        Ok(hardfork) => {
+            (DoctorStep::pass(HARDFORK, "pre-T3; TIP-1011 scopes not enforced"), Some(hardfork))
         }
         Err(err) => (
             DoctorStep::warn(
@@ -2238,20 +2249,24 @@ fn check_expiring_nonce(
     tempo: &TempoOpts,
     resolved_expires_at: Option<u64>,
     chain_timestamp: &ChainTimestamp,
+    hardfork: Option<TempoHardfork>,
 ) -> DoctorStep {
     if !tempo.expiring_nonce && tempo.valid_before.is_none() && tempo.valid_after.is_none() {
         return DoctorStep::pass(EXPIRING_NONCE, "not requested");
     }
     match chain_timestamp.get(EXPIRING_NONCE, "validity window not checked") {
-        Ok(now) => check_expiring_nonce_window(tempo, resolved_expires_at, now),
+        Ok(now) => check_expiring_nonce_window(tempo, resolved_expires_at, now, hardfork),
         Err(step) => step,
     }
 }
 
+/// Checks the validity window against the chain timestamp. The upper bound depends on the active
+/// hardfork and is skipped when it is unknown.
 fn check_expiring_nonce_window(
     tempo: &TempoOpts,
     resolved_expires_at: Option<u64>,
     chain_timestamp: u64,
+    hardfork: Option<TempoHardfork>,
 ) -> DoctorStep {
     let valid_before = tempo.valid_before;
     let valid_after = tempo.valid_after;
@@ -2294,20 +2309,23 @@ fn check_expiring_nonce_window(
                 "use a larger validity window before signing",
             );
         }
-        if ttl > 30 {
+        if let Some(max_expiry_secs) =
+            hardfork.map(|hardfork| hardfork.expiring_nonce_max_expiry_secs())
+            && ttl > max_expiry_secs
+        {
             return if resolved_expires_at.is_some() {
                 DoctorStep::warn(
                     EXPIRING_NONCE,
                     format!(
-                        "--tempo.expires resolved to a deadline {ttl}s ahead of chain timestamp {chain_timestamp}"
+                        "--tempo.expires resolved to a deadline {ttl}s ahead of chain timestamp {chain_timestamp}; the active hardfork allows at most {max_expiry_secs}s"
                     ),
-                    "check local clock/RPC timestamp skew before relying on this deadline",
+                    "use a shorter --tempo.expires or check local clock/RPC timestamp skew",
                 )
             } else {
                 DoctorStep::warn(
                     EXPIRING_NONCE,
                     format!(
-                        "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; --tempo.expires caps this at 30s"
+                        "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; expiring nonce transactions must expire within {max_expiry_secs}s on the active hardfork"
                     ),
                     "prefer --tempo.expires for bounded retry-safe sends",
                 )
@@ -2489,7 +2507,7 @@ async fn run_authorize(
             expiry,
             enforceLimits: enforce,
             limits,
-            allowAnyCalls: allowed_calls.is_empty(),
+            allowAnyCalls: !scopes_present,
             allowedCalls: allowed_calls,
         };
         match witness {
@@ -2505,6 +2523,10 @@ async fn run_authorize(
         }
     } else {
         // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
+        eyre::ensure!(
+            !scopes_present,
+            "call scopes (--scope / --scopes) require a Tempo T3-capable chain"
+        );
         if let Some(limit) = limits.iter().find(|limit| limit.period != 0) {
             eyre::bail!(
                 "legacy AccountKeychain authorization does not support periodic limits; remove \
@@ -2977,14 +2999,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .await?;
 
     let from = root_signer.address();
-    let chain = builder.chain();
     if print_sponsor_hash {
         let Some(mut tx) =
             confirm_and_build(builder, root_signer.sender(), force, None, false).await?
         else {
             return Ok(KeychainTxOutcome::Aborted);
         };
-        let hash = sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
+        let hash = sponsor_hash(fee_provider, &mut tx, from, sponsor_fee_payer).await?;
         if shell::is_json() {
             sh_println!("{}", json!({ "sponsor_hash": format!("{hash:?}") }))?;
         } else {
@@ -2995,8 +3016,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     print_expires(expires_at)?;
 
-    let send_opts = SendOptions::new(send_tx, &config)
-        .resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
+    let send_opts =
+        SendOptions::new(send_tx, &config).resolving_fee_token(tempo_sponsor.is_none(), &config);
     let is_browser = matches!(root_signer, KeychainRootSigner::Browser(_));
     let (builder, lane) = if is_browser {
         (builder.with_browser_wallet(), None)
@@ -3007,14 +3028,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     else {
         return Ok(KeychainTxOutcome::Aborted);
     };
-    apply_fee_payment::<TempoNetwork, _>(
-        tempo_sponsor.as_ref(),
-        fee_provider,
-        chain,
-        &mut tx,
-        from,
-    )
-    .await?;
+    apply_fee_payment::<TempoNetwork, _>(tempo_sponsor.as_ref(), fee_provider, &mut tx, from)
+        .await?;
     before_submit()?;
 
     match root_signer {
@@ -3394,7 +3409,7 @@ mod tests {
     use alloy_rlp::Decodable;
 
     fn addr(byte: u8) -> Address {
-        Address::from([byte; 20])
+        Address::repeat_byte(byte)
     }
 
     fn rule(selector: [u8; 4], recipients: Vec<Address>) -> SelectorRule {
@@ -3800,9 +3815,9 @@ mod tests {
         let fee_token = addr(0xAA);
         let limit = |token, limit, period| AuthTokenLimit { token, limit, period };
         let cases = [
-            (limit(addr(0xBB), U256::from(1), 0), Some(true), "not listed"),
+            (limit(addr(0xBB), U256::ONE, 0), Some(true), "not listed"),
             (limit(fee_token, U256::ZERO, 0), Some(true), ""),
-            (limit(fee_token, U256::from(1), 60), None, "hardfork unknown"),
+            (limit(fee_token, U256::ONE, 60), None, "hardfork unknown"),
         ];
         for (limit, is_t3, detail) in cases {
             let signed = signed_authorization_with_limits(Some(vec![limit]));
@@ -3861,18 +3876,25 @@ mod tests {
             valid_before,
             ..Default::default()
         };
+        let t10 = Some(TempoHardfork::T10);
+        let t11 = Some(TempoHardfork::T11);
         let cases = [
             // Validated even without --tempo.expiring-nonce.
-            (opts(false, Some(20), Some(20)), 10, DoctorStatus::Fail),
-            (opts(false, None, Some(10)), 10, DoctorStatus::Fail),
-            (opts(true, None, Some(103)), 100, DoctorStatus::Fail),
-            (opts(true, None, Some(104)), 100, DoctorStatus::Warn),
-            (opts(true, None, Some(105)), 100, DoctorStatus::Warn),
-            (opts(true, None, Some(131)), 100, DoctorStatus::Warn),
-            (opts(true, None, Some(120)), 100, DoctorStatus::Pass),
+            (opts(false, Some(20), Some(20)), 10, t10, DoctorStatus::Fail),
+            (opts(false, None, Some(10)), 10, t10, DoctorStatus::Fail),
+            (opts(true, None, Some(103)), 100, t10, DoctorStatus::Fail),
+            (opts(true, None, Some(104)), 100, t10, DoctorStatus::Warn),
+            (opts(true, None, Some(105)), 100, t10, DoctorStatus::Warn),
+            (opts(true, None, Some(120)), 100, t10, DoctorStatus::Pass),
+            // The upper bound follows the active hardfork and is skipped when it is unknown.
+            (opts(true, None, Some(131)), 100, t10, DoctorStatus::Warn),
+            (opts(true, None, Some(131)), 100, t11, DoctorStatus::Pass),
+            (opts(true, None, Some(400)), 100, t11, DoctorStatus::Pass),
+            (opts(true, None, Some(401)), 100, t11, DoctorStatus::Warn),
+            (opts(true, None, Some(401)), 100, None, DoctorStatus::Pass),
         ];
-        for (tempo, now, expected) in cases {
-            let step = check_expiring_nonce_window(&tempo, None, now);
+        for (tempo, now, hardfork, expected) in cases {
+            let step = check_expiring_nonce_window(&tempo, None, now, hardfork);
             assert_eq!(step.status, expected, "{step:?}");
         }
     }

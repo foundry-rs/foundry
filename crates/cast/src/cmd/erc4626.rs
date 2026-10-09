@@ -7,7 +7,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, FixedBytes, U256, address};
+use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, sol};
 use clap::Parser;
@@ -21,7 +21,7 @@ use foundry_cli::{
 use foundry_common::{provider::RetryProvider, shell};
 use serde::Serialize;
 
-const NATIVE_ASSET: Address = address!("EeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
+const NATIVE_ASSET: Address = Address::repeat_byte(0xee);
 /// ERC-7535 asset quantities are denominated in wei.
 const NATIVE_ASSET_DECIMALS: u8 = 18;
 const ERC7540_ASYNC_DEPOSIT_INTERFACE: FixedBytes<4> = FixedBytes::new([0xce, 0x3b, 0xbe, 0x50]);

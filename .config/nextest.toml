@@ -17,17 +17,17 @@ default-filter = "not test(/flaky_/) and not test(/deploy_verify_/)"
 filter = "test(/ext_integration/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
-# `cast vaddr` end-to-end tests mine a 4-byte TIP-1022 PoW salt (CPU-bound,
-# minutes in debug mode) before exercising register/resolve/forward/watch
-# against an in-process Anvil Tempo node.
+# The symbolic conformance and limits suites only do work with SYMBOLIC_CONFORMANCE and
+# SYMBOLIC_LIMITS set, as the nightly test-flaky workflow does; the stateful invariant cases there
+# take minutes in debug builds.
 [[profile.default.overrides]]
-filter = "test(/vaddr_e2e::/)"
+filter = "test(/symbolic_conformance::|symbolic_limits::/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
 # Integration-style CLI tests can exceed the default 90s timeout on slower
 # Windows, macOS, and ARM runners while shelling out to forge/solc/git.
 [[profile.default.overrides]]
-filter = "test(/(^|::)bind_event_module_name_shadowing$/) | test(/(^|::)bind_event_module_prefix_does_not_shadow_aliases$/) | test(/(^|::)can_bind_e2e$/) | test(/(^|::)test_clone_/) | test(/(^|::)can_deploy_and_simulate_25_txes_concurrently$/) | test(/(^|::)chisel_can_run_with_live_logs_flag$/) | test(/(^|::)session_wrapper_uses_project_config_for_cast_session$/)"
+filter = "test(/(^|::)bind_event_module_name_shadowing$/) | test(/(^|::)bind_event_module_prefix_does_not_shadow_aliases$/) | test(/(^|::)can_bind_e2e$/) | test(/(^|::)test_clone_/) | test(/(^|::)can_deploy_and_simulate_25_txes_concurrently$/) | test(/(^|::)can_deploy_25_txes_concurrently_across_full_blocks$/) | test(/(^|::)can_deploy_25_txes_concurrently_with_interval_mining$/) | test(/(^|::)can_deploy_25_txes_concurrently_with_mixed_mining$/) | test(/(^|::)chisel_can_run_with_live_logs_flag$/) | test(/(^|::)session_wrapper_uses_project_config_for_cast_session$/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
 [[profile.default.overrides]]

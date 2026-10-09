@@ -3,22 +3,25 @@
 use super::*;
 
 // checks `cast calldata` can handle arrays
-casttest!(calldata_array, |_prj, cmd| {
+#[casttest]
+fn calldata_array(cmd: _) {
     cmd.args(["calldata", "propose(string[])", "[\"\"]"]).assert_success().stdout_eq(str![[r#"
 0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000
 
 "#]]);
-});
+}
 
-casttest!(string_decode, |_prj, cmd| {
+#[casttest]
+fn string_decode(cmd: _) {
     cmd.args(["string-decode", "0x88c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000054753303235000000000000000000000000000000000000000000000000000000"]).assert_success().stdout_eq(str![[r#"
 "GS025"
 
 "#]]);
-});
+}
 
 // Test cast abi-encode-event with indexed parameters
-casttest!(abi_encode_event_indexed, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_indexed(cmd: _) {
     cmd.args([
         "abi-encode-event",
         "Transfer(address indexed from, address indexed to, uint256 value)",
@@ -34,10 +37,11 @@ casttest!(abi_encode_event_indexed, |_prj, cmd| {
 [data]: 0x00000000000000000000000000000000000000000000000000000000000003e8
 
 "#]]);
-});
+}
 
 // Test cast abi-encode-event with no indexed parameters
-casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_no_indexed(cmd: _) {
     cmd.args([
         "abi-encode-event",
         "Approval(address owner, address spender, uint256 value)",
@@ -51,10 +55,11 @@ casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
 [data]: 0x0000000000000000000000001234567890123456789012345678901234567890000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd00000000000000000000000000000000000000000000000000000000000007d0
 
 "#]]);
-});
+}
 
 // Test cast abi-encode-event with dynamic indexed parameter (string)
-casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_dynamic_indexed(cmd: _) {
     // topic1 is keccak256("hello"), matching Solidity's hashing of indexed strings.
     cmd.args(["abi-encode-event", "Log(string indexed message, uint256 data)", "hello", "42"])
         .assert_success()
@@ -74,9 +79,10 @@ casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
 [topic1]: 0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_indexed_arrays, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_indexed_arrays(cmd: _) {
     // Array topics hash the concatenated padded elements without any length prefix:
     // topic1 is keccak256(word(1) ++ word(2)).
     cmd.args(["abi-encode-event", "Numbers(uint256[] indexed values)", "[1,2]"])
@@ -115,9 +121,10 @@ casttest!(abi_encode_event_indexed_arrays, |_prj, cmd| {
 [topic1]: 0xec503acd2f5b8395d778ead6068e4dff0b21beb8f55fc559e660857d57f0c112
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_indexed_tuples, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_indexed_tuples(cmd: _) {
     // Tuple topics hash member preimages without offsets: keccak256(word(7) ++ pad32("hello")).
     cmd.args(["abi-encode-event", "Pair((uint256,string) indexed pair)", "(7,hello)"])
         .assert_success()
@@ -141,9 +148,10 @@ casttest!(abi_encode_event_indexed_tuples, |_prj, cmd| {
 [topic1]: 0x5e20f5ecd52f29dc801132b4fba26d512378bf6c068eff0f4c6e797d69ac1e2a
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_indexed_function, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_indexed_function(cmd: _) {
     cmd.args([
         "abi-encode-event",
         "Callback(function indexed callback)",
@@ -155,9 +163,10 @@ casttest!(abi_encode_event_indexed_function, |_prj, cmd| {
 [topic1]: 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_dynamic_tuple, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_dynamic_tuple(cmd: _) {
     cmd.args([
         "abi-encode-event",
         "Details((uint256,string) details,uint256 nonce)",
@@ -170,9 +179,10 @@ casttest!(abi_encode_event_dynamic_tuple, |_prj, cmd| {
 [data]: 0x0000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_dynamic_strings, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_dynamic_strings(cmd: _) {
     let signature = "Strings(string,string)";
     let data = "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000005616c70686100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046265746100000000000000000000000000000000000000000000000000000000";
 
@@ -191,9 +201,25 @@ casttest!(abi_encode_event_dynamic_strings, |_prj, cmd| {
 
 "#]],
     );
-});
+}
 
-casttest!(abi_encode_event_argument_count_mismatch, |_prj, cmd| {
+#[casttest]
+fn decode_event_with_indexed_params(cmd: _) {
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+42
+
+"#]]);
+}
+
+#[casttest]
+fn abi_encode_event_argument_count_mismatch(cmd: _) {
     cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
         [r#"
 Error: encode length mismatch: expected 2 types, got 1
@@ -208,9 +234,10 @@ Error: encode length mismatch: expected 2 types, got 1
 Error: encode length mismatch: expected 2 types, got 3
 
 "#]]);
-});
+}
 
-casttest!(abi_encode_event_anonymous, |_prj, cmd| {
+#[casttest]
+fn abi_encode_event_anonymous(cmd: _) {
     cmd.args([
         "abi-encode-event",
         "Log(uint256 indexed id,string message) anonymous",
@@ -223,9 +250,10 @@ casttest!(abi_encode_event_anonymous, |_prj, cmd| {
 [data]: 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
 
 "#]]);
-});
+}
 
-casttest!(abi_decode_output, |_prj, cmd| {
+#[casttest]
+fn abi_decode_output(cmd: _) {
     cmd.cast_fuse()
         .args([
             "abi-decode",
@@ -242,9 +270,10 @@ casttest!(abi_decode_output, |_prj, cmd| {
         ])
         .assert_success()
         .stdout_eq("1\n");
-});
+}
 
-casttest!(abi_and_calldata_decode_mixed_values, |_prj, cmd| {
+#[casttest]
+fn abi_and_calldata_decode_mixed_values(cmd: _) {
     let data = "0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
     let expected = "0x8DbD1b711DC621e1404633da156FcC779e1c6f3E\n0xD9f3c9CC99548bF3b44a43E0A2D07399EB918ADc\n42\n1\n0x\n";
@@ -256,9 +285,10 @@ casttest!(abi_and_calldata_decode_mixed_values, |_prj, cmd| {
         .args(["calldata-decode", sig, &format!("0xf242432a{data}")])
         .assert_success()
         .stdout_eq(expected);
-});
+}
 
-casttest!(calldata_decode_nested_json, |_prj, cmd| {
+#[casttest]
+fn calldata_decode_nested_json(cmd: _) {
     let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
     let sig =
         "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
@@ -295,22 +325,25 @@ casttest!(calldata_decode_nested_json, |_prj, cmd| {
         "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
     ]);
     cmd.args(["calldata-decode", sig, calldata, "--json"]).assert_json_stdout(json!({"schema_version": 1, "success": true, "data": expected, "errors": [], "warnings": []}).to_string());
-});
+}
 
-casttest!(abi_encode, |_prj, cmd| {
+#[casttest]
+fn abi_encode(cmd: _) {
     cmd.cast_fuse()
         .args(["abi-encode", "f(uint256)", "1"])
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
-});
+}
 
-casttest!(abi_encode_constructor, |_prj, cmd| {
+#[casttest]
+fn abi_encode_constructor(cmd: _) {
     cmd.args(["abi-encode", "constructor(uint a)", "1"])
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
-});
+}
 
-casttest!(abi_encode_packed, |_prj, cmd| {
+#[casttest]
+fn abi_encode_packed(cmd: _) {
     cmd.cast_fuse()
         .args(["abi-encode", "--packed", "(uint128[] a, uint64 b)", "[100, 300]", "200"])
         .assert_success()
@@ -329,11 +362,12 @@ casttest!(abi_encode_packed, |_prj, cmd| {
         .args(["abi-encode", "--packed", "f(uint256)", "1"])
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
-});
+}
 
-casttest!(calldata_bool, |_prj, cmd| {
+#[casttest]
+fn calldata_bool(cmd: _) {
     cmd.cast_fuse()
         .args(["calldata", "bar(bool)", "false"])
         .assert_success()
         .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
-});
+}

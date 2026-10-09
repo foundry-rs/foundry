@@ -1,7 +1,8 @@
 use crate::{
     eth::{
-        backend::cheats::CheatsManager, error::InvalidTransactionError,
-        pool::transactions::PoolTransaction,
+        backend::cheats::CheatsManager,
+        error::InvalidTransactionError,
+        pool::transactions::{PoolTransaction, TxMarker},
     },
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
@@ -27,9 +28,10 @@ use alloy_evm::{
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
         spec::EthExecutorSpec,
     },
+    precompiles::PrecompilesMap,
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_primitives::{Address, B256, Bytes, Log, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, U256, map::HashSet};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -44,6 +46,7 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
+use tempo_precompiles::{NONCE_PRECOMPILE_ADDRESS, nonce::NonceManager};
 
 #[cfg(feature = "base")]
 use base_common_consensus::Eip8130Receipt;
@@ -175,6 +178,12 @@ impl FoundryReceiptBuilder {
                 logs_bloom: receipt.logs_bloom,
             }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+            FoundryTxType::Celo => {
+                FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
+                    inner: receipt,
+                    r#type: foundry_primitives::CIP64_TX_TYPE,
+                })
+            }
         }
     }
 
@@ -425,7 +434,7 @@ where
                         .transact_system_call(
                             eip4788::SYSTEM_ADDRESS,
                             eip2935::HISTORY_STORAGE_ADDRESS,
-                            Bytes::copy_from_slice(self.parent_hash.as_slice()),
+                            Bytes::from(self.parent_hash),
                         )
                         .map_err(BlockExecutionError::other)?;
                     state_changes.push(result.state.clone());
@@ -440,7 +449,7 @@ where
                         .transact_system_call(
                             eip4788::SYSTEM_ADDRESS,
                             eip4788::BEACON_ROOTS_ADDRESS,
-                            Bytes::copy_from_slice(parent_beacon_block_root.as_slice()),
+                            Bytes::from(parent_beacon_block_root),
                         )
                         .map_err(BlockExecutionError::other)?;
                     state_changes.push(result.state.clone());
@@ -553,6 +562,8 @@ where
 pub struct ExecutedPoolTransactions<T> {
     /// Successfully included transactions.
     pub included: Vec<Arc<PoolTransaction<T>>>,
+    /// Transactions whose nonce was already consumed by the current state.
+    pub stale: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions that failed validation.
     pub invalid: Vec<Arc<PoolTransaction<T>>>,
     /// Transactions skipped because they're not yet valid (e.g., valid_after in the future).
@@ -610,7 +621,11 @@ pub fn execute_pool_transactions<B, ExecuteTransaction>(
 where
     B: BlockExecutor<
             Transaction = FoundryTxEnvelope,
-            Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>,
+            Evm: Evm<
+                DB: Database + Debug,
+                Inspector = AnvilInspector,
+                Precompiles = PrecompilesMap,
+            >,
         >,
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
@@ -625,23 +640,20 @@ where
     let gas_limit = executor.evm().block().gas_limit();
 
     let mut included = Vec::new();
+    let mut stale = Vec::new();
     let mut invalid = Vec::new();
     let mut not_yet_valid = Vec::new();
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
     let mut transactions = Vec::new();
     let mut blob_gas_used = 0u64;
+    let mut unavailable_markers = HashSet::<TxMarker>::default();
 
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
         let sender = *pending.sender();
-        let block_timestamp = executor.evm().block().timestamp();
-
-        if let FoundryTxEnvelope::Tempo(aa_tx) = pending.transaction.as_ref()
-            && let Some(valid_after) = aa_tx.tx().valid_after
-            && U256::from(valid_after.get()) > block_timestamp
-        {
-            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
-            not_yet_valid.push(pool_tx.clone());
+        if pool_tx.requires.iter().any(|marker| unavailable_markers.contains(marker)) {
+            trace!(target: "backend", "[{:?}] dependency was not included, skipping transaction", pool_tx.hash());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -650,9 +662,48 @@ where
             Ok(acc) => acc,
             Err(err) => {
                 trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                unavailable_markers.extend(pool_tx.provides.iter().cloned());
                 continue;
             }
         };
+
+        let transaction = pending.transaction.as_ref();
+        let state_nonce = match transaction {
+            FoundryTxEnvelope::Tempo(tx) if tx.tx().nonce_key == U256::MAX => None,
+            FoundryTxEnvelope::Tempo(tx) if !tx.tx().nonce_key.is_zero() => {
+                let slot = NonceManager::new().nonces[sender][tx.tx().nonce_key].slot();
+                match executor.evm_mut().db_mut().storage(NONCE_PRECOMPILE_ADDRESS, slot) {
+                    Ok(nonce) => Some(nonce.saturating_to::<u64>()),
+                    Err(err) => {
+                        trace!(target: "backend", ?err, "db error for tx {:?}, skipping", pool_tx.hash());
+                        unavailable_markers.extend(pool_tx.provides.iter().cloned());
+                        continue;
+                    }
+                }
+            }
+            #[cfg(feature = "base")]
+            FoundryTxEnvelope::Eip8130(_) => None,
+            #[cfg(any(feature = "base", feature = "optimism"))]
+            FoundryTxEnvelope::Deposit(_) => None,
+            #[cfg(feature = "optimism")]
+            FoundryTxEnvelope::PostExec(_) => None,
+            _ => Some(account.nonce),
+        };
+        if state_nonce.is_some_and(|nonce| transaction.nonce() < nonce) {
+            warn!(target: "backend", "Skipping stale tx [{:?}]", pool_tx.hash());
+            stale.push(pool_tx.clone());
+            continue;
+        }
+
+        if let FoundryTxEnvelope::Tempo(aa_tx) = transaction
+            && let Some(valid_after) = aa_tx.tx().valid_after
+            && U256::from(valid_after.get()) > executor.evm().block().timestamp()
+        {
+            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
+            not_yet_valid.push(pool_tx.clone());
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
+            continue;
+        }
 
         let tx_env =
             build_tx_env_for_pending::<B::Transaction, <B::Evm as Evm>::Tx>(pending, cheats);
@@ -663,6 +714,7 @@ where
         let max_block_gas = cumulative_gas.saturating_add(pending.transaction.gas_limit());
         if !gas_config.disable_block_gas_limit && max_block_gas > gas_limit {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "block gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -671,6 +723,7 @@ where
             && pending.transaction.gas_limit() > tx_gas_limit_cap
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -679,6 +732,7 @@ where
         let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
         if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
             trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+            unavailable_markers.extend(pool_tx.provides.iter().cloned());
             continue;
         }
 
@@ -700,8 +754,8 @@ where
 
                 executor.commit_transaction(result);
 
-                let traces =
-                    executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
+                let (_, inspector, precompiles) = executor.evm_mut().components_mut();
+                let traces = inspector.finish_transaction(inspector_config, precompiles);
 
                 if gas_config.is_cancun {
                     blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
@@ -757,13 +811,14 @@ where
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());
                 } else {
+                    unavailable_markers.extend(pool_tx.provides.iter().cloned());
                     trace!(target: "backend", ?err, "tx execution error, skipping {:?}", pool_tx.hash());
                 }
             }
         }
     }
 
-    ExecutedPoolTransactions { included, invalid, not_yet_valid, tx_info, txs: transactions }
+    ExecutedPoolTransactions { included, stale, invalid, not_yet_valid, tx_info, txs: transactions }
 }
 
 /// Builds the EVM transaction env from a pending pool transaction.

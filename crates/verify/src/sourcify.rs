@@ -262,8 +262,12 @@ impl SourcifyVerificationProvider {
     fn get_base_url(verifier_url: Option<&str>) -> Url {
         // note(onbjerg): a little ugly but makes this infallible as we guarantee `SOURCIFY_URL` to
         // be well formatted
-        Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
-            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap())
+        let mut url = Url::parse(verifier_url.unwrap_or(SOURCIFY_URL))
+            .unwrap_or_else(|_| Url::parse(SOURCIFY_URL).unwrap());
+        if !url.path().ends_with('/') {
+            url.set_path(&format!("{}/", url.path()));
+        }
+        url
     }
 
     fn get_verify_url(
@@ -364,14 +368,12 @@ impl SourcifyVerificationProvider {
                     let creation_exact = contract_response
                         .creation_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     let runtime_exact = contract_response
                         .runtime_match
                         .as_ref()
-                        .map(|s| s == "exact_match")
-                        .unwrap_or(false);
+                        .is_some_and(|s| s == "exact_match");
 
                     Ok(creation_exact && runtime_exact)
                 } else {
@@ -445,7 +447,7 @@ mod tests {
     use super::*;
     use clap::Parser;
     use foundry_config::Config;
-    use foundry_test_utils::forgetest_async;
+    use foundry_test_utils::{forgetest, util::SOLC_VERSION};
     use serde_json::json;
     use std::{
         io::{Read, Write},
@@ -499,7 +501,7 @@ mod tests {
         })
         .to_string();
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_url = format!("http://{}/", server.local_addr().unwrap());
+        let server_url = format!("http://{}/server", server.local_addr().unwrap());
         let server_thread = thread::spawn(move || {
             let (mut socket, _) = server.accept().unwrap();
             let mut request = [0; 4096];
@@ -507,7 +509,7 @@ mod tests {
             assert!(
                 std::str::from_utf8(&request[..bytes_read])
                     .unwrap()
-                    .starts_with("GET /v2/verify/job-id ")
+                    .starts_with("GET /server/v2/verify/job-id ")
             );
             socket
                 .write_all(
@@ -585,7 +587,8 @@ mod tests {
         assert_eq!(response, "redirected");
     }
 
-    forgetest_async!(creates_correct_verify_request_body, |prj, _cmd| {
+    #[forgetest]
+    async fn creates_correct_verify_request_body(prj: _) {
         prj.add_source("Counter", "contract Counter {}");
 
         let args = VerifyArgs::parse_from([
@@ -593,7 +596,7 @@ mod tests {
             "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
             "src/Counter.sol:Counter",
             "--compiler-version",
-            "0.8.19",
+            SOLC_VERSION,
             "--root",
             &prj.root().to_string_lossy(),
         ]);
@@ -602,7 +605,7 @@ mod tests {
         let provider = SourcifyVerificationProvider::default();
         let request = provider.prepare_verify_request(&args, &context).await.unwrap();
 
-        assert_eq!(request.compiler_version, "0.8.19+commit.7dd6d404");
+        assert_eq!(request.compiler_version, "0.8.35+commit.47b9dedd");
         assert_eq!(request.contract_identifier, "src/Counter.sol:Counter");
         assert!(request.creation_transaction_hash.is_none());
 
@@ -616,5 +619,5 @@ mod tests {
         let counter_source = sources.get("src/Counter.sol").unwrap().as_object().unwrap();
         let content = counter_source.get("content").unwrap().as_str().unwrap();
         assert!(content.contains("contract Counter {}"));
-    });
+    }
 }

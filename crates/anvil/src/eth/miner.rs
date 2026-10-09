@@ -23,7 +23,7 @@ use tokio::time::{Interval, MissedTickBehavior, Sleep};
 
 /// Window for grouping concurrently-submitted transactions into one instant-mined block.
 /// Scoped to batch/in-process concurrency; not a guarantee for independent external clients.
-const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
+pub(crate) const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
 
 pub struct Miner<T> {
     /// The mode this miner currently operates in
@@ -117,12 +117,10 @@ impl<T> Miner<T> {
             }
             return;
         }
-        match &mut *mode {
-            MiningMode::Auto(miner) | MiningMode::Mixed(miner, _) => {
-                miner.has_pending_txs = Some(false);
-                miner.coalesce = None;
-            }
-            MiningMode::None | MiningMode::FixedBlockTime(_) => {}
+        // Selecting the candidate already cleared `has_pending_txs`, so keep any retry requested
+        // since then, e.g. by a block mined via `evm_mine` before this failure was processed.
+        if let MiningMode::Auto(miner) | MiningMode::Mixed(miner, _) = &mut *mode {
+            miner.coalesce = None;
         }
         match &mut *mode {
             MiningMode::FixedBlockTime(miner) | MiningMode::Mixed(_, miner) => {
@@ -146,6 +144,16 @@ impl<T> Miner<T> {
         let mut mode = self.mode.write();
         let generation = self.generation.load(Ordering::Relaxed);
         mode.poll(pool, cx).map(|transactions| MiningWork { transactions, generation })
+    }
+
+    /// Makes the instant miner select ready transactions again without waiting for a new one.
+    ///
+    /// Used when a mined block left ready transactions behind, e.g. because it ran out of gas.
+    pub(crate) fn retry_ready_transactions(&self) {
+        if let MiningMode::Auto(miner) | MiningMode::Mixed(miner, _) = &mut *self.mode.write() {
+            miner.has_pending_txs = Some(true);
+            self.inner.wake();
+        }
     }
 }
 
@@ -202,6 +210,7 @@ impl MiningMode {
             has_pending_txs: None,
             rx: listener.fuse(),
             coalesce: None,
+            coalesce_window: INSTANT_COALESCE_WINDOW,
         })
     }
 
@@ -216,9 +225,21 @@ impl MiningMode {
                 has_pending_txs: None,
                 rx: listener.fuse(),
                 coalesce: None,
+                coalesce_window: INSTANT_COALESCE_WINDOW,
             },
             FixedBlockTimeMiner::new(duration),
         )
+    }
+
+    /// Sets the window for grouping ready transactions in auto or mixed mining mode.
+    /// A zero window mines ready transactions without a coalescing timer.
+    #[must_use]
+    pub fn with_coalescing_window(mut self, window: Duration) -> Self {
+        if let Self::Auto(miner) | Self::Mixed(miner, _) = &mut self {
+            miner.coalesce_window = window;
+            miner.coalesce = None;
+        }
+        self
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
@@ -306,7 +327,9 @@ pub struct ReadyTransactionMiner {
     has_pending_txs: Option<bool>,
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
-    /// Active [`INSTANT_COALESCE_WINDOW`] timer; while pending, ready txs are accumulated.
+    /// Delay for accumulating ready transactions; zero disables coalescing.
+    coalesce_window: Duration,
+    /// Active coalescing timer; while pending, ready txs are accumulated.
     coalesce: Option<Pin<Box<Sleep>>>,
 }
 
@@ -326,8 +349,8 @@ impl ReadyTransactionMiner {
         // consecutive chunks when draining a backlog larger than `max_transactions`.
         if saw_new_ready {
             self.has_pending_txs = Some(true);
-            if self.coalesce.is_none() {
-                self.coalesce = Some(Box::pin(tokio::time::sleep(INSTANT_COALESCE_WINDOW)));
+            if self.coalesce.is_none() && !self.coalesce_window.is_zero() {
+                self.coalesce = Some(Box::pin(tokio::time::sleep(self.coalesce_window)));
             }
         }
 
@@ -345,11 +368,11 @@ impl ReadyTransactionMiner {
         let transactions =
             pool.ready_transactions().take(self.max_transactions).collect::<Vec<_>>();
 
-        // there are pending transactions if we didn't drain the pool
-        self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
+        // Whether ready txs left behind are worth another block is decided once this block is
+        // mined, see `Miner::retry_ready_transactions`.
+        self.has_pending_txs = Some(false);
 
         if transactions.is_empty() {
-            self.has_pending_txs = Some(false);
             return Poll::Pending;
         }
 
@@ -383,6 +406,19 @@ mod tests {
         assert_eq!(auto.has_pending_txs, Some(true));
     }
 
+    #[test]
+    fn failure_keeps_retry_requested_after_candidate_selection() {
+        let (_tx, rx) = mpsc::channel(1);
+        let miner = Miner::<()>::new(MiningMode::instant(1, rx));
+        miner.retry_ready_transactions();
+
+        miner.handle_failed_candidate(0);
+
+        let mode = miner.mode.read();
+        let MiningMode::Auto(auto) = &*mode else { panic!("expected auto mining") };
+        assert_eq!(auto.has_pending_txs, Some(true));
+    }
+
     #[tokio::test]
     async fn failed_fixed_candidate_rearms_interval() {
         let mut miner = Miner::<()>::new(MiningMode::interval(Duration::from_millis(10)));
@@ -396,5 +432,35 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), poll_fn(|cx| miner.poll(&pool, cx)))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn coalescing_window_controls_fresh_notifications() {
+        for mixed in [false, true] {
+            for window in [Duration::ZERO, Duration::from_secs(60)] {
+                let (mut tx, rx) = mpsc::channel(1);
+                let mode = if mixed {
+                    MiningMode::mixed(1, rx, Duration::from_secs(120))
+                } else {
+                    MiningMode::instant(1, rx)
+                };
+                let mut mode = mode.with_coalescing_window(window);
+                let pool = Arc::new(Pool::<()>::default());
+                tx.try_send(TxHash::ZERO).unwrap();
+                let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+                assert!(mode.poll(&pool, &mut cx).is_pending());
+                let auto = match &mode {
+                    MiningMode::Auto(auto) | MiningMode::Mixed(auto, _) => auto,
+                    _ => unreachable!(),
+                };
+                if window.is_zero() {
+                    assert!(auto.coalesce.is_none());
+                    assert_eq!(auto.has_pending_txs, Some(false));
+                } else {
+                    assert!(auto.coalesce.is_some());
+                    assert_eq!(auto.has_pending_txs, Some(true));
+                }
+            }
+        }
     }
 }

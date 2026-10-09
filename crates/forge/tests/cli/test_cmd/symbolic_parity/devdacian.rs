@@ -8,7 +8,8 @@ use foundry_test_utils::{forgetest_init, str};
 // Only Halmos & Certora solved this upstream; Echidna, Medusa, and
 // Foundry-fuzz all failed. A perfect minimal regression for the symbolic
 // engine on modular / divisibility reasoning (`bv-urem` over bounded `n`).
-forgetest_init!(devdacian_rarely_false_parity, |prj, cmd| {
+#[forgetest_init]
+fn devdacian_rarely_false_parity(prj: _, cmd: _) {
     skip_unless_z3!("devdacian_rarely_false_parity");
 
     prj.add_test(
@@ -49,4 +50,4 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
-});
+}

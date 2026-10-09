@@ -276,8 +276,18 @@ impl<'a> Linker<'a> {
             .copied()
             .filter(|id| id.build_id == target.build_id && id.profile == target.profile)
             .collect::<Vec<_>>();
-        let candidates =
-            if same_build_and_profile.is_empty() { candidates } else { same_build_and_profile };
+        let same_profile = candidates
+            .iter()
+            .copied()
+            .filter(|id| id.profile == target.profile)
+            .collect::<Vec<_>>();
+        let candidates = if !same_build_and_profile.is_empty() {
+            same_build_and_profile
+        } else if !same_profile.is_empty() {
+            same_profile
+        } else {
+            candidates
+        };
 
         if candidates.len() > 1 {
             return Err(LinkerError::ConflictingLibraryArtifacts {
@@ -1128,7 +1138,7 @@ mod tests {
                 .build()
                 .unwrap();
 
-            let solc = Solc::find_or_install(&Version::new(0, 8, 18)).unwrap();
+            let solc = Solc::find_or_install(&Version::new(0, 8, 35)).unwrap();
             let project = Project::builder()
                 .paths(paths)
                 .ephemeral()
@@ -1306,13 +1316,11 @@ mod tests {
                         // have the same address and nonce.
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
-                                .unwrap(),
+                            address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
-                                .unwrap(),
+                            address!("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D"),
                         ),
                     ],
                 )
@@ -1321,13 +1329,11 @@ mod tests {
                     &[
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
-                                .unwrap(),
+                            address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
-                                .unwrap(),
+                            address!("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d"),
                         ),
                     ],
                 )
@@ -1360,13 +1366,11 @@ mod tests {
                     &[
                         (
                             "default/linking/duplicate/Duplicate.t.sol:A",
-                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
-                                .unwrap(),
+                            address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:C",
-                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
-                                .unwrap(),
+                            address!("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d"),
                         ),
                     ],
                 )
@@ -1375,28 +1379,23 @@ mod tests {
                     &[
                         (
                             "default/linking/duplicate/Duplicate.t.sol:A",
-                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
-                                .unwrap(),
+                            address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:B",
-                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
-                                .unwrap(),
+                            address!("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:C",
-                            Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca")
-                                .unwrap(),
+                            address!("0x8be503bcded90ed42eff31f56199399b2b0154ca"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:D",
-                            Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782")
-                                .unwrap(),
+                            address!("0x47c5e40890bce4a473a49d7501808b9633f29782"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:E",
-                            Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f")
-                                .unwrap(),
+                            address!("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f"),
                         ),
                     ],
                 )
@@ -1405,28 +1404,23 @@ mod tests {
                     &[
                         (
                             "default/linking/duplicate/Duplicate.t.sol:A",
-                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
-                                .unwrap(),
+                            address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:B",
-                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
-                                .unwrap(),
+                            address!("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:C",
-                            Address::from_str("0x8be503bcded90ed42eff31f56199399b2b0154ca")
-                                .unwrap(),
+                            address!("0x8be503bcded90ed42eff31f56199399b2b0154ca"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:D",
-                            Address::from_str("0x47c5e40890bce4a473a49d7501808b9633f29782")
-                                .unwrap(),
+                            address!("0x47c5e40890bce4a473a49d7501808b9633f29782"),
                         ),
                         (
                             "default/linking/duplicate/Duplicate.t.sol:E",
-                            Address::from_str("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f")
-                                .unwrap(),
+                            address!("0x29b2440db4a256b0c1e6d3b4cdcaa68e2440a08f"),
                         ),
                     ],
                 )
@@ -1443,13 +1437,11 @@ mod tests {
                     &[
                         (
                             "default/linking/cycle/Cycle.t.sol:Foo",
-                            Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
-                                .unwrap(),
+                            address!("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D"),
                         ),
                         (
                             "default/linking/cycle/Cycle.t.sol:Bar",
-                            Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
-                                .unwrap(),
+                            address!("0x5a443704dd4B594B382c22a083e2BD3090A6feF3"),
                         ),
                     ],
                 )
@@ -1458,13 +1450,11 @@ mod tests {
                     &[
                         (
                             "default/linking/cycle/Cycle.t.sol:Foo",
-                            Address::from_str("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D")
-                                .unwrap(),
+                            address!("0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D"),
                         ),
                         (
                             "default/linking/cycle/Cycle.t.sol:Bar",
-                            Address::from_str("0x5a443704dd4B594B382c22a083e2BD3090A6feF3")
-                                .unwrap(),
+                            address!("0x5a443704dd4B594B382c22a083e2BD3090A6feF3"),
                         ),
                     ],
                 )
@@ -1492,13 +1482,11 @@ mod tests {
                         // have the same address and nonce.
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0x773253227cce756e50c3993ec6366b3ec27786f9")
-                                .unwrap(),
+                            address!("0x773253227cce756e50c3993ec6366b3ec27786f9"),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0xac231df03403867b05d092c26fc91b6b83f4bebe")
-                                .unwrap(),
+                            address!("0xac231df03403867b05d092c26fc91b6b83f4bebe"),
                         ),
                     ],
                 )
@@ -1507,13 +1495,11 @@ mod tests {
                     &[
                         (
                             "default/linking/nested/Nested.t.sol:Lib",
-                            Address::from_str("0x773253227cce756e50c3993ec6366b3ec27786f9")
-                                .unwrap(),
+                            address!("0x773253227cce756e50c3993ec6366b3ec27786f9"),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib",
-                            Address::from_str("0xac231df03403867b05d092c26fc91b6b83f4bebe")
-                                .unwrap(),
+                            address!("0xac231df03403867b05d092c26fc91b6b83f4bebe"),
                         ),
                     ],
                 )
@@ -1537,13 +1523,11 @@ mod tests {
                     &[
                         (
                             "default/linking/samefile_union/Libs.sol:LInit",
-                            Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3")
-                                .unwrap(),
+                            address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                         ),
                         (
                             "default/linking/samefile_union/Libs.sol:LRun",
-                            Address::from_str("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d")
-                                .unwrap(),
+                            address!("0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d"),
                         ),
                     ],
                 )
@@ -1885,7 +1869,7 @@ mod tests {
         };
         assert!(matches!(err, LinkerError::ConflictingLibraryArtifacts { .. }));
 
-        let configured_address = address!("0000000000000000000000000000000000000001");
+        let configured_address = Address::with_last_byte(1);
         let (file, name) = linker.convert_artifact_id_to_lib_path(&library_id);
         let mut libraries = Libraries::default();
         libraries.libs.entry(file).or_default().insert(name, configured_address.to_checksum(None));
@@ -1914,7 +1898,7 @@ mod tests {
     }
 
     #[test]
-    fn linking_resolves_same_version_library_from_target_build() {
+    fn linking_resolves_same_version_library_from_target_build_or_profile() {
         let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
         let (library_id, library) = linker
@@ -1931,6 +1915,9 @@ mod tests {
             .unwrap();
 
         let mut contracts = linker.contracts.clone();
+        let mut stale_consumer_id = consumer_id.clone();
+        stale_consumer_id.build_id = "stale".to_string();
+        contracts.insert(stale_consumer_id.clone(), consumer.clone());
         let mut other_library_id = library_id;
         other_library_id.build_id = "other".to_string();
         other_library_id.profile = "other".to_string();
@@ -1943,6 +1930,14 @@ mod tests {
         let linker = Linker::new(test.project.root(), contracts);
         linker
             .link_with_create2(Libraries::default(), Address::ZERO, B256::ZERO, [&consumer_id])
+            .unwrap();
+        linker
+            .link_with_create2(
+                Libraries::default(),
+                Address::ZERO,
+                B256::ZERO,
+                [&stale_consumer_id],
+            )
             .unwrap();
 
         let Err(err) = linker.link_with_create2(
@@ -1961,7 +1956,7 @@ mod tests {
         let test = LinkerTest::new(&testdata().join("default/linking/simple"), true);
         let linker = Linker::new(test.project.root(), test.output.artifact_ids().collect());
         let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
-        let unrelated = address!("0000000000000000000000000000000000000001");
+        let unrelated = Address::with_last_byte(1);
         let mut libraries = Libraries::default();
         libraries
             .libs
@@ -1991,7 +1986,7 @@ mod tests {
         contracts.insert(alias_id, library);
         let linker = Linker::new(test.project.root(), contracts);
         let consumer = linker.contracts.keys().find(|id| id.name == "LibraryConsumer").unwrap();
-        let configured = address!("0000000000000000000000000000000000000001");
+        let configured = Address::with_last_byte(1);
         let alias = PathBuf::from("./default/linking/simple/Simple.t.sol");
         let generated_key = PathBuf::from("default/linking/simple/Simple.t.sol");
         let mut libraries = Libraries::default();
@@ -2015,7 +2010,7 @@ mod tests {
         assert!(output.libraries.libs.contains_key(&alias));
         assert!(output.libraries.libs.contains_key(&generated_key));
 
-        let exact = address!("0000000000000000000000000000000000000002");
+        let exact = Address::with_last_byte(2);
         let references = BTreeMap::from([(&library_id, BTreeSet::from([alias.clone()]))]);
         let mut libraries = output.libraries;
         libraries.libs.get_mut(&alias).unwrap().insert("Lib".into(), exact.to_checksum(None));

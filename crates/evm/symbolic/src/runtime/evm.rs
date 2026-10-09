@@ -1,10 +1,9 @@
 use super::*;
-
-pub(crate) fn failed_slot() -> U256 {
-    let mut bytes = [0u8; 32];
-    bytes[..6].copy_from_slice(b"failed");
-    U256::from_be_bytes(bytes)
-}
+use alloy_sol_types::{
+    Panic, PanicKind, Revert, SolError,
+    abi::{AbiDecoderConfig, decode_with_config, token::PackedSeqToken},
+};
+use foundry_evm::core::decode::ASSERTION_FAILED_PREFIX;
 
 pub(crate) fn exp_expr_for_concrete_exponent(
     cx: &mut SymCx,
@@ -30,9 +29,9 @@ pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
         return value;
     }
     let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
-    let sign_bit = U256::from(1) << bit_index;
-    let mask = sign_bit - U256::from(1);
-    if value & sign_bit == U256::ZERO { value & mask } else { value | !mask }
+    let sign_bit = U256::ONE << bit_index;
+    let mask = sign_bit - U256::ONE;
+    if (value & sign_bit).is_zero() { value & mask } else { value | !mask }
 }
 
 pub(crate) fn signextend_word(cx: &mut SymCx, byte_index: U256, value: SymExpr) -> SymExpr {
@@ -43,8 +42,8 @@ pub(crate) fn signextend_word(cx: &mut SymCx, byte_index: U256, value: SymExpr) 
         return SymExpr::constant(cx, signextend(byte_index, value));
     }
     let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
-    let sign_bit = U256::from(1) << bit_index;
-    let mask_value = sign_bit - U256::from(1);
+    let sign_bit = U256::ONE << bit_index;
+    let mask_value = sign_bit - U256::ONE;
     let sign_bit = SymExpr::constant(cx, sign_bit);
     let masked_sign = SymExpr::binop(cx, SymBinOp::And, value.clone(), sign_bit);
     let zero = SymExpr::zero(cx);
@@ -131,57 +130,19 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
 }
 
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
-    is_assert_panic(data) || is_revert_assertion_failure(data)
-}
-
-pub(crate) fn is_assert_panic(data: &[u8]) -> bool {
-    data.len() >= ABI_SELECTOR_PLUS_WORD_LEN
-        && data.starts_with(&PANIC_SELECTOR)
-        && abi_word(&data[4..ABI_SELECTOR_PLUS_WORD_LEN])
-            .is_some_and(|code| code == ASSERT_PANIC_CODE)
+    Panic::abi_decode(data).is_ok_and(|panic| panic.kind() == Some(PanicKind::Assert))
+        || is_revert_assertion_failure(data)
 }
 
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
-    if data.len() < ERROR_DATA_MIN_LEN || !data.starts_with(&ERROR_SELECTOR) {
+    if data.len() < ERROR_DATA_MIN_LEN {
         return false;
     }
-
-    let Some(offset) = abi_word_usize(&data[4..ABI_SELECTOR_PLUS_WORD_LEN]) else {
-        return false;
-    };
-    let Some(length_offset) = 4usize.checked_add(offset) else {
-        return false;
-    };
-    let Some(length_end) = length_offset.checked_add(32) else {
-        return false;
-    };
-    if length_end > data.len() {
-        return false;
-    }
-
-    let Some(length) = abi_word_usize(&data[length_offset..length_end]) else {
-        return false;
-    };
-    let Some(message_end) = length_end.checked_add(length) else {
-        return false;
-    };
-    if message_end > data.len() {
-        return false;
-    }
-
-    std::str::from_utf8(&data[length_end..message_end])
-        .is_ok_and(|message| message.contains(ASSERTION_FAILED_PREFIX))
-}
-
-pub(crate) fn abi_word_usize(word: &[u8]) -> Option<usize> {
-    usize::try_from(abi_word(word)?).ok()
-}
-
-pub(crate) const fn abi_word(word: &[u8]) -> Option<U256> {
-    if word.len() != 32 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(word);
-    Some(U256::from_be_bytes(bytes))
+    let Some(data) = data.strip_prefix(&Revert::SELECTOR) else { return false };
+    // Decode a borrowed token to preserve strict UTF-8 checks without allocating a String.
+    let config = AbiDecoderConfig::new().memory_limit(data.len());
+    decode_with_config::<PackedSeqToken<'_>>(data, config)
+        .ok()
+        .and_then(|message| std::str::from_utf8(message.0).ok())
+        .is_some_and(|message| message.contains(ASSERTION_FAILED_PREFIX))
 }

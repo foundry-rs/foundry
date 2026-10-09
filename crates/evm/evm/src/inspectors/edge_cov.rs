@@ -1,11 +1,8 @@
 use alloy_primitives::{
     Address, U256,
-    map::{DefaultHashBuilder, Entry, HashMap},
+    map::{Entry, HashMap},
 };
-use core::{
-    fmt,
-    hash::{BuildHasher, Hash, Hasher},
-};
+use core::fmt;
 use revm::{
     Inspector,
     bytecode::opcode,
@@ -171,7 +168,6 @@ pub struct EdgeCovInspector {
     collect_edges: bool,
     /// Per-execution dense edge hitcounts. Stable IDs are assigned by the corpus history owner.
     dense_hitcount: HashMap<EdgeKey, u8>,
-    hash_builder: DefaultHashBuilder,
     /// Comparison operand log for CmpLog-style guided fuzzing.
     cmp_log: Option<Vec<CmpOperands>>,
     cmp_site_counts: HashMap<CmpSiteKey, u8>,
@@ -223,7 +219,6 @@ impl EdgeCovInspector {
             config,
             collect_edges: true,
             dense_hitcount: HashMap::default(),
-            hash_builder: DefaultHashBuilder::default(),
             cmp_log: None,
             cmp_site_counts: HashMap::default(),
         }
@@ -299,16 +294,16 @@ impl EdgeCovInspector {
         pc: usize,
         jump_dest: U256,
     ) -> usize {
-        let mut hasher = self.hash_builder.build_hasher();
-        address.hash(&mut hasher);
+        let mut hash = FNV_OFFSET_BASIS;
+        hash_bytes(&mut hash, address.as_slice());
         if self.config.include_call_depth {
-            depth.hash(&mut hasher);
+            hash_bytes(&mut hash, &depth.to_le_bytes());
         }
-        pc.hash(&mut hasher);
-        jump_dest.hash(&mut hasher);
+        hash_bytes(&mut hash, &pc.to_le_bytes());
+        hash_bytes(&mut hash, &jump_dest.to_be_bytes::<32>());
         // The hash is used to index into the hitcount array,
         // so it must be modulo the map size.
-        (hasher.finish() % self.hitcount.len() as u64) as usize
+        (hash % self.hitcount.len() as u64) as usize
     }
 
     #[cfg(test)]
@@ -468,6 +463,16 @@ impl CmpSiteKey {
     }
 }
 
+const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
+
+fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(FNV_PRIME);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,7 +516,7 @@ mod tests {
         let mut inspector = EdgeCovInspector::with_cmp_log_only();
         let addr = Address::ZERO;
 
-        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_hit(addr, 0, 0, U256::ONE);
         inspector.store_cmp(CmpOperands {
             op1: U256::from(123),
             op2: U256::from(456),
@@ -570,7 +575,7 @@ mod tests {
         let addr = Address::ZERO;
 
         for _ in 0..256 {
-            inspector.store_hit(addr, 0, 0, U256::from(1));
+            inspector.store_hit(addr, 0, 0, U256::ONE);
         }
 
         assert_eq!(inspector.edge_count(), 1);
@@ -582,7 +587,7 @@ mod tests {
         let mut inspector = EdgeCovInspector::new();
         let addr = Address::ZERO;
 
-        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_hit(addr, 0, 0, U256::ONE);
         inspector.store_hit(addr, 0, 0, U256::from(2));
         assert_eq!(inspector.edge_count(), 2);
         assert_eq!(dense_counts(&inspector), [1, 1]);
@@ -591,27 +596,21 @@ mod tests {
         assert_eq!(inspector.edge_count(), 0);
         assert!(inspector.dense_hits().is_empty());
 
-        inspector.store_hit(addr, 0, 0, U256::from(1));
+        inspector.store_hit(addr, 0, 0, U256::ONE);
         assert_eq!(inspector.edge_count(), 1);
         assert_eq!(dense_counts(&inspector), [1]);
     }
 
     #[test]
-    fn legacy_hash_ids_match_old_calculation() {
+    fn hash_ids_use_stable_encoding() {
         let mut inspector = EdgeCovInspector::with_config(EdgeCovConfig::legacy_hash_ids());
         let addr = Address::ZERO;
         let pc = 42;
         let jump_dest = U256::from(100);
 
-        let mut hasher = inspector.hash_builder.build_hasher();
-        addr.hash(&mut hasher);
-        pc.hash(&mut hasher);
-        jump_dest.hash(&mut hasher);
-        let expected_id = (hasher.finish() % MAX_EDGE_COUNT as u64) as usize;
-
         inspector.store_hit(addr, 0, pc, jump_dest);
 
-        assert_eq!(inspector.hitcount[expected_id], 1);
+        assert_eq!(inspector.hitcount[65235], 1);
         assert_eq!(inspector.hitcount.iter().filter(|&&count| count != 0).count(), 1);
     }
 
@@ -620,15 +619,15 @@ mod tests {
         let addr = Address::ZERO;
 
         let mut without_depth = EdgeCovInspector::new();
-        without_depth.store_hit(addr, 0, 0, U256::from(1));
-        without_depth.store_hit(addr, 1, 0, U256::from(1));
+        without_depth.store_hit(addr, 0, 0, U256::ONE);
+        without_depth.store_hit(addr, 1, 0, U256::ONE);
         assert_eq!(without_depth.edge_count(), 1);
         assert_eq!(dense_counts(&without_depth), [2]);
 
         let mut with_depth =
             EdgeCovInspector::with_config(EdgeCovConfig::new(EdgeCovKind::CollisionFree, true));
-        with_depth.store_hit(addr, 0, 0, U256::from(1));
-        with_depth.store_hit(addr, 1, 0, U256::from(1));
+        with_depth.store_hit(addr, 0, 0, U256::ONE);
+        with_depth.store_hit(addr, 1, 0, U256::ONE);
         assert_eq!(with_depth.edge_count(), 2);
         assert_eq!(dense_counts(&with_depth), [1, 1]);
     }
@@ -637,7 +636,7 @@ mod tests {
     fn reset_clears_hitcount_and_cmp_log() {
         let mut inspector = EdgeCovInspector::with_cmp_log();
 
-        inspector.store_hit(Address::ZERO, 0, 0, U256::from(1));
+        inspector.store_hit(Address::ZERO, 0, 0, U256::ONE);
         inspector.store_cmp(CmpOperands {
             op1: U256::from(123),
             op2: U256::from(456),

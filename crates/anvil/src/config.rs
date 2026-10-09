@@ -11,13 +11,14 @@ use crate::{
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
+        miner::INSTANT_COALESCE_WINDOW,
         pool::transactions::TransactionOrder,
     },
     mem::{self, in_memory_db::StateRootDb},
 };
-use alloy_chains::{Chain, NamedChain};
+use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
-use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_eips::{BlockId, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, AnyRpcBlock, BlockResponse, TransactionResponse};
@@ -25,10 +26,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, TxHash, U256, hex, keccak256, map::HashMap, utils::Unit,
 };
 use alloy_provider::Provider;
-use alloy_rpc_types::{
-    BlockNumberOrTag,
-    anvil::{Metadata, NodeInfo},
-};
+use alloy_rpc_types::anvil::{Metadata, NodeInfo};
 use alloy_signer::Signer;
 use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
@@ -77,6 +75,9 @@ use tempo_hardfork::{
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
+
+#[cfg(feature = "base")]
+use alloy_chains::NamedChain;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 
@@ -130,6 +131,7 @@ struct ForkOverrides {
 
 struct StableForkSnapshot {
     endpoint_identity: ForkEndpointIdentity,
+    state_is_mutable: bool,
     block_number: u64,
     transaction_replay: Option<ForkTransactionReplay>,
     block: Option<AnyRpcBlock>,
@@ -150,11 +152,13 @@ const FORK_IDENTITY_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 struct AnvilNodeInfoProbe {
     identified: bool,
     skip: bool,
+    /// A failed probe could not distinguish an unsupported method from a mutable Anvil source.
+    inconclusive: bool,
 }
 
 impl AnvilNodeInfoProbe {
     const fn new(identified: bool, skip: bool) -> Self {
-        Self { identified, skip }
+        Self { identified, skip, inconclusive: false }
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
@@ -167,6 +171,7 @@ impl AnvilNodeInfoProbe {
         )
         .await
         else {
+            self.inconclusive = true;
             return Ok(None);
         };
         match response {
@@ -174,7 +179,10 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(_) if !self.identified => Ok(None),
+            Err(error) if !self.identified => {
+                self.inconclusive |= !is_rpc_method_not_found(&error);
+                Ok(None)
+            }
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }
@@ -247,6 +255,8 @@ pub struct NodeConfig {
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
+    /// Window for grouping ready transactions in auto mining; zero disables coalescing.
+    pub transaction_coalescing_window: Duration,
     /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
@@ -267,6 +277,8 @@ pub struct NodeConfig {
     pub fork_chain_id: Option<U256>,
     /// Skip `anvil_nodeInfo` / `anvil_metadata` probes against the fork URL.
     pub no_fork_node_info: bool,
+    /// Disables opportunistic BAL post-state prefill of the remote fork cache.
+    pub no_bal: bool,
     /// Address fork state reads by block number instead of by block hash.
     pub fork_state_by_number: bool,
     /// Chain ID discovered from the active fork source.
@@ -541,7 +553,7 @@ Genesis Number
 
         for wallet in &self.genesis_accounts {
             available_accounts.push(format!("{:?}", wallet.address()));
-            private_keys.push(format!("0x{}", hex::encode(wallet.credential().to_bytes())));
+            private_keys.push(hex::encode_prefixed(wallet.credential().to_bytes()));
         }
 
         if let Some(generator) = &self.account_generator {
@@ -649,6 +661,7 @@ impl Default for NodeConfig {
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
             block_time: None,
+            transaction_coalescing_window: INSTANT_COALESCE_WINDOW,
             no_mining: false,
             mixed_mining: false,
             port: NODE_PORT,
@@ -676,6 +689,7 @@ impl Default for NodeConfig {
             fork_retry_backoff: Duration::from_millis(1_000),
             fork_chain_id: None,
             no_fork_node_info: false,
+            no_bal: false,
             fork_state_by_number: false,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
@@ -1036,6 +1050,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the auto-mining coalescing window. Zero disables the delay.
+    #[must_use]
+    pub const fn with_transaction_coalescing_window(mut self, window: Duration) -> Self {
+        self.transaction_coalescing_window = window;
+        self
+    }
+
     /// If set to `true` auto mining will be disabled
     #[must_use]
     pub const fn with_no_mining(mut self, no_mining: bool) -> Self {
@@ -1131,6 +1152,13 @@ impl NodeConfig {
     #[must_use]
     pub const fn with_fork_state_by_number(mut self, fork_state_by_number: bool) -> Self {
         self.fork_state_by_number = fork_state_by_number;
+        self
+    }
+
+    /// Disables opportunistic BAL post-state prefill of the remote fork cache.
+    #[must_use]
+    pub const fn with_no_bal(mut self, no_bal: bool) -> Self {
+        self.no_bal = no_bal;
         self
     }
 
@@ -1266,10 +1294,16 @@ impl NodeConfig {
     pub fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
         if let Some(path) = &self.config_out {
             let value = self.as_json(fork);
-            foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
+            foundry_common::fs::write_sensitive_json_file(path, &value)
+                .wrap_err("failed writing JSON")?;
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
+            if self.networks.is_celo() {
+                foundry_common::sh_warn!(
+                    "CIP-64 uses native fee accounting; feeCurrency is preserved but token fees are not charged"
+                )?;
+            }
         }
         Ok(())
     }
@@ -1438,8 +1472,8 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::default();
-        cfg.spec = self.get_hardfork().into();
+        let mut cfg = CfgEnv::new();
+        cfg.set_spec_and_mainnet_gas_params(self.get_hardfork().into());
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1518,14 +1552,11 @@ impl NodeConfig {
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
-        // Fork setup initializes its own timestamp. For a local BSC chain, keep the initial EVM
-        // and genesis block on the same resolved timestamp so chain precompiles are available
-        // immediately. Preserve the default timestamp behavior for all other local chains.
-        let is_bsc = matches!(
-            NamedChain::try_from(evm_env.cfg_env.chain_id),
-            Ok(NamedChain::BinanceSmartChain | NamedChain::BinanceSmartChainTestnet)
-        );
-        if fork.is_none() && (self.genesis_timestamp.is_some() || is_bsc) {
+        // Fork setup initializes its own timestamp. For a local chain, keep the initial EVM and
+        // genesis block on the same resolved timestamp, so that calls against the latest block
+        // observe the genesis time, and timestamp-activated precompiles and validity windows
+        // behave the same before and after the first mined block.
+        if fork.is_none() {
             evm_env.block_env.timestamp = U256::from(genesis_timestamp);
         }
 
@@ -1627,6 +1658,9 @@ impl NodeConfig {
     {
         let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
+        if !self.no_bal && !self.no_fork_node_info {
+            config.prefill_cache(db.inner()).await;
+        }
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork), replay))
@@ -1775,7 +1809,7 @@ impl NodeConfig {
                 "cannot set Anvil's fork provider to its own RPC endpoint"
             );
             let block = provider
-                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to confirm active fork block on replacement endpoint")?;
             let after =
@@ -1821,7 +1855,7 @@ impl NodeConfig {
                 )
             };
             let block = provider
-                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to get fork block")?;
             let gas_price = if let Some(gas_price) = fork_overrides.gas_price {
@@ -1834,6 +1868,7 @@ impl NodeConfig {
             if before == after {
                 return Ok(StableForkSnapshot {
                     endpoint_identity: before,
+                    state_is_mutable: node_info_probe.identified || node_info_probe.inconclusive,
                     block_number,
                     transaction_replay,
                     block,
@@ -1859,7 +1894,7 @@ impl NodeConfig {
             let before =
                 self.resolved_fork_endpoint_identity(&provider, &mut node_info_probe).await?;
             let block = provider
-                .get_block(BlockNumberOrTag::Number(block_number).into())
+                .get_block(BlockId::number(block_number))
                 .await
                 .wrap_err("failed to confirm fork block context")?;
             let after =
@@ -1933,6 +1968,9 @@ impl NodeConfig {
         let (db, config, replay) =
             self.setup_fork_db_config_with_replay(eth_rpc_url, evm_env, fees, None).await?;
         eyre::ensure!(replay.is_none(), "transaction-hash fork replay requires full node startup");
+        if !self.no_bal && !self.no_fork_node_info {
+            config.prefill_cache(db.inner()).await;
+        }
         Ok((db, config))
     }
 
@@ -1981,6 +2019,7 @@ impl NodeConfig {
         // reset between any two RPC calls, so verify the endpoint identity on both sides.
         let StableForkSnapshot {
             endpoint_identity: fork_identity,
+            state_is_mutable,
             block_number: fork_block_number,
             transaction_replay: fork_transaction_replay,
             block,
@@ -2243,7 +2282,16 @@ latest block number: {latest_block}"
         } else {
             SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?
         };
-        tokio::spawn(handler);
+        // The handler gets its own thread and runtime: `SharedBackend` reads block the calling
+        // thread via `block_in_place`, so under enough concurrent reads they can occupy every
+        // thread of the node's runtime and leave none to poll the handler they wait on.
+        std::thread::Builder::new().name("fork-backend".into()).spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build fork backend runtime")
+                .block_on(handler)
+        })?;
 
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
@@ -2258,6 +2306,7 @@ latest block number: {latest_block}"
             fork_chain_id: self.fork_chain_id.map(|chain_id| chain_id.to()),
             hardfork: Some(effective_hardfork),
             endpoint_identity: fork_identity,
+            state_is_mutable,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -2618,11 +2667,17 @@ mod tests {
     use super::*;
     use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[cfg(feature = "base")]
     use foundry_evm::hardforks::BaseUpgrade;
 
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
+
+    #[cfg(not(feature = "base"))]
+    use alloy_chains::NamedChain;
 
     #[cfg(feature = "base")]
     #[tokio::test(flavor = "multi_thread")]
@@ -2667,6 +2722,7 @@ mod tests {
         config.fork_urls.push("https://mirror.example/private-api-key?token=secret".to_string());
 
         let fork = api.backend.get_fork().unwrap();
+        let node_info = api.anvil_node_info().await.unwrap();
         let output = config.as_string(Some(&fork));
         let temp = tempfile::tempdir().unwrap();
         let config_out = temp.path().join("config.json");
@@ -2681,6 +2737,7 @@ mod tests {
         assert!(!output.contains("private-api-key"));
         assert!(!output.contains("secret"));
         assert_eq!(json["endpoint"], redact_url(&fork_url));
+        assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&fork_url)));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
     }
@@ -2717,9 +2774,8 @@ mod tests {
             .with_chain_id(Some(1u64));
         let block = 42;
         config.fork_source_chain_id = Some(143);
-        let expected = Config::foundry_block_cache_file(143, block).map(|path| {
-            path.with_file_name(format!("storage-{}.json", hex::encode(keccak256(rpc_url))))
-        });
+        let expected = Config::foundry_block_cache_file(143, block)
+            .map(|path| path.with_file_name(format!("storage-{:x}.json", keccak256(rpc_url))));
 
         assert_eq!(config.block_cache_path(block), expected);
         assert_ne!(
@@ -2952,5 +3008,18 @@ mod tests {
                 .generate()
                 .is_ok()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_out_has_owner_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = NodeConfig::test().set_config_out(Some(path.clone()));
+
+        config.print(None).unwrap();
+
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }
