@@ -529,24 +529,28 @@ where
 
     async fn trace_filter(&self, filter: TraceFilter) -> RpcResult<Vec<LocalizedTransactionTrace>> {
         // A range without a start begins at the latest block, which is local.
-        let (Some(fork), Some(from)) = (&self.fork, filter.from_block) else {
+        let remote = self
+            .fork
+            .as_ref()
+            .and_then(|fork| fork.remote_block_number().map(|number| (fork, number)));
+        let (Some((fork, remote_head)), Some(from)) = (remote, filter.from_block) else {
             return self.local_filter(filter).await;
         };
-        if from > fork.block_number() {
+        if from > remote_head {
             return self.local_filter(filter).await;
         }
         let TraceFilter { to_block, after, count, .. } = filter;
         let remote = TraceFilter {
-            to_block: Some(to_block.map_or(fork.block_number(), |to| to.min(fork.block_number()))),
+            to_block: Some(to_block.map_or(remote_head, |to| to.min(remote_head))),
             after: None,
             count: None,
             ..filter.clone()
         };
         let mut traces: Vec<LocalizedTransactionTrace> =
             fork.forward_json("trace_filter", json!([remote]))?;
-        if to_block.is_none_or(|to| to > fork.block_number()) {
+        if to_block.is_none_or(|to| to > remote_head) {
             let local = TraceFilter {
-                from_block: Some(fork.block_number() + 1),
+                from_block: Some(remote_head + 1),
                 after: None,
                 count: None,
                 ..filter

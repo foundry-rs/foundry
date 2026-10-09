@@ -507,6 +507,21 @@ async fn test_fork_transaction_hash_replay_skips_unsupported_prefix() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_transaction_hash_replays_before_startup() {
+    assert_fork_transaction_hash_replay(2, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replays_prefix_before_startup() {
+    assert_fork_transaction_hash_replay(1, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replays_before_auto_mining() {
+    assert_fork_transaction_hash_replay(2, true).await;
+}
+
+/// Each replay mode uses its own nodes so their caches do not accumulate in one test.
+async fn assert_fork_transaction_hash_replay(last: usize, auto_mine: bool) {
     let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     origin_api.anvil_set_auto_mine(false).await.unwrap();
     let origin_provider = origin_handle.http_provider();
@@ -556,8 +571,8 @@ async fn test_fork_transaction_hash_replays_before_startup() {
     let (fork_api, fork_handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
-            .with_fork_transaction_hash(Some(expected_hashes[2]))
-            .with_no_mining(true),
+            .with_fork_transaction_hash(Some(expected_hashes[last]))
+            .with_no_mining(!auto_mine),
     )
     .await;
     let fork_provider = fork_handle.http_provider();
@@ -572,70 +587,40 @@ async fn test_fork_transaction_hash_replays_before_startup() {
         .iter()
         .map(|tx| tx.tx_hash())
         .collect::<Vec<_>>();
-    assert_eq!(replayed_hashes, expected_hashes);
+    assert_eq!(replayed_hashes, expected_hashes[..=last]);
     assert_eq!(fork_provider.txpool_status().await.unwrap().pending, 0);
     assert_eq!(fork_provider.txpool_status().await.unwrap().queued, 0);
     let content = fork_provider.txpool_content().await.unwrap();
     assert!(content.pending.is_empty());
     assert!(content.queued.is_empty());
-    assert_eq!(fork_provider.get_transaction_count(sender).await.unwrap(), 3);
-    assert!(
-        !fork_provider.get_transaction_receipt(expected_hashes[2]).await.unwrap().unwrap().status()
-    );
-
-    let (prefix_api, _) = spawn(
-        NodeConfig::test()
-            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
-            .with_fork_transaction_hash(Some(expected_hashes[1]))
-            .with_no_mining(true),
-    )
-    .await;
-    let prefix =
-        prefix_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
-    assert_eq!(
-        prefix
-            .transactions
-            .as_transactions()
-            .unwrap()
-            .iter()
-            .map(|tx| tx.tx_hash())
-            .collect::<Vec<_>>(),
-        expected_hashes[..2]
-    );
-    assert!(prefix_api.transaction_by_hash(expected_hashes[2]).await.unwrap().is_none());
-
-    let _pending = fork_provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default()
-                .from(sender)
-                .to(Address::random())
-                .value(U256::from(3))
-                .nonce(3),
-        ))
-        .await
-        .unwrap();
-    let pool = fork_provider.txpool_status().await.unwrap();
-    assert_eq!(pool.pending, 1);
-    assert_eq!(pool.queued, 0);
-
-    let (auto_mining_api, _) = spawn(
-        NodeConfig::test()
-            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
-            .with_fork_transaction_hash(Some(expected_hashes[2])),
-    )
-    .await;
-    let replayed =
-        auto_mining_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
-    assert_eq!(
-        replayed
-            .transactions
-            .as_transactions()
-            .unwrap()
-            .iter()
-            .map(|tx| tx.tx_hash())
-            .collect::<Vec<_>>(),
-        expected_hashes
-    );
+    assert_eq!(fork_provider.get_transaction_count(sender).await.unwrap(), last as u64 + 1);
+    if last == 2 {
+        assert!(
+            !fork_provider
+                .get_transaction_receipt(expected_hashes[2])
+                .await
+                .unwrap()
+                .unwrap()
+                .status()
+        );
+    } else {
+        assert!(fork_api.transaction_by_hash(expected_hashes[2]).await.unwrap().is_none());
+    }
+    if !auto_mine {
+        let _pending = fork_provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default()
+                    .from(sender)
+                    .to(Address::random())
+                    .value(U256::from(3))
+                    .nonce(last as u64 + 1),
+            ))
+            .await
+            .unwrap();
+        let pool = fork_provider.txpool_status().await.unwrap();
+        assert_eq!(pool.pending, 1);
+        assert_eq!(pool.queued, 0);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -763,7 +748,6 @@ async fn test_fork_transaction_hash_replay_resolves_source_hardfork() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth activates hardforks once and for good, so a replay cannot run a newer hardfork than the blocks after it"]
 async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
     // Real chain ID so the hardfork can be resolved from chain + timestamp.
     const MAINNET_CHAIN_ID: u64 = 1;
@@ -817,6 +801,14 @@ async fn test_fork_transaction_hash_replay_applies_source_beacon_root() {
         .await
         .unwrap();
     assert_eq!(stored_timestamp, B256::from(U256::from(CANCUN_ERA_TIMESTAMP)));
+    // The next block returns to Shanghai even if its timestamp equals the replay's.
+    fork_api.evm_set_next_block_timestamp(CANCUN_ERA_TIMESTAMP).await.unwrap();
+    fork_api.mine_one().await.unwrap();
+    let next = fork_api.block_by_number_full(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(next.header.timestamp, CANCUN_ERA_TIMESTAMP);
+    assert!(next.header.parent_beacon_block_root.is_none());
+    assert!(next.header.blob_gas_used.is_none());
+    assert!(next.header.excess_blob_gas.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2669,7 +2661,6 @@ async fn spawn_arbitrum_block_number_source(
 
 // <https://github.com/foundry-rs/foundry/issues/16768>
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Arbitrum forks number blocks by the L2 block: NUMBER returns the L2 number and blocks carry no l1BlockNumber; anvil mirrors Arbitrum's L1 numbering"]
 async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
     const L2_BLOCK: u64 = 503_433_721;
     const L1_BLOCK: u64 = 25_941_231;
@@ -2728,6 +2719,8 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
                 serde_json::from_value::<U256>(block.other["l1BlockNumber"].clone()).unwrap(),
                 U256::from(L1_BLOCK + offset)
             );
+            let by_hash = provider.get_block_by_hash(block.header.hash).await.unwrap().unwrap();
+            assert_eq!(by_hash.other.get("l1BlockNumber"), block.other.get("l1BlockNumber"));
             if offset == 1 {
                 let sender = provider.get_accounts().await.unwrap()[0];
                 let receipt = provider
@@ -2735,7 +2728,9 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
                         TransactionRequest::default()
                             .with_from(sender)
                             .with_to(target)
-                            .with_gas_limit(100_000),
+                            .with_gas_limit(100_000)
+                            .with_max_fee_per_gas(2_000_000_000)
+                            .with_max_priority_fee_per_gas(0),
                     ))
                     .await
                     .unwrap()
@@ -2757,6 +2752,32 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
             U256::from(L1_BLOCK + 1)
         );
         let state = api.anvil_dump_state(Some(true)).await.unwrap();
+        // The dump alone retains execution numbering, including with an explicit local id.
+        {
+            let (restored_api, restored) = spawn(NodeConfig::test().with_chain_id(chain_id)).await;
+            restored_api.anvil_load_state(state.clone()).await.unwrap();
+            let restored_provider = restored.http_provider();
+            assert_eq!(
+                U256::from_be_slice(
+                    &restored_provider
+                        .call(request.clone())
+                        .block(BlockId::latest())
+                        .await
+                        .unwrap()
+                ),
+                U256::from(L1_BLOCK + 2)
+            );
+            assert_eq!(
+                U256::from_be_slice(
+                    &restored_provider
+                        .call(arb_request.clone())
+                        .block(BlockId::latest())
+                        .await
+                        .unwrap()
+                ),
+                U256::from(L2_BLOCK + 2)
+            );
+        }
         assert!(api.evm_revert(snapshot).await.unwrap());
         assert_eq!(provider.get_block_number().await.unwrap(), L2_BLOCK);
         assert_eq!(
@@ -2809,7 +2830,6 @@ async fn test_arbitrum_fork_preserves_l1_block_number_after_mining() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "Arbitrum forks number blocks by the L2 block: NUMBER returns the L2 number and blocks carry no l1BlockNumber; anvil mirrors Arbitrum's L1 numbering"]
 async fn test_arbitrum_fork_simulate_preserves_l1_and_l2_block_numbers() {
     const L2_BLOCK: u64 = 503_433_721;
     const L1_BLOCK: u64 = 25_941_231;
@@ -4609,7 +4629,6 @@ async fn test_anvil_reset_from_local_node_rejects_zksync_source_atomically() {
 
 // <https://github.com/foundry-rs/foundry/issues/11486>
 #[test]
-#[ignore = "reth's engine and RPC run on the runtime's blocking pool; a runtime with one blocking thread stalls them"]
 fn test_fork_uncached_reads_do_not_deadlock_saturated_runtime() {
     // The origin is a separate node, so it gets its own runtime.
     let origin_rt = tokio::runtime::Runtime::new().unwrap();

@@ -1065,7 +1065,6 @@ async fn test_trace_transaction_keeps_root_and_valued_precompile_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "replays run with the precompiles of the current chain id; anvil serves the traces it recorded at mining"]
 async fn test_mined_precompile_traces_survive_chain_id_changes() {
     let p256 = Address::left_padding_from(&[1, 0]);
     let target = Address::left_padding_from(&[0xbe, 0xef]);
@@ -1125,12 +1124,61 @@ async fn test_mined_precompile_traces_survive_chain_id_changes() {
             before
         );
 
+        // Calls at latest still use the replacement id, rather than the mined block's id.
+        let chain_id_contract = Address::random();
+        api.anvil_set_code(chain_id_contract, Bytes::from_hex("0x465f5260205ff3").unwrap())
+            .await
+            .unwrap();
+        let result = provider
+            .call(WithOtherFields::new(TransactionRequest::default().to(chain_id_contract)))
+            .await
+            .unwrap();
+        assert_eq!(U256::from_be_slice(&result), U256::from(replacement));
+
         // The execution marker must also survive serialization into a fresh node.
-        let state = api.anvil_dump_state(None).await.unwrap();
+        let state = api.anvil_dump_state(Some(true)).await.unwrap();
         let (restored_api, restored_handle) = spawn(config.with_chain_id(Some(replacement))).await;
         assert!(restored_api.anvil_load_state(state).await.unwrap());
         assert_eq!(restored_handle.http_provider().trace_transaction(hash).await.unwrap(), before);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_precompile_traces_keep_source_chain_after_id_changes() {
+    let config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Prague.into()))
+        .with_chain_id(Some(56u64))
+        .with_genesis_timestamp(Some(1_718_863_501u64));
+    let (origin_api, origin) = spawn(config.clone()).await;
+    let caller = Address::repeat_byte(0x42);
+    // STATICCALL to BSC's P256 precompile, which does not appear as a child trace.
+    origin_api
+        .anvil_set_code(caller, Bytes::from_hex("0x60006000600060006101005afa5000").unwrap())
+        .await
+        .unwrap();
+    let (api, handle) =
+        spawn(config.with_chain_id(Some(1u64)).with_eth_rpc_url(Some(origin.http_endpoint())))
+            .await;
+    let provider = handle.http_provider();
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(handle.dev_wallets().next().unwrap().address())
+                .to(caller)
+                .gas_limit(100_000)
+                .max_fee_per_gas(2_000_000_000)
+                .max_priority_fee_per_gas(0),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let before = provider.trace_transaction(receipt.transaction_hash).await.unwrap();
+    assert_eq!(before.len(), 1);
+    api.anvil_set_chain_id(2).await.unwrap();
+    assert_eq!(provider.trace_transaction(receipt.transaction_hash).await.unwrap(), before);
+    assert_eq!(provider.trace_block(receipt.block_number.unwrap().into()).await.unwrap(), before);
 }
 
 #[tokio::test(flavor = "multi_thread")]

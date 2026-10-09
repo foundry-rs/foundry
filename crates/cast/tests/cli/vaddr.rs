@@ -1,7 +1,6 @@
 //! CLI tests for vaddr commands.
 
 use super::*;
-use anvil::TempoConfigExt;
 
 // Tests for `cast vaddr` JSON output
 #[casttest]

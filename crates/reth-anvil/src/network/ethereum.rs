@@ -1,7 +1,13 @@
 //! The Ethereum network: reth's Ethereum node with the anvil pool and executor wrappers.
 
+use self::{
+    evm::AnvilEthEvmFactory,
+    payload::AnvilPayloadBuilderBuilder,
+    replay::{ExecutionOverrides, ReplayEvmConfig},
+};
 use super::{AnvilAdapter, AnvilComponents, AnvilNetwork, AnvilRpcOf, Prepared};
 use crate::{
+    block_env::BlockEnvOverrides,
     config::{ForkSource, NodeConfig},
     engine::AnvilEngineValidatorBuilder,
     evm::{AnvilEvmFactory, AnvilExecutorBuilder, PrecompileBuilder},
@@ -11,6 +17,7 @@ use crate::{
     pending::AnvilEthApiBuilder,
     pool::{AnvilPoolBuilder, PoolSettings},
 };
+use alloy_eips::Encodable2718;
 use alloy_evm::eth::spec::EthExecutorSpec;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
@@ -27,9 +34,9 @@ use reth_ethereum::{
     EthPrimitives,
     chainspec::{ChainSpec, EthereumHardforks, Hardforks},
     engine::local::LocalPayloadAttributesBuilder,
-    evm::{EthEvmConfig, factory::RethEvmFactory},
+    evm::EthEvmConfig,
     node::{
-        EthereumAddOns, EthereumNode, EthereumPayloadBuilder,
+        EthereumAddOns, EthereumNode,
         builder::{
             BuilderContext, FullNodeTypes, NodeTypes,
             components::{
@@ -39,10 +46,15 @@ use reth_ethereum::{
             rpc::{BasicEngineApiBuilder, BasicEngineValidatorBuilder, RpcAddOns},
         },
     },
+    pool::EthPooledTransaction,
 };
 use serde::de::DeserializeOwned;
 use std::{fmt, sync::Arc};
 use tower::layer::util::Identity;
+
+mod evm;
+mod payload;
+pub(crate) mod replay;
 
 /// The Ethereum network.
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,7 +66,7 @@ impl AnvilNetwork for Ethereum {
     type Components = ComponentsBuilder<
         AnvilAdapter<EthereumNode>,
         AnvilPoolBuilder,
-        BasicPayloadServiceBuilder<EthereumPayloadBuilder>,
+        BasicPayloadServiceBuilder<AnvilPayloadBuilderBuilder>,
         NoopNetworkBuilder,
         AnvilExecutorBuilder<EthereumEvmBuilder>,
         NoopConsensusBuilder,
@@ -70,26 +82,36 @@ impl AnvilNetwork for Ethereum {
     type Attributes = LocalPayloadAttributesBuilder<ChainSpec>;
 
     async fn prepare(config: &mut NodeConfig) -> Result<Prepared<EthereumNode>> {
-        prepare(config).await
+        let prepared = prepare(config).await?;
+        let fork = prepared.fork.as_ref().map(|fork| fork.as_ref() as &dyn ForkInfo);
+        let overrides = ExecutionOverrides::new(config, fork)?;
+        config.extensions.insert(overrides);
+        Ok(prepared)
     }
 
     fn components(anvil: &AnvilComponents) -> Self::Components {
+        let overrides =
+            anvil.config.extensions.get::<ExecutionOverrides>().cloned().unwrap_or_default();
+        let mut executor = EthereumEvmBuilder::new(
+            network_precompiles(anvil),
+            anvil.fork.clone(),
+            anvil.console.is_some(),
+            anvil.impersonation.clone(),
+        );
+        executor.overrides = overrides.clone();
+        executor.block_env = anvil.block_env.clone();
         EthereumNode::components()
+            .payload(BasicPayloadServiceBuilder::new(AnvilPayloadBuilderBuilder {
+                impersonation: anvil.impersonation.clone(),
+                overrides,
+            }))
             .network(NoopNetworkBuilder::eth())
             .pool(AnvilPoolBuilder {
                 state: anvil.impersonation.clone(),
                 order: anvil.order.clone(),
                 settings: PoolSettings::from_config(&anvil.config),
             })
-            .executor(AnvilExecutorBuilder::new(
-                EthereumEvmBuilder::new(
-                    network_precompiles(&anvil.config),
-                    anvil.fork.clone(),
-                    anvil.console.is_some(),
-                    anvil.impersonation.clone(),
-                ),
-                anvil,
-            ))
+            .executor(AnvilExecutorBuilder::new(executor, anvil))
             .consensus(NoopConsensusBuilder)
     }
 
@@ -124,6 +146,10 @@ impl AnvilNetwork for Ethereum {
         module.register_method("eth_signRawTransaction", |params, _, _| {
             unsupported_network_method::<(Bytes,)>(params)
         })?;
+        let rpc = rpc.with_pool_transaction_converter(|tx| {
+            let encoded_length = tx.encode_2718_len();
+            Ok(EthPooledTransaction::new(tx, encoded_length))
+        });
         Ok((rpc, module))
     }
 
@@ -191,6 +217,8 @@ pub struct EthereumEvmBuilder {
     fork: Option<Arc<dyn ForkInfo>>,
     console: bool,
     impersonation: ImpersonationState,
+    overrides: ExecutionOverrides,
+    block_env: BlockEnvOverrides,
 }
 
 impl fmt::Debug for EthereumEvmBuilder {
@@ -207,13 +235,20 @@ impl fmt::Debug for EthereumEvmBuilder {
 impl EthereumEvmBuilder {
     /// Creates the builder with the precompiles to install, the fork, if any, and whether to
     /// collect `console.log` calls.
-    pub const fn new(
+    pub fn new(
         precompiles: Vec<(Address, PrecompileBuilder)>,
         fork: Option<Arc<dyn ForkInfo>>,
         console: bool,
         impersonation: ImpersonationState,
     ) -> Self {
-        Self { precompiles, fork, console, impersonation }
+        Self {
+            precompiles,
+            fork,
+            console,
+            impersonation,
+            overrides: Default::default(),
+            block_env: Default::default(),
+        }
     }
 }
 
@@ -225,11 +260,11 @@ where
         >,
     Node: FullNodeTypes<Types = Types>,
 {
-    type EVM = EthEvmConfig<Types::ChainSpec, AnvilEvmFactory<RethEvmFactory>>;
+    type EVM = ReplayEvmConfig<Types::ChainSpec>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> Result<Self::EVM> {
         let factory = AnvilEvmFactory::new(
-            RethEvmFactory::default(),
+            AnvilEthEvmFactory::new(self.fork.clone()),
             self.precompiles,
             self.fork,
             self.console,
@@ -239,18 +274,24 @@ where
         if let Some(cache) = ctx.sender_recovery_cache() {
             evm_config = evm_config.with_sender_recovery_cache(cache.clone());
         }
-        Ok(evm_config)
+        Ok(ReplayEvmConfig::new(evm_config, self.overrides, self.block_env))
     }
 }
 
 /// The precompiles the configured network adds: Celo's native transfer on Celo, and `ArbSys`
 /// on Arbitrum chains.
-fn network_precompiles(config: &NodeConfig) -> Vec<(Address, PrecompileBuilder)> {
+fn network_precompiles(anvil: &AnvilComponents) -> Vec<(Address, PrecompileBuilder)> {
+    let config = &anvil.config;
     let mut precompiles: Vec<(Address, PrecompileBuilder)> = Vec::new();
     if config.networks.is_celo() {
         precompiles.push((CELO_TRANSFER_ADDRESS, Arc::new(|_| celo_transfer::precompile())));
     }
-    if arbitrum::is_arbitrum_chain(config.get_chain_id()) {
+    if arbitrum::is_arbitrum_chain(config.get_chain_id())
+        || anvil.fork.as_ref().is_some_and(|fork| {
+            arbitrum::is_arbitrum_chain(fork.source_chain_id())
+                || fork.l1_block_number(fork.block_number()).is_some()
+        })
+    {
         precompiles.push((arbitrum::ARB_SYS_ADDRESS, Arc::new(arbitrum::arb_sys_precompile)));
     }
     precompiles

@@ -346,7 +346,6 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "without validation, a blob call with a zero cap runs at the blob base fee and pays it; anvil charges no blob fee"]
 async fn test_simulate_v1_preserves_precompile_warming_for_blob_calls_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let source = "0x0000000000000000000000000000000000000004";
@@ -359,7 +358,7 @@ async fn test_simulate_v1_preserves_precompile_warming_for_blob_calls_rpc() {
         &destination[2..],
     );
 
-    // A zero-priced blob call runs at a zero blob base fee on anvil.
+    // A zero-cap blob call skips its blob fee without changing precompile warming.
     for call in [json!({
         "to": helper,
         "blobVersionedHashes": [format!("0x01{}", "00".repeat(31))],

@@ -1418,7 +1418,7 @@ pub struct ForkSource<'a> {
 }
 
 /// Builds a chain spec with every hardfork up to and including `hardfork` active at genesis, and
-/// anvil's blob schedule for that hardfork.
+/// anvil's blob schedule for that hardfork, including later BPO updates on known chains.
 /// With `deferred`, only the hardforks up to the given one are active at genesis, and the rest up
 /// to `hardfork` activate at the given timestamp.
 fn build_chain_spec(
@@ -1447,6 +1447,20 @@ fn build_chain_spec(
     };
     if hardfork > EthereumHardfork::Osaka {
         blob_params.scheduled.push((switch, get_blob_params_by_hardfork(hardfork.into())));
+    }
+    // BPO updates change blob limits without upgrading the EVM. Keep their known activation
+    // times on Osaka and later nodes, while older configured hardforks remain pinned.
+    if hardfork >= EthereumHardfork::Osaka {
+        for fork in EthereumHardfork::bpo_variants() {
+            if *fork > hardfork
+                && let Some(timestamp) = fork.activation_timestamp(spec.chain)
+                && timestamp > switch
+            {
+                blob_params
+                    .scheduled
+                    .push((timestamp, get_blob_params_by_hardfork((*fork).into())));
+            }
+        }
     }
     spec.blob_params = blob_params;
     spec
@@ -1564,5 +1578,43 @@ impl AccountGenerator {
             wallets.push(wallet);
         }
         Ok(wallets)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reth_ethereum::chainspec::{EthChainSpec, EthereumHardforks};
+
+    #[test]
+    fn blob_schedule_advances_without_upgrading_the_evm() {
+        let spec = NodeConfig::test()
+            .with_chain_id(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .chain_spec()
+            .unwrap();
+        let bpo1 = EthereumHardfork::Bpo1.mainnet_activation_timestamp().unwrap();
+        let bpo2 = EthereumHardfork::Bpo2.mainnet_activation_timestamp().unwrap();
+        assert_eq!(spec.blob_params_at_timestamp(bpo1 - 1), Some(BlobParams::osaka()));
+        assert_eq!(spec.blob_params_at_timestamp(bpo1), Some(BlobParams::bpo1()));
+        assert_eq!(spec.blob_params_at_timestamp(bpo2), Some(BlobParams::bpo2()));
+        assert!(!spec.is_amsterdam_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn blob_schedule_keeps_older_hardforks_and_unknown_chains_pinned() {
+        for (chain_id, hardfork, expected) in [
+            (1, EthereumHardfork::Cancun, BlobParams::cancun()),
+            (1, EthereumHardfork::Prague, BlobParams::prague()),
+            (CHAIN_ID, EthereumHardfork::Osaka, BlobParams::osaka()),
+            (CHAIN_ID, EthereumHardfork::Bpo1, BlobParams::bpo1()),
+        ] {
+            let spec = NodeConfig::test()
+                .with_chain_id(Some(chain_id))
+                .with_hardfork(Some(hardfork.into()))
+                .chain_spec()
+                .unwrap();
+            assert_eq!(spec.blob_params_at_timestamp(u64::MAX), Some(expected));
+        }
     }
 }

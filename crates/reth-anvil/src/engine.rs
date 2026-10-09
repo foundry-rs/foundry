@@ -3,6 +3,12 @@
 //! timestamp when `evm_mine` or `evm_setTime` ask for one, and that a payload of a block before
 //! London converts to a header without a base fee, which the engine API cannot express.
 
+use crate::{
+    evm::AnvilEvmConfig,
+    network::ethereum::replay::{ExecutionOverrides, ReplayEvmConfig},
+};
+use alloy_consensus::Header;
+use alloy_evm::eth::spec::EthExecutorSpec;
 use alloy_rpc_types_engine::{ExecutionData, PayloadAttributes, PayloadError};
 use reth_ethereum::{
     Block, EthPrimitives,
@@ -18,6 +24,7 @@ use reth_ethereum::{
     },
     primitives::{Block as BlockTrait, SealedBlock},
 };
+use reth_ethereum_payload_builder::validator::ensure_well_formed_payload;
 use std::sync::Arc;
 
 /// Reth's Ethereum engine validator without the timestamp check on payload attributes, and with
@@ -26,6 +33,7 @@ use std::sync::Arc;
 pub struct AnvilEngineValidator<ChainSpec> {
     inner: EthereumEngineValidator<ChainSpec>,
     chain_spec: Arc<ChainSpec>,
+    overrides: ExecutionOverrides,
 }
 
 impl<ChainSpec, Types> PayloadValidator<Types> for AnvilEngineValidator<ChainSpec>
@@ -39,7 +47,12 @@ where
         &self,
         payload: ExecutionData,
     ) -> Result<SealedBlock<Self::Block>, NewPayloadError> {
-        if self.chain_spec.is_london_active_at_block(payload.payload.block_number()) {
+        let number = payload.payload.block_number();
+        if let Some(spec) = self.overrides.0.get(&number) {
+            if spec.is_london_active_at_block(number) {
+                return ensure_well_formed_payload(spec.as_ref(), payload).map_err(Into::into);
+            }
+        } else if self.chain_spec.is_london_active_at_block(number) {
             return PayloadValidator::<Types>::convert_payload_to_block(&self.inner, payload);
         }
         // The engine API always carries a base fee; a block before London has none.
@@ -98,12 +111,18 @@ pub struct AnvilEngineValidatorBuilder;
 impl<Node, Types> PayloadValidatorBuilder<Node> for AnvilEngineValidatorBuilder
 where
     Types: NodeTypes<
-            ChainSpec: Hardforks + EthereumHardforks + Clone + 'static,
+            ChainSpec: Hardforks
+                           + EthereumHardforks
+                           + EthExecutorSpec
+                           + EthChainSpec<Header = Header>
+                           + Clone
+                           + 'static,
             Payload: EngineTypes<ExecutionData = ExecutionData>
                          + PayloadTypes<PayloadAttributes = PayloadAttributes>,
             Primitives = EthPrimitives,
         >,
-    Node: FullNodeComponents<Types = Types>,
+    Node:
+        FullNodeComponents<Types = Types, Evm = AnvilEvmConfig<ReplayEvmConfig<Types::ChainSpec>>>,
 {
     type Validator = AnvilEngineValidator<Types::ChainSpec>;
 
@@ -112,6 +131,7 @@ where
         Ok(AnvilEngineValidator {
             inner: EthereumEngineValidator::new(chain_spec.clone()),
             chain_spec,
+            overrides: ctx.node.evm_config().inner().execution_overrides(),
         })
     }
 }

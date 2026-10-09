@@ -3,7 +3,7 @@ use crate::{
     eth_api::on_large_stack,
     evm::AnvilNextBlockEnv,
     fork::{ForkInfo, NodeInfoProbe},
-    impersonation::ImpersonationState,
+    impersonation::{ImpersonationState, impersonated_signature},
     logging::LoggingState,
     miner::HookFuture,
     mining::{MiningController, wait_for_pool},
@@ -38,6 +38,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimulatePayload, SimulatedBlock},
     state::{AccountOverride, StateOverride, StateOverridesBuilder},
 };
+use alloy_serde::WithOtherFields;
 use foundry_common::{
     provider::{ProviderBuilder, redact_url},
     version::{COMMIT_SHA, SEMVER_VERSION},
@@ -57,11 +58,14 @@ use reth_ethereum::{
     PooledTransactionVariant,
     chainspec::{EthChainSpec, EthereumHardforks, Hardforks, MIN_TRANSACTION_GAS},
     evm::primitives::ConfigureEvm,
-    pool::{TransactionPool, TransactionPoolExt},
-    primitives::{Bytecode, SealedHeader, TxTy},
+    pool::{
+        PoolConsensusTx, PoolTransaction, PoolTx, TransactionOrigin, TransactionPool,
+        TransactionPoolExt,
+    },
+    primitives::{Bytecode, Recovered, SealedHeader, TxTy},
     rpc::eth::{
-        EthApiError, FillTransaction, RpcInvalidTransactionError, error::RpcPoolError,
-        utils::recover_raw_transaction,
+        EthApiError, FillTransaction, PendingBlockEnvOrigin, RpcInvalidTransactionError,
+        error::RpcPoolError, utils::recover_raw_transaction,
     },
     storage::{BlockNumReader, HeaderProvider, StateProviderFactory, TransactionsProvider},
 };
@@ -433,6 +437,18 @@ pub trait EthExtApi<
         state_override: Option<StateOverride>,
     ) -> RpcResult<AccessListResult>;
 
+    /// Returns a block and propagates errors while building the pending block.
+    #[method(name = "getBlockByNumber")]
+    async fn eth_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        full: bool,
+    ) -> RpcResult<Option<Blk>>;
+
+    /// Returns a block by hash with retained fork execution metadata.
+    #[method(name = "getBlockByHash")]
+    async fn eth_block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<Blk>>;
+
     /// Returns the receipt of a transaction. An impersonated transaction has no valid signature,
     /// so a lookup that recovers the sender from it fails; the lookup then runs again with the
     /// block in the RPC cache, which carries the senders the block recorded.
@@ -738,7 +754,7 @@ pub struct NodeIdentity {
 
 /// Implementation of the `anvil_*` RPC namespace.
 #[derive(Debug, Clone)]
-pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec, Net = ()> {
+pub struct AnvilRpc<Pool: TransactionPool, Provider: HeaderProvider, Eth, Spec, Net = ()> {
     network: PhantomData<fn() -> Net>,
     identity: NodeIdentity,
     relauncher: Relauncher,
@@ -774,6 +790,8 @@ pub struct AnvilRpc<Pool, Provider: HeaderProvider, Eth, Spec, Net = ()> {
     first_block_keeps_genesis_base_fee: bool,
     /// Converts a synthetic checkpoint header through the network's fork adapter.
     checkpoint_header: fn(Header) -> FoundryHeader,
+    /// Converts signed dev transactions before the pool applies its validation policy.
+    pool_transaction: fn(Recovered<PoolConsensusTx<Pool>>) -> RpcResult<PoolTx<Pool>>,
 }
 
 /// Makes the pool drop the state it read at the tip. Tempo's pool keeps the reads it made at a
@@ -852,7 +870,7 @@ impl NewFilterHook {
     }
 }
 
-impl<Pool, Provider: HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+impl<Pool: TransactionPool, Provider: HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
     AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
     Spec: EthChainSpec<Header = HeaderOf<Provider>> + 'static,
@@ -912,7 +930,21 @@ where
             pending_reset: None,
             first_block_keeps_genesis_base_fee: true,
             checkpoint_header,
+            pool_transaction: |tx| {
+                PoolTx::<Pool>::try_from_consensus(tx)
+                    .map_err(|error| internal_error(error.to_string()))
+            },
         }
+    }
+
+    /// Uses the network's pool conversion for signed dev transactions. Validation still runs
+    /// in the pool; this hook only controls which consensus transactions can enter it.
+    pub fn with_pool_transaction_converter(
+        mut self,
+        convert: fn(Recovered<PoolConsensusTx<Pool>>) -> RpcResult<PoolTx<Pool>>,
+    ) -> Self {
+        self.pool_transaction = convert;
+        self
     }
 
     /// Returns the native eth API, with the network's provider, pool, and request types.
@@ -947,8 +979,13 @@ where
     }
 }
 
-impl<Pool, Provider: BlockNumReader + HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
-    AnvilRpc<Pool, Provider, Eth, Spec, Net>
+impl<
+    Pool: TransactionPool,
+    Provider: BlockNumReader + HeaderProvider,
+    Eth,
+    Spec,
+    Net: Clone + Send + Sync + 'static,
+> AnvilRpc<Pool, Provider, Eth, Spec, Net>
 {
     fn best_block_number(&self) -> RpcResult<u64> {
         self.provider
@@ -2213,19 +2250,56 @@ where
             self.ensure_fee_cap(max_fee)?;
         }
         self.ensure_request_replacement_priced(&request)?;
+        if request.as_ref().nonce.is_none() {
+            loop {
+                let head = self.provider.chain_info().map_err(EthApiError::from)?.best_hash;
+                let nonce =
+                    self.eth.next_available_nonce_for(&request).await.map_err(Into::into)?;
+                // Mining can remove pool transactions after reth reads their old chain nonce.
+                // Repeat its network-specific selection if the head changed between reads.
+                if self.provider.chain_info().map_err(EthApiError::from)?.best_hash == head {
+                    request.as_mut().nonce = Some(nonce);
+                    break;
+                }
+            }
+        }
         // Reth signs a blob transaction without its sidecar and the pool rejects it; the signed
         // transaction gets the sidecar back and goes in as a pooled transaction.
         let Some(sidecar) = request.as_ref().sidecar.clone() else {
+            let from = request.as_ref().from.unwrap_or_default();
+            if request.as_ref().blob_versioned_hashes.is_some()
+                && self.impersonation.is_impersonated(&from)
+            {
+                if request.as_ref().chain_id.is_none() {
+                    request.as_mut().chain_id = Some(self.chain_spec.chain().id());
+                }
+                // Alloy's sendable request builder requires a sidecar. Build the consensus
+                // transaction instead, with the same signature as the impersonated signer.
+                let encoded = request
+                    .as_ref()
+                    .clone()
+                    .build_consensus_tx()
+                    .map_err(|error| invalid_params(error.error))?
+                    .into_envelope(impersonated_signature(from))
+                    .encoded_2718();
+                let tx = PoolConsensusTx::<Pool>::decode_2718_exact(&encoded)
+                    .map_err(|error| invalid_params(error.to_string()))?;
+                self.impersonation.remember_tx_sender(*tx.tx_hash(), from);
+                let tx = (self.pool_transaction)(Recovered::new_unchecked(tx, from))?;
+                let added = self
+                    .pool
+                    .add_transaction(TransactionOrigin::Local, tx)
+                    .await
+                    .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?;
+                self.reset_pending_block();
+                return Ok(added.hash);
+            }
             return EthApiServer::send_transaction(&self.eth, request).await;
         };
         if request.as_ref().blob_versioned_hashes.is_none() {
             request.as_mut().blob_versioned_hashes = Some(sidecar.versioned_hashes().collect());
         }
         // Signing fills nothing in, unlike sending.
-        if request.as_ref().nonce.is_none() {
-            let from = request.as_ref().from.unwrap_or_default();
-            request.as_mut().nonce = Some(self.pending_nonce(from).await?.saturating_to());
-        }
         if request.as_ref().chain_id.is_none() {
             request.as_mut().chain_id = EthApiServer::chain_id(&self.eth).await?.map(|id| id.to());
         }
@@ -2551,7 +2625,7 @@ impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static>
         RpcTxReq<Eth::NetworkTypes>,
         RpcReceipt<Eth::NetworkTypes>,
         RpcTransaction<Eth::NetworkTypes>,
-        RpcBlock<Eth::NetworkTypes>,
+        WithOtherFields<RpcBlock<Eth::NetworkTypes>>,
         TxTy<Eth::Primitives>,
     > for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
@@ -2733,7 +2807,7 @@ where
         &self,
         mut payload: SimulatePayload<RpcTxReq<Eth::NetworkTypes>>,
         block: Option<BlockId>,
-    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>> {
+    ) -> RpcResult<Vec<SimulatedBlock<WithOtherFields<RpcBlock<Eth::NetworkTypes>>>>> {
         for call in payload.block_state_calls.iter_mut().flat_map(|block| block.calls.iter_mut()) {
             let tx = call.as_mut();
             if let Some(sidecar) = tx.sidecar.take()
@@ -2894,6 +2968,48 @@ where
         EthApiServer::sign_typed_data(&self.eth, address, data).await
     }
 
+    async fn eth_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+        full: bool,
+    ) -> RpcResult<Option<WithOtherFields<RpcBlock<Eth::NetworkTypes>>>> {
+        if number.is_pending()
+            && !self.eth.pending_block_kind().is_none()
+            && self.eth.pool_pending_block().await.map_err(Into::into)?.is_none()
+        {
+            // Reth turns a failed local pending build into None. Rebuild only that case to
+            // return its error, including a malformed EIP-6110 deposit, to the caller.
+            self.eth
+                .spawn_blocking_io(|eth| {
+                    if let PendingBlockEnvOrigin::DerivedFromLatest(parent) =
+                        eth.pending_block_env_and_cfg()?.origin
+                    {
+                        eth.build_block(&parent)?;
+                    }
+                    Ok(())
+                })
+                .await
+                .map_err(Into::into)?;
+        }
+        let block = EthApiServer::block_by_number(&self.eth, number, full).await?;
+        Ok(block.map(|block| match &self.fork {
+            Some(fork) => fork.with_block_fields(block),
+            None => WithOtherFields::new(block),
+        }))
+    }
+
+    async fn eth_block_by_hash(
+        &self,
+        hash: B256,
+        full: bool,
+    ) -> RpcResult<Option<WithOtherFields<RpcBlock<Eth::NetworkTypes>>>> {
+        let block = EthApiServer::block_by_hash(&self.eth, hash, full).await?;
+        Ok(block.map(|block| match &self.fork {
+            Some(fork) => fork.with_block_fields(block),
+            None => WithOtherFields::new(block),
+        }))
+    }
+
     async fn eth_get_transaction_receipt(
         &self,
         hash: B256,
@@ -3008,7 +3124,7 @@ where
 impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static> PersonalApiServer
     for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
-    Pool: Send + Sync + 'static,
+    Pool: TransactionPool + Send + Sync + 'static,
     Provider: HeaderProvider + Send + Sync + 'static,
     Eth: FullEthApiServer,
     Spec: Send + Sync + 'static,
@@ -3073,7 +3189,7 @@ fn ensure_chain_id(request: &TransactionRequest, chain_id: u64) -> RpcResult<()>
 impl<Pool, Provider, Eth, Spec, Net: Clone + Send + Sync + 'static> Web3ExtApiServer
     for AnvilRpc<Pool, Provider, Eth, Spec, Net>
 where
-    Pool: Send + Sync + 'static,
+    Pool: TransactionPool + Send + Sync + 'static,
     Provider: HeaderProvider + Send + Sync + 'static,
     Eth: Send + Sync + 'static,
     Spec: Send + Sync + 'static,
@@ -3083,7 +3199,7 @@ where
     }
 }
 
-impl<Pool, Provider: HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
+impl<Pool: TransactionPool, Provider: HeaderProvider, Eth, Spec, Net: Clone + Send + Sync + 'static>
     AnvilRpc<Pool, Provider, Eth, Spec, Net>
 {
     /// Makes the pool see the anvil state writes made since the tip.

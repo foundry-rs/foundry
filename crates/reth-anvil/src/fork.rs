@@ -20,15 +20,22 @@ use alloy_consensus::{
     transaction::{SignerRecoverable, TransactionMeta, TxHashRef},
 };
 use alloy_eips::{BlockHashOrNumber, BlockId};
-use alloy_network::{AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt, Network};
-use alloy_primitives::{Address, B256, Bytes, StorageKey, StorageValue, TxNumber, U256, keccak256};
+use alloy_network::{
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt, Network,
+    primitives::BlockResponse,
+};
+use alloy_primitives::{
+    Address, B256, Bytes, StorageKey, StorageValue, TxNumber, U64, U256, keccak256,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::{Metadata, NodeInfo};
+use alloy_serde::WithOtherFields;
 use eyre::{Result, WrapErr};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
 use foundry_evm_core::{backend::account_fetch_policy_for_source, utils::block_env_from_header};
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_hardforks::EthereumHardfork;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_fork_db::{
     AccountFetchPolicy, BlockchainDb, ForkBlock as ForkAnchor, SharedBackend,
     backend::BlockingMode, cache::BlockchainDbMeta,
@@ -41,6 +48,7 @@ use jsonrpsee::{
 use parking_lot::RwLock;
 use reth_ethereum::{
     Block, EthPrimitives, Receipt, TransactionSigned,
+    chainspec::Chain,
     primitives::{
         Account, BlockBody, Bytecode, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
     },
@@ -62,7 +70,7 @@ use revm::{
     state::AccountInfo,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Debug, Formatter},
     path::PathBuf,
     sync::Arc,
@@ -246,6 +254,18 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn chain_id(&self) -> u64;
     /// Returns the chain the fork's state comes from.
     fn source_chain_id(&self) -> u64;
+    /// Returns the chain id recorded for a locally executed block, when available.
+    fn execution_chain_id(&self, _number: u64) -> Option<u64> {
+        None
+    }
+    /// Returns the source hardfork of each transaction-hash replay retained by this fork.
+    fn replay_hardforks(&self) -> BTreeMap<u64, EthereumHardfork> {
+        BTreeMap::new()
+    }
+    /// Returns the L1 execution number of an Arbitrum block, when retained.
+    fn l1_block_number(&self, _number: u64) -> Option<u64> {
+        None
+    }
     /// Returns the fork block number.
     fn block_number(&self) -> u64;
     /// Returns the fork block hash.
@@ -254,6 +274,10 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
     fn block_hash_by_number(&self, number: u64) -> ProviderResult<Option<B256>>;
     /// Returns whether an endpoint stands below this fork; a state dump may serve alone.
     fn has_remote(&self) -> bool;
+    /// Returns the endpoint's last block, excluding history restored from a state dump.
+    fn remote_block_number(&self) -> Option<u64> {
+        self.has_remote().then(|| self.block_number())
+    }
     /// Returns whether the endpoint serves the block with the given number.
     fn remote_serves(&self, number: u64) -> bool;
     /// Returns whether the state at the given block is available for a replay.
@@ -270,6 +294,19 @@ pub trait ForkInfo: Send + Sync + Debug + 'static {
 }
 
 impl dyn ForkInfo {
+    /// Restores execution metadata that the consensus header cannot carry.
+    pub(crate) fn with_block_fields<B>(&self, block: B) -> WithOtherFields<B>
+    where
+        B: BlockResponse<Header: BlockHeader>,
+    {
+        let number = self.l1_block_number(block.header().number());
+        let mut block = WithOtherFields::new(block);
+        if let Some(number) = number {
+            block.other.insert("l1BlockNumber".to_string(), serde_json::json!(U64::from(number)));
+        }
+        block
+    }
+
     /// Forwards a request to the fork endpoint and decodes its result.
     pub fn forward_json<T: serde::de::DeserializeOwned>(
         &self,
@@ -306,6 +343,51 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
         Self::source_chain_id(self)
     }
 
+    fn replay_hardforks(&self) -> BTreeMap<u64, EthereumHardfork> {
+        let mut forks = self
+            .dump
+            .as_ref()
+            .map(|dump| {
+                dump.blocks
+                    .iter()
+                    .filter_map(|block| {
+                        block.replay_hardfork.map(|hardfork| (block.header.number, hardfork))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        if let Some(replay) = self.replay.read().as_ref()
+            && let Some(hardfork) = EthereumHardfork::from_chain_and_timestamp(
+                Chain::from_id(self.source_chain_id),
+                replay.header.timestamp(),
+            )
+        {
+            forks.insert(replay.header.number(), hardfork);
+        }
+        forks
+    }
+
+    fn execution_chain_id(&self, number: u64) -> Option<u64> {
+        let hash = *self.hashes.read().get(&number)?;
+        self.dump
+            .as_ref()?
+            .blocks
+            .iter()
+            .find(|block| block.header.number == number && block.header.hash_slow() == hash)?
+            .execution_chain_id
+    }
+
+    fn l1_block_number(&self, number: u64) -> Option<u64> {
+        let numbers = self.l1_block_numbers.read();
+        if let Some(hash) = self.hashes.read().get(&number)
+            && let Some(number) = numbers.get(hash)
+        {
+            return Some(*number);
+        }
+        let offset = number.checked_sub(self.header.number())?;
+        numbers.get(&self.header.hash())?.checked_add(offset)
+    }
+
     fn block_number(&self) -> u64 {
         Self::block_number(self)
     }
@@ -320,6 +402,10 @@ impl<F: ForkNetwork> ForkInfo for ForkBackend<F> {
 
     fn has_remote(&self) -> bool {
         Self::has_remote(self)
+    }
+
+    fn remote_block_number(&self) -> Option<u64> {
+        self.dump.as_ref().map_or(Some(self.header.number()), |dump| dump.remote_head)
     }
 
     fn remote_serves(&self, number: u64) -> bool {
@@ -582,6 +668,8 @@ pub struct ForkBackend<F: ForkNetwork = EthereumFork> {
     reads: RwLock<RemoteReads>,
     blocks: RwLock<HashMap<B256, Arc<SealedBlock<ForkBlock<F>>>>>,
     hashes: RwLock<HashMap<u64, B256>>,
+    /// Arbitrum execution numbers retained before RPC headers become consensus headers.
+    l1_block_numbers: RwLock<HashMap<B256, u64>>,
     receipts: RwLock<HashMap<B256, Arc<Vec<ForkReceipt<F>>>>>,
     /// The state dump this fork serves instead of an endpoint, if any.
     dump: Option<DumpHistory>,
@@ -776,6 +864,8 @@ impl<F: ForkNetwork> ForkBackend<F> {
             }
             eyre::bail!("{message}");
         };
+        let l1_block_number =
+            block.other_fields().and_then(|fields| fields.get_deserialized::<U64>("l1BlockNumber"));
         let block = F::block(block, Vec::new())?;
         let hash = block.hash();
         let header = block.sealed_header().clone();
@@ -886,6 +976,14 @@ impl<F: ForkNetwork> ForkBackend<F> {
                 reads: RwLock::new(RemoteReads::default()),
                 blocks: RwLock::new(HashMap::new()),
                 hashes: RwLock::new(HashMap::from([(block_number, hash)])),
+                l1_block_numbers: RwLock::new(
+                    l1_block_number
+                        .filter(|_| arbitrum::is_arbitrum_chain(source_chain_id))
+                        .transpose()?
+                        .map(|number| (hash, number.to()))
+                        .into_iter()
+                        .collect(),
+                ),
                 receipts: RwLock::new(HashMap::new()),
                 dump: None,
                 node_info,
@@ -950,6 +1048,15 @@ impl<F: ForkNetwork> ForkBackend<F> {
             reads: RwLock::new(RemoteReads::default()),
             blocks: RwLock::new(blocks),
             hashes: RwLock::new(hashes),
+            l1_block_numbers: RwLock::new(
+                state
+                    .blocks
+                    .iter()
+                    .filter_map(|block| {
+                        block.l1_block_number.map(|number| (block.header.hash_slow(), number))
+                    })
+                    .collect(),
+            ),
             receipts: RwLock::new(receipts),
             dump: Some(dump),
             node_info: None,
@@ -1101,6 +1208,10 @@ impl<F: ForkNetwork> ForkBackend<F> {
         head: &SealedHeader<ForkHeader<F>>,
     ) -> Result<Self> {
         let remote_head = self.header.number();
+        let mut l1_block_numbers = self.l1_block_numbers.into_inner();
+        l1_block_numbers.extend(state.blocks.iter().filter_map(|block| {
+            block.l1_block_number.map(|number| (block.header.hash_slow(), number))
+        }));
         let mut blocks = self.blocks.into_inner();
         let mut hashes = self.hashes.into_inner();
         let mut receipts = self.receipts.into_inner();
@@ -1129,6 +1240,7 @@ impl<F: ForkNetwork> ForkBackend<F> {
             reads: self.reads,
             blocks: RwLock::new(blocks),
             hashes: RwLock::new(hashes),
+            l1_block_numbers: RwLock::new(l1_block_numbers),
             receipts: RwLock::new(receipts),
             dump: Some(dump),
             node_info: None,
@@ -1199,7 +1311,15 @@ impl<F: ForkNetwork> ForkBackend<F> {
 
     /// Takes the transactions to replay at startup, if the fork is at a transaction hash.
     pub fn take_replay(&self) -> Option<ForkReplay<F>> {
-        self.replay.write().take()
+        let mut replay = self.replay.write();
+        let replay = replay.as_mut()?;
+        if replay.transactions.is_empty() {
+            return None;
+        }
+        Some(ForkReplay {
+            header: replay.header.clone(),
+            transactions: std::mem::take(&mut replay.transactions),
+        })
     }
 
     /// Returns the timestamp of the block the fork replays, if the fork is at a transaction hash.
@@ -1406,7 +1526,16 @@ impl<F: ForkNetwork> ForkBackend<F> {
         ),
     ) -> ProviderResult<Arc<SealedBlock<ForkBlock<F>>>> {
         let (response, uncles) = response;
+        let l1_block_number = response
+            .other_fields()
+            .and_then(|fields| fields.get_deserialized::<U64>("l1BlockNumber"))
+            .filter(|_| arbitrum::is_arbitrum_chain(self.source_chain_id))
+            .transpose()
+            .map_err(ProviderError::other)?;
         let block = Arc::new(F::block(response, uncles)?);
+        if let Some(number) = l1_block_number {
+            self.l1_block_numbers.write().insert(block.hash(), number.to());
+        }
         let hash = block.hash();
         self.hashes.write().insert(block.number(), hash);
         self.blocks.write().insert(hash, block.clone());

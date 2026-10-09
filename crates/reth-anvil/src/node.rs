@@ -63,7 +63,7 @@ use reth_ethereum::{
     },
     rpc::builder::{RpcModuleSelection, constants::MAX_ETH_PROOF_WINDOW},
     storage::BlockNumReader,
-    tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig},
+    tasks::{Runtime, RuntimeBuilder, RuntimeConfig},
 };
 use reth_rpc_eth_api::{
     EthFilterApiServer,
@@ -80,10 +80,7 @@ use std::{
     time::Duration,
 };
 use tempfile::TempDir;
-use tokio::{
-    runtime::Handle,
-    sync::{broadcast::error::RecvError, mpsc, oneshot},
-};
+use tokio::sync::{broadcast::error::RecvError, mpsc, oneshot};
 
 /// A running node.
 #[derive(Debug)]
@@ -114,18 +111,35 @@ impl Future for NodeExit {
 /// The reth node and the resources it runs on. Replaced on a relaunch.
 struct RunningNode {
     node_exit_future: NodeExitFuture,
-    _datadir: TempDir,
-    runtime: Runtime,
+    resources: NodeResources,
 }
 
 impl RunningNode {
     /// Shuts the node's tasks down and removes its datadir.
     async fn stop(self) {
-        let runtime = self.runtime;
-        let _ = tokio::task::spawn_blocking(move || {
-            runtime.graceful_shutdown_with_timeout(Duration::from_secs(10))
-        })
-        .await;
+        self.resources.stop().await;
+    }
+}
+
+/// Owns startup resources too, so errors and cancelled launches cannot leave a runtime alive.
+struct NodeResources {
+    owned: Option<(Runtime, TempDir)>,
+}
+
+impl NodeResources {
+    async fn stop(mut self) {
+        if let Some(resources) = self.owned.take() {
+            let _ = tokio::task::spawn_blocking(move || shutdown_node_resources(resources)).await;
+        }
+    }
+}
+
+impl Drop for NodeResources {
+    fn drop(&mut self) {
+        if let Some(resources) = self.owned.take() {
+            // Drop can run inside an async task or while its caller's runtime is shutting down.
+            std::thread::spawn(move || shutdown_node_resources(resources));
+        }
     }
 }
 
@@ -273,8 +287,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// impersonation controls.
 ///
 /// The node runs on a fresh MDBX database in a temporary directory that is removed when the
-/// returned handle and every clone of the returned API drop. The node tasks run on the current
-/// tokio runtime.
+/// returned handle and every clone of the returned API drop. The node owns its reth runtime.
 pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     config.resolve_networks().await?;
     match config.networks.resolved_network().unwrap_or_default() {
@@ -364,7 +377,6 @@ async fn supervise<Net: AnvilNetwork>(mut supervisor: Supervisor) {
                 let _ = reply.send(result.map_err(|error| error.to_string()));
             }
             result = &mut running.node_exit_future => {
-                supervisor.running = None;
                 if let Some(exit) = supervisor.exit.take() {
                     let _ = exit.send(result);
                 }
@@ -454,10 +466,9 @@ async fn launch_node<Net: AnvilNetwork>(
     instance_id: Arc<RwLock<B256>>,
     relauncher: Relauncher,
 ) -> Result<(RpcModule<()>, RunningNode)> {
-    let runtime = RuntimeBuilder::new(
-        RuntimeConfig::default().with_tokio(TokioConfig::ExistingHandle(Handle::current())),
-    )
-    .build()?;
+    // Reth runs long-lived validation services on its blocking pool. Give the node its own
+    // runtime so those services cannot exhaust an embedding application's blocking threads.
+    let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
     let Prepared { chain_spec, fork } = prepared;
     {
         // What a fork endpoint chose stays across relaunches, as on anvil: the network for good,
@@ -474,6 +485,8 @@ async fn launch_node<Net: AnvilNetwork>(
     }
 
     let datadir = tempfile::tempdir()?;
+    let datadir_path = datadir.path().to_path_buf();
+    let resources = NodeResources { owned: Some((runtime.clone(), datadir)) };
     // The RPC servers run in front of the node, see `RpcServer`.
     let mut rpc_args = RpcServerArgs {
         http: false,
@@ -493,7 +506,7 @@ async fn launch_node<Net: AnvilNetwork>(
         .with_storage(StorageArgs { v2: false })
         .with_rpc(rpc_args)
         .with_datadir_args(DatadirArgs {
-            datadir: MaybePlatformPath::<DataDirPath>::from(datadir.path().to_path_buf()),
+            datadir: MaybePlatformPath::<DataDirPath>::from(datadir_path),
             ..Default::default()
         })
         // Pin the block gas limit, so blocks do not drift towards reth's default limit.
@@ -860,7 +873,7 @@ async fn launch_node<Net: AnvilNetwork>(
         .take()
         .ok_or_else(|| eyre::eyre!("the rpc modules were not built"))?;
 
-    Ok((module, RunningNode { node_exit_future, _datadir: datadir, runtime }))
+    Ok((module, RunningNode { node_exit_future, resources }))
 }
 
 /// Mines the transactions of a fork at a transaction hash into the first local block, with the
@@ -972,5 +985,42 @@ async fn clear_applied_state_writes<N: NodePrimitives>(
             Err(RecvError::Lagged(_)) => {}
             Err(RecvError::Closed) => return,
         }
+    }
+}
+
+/// Keeps the datadir until the owned runtime has stopped, including retained RPC handles.
+fn shutdown_node_resources((runtime, _datadir): (Runtime, TempDir)) {
+    runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+    runtime.shutdown_timeout(Duration::from_secs(10));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stopping_node_shuts_down_retained_runtime_handles() {
+        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build().unwrap();
+        let retained = runtime.clone();
+        let task = runtime.handle().spawn(std::future::pending::<()>());
+        let node = RunningNode {
+            node_exit_future: NodeExitFuture::new(std::future::pending()),
+            resources: NodeResources { owned: Some((runtime, tempfile::tempdir().unwrap())) },
+        };
+        node.stop().await;
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(retained.handle().spawn(async {}).await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn failed_startup_releases_owned_runtime() {
+        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build().unwrap();
+        let retained = runtime.clone();
+        let task = runtime.handle().spawn(std::future::pending::<()>());
+        let resources = NodeResources { owned: Some((runtime, tempfile::tempdir().unwrap())) };
+        drop(resources);
+        let result = tokio::time::timeout(Duration::from_secs(5), task).await.unwrap();
+        assert!(result.unwrap_err().is_cancelled());
+        assert!(retained.handle().spawn(async {}).await.unwrap_err().is_cancelled());
     }
 }

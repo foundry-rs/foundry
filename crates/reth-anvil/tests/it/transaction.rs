@@ -1145,19 +1145,33 @@ async fn includes_pending_tx_for_transaction_count() {
 // <https://github.com/foundry-rs/foundry/issues/17354>
 #[tokio::test(flavor = "multi_thread")]
 async fn concurrent_unlocked_transactions_assign_unique_pending_nonces() {
-    assert_concurrent_unlocked_transactions(false).await;
+    assert_concurrent_unlocked_transactions(false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn concurrent_unlocked_transactions_assign_unique_nonces_with_automining() {
-    assert_concurrent_unlocked_transactions(true).await;
+    assert_concurrent_unlocked_transactions(true, false).await;
 }
 
-async fn assert_concurrent_unlocked_transactions(automine: bool) {
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_impersonated_transactions_assign_unique_nonces_with_automining() {
+    assert_concurrent_unlocked_transactions(true, true).await;
+}
+
+async fn assert_concurrent_unlocked_transactions(automine: bool, impersonate: bool) {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
-    let from = handle.dev_wallets().next().unwrap().address();
+    let from = if impersonate {
+        Address::random()
+    } else {
+        handle.dev_wallets().next().unwrap().address()
+    };
     let to = Address::random();
+
+    if impersonate {
+        api.anvil_set_balance(from, handle.genesis_balance()).await.unwrap();
+        api.anvil_impersonate_account(from).await.unwrap();
+    }
 
     // Start from a mined nonce to exercise both chain state and the pending pool.
     let initial = WithOtherFields::new(TransactionRequest::default().from(from).to(to));

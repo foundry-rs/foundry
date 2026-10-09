@@ -25,6 +25,7 @@ use alloy_rpc_types_eth::{
     simulate::{MAX_SIMULATE_BLOCKS, SimBlock, SimulatePayload, SimulatedBlock},
     state::{AccountOverride, StateOverride},
 };
+use alloy_serde::WithOtherFields;
 use jsonrpsee::types::ErrorObject;
 use reth_ethereum::{
     chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks},
@@ -140,7 +141,7 @@ pub(crate) async fn simulate_v1<Eth, Net: Send + Sync + 'static>(
     base_fee: Option<u64>,
     compute_state_root: bool,
     fork: Option<Arc<dyn ForkInfo>>,
-) -> Result<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>, Eth::Error>
+) -> Result<Vec<SimulatedBlock<WithOtherFields<RpcBlock<Eth::NetworkTypes>>>>, Eth::Error>
 where
     Eth: EthCall + Clone + 'static,
     RpcTxReq<Eth::NetworkTypes>: CallBatch<Net>,
@@ -356,12 +357,17 @@ where
             db.override_block_hashes(BTreeMap::from([(header.number(), header.hash())]));
             parent = header;
 
-            blocks.push(build_block::<Eth::Error, _>(
+            let block = build_block::<Eth::Error, _>(
                 outcome,
                 calls,
                 return_full_transactions,
                 this.converter(),
-            )?);
+            )?;
+            let inner = match &fork {
+                Some(fork) => fork.with_block_fields(block.inner),
+                None => WithOtherFields::new(block.inner),
+            };
+            blocks.push(SimulatedBlock { inner, calls: block.calls });
         }
 
         Ok(blocks)
@@ -549,8 +555,6 @@ struct SimulatedCall<Halt> {
     attempted_logs: u64,
     /// Whether the call ran with the maximum nonce and no validation.
     max_nonce: bool,
-    /// The zero blob fee cap the call asked for, when it ran with the block's blob base fee.
-    asked_blob_cap: Option<u128>,
 }
 
 /// Executes the calls of one simulated block, with anvil's gas rules, and builds the block.
@@ -627,10 +631,8 @@ where
         // A call bumps the caller's nonce at the protocol level; a create bumps it in its frame,
         // which fails at the maximum nonce and leaves it in place.
         let wraps_nonce = max_nonce && call.as_ref().to.is_some_and(|to| to.is_call());
-        // A blob call without a blob fee cap has a zero cap. Without validation, a zero cap runs
-        // at the block's blob base fee, which revm checks against the cap, and the response
-        // shows the zero cap, as anvil does.
-        let mut asked_blob_cap = None;
+        // An omitted blob fee cap is zero. The Ethereum handler skips its validation and
+        // charge when validation is disabled, while preserving BLOBBASEFEE during execution.
         let blob_count = call.as_ref().blob_versioned_hashes.as_ref().map_or(0, Vec::len) as u64;
         if blob_count > 0 {
             blob_gas_used = blob_gas_used.saturating_add(blob_count * DATA_GAS_PER_BLOB);
@@ -639,12 +641,7 @@ where
                     "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
                 )));
             }
-            let cap = *call.as_mut().max_fee_per_blob_gas.get_or_insert(0);
-            let blob_fee = builder.evm().block().blob_gasprice().unwrap_or_default();
-            if !validation && cap == 0 && blob_fee > 0 {
-                call.as_mut().max_fee_per_blob_gas = Some(blob_fee);
-                asked_blob_cap = Some(cap);
-            }
+            call.as_mut().max_fee_per_blob_gas.get_or_insert(0);
         }
         let basefee = builder.evm().block().basefee();
         let tx = resolve_transaction::<_, _, Net>(
@@ -686,7 +683,7 @@ where
         cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
         regular_gas_used = regular_gas_used.saturating_add(result.gas().block_regular_gas_used());
         state_gas_used = state_gas_used.saturating_add(gas_output.state_gas_used());
-        results.push(SimulatedCall { result, logs, attempted_logs, max_nonce, asked_blob_cap });
+        results.push(SimulatedCall { result, logs, attempted_logs, max_nonce });
     }
 
     let outcome = if compute_state_root {
@@ -750,9 +747,6 @@ where
         if call.max_nonce {
             restored.push((index, "nonce", u128::from(u64::MAX)));
         }
-        if let Some(cap) = call.asked_blob_cap {
-            restored.push((index, "maxFeePerBlobGas", cap));
-        }
     }
     if return_full_transactions && !restored.is_empty() {
         restore_fields(&mut simulated.inner, &restored).map_err(Err::from_eth_err)?;
@@ -772,8 +766,7 @@ fn halt_message(reason: &impl fmt::Debug) -> String {
 }
 
 /// Shows the values the calls asked for on the transactions that ran with others, as anvil does:
-/// the maximum nonce, which revm cannot execute, so the transaction ran with nonce zero, and a
-/// blob fee cap below the block's blob base fee without validation.
+/// the maximum nonce, which revm cannot execute, so the transaction ran with nonce zero.
 fn restore_fields<B: Serialize + DeserializeOwned>(
     block: &mut B,
     fields: &[(usize, &str, u128)],

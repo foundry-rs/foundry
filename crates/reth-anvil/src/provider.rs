@@ -1,6 +1,6 @@
 use crate::{
     fork::{
-        EthereumFork, ForkBackend, ForkNetwork, ForkStateProvider, LocalWrites,
+        EthereumFork, ForkBackend, ForkInfo, ForkNetwork, ForkStateProvider, LocalWrites,
         decode_remote_tx_number, remote_tx_number,
     },
     miner::RewindHooks,
@@ -709,7 +709,7 @@ impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockReader for AnvilProvider<N, F> {
     }
 
     fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
-        let (remote, local) = self.split_range(range);
+        let (remote, mut local) = self.split_range(range);
         let mut blocks = Vec::new();
         if let (Some(remote), Some(fork)) = (remote, &self.fork) {
             for number in remote {
@@ -717,6 +717,15 @@ impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockReader for AnvilProvider<N, F> {
                     fork.block_by_number(number)?.map(|block| (*block).clone().into_block()),
                 );
             }
+        }
+        // A restored head has a body in the dump; reth stores only its genesis header.
+        if !local.is_empty()
+            && let Some(fork) = self.remote_for_body_id((*local.start()).into())?
+        {
+            blocks.extend(
+                fork.block_by_number(*local.start())?.map(|block| (*block).clone().into_block()),
+            );
+            local = local.start().saturating_add(1)..=*local.end();
         }
         if !local.is_empty() {
             blocks.extend(self.inner.block_range(local)?);
@@ -735,12 +744,19 @@ impl<N: AnvilNodeTypes<F>, F: ForkNetwork> BlockReader for AnvilProvider<N, F> {
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> ProviderResult<Vec<RecoveredBlock<Self::Block>>> {
-        let (remote, local) = self.split_range(range);
+        let (remote, mut local) = self.split_range(range);
         let mut blocks = Vec::new();
         if let (Some(remote), Some(fork)) = (remote, &self.fork) {
             for number in remote {
                 blocks.extend(fork.recovered_block(number.into())?);
             }
+        }
+        // Include a restored head's transactions, as single-block lookups do.
+        if !local.is_empty()
+            && let Some(fork) = self.remote_for_body_id((*local.start()).into())?
+        {
+            blocks.extend(fork.recovered_block((*local.start()).into())?);
+            local = local.start().saturating_add(1)..=*local.end();
         }
         if !local.is_empty() {
             blocks.extend(self.inner.recovered_block_range(local)?);
@@ -1384,6 +1400,8 @@ impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StateDump for AnvilProvider<N, F> {
             (blocks, transactions) = fork.dumped_history();
             first += 1;
         }
+        let replay_hardforks =
+            self.fork.as_ref().map(|fork| fork.replay_hardforks()).unwrap_or_default();
         for number in first..=best {
             let Some(block) =
                 self.inner.recovered_block(number.into(), TransactionVariant::WithHash)?
@@ -1439,6 +1457,9 @@ impl<N: AnvilNodeTypes<F>, F: ForkNetwork> StateDump for AnvilProvider<N, F> {
                 });
             }
             blocks.push(SerializableBlock {
+                replay_hardfork: replay_hardforks.get(&number).copied(),
+                l1_block_number: self.fork.as_ref().and_then(|fork| fork.l1_block_number(number)),
+                execution_chain_id: Some(self.inner.chain_spec().chain().id()),
                 header: json_convert(block.header())?,
                 transactions: dumped,
                 ommers: block

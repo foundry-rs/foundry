@@ -30,6 +30,7 @@ lookup retry remain until the pinned reth revision includes the required fixes.
 | Registers `eth_config` itself, because reth adds it only to its transport modules, not to the registry the in-process module is built from | `src/node.rs` | ~5 | Register `eth_config` in the RPC registry like the other `eth_*` methods |
 | Runs its own RPC server in front of the node, forwarding every method to the current node's module, so `anvil_reset` to another fork and `anvil_setChainId` can relaunch the node without losing the endpoint, the connections, or the in-process API | `src/server.rs`, `src/node.rs` (`Relauncher`) | ~300 | A way to replace a running node's chain spec and database in place, or to restart the node behind reth's RPC servers |
 | Replays the transactions before a fork transaction through the pool into the first local block, with the remote block's environment and the pool in arrival order | `src/node.rs` (`replay_fork_transactions`) | ~70 | A way to build and insert a block from a given transaction list |
+| Uses a native source chain spec for a transaction-hash replay's block number, including execution, system calls, payload assembly, and engine validation. Later blocks use the configured rules even at the same timestamp; dumps retain the replay marker | `src/network/ethereum/replay.rs`, `src/engine.rs`, `src/fork.rs`, `src/state_dump.rs` | ~300 | Block-specific execution rules independent of the monotonic chain schedule |
 | Rejects every transaction past `--max-transactions` in the executor wrapper, so the payload builder leaves it in the pool for the next block | `src/evm.rs` (`AnvilBlockExecutor`) | ~25 | A transaction count limit in `PayloadBuilderArgs` |
 | Replaces `eth_gasPrice` to return the base fee alone under `--disable-min-priority-fee` | `src/api.rs` (`EthExtApi`) | ~10 | A gas price oracle option for a zero tip |
 | Installs a precompile at Hardhat's console address that decodes `console.log` calls, and prints the lines of every mined transaction from the executor wrapper, because the payload builder has no inspector hook. The precompile address is warm at the start of a transaction, so the first `console.log` of a transaction costs 2,500 gas less than on anvil | `src/console.rs`, `src/evm.rs` | ~120 | An inspector hook on the payload builder, or an `Inspector` slot on `ConfigureEvm::evm_for_block` |
@@ -43,6 +44,7 @@ lookup retry remain until the pinned reth revision includes the required fixes.
 | Chains automine blocks after a block that leaves ready transactions behind, waiting for the pool to see each block first, and groups transactions that arrive within five milliseconds into one block, as anvil's instant miner does; a block without transactions idles automine until the pool changes | `src/mining.rs`, `src/miner.rs` (`follow_up`, `MineIfPending`) | ~90 | A local miner mode that drains the pool |
 | Gives the first block the genesis base fee through a one-shot override, where reth applies the EIP-1559 decrease of an empty parent; replaces `eth_feeHistory` to take the entry after the newest block from that block or from the next-block override, and to report a zero gas-used ratio for a block without a gas limit instead of NaN | `src/node.rs`, `src/api.rs` (`eth_fee_history`) | ~50 | A fee history that reads the child block; an initial base fee option for dev chains |
 | Rejects at `eth_sendTransaction` and `eth_sendRawTransaction` a fee cap below the next block's base fee, as anvil does; reth's pool parks the transaction until the base fee drops. Rejects priced calls, estimates, and traces below the execution block's base fee, and a priced `eth_call` whose sender cannot pay for its gas and value; reth disables these checks for calls | `src/api.rs` (`ensure_fee_cap`, `ensure_call_fee_cap`, `ensure_call_funds`), `src/debug.rs` | ~100 | Pool and call options for these checks |
+| Retains Arbitrum's L1 execution number in the fork cache and state dump. The Ethereum EVM adapter exposes that number to `NUMBER`, while block assembly, receipts, and `ArbSys` keep the L2 number. Block and simulation responses restore `l1BlockNumber` | `src/fork.rs`, `src/network/ethereum/evm.rs`, `src/api.rs`, `src/simulate.rs` | ~120 | Separate execution and consensus block numbers in the Ethereum EVM and RPC conversion |
 | Installs the `ArbSys` precompile on Arbitrum chains, through precompile builders that get the block number | `src/evm.rs` (`PrecompileBuilder`), `src/network/ethereum.rs` | ~15 | A block-aware precompile hook on `EvmFactory` |
 | Gives impersonated transactions a signature with the sender in `r`, so the transactions of different impersonated senders get different hashes, as anvil's impersonated hash does | `src/impersonation.rs` | ~5 | A sender-attributed transaction that reth hashes with its sender |
 | Replaces `eth_newFilter` to drain the block the filter is installed on, so the filter reports the blocks after it, as anvil's does; reth's first poll includes the install block. Gives a revert without data the empty `data` anvil reports | `src/api.rs` (`eth_new_filter`, `with_revert_data`), `src/node.rs` | ~30 | Install filters at the next block; `data: "0x"` on empty reverts |
@@ -50,9 +52,12 @@ lookup retry remain until the pinned reth revision includes the required fixes.
 | Retries `eth_getTransactionReceipt` and `eth_getTransactionByHash` with the transaction's block in the RPC cache when the lookup failed to recover the sender from the signature: an impersonated transaction has no valid signature, and reth's disk path recovers instead of reading the senders table | `src/api.rs` (`cache_block_of`) | ~30 | Read `TransactionSenders` in the RPC lookups |
 | `anvil_dropTransaction` removes the sender's later transactions, `anvil_setNonce` and `anvil_setBalance` tell the pool the new values, and a snapshot revert brings the pool back to the snapshot: the transactions mined since return, the ones sent since go | `src/api.rs` (`anvil_revert`, `restore_pool`, `sync_pool_account`) | ~110 | Pool hooks for dropping dependents and for a pool snapshot |
 | Serves anvil's Beacon API routes (`/eth/v1/beacon/blobs/{block_id}`, `/eth/v1/beacon/genesis`) from a tower layer in front of the JSON-RPC server | `src/beacon.rs` | ~250 | Reth has no Beacon API; a blob route on the RPC server would do |
+| Records each dumped block's execution chain id and restores it for mined replays, so BSC precompiles and `CHAINID` survive `anvil_setChainId` and loading the dump in another node. RPC calls retain the current chain id. Trace filters route restored blocks locally and only forward ranges the endpoint serves. Old dumps without the marker keep their previous behavior | `src/state_dump.rs`, `src/provider.rs`, `src/fork.rs`, `src/evm.rs` (`block_context`) | ~30 | A replay execution context independent of the current chain spec |
 | Installs BSC's P256 verifier when Haber is active and overrides `ecrecover` for the signatures `anvil_impersonateSignature` registers, from the EVM factory | `src/evm.rs` (`install`, `cheat_ecrecover`) | ~60 | A chain-aware precompile hook on `EvmFactory` |
 | Installs an alloy `CryptoProvider` when a node first sets a signature override, so EIP-7702 authorities with an overridden signature recover to the override's address on every path, as anvil does: alloy-evm recovers authorities when it builds the transaction environment, before any anvil hook sees them. The provider is process-wide, so in one process the overrides of every node apply | `src/impersonation.rs` (`OverrideCryptoProvider`) | ~90 | A recovery hook in alloy-evm's `FromRecoveredTx`, or signed authorities in the transaction environment |
+| Selects an omitted transaction nonce under the sender lock and repeats the network's native selection if the chain head changes. Reth reads chain state before the pool, so mining can otherwise remove transactions between those reads and yield a stale nonce | `src/api.rs` (`send`) | ~15 | Nonce selection from a consistent chain and pool view |
 | Sends a blob transaction from a dev account by signing it through reth and attaching the sidecar as a pooled transaction, and fills `maxFeePerBlobGas`; reth's `eth_sendTransaction` signs without the sidecar and the pool rejects the result | `src/api.rs` (`send`) | ~30 | Keep the sidecar through `send_transaction_request` |
+| Converts sidecarless impersonated transactions into `EthPooledTransaction` before normal pool validation; an Ethereum payload adapter retains the native builder and permits these transactions without inventing blob data | `src/api.rs`, `src/network/ethereum/payload.rs` | ~550 | A dev consensus-to-pool conversion and an optional-sidecar policy in `EthereumPayloadBuilder` |
 | Resolves `earliest` to the genesis block and anchors `safe` and `finalized` at it, as anvil does, for a chain whose genesis number is not zero | `src/provider.rs`, `src/miner.rs` | ~10 | `earliest_block_number` from the chain spec |
 | Stops the RPC servers when the node handle drops while an in-process API keeps the node, as anvil does | `src/node.rs` (`Supervisor`) | ~20 | None; node behaviour |
 | Routes the block access list methods: `null` before Amsterdam, an error above the head, and the fork endpoint for a fork's blocks and unknown hashes; gives `eth_simulateV1` calls the blob hashes of their sidecars | `src/api.rs` (`access_list_route`, `eth_simulate_v1`) | ~120 | BAL methods that honour the fork activation; sidecars in simulate calls |
@@ -66,12 +71,24 @@ lookup retry remain until the pinned reth revision includes the required fixes.
 | Serves the fork block's body, receipts, and body indices from the endpoint, because the fork block is the local genesis block and reth writes the genesis block with an empty body | `src/provider.rs` (`remote_for_body`, `remote_for_body_number`) | ~40 | A genesis block with a body, or a hook on the block readers |
 | Recomputes the withdrawals and the parent beacon block root of the payload attributes for the block's final timestamp: `LocalPayloadAttributesBuilder` picks them for the wall-clock time, and the time manager may move the block across a hardfork, as the replayed block of a fork at a transaction hash does | `src/time.rs` (`build_hooks`) | ~30 | A timestamp source on `LocalPayloadAttributesBuilder` |
 | Gives the pending block a zero parent beacon block root on a Cancun chain whose parent has none, the fork block of an older chain; reth takes the root's presence from the parent and builds no pending block | `src/pending.rs` | ~25 | The hardfork check in `BuildPendingEnv` |
+| Returns pending-block build failures from `eth_getBlockByNumber`, including malformed EIP-6110 deposits. Reth swallows the build error and returns no pending block; the wrapper retries that failed build to recover its error | `src/api.rs` (`eth_block_by_number`) | ~25 | A pending-block builder that propagates errors |
 | Drops reth's cached pending block after a change to the pool, the state, or the next block's environment: reth reuses a pending block for a second and keys it on the parent alone, and anvil's pending block shows a change at once. Calls, estimates, and access lists at `pending` run with the pending block's state changes as state overrides: reth runs them with the pending block's environment on the latest state. `eth_estimateGas` without a block estimates on the pending block, as anvil does | `src/api.rs` (`PendingReset`, `with_pending_state`), `src/node.rs` | ~150 | A pending block cache that the node can invalidate, and pending calls on the pending block's state |
 | Replaces `ots_getInternalOperations` to include the top-level operation, `ots_getBlockTransactions` to page from the first transaction, and implements `ots_searchTransactionsBefore` and `ots_searchTransactionsAfter`, which reth leaves unimplemented, over the node's own `trace_block` and `eth_*` methods | `src/otterscan.rs` | ~300 | The same in reth's Otterscan module |
+| Uses an Ethereum EVM adapter to skip blob fee validation and deduction for zero-cap calls when base-fee validation is disabled. `eth_simulateV1` retains the block's `BLOBBASEFEE` and the request's zero cap; priced blob calls keep native validation and charges | `src/network/ethereum/evm.rs` | ~200 | A zero-cap blob call option on the Ethereum handler; the wrapper otherwise delegates to native execution |
 | Runs a blob call without a blob fee cap at a zero blob base fee in `eth_call` and `trace_call`, as geth and anvil do, through a block override | `src/simulate.rs` (`with_zero_blob_base_fee`), `src/debug.rs` | ~30 | The same rule in reth's call path |
 | Accepts a transaction whose priority fee is above its fee cap on Arbitrum chains, in the pool and in the EVM, as anvil does: Arbitrum does not enforce the EIP-1559 ordering | `src/pool.rs`, `src/evm.rs` (`EvmSettings`) | ~15 | A chain-aware fee rule in reth's pool validator |
 | Answers a state read at a block below the `--prune-history` window with anvil's `BlockOutOfRangeError`, from an RPC middleware: reth keeps every state | `src/history.rs` | ~150 | A history pruning mode in reth with anvil's error |
 | Leaves the console precompile out of `eth_config` | `src/node.rs` | ~15 | An `eth_config` hook for node-specific precompiles |
+
+The node owns its reth runtime. Reth's long-lived transaction validation services use blocking
+threads, so sharing an embedding application's runtime can consume its entire blocking pool.
+`test_fork_uncached_reads_do_not_deadlock_saturated_runtime` covers a caller with one blocking
+thread. Shutdown closes the owned runtime even while RPC modules retain runtime handles;
+`stopping_node_shuts_down_retained_runtime_handles` covers this lifecycle. A resource guard also
+closes the runtime and retains its datadir through cleanup if startup fails or is cancelled.
+
+Ethereum nodes configured for Osaka or later retain known BPO activation times without
+activating later EVM hardforks; `simulate_v1_updates_blob_schedule_at_bpo_timestamp` covers this.
 
 The IPC listener uses reth's request dispatch and streaming codec locally because the upstream
 server fixes its codec internally. The codec emits unmatched closing delimiters for a JSON-RPC
@@ -100,18 +117,9 @@ be free if reth had a dev mode:
   so `anvil_setStorageAt` on such an account does not stick; anvil keeps the storage.
 - `eth_getProof` proves the state of the latest block; anvil's proofs include the state writes it
   has not mined yet.
-- Reth builds the pending block without anvil's check of the deposit contract's logs, so a
-  malformed deposit log does not fail `eth_getBlockByNumber("pending")`.
 - Anvil's precompile factory (`NodeConfig::with_precompile_factory`) is not served.
-- Reth's pool requires the sidecar of a blob transaction; anvil mines a blob transaction sent
-  without one. A blob call with a zero blob fee cap keeps the block's blob base fee in
-  `eth_simulateV1` on reth, which rejects the call when validation is off; anvil runs it at zero.
 - `eth_simulateV1` shows the maximum nonce on a transaction that ran with it and no validation,
   as anvil does, but the transaction ran with nonce zero: revm cannot execute the maximum nonce.
-- A trace replays the transaction with the precompiles of the node's current chain id, so after
-  `anvil_setChainId` switches to a chain with other precompiles, the traces of the blocks mined
-  before it change; anvil serves the traces it recorded at mining. Replays after a chain id
-  change skip the EVM's chain id check, and the API checks the chain id of a request instead.
 - `eth_createAccessList` for a call without fee fields runs at a zero base fee on reth; anvil,
   like geth, runs it at the block's base fee.
 - `anvil_reset` restarts from the configured genesis; anvil's reset carries the next-block base
@@ -132,14 +140,9 @@ be free if reth had a dev mode:
   an OP-stack deposit, or another chain-specific type is left out of the blocks, receipts, and
   lookups the fork serves, and indices count the kept transactions. Anvil serves remote blocks
   as the endpoint returns them and skips those transactions only when it replays a block.
-- A fork at a transaction hash replays the block under the source block's hardfork when it is
-  older than the configured one; when it is newer, the replay runs under the configured one,
-  because a reth chain spec activates hardforks once and for good.
 - A call on a Cancun chain whose fork block lost its blob fields fails with reth's `excess blob
   gas missing` error instead of anvil's `Excess blob gas not set`, and such a chain has no
   pending block.
-- Arbitrum forks number blocks by the L2 block; anvil mirrors Arbitrum's L1 block numbers in
-  `NUMBER` and in the blocks' `l1BlockNumber`.
 
 ## Anvil's own tests
 
@@ -184,6 +187,7 @@ parent cache then does not fall back to the endpoint for read-only slots.
 
 The unit tests of `forge-script` and `foundry-evm-core` that spawn a node pass as well, except
 those that need Optimism, and the `--fork-bal` prewarm test, for EIP-8037 above.
+
 
 ## What Tempo needs
 

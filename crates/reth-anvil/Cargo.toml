@@ -24,11 +24,14 @@ foundry-fork-db.workspace = true
 foundry-primitives.workspace = true
 
 # reth
+reth-basic-payload-builder.workspace = true
 reth-chain-state.workspace = true
 reth-db-api.workspace = true
 reth-engine-tree.workspace = true
 reth-engine-util.workspace = true
 reth-ethereum = { workspace = true, features = ["exex", "node", "node-api"] }
+reth-ethereum-payload-builder.workspace = true
+reth-execution-cache.workspace = true
 reth-execution-types.workspace = true
 reth-node-events.workspace = true
 reth-payload-builder.workspace = true
@@ -48,6 +51,7 @@ alloy-genesis.workspace = true
 alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
+alloy-rlp.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types = { workspace = true, features = ["anvil", "debug", "txpool"] }
 alloy-rpc-types-beacon.workspace = true
@@ -120,7 +124,6 @@ alloy-contract = { workspace = true, features = ["pubsub"] }
 alloy-provider = { workspace = true, features = ["txpool-api", "trace-api"] }
 axum.workspace = true
 alloy-pubsub.workspace = true
-alloy-rlp.workspace = true
 alloy-sol-types = { workspace = true, features = ["json"] }
 alloy-transport.workspace = true
 alloy-trie.workspace = true

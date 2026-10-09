@@ -492,7 +492,6 @@ async fn rejects_malformed_eip4844_transaction() {
 
 // <https://github.com/foundry-rs/foundry/issues/9924>
 #[tokio::test]
-#[ignore = "reth's pool requires the sidecar of a blob transaction"]
 async fn can_bypass_sidecar_requirement() {
     foundry_test_utils::init_tracing();
     let node_config = NodeConfig::test()
@@ -526,7 +525,7 @@ async fn can_bypass_sidecar_requirement() {
     };
 
     let receipt = provider
-        .send_transaction(WithOtherFields::new(tx))
+        .send_transaction(WithOtherFields::new(tx.clone()))
         .await
         .unwrap()
         .get_receipt()
@@ -535,9 +534,23 @@ async fn can_bypass_sidecar_requirement() {
 
     assert!(receipt.status());
 
-    let tx = provider.get_transaction_by_hash(receipt.transaction_hash).await.unwrap().unwrap();
+    let mined = provider.get_transaction_by_hash(receipt.transaction_hash).await.unwrap().unwrap();
 
-    assert_eq!(tx.inner.ty(), 3);
+    assert_eq!(mined.inner.ty(), 3);
+    assert_eq!(receipt.blob_gas_used, Some(DATA_GAS_PER_BLOB));
+    let block = provider.get_block_by_hash(receipt.block_hash.unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.header.blob_gas_used, Some(DATA_GAS_PER_BLOB));
+    // Accepting a dev transaction must not invent blob data for the beacon endpoint.
+    assert!(
+        api.anvil_get_blob_by_versioned_hash(mined.blob_versioned_hashes().unwrap()[0])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    api.anvil_auto_impersonate_account(false).await.unwrap();
+    let mut normal = tx;
+    normal.from = Some(handle.dev_wallets().next().unwrap().address());
+    assert!(provider.send_transaction(WithOtherFields::new(normal)).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -716,7 +729,6 @@ async fn call_defaults_blob_fee_cap_to_zero() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "without validation, a blob call with a zero cap runs at the blob base fee and pays it; anvil charges no blob fee"]
 async fn simulate_v1_defaults_blob_fee_cap_to_zero() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (_api, handle) = spawn(node_config).await;
@@ -1016,7 +1028,6 @@ async fn simulate_v1_uses_bpo_blob_gas_limits() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "reth-anvil schedules no hardfork after the configured one, so an Osaka node keeps Osaka's blob limits at the BPO1 timestamp"]
 async fn simulate_v1_updates_blob_schedule_at_bpo_timestamp() {
     let bpo1_timestamp = EthereumHardfork::Bpo1.mainnet_activation_timestamp().unwrap();
     let node_config = NodeConfig::test()

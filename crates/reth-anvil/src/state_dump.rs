@@ -5,6 +5,7 @@ use alloy_eips::{eip4895::Withdrawals, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use eyre::{Result, WrapErr};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use foundry_evm_hardforks::EthereumHardfork;
 use foundry_primitives::FoundryHeader;
 use reth_ethereum::storage::errors::provider::ProviderResult;
 use revm::context::BlockEnv;
@@ -59,6 +60,15 @@ pub struct CheckpointForks {
 /// One block of a state dump.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableBlock {
+    /// Source hardfork used for a transaction-hash replay, independent of later blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_hardfork: Option<EthereumHardfork>,
+    /// Arbitrum's L1 execution number, distinct from the consensus header's L2 number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l1_block_number: Option<u64>,
+    /// Chain id used when this block was executed, retained across later chain-id changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_chain_id: Option<u64>,
     /// The header: a Tempo header keeps its Tempo fields.
     #[serde(deserialize_with = "deserialize_header_compat")]
     pub header: FoundryHeader,
@@ -398,6 +408,9 @@ impl SerializableState {
             "state dump has no block history; created a synthetic checkpoint block"
         );
         self.blocks.push(SerializableBlock {
+            l1_block_number: None,
+            execution_chain_id: None,
+            replay_hardfork: None,
             header: convert(header),
             transactions: Vec::new(),
             ommers: Vec::new(),

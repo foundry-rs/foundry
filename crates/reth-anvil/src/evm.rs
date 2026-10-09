@@ -210,8 +210,6 @@ impl<F> AnvilEvmFactory<F> {
         for (address, build) in self.precompiles.iter() {
             precompiles.apply_precompile(address, |_| Some(build(block_number)));
         }
-        // A fork keeps the precompiles of the chain it forks, whatever chain id the node reports.
-        let chain_id = self.fork.as_ref().map_or(chain_id, |fork| fork.chain_id());
         apply_bsc_p256_precompile(precompiles, chain_id, timestamp);
         install_ecrecover_override(precompiles, &self.impersonation);
         let console = self.console.then(ConsoleBuffer::default)?;
@@ -241,9 +239,9 @@ where
     fn create_evm<DB: Database>(
         &self,
         db: DB,
-        input: EvmEnv<F::Spec, F::BlockEnv>,
+        mut input: EvmEnv<F::Spec, F::BlockEnv>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let (block_number, chain_id, timestamp) = block_context(&input);
+        let (block_number, chain_id, timestamp) = block_context(&mut input, self.fork.as_deref());
         let mut evm = self.inner.create_evm(self.wrap_db(db), input);
         let console = self.install(evm.precompiles_mut(), block_number, chain_id, timestamp);
         AnvilEvm::new(evm, console)
@@ -252,10 +250,10 @@ where
     fn create_evm_with_inspector<DB: Database, I: Inspector<F::Context<ForkHashDb<DB>>>>(
         &self,
         db: DB,
-        input: EvmEnv<F::Spec, F::BlockEnv>,
+        mut input: EvmEnv<F::Spec, F::BlockEnv>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let (block_number, chain_id, timestamp) = block_context(&input);
+        let (block_number, chain_id, timestamp) = block_context(&mut input, self.fork.as_deref());
         let mut evm = self.inner.create_evm_with_inspector(self.wrap_db(db), input, inspector);
         let console = self.install(evm.precompiles_mut(), block_number, chain_id, timestamp);
         AnvilEvm::new(evm, console)
@@ -268,13 +266,26 @@ const EC_RECOVER_ADDRESS: Address = Address::with_last_byte(1);
 /// The gas `ecrecover` costs.
 const EC_RECOVER_GAS: u64 = 3_000;
 
-/// Returns the block number, chain id, and timestamp of an EVM environment.
-fn block_context<Spec, BlockEnv: Block>(input: &EvmEnv<Spec, BlockEnv>) -> (u64, u64, u64) {
-    (
-        input.block_env.number().saturating_to(),
-        input.cfg_env.chain_id,
-        input.block_env.timestamp().saturating_to(),
-    )
+/// Applies a mined block's recorded chain id and returns its precompile context.
+fn block_context<Spec, BlockEnv: Block>(
+    input: &mut EvmEnv<Spec, BlockEnv>,
+    fork: Option<&dyn ForkInfo>,
+) -> (u64, u64, u64) {
+    let number = input.block_env.number().saturating_to();
+    // RPC calls disable base-fee validation and use the node's current chain id. Replays of
+    // mined transactions retain the environment recorded before anvil_setChainId.
+    let recorded = (!input.cfg_env.disable_base_fee)
+        .then(|| fork.and_then(|fork| fork.execution_chain_id(number)))
+        .flatten();
+    if let Some(chain_id) = recorded {
+        input.cfg_env.chain_id = chain_id;
+    }
+    // A remote fork keeps the source chain's precompiles even when the node reports another id.
+    let chain_id = match fork {
+        Some(fork) if fork.has_remote() => fork.chain_id(),
+        _ => recorded.unwrap_or_else(|| fork.map_or(input.cfg_env.chain_id, ForkInfo::chain_id)),
+    };
+    (number, chain_id, input.block_env.timestamp().saturating_to())
 }
 
 /// Overrides `ecrecover` for the signatures `anvil_impersonateSignature` registered, if any.

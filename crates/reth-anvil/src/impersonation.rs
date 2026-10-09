@@ -239,9 +239,7 @@ impl TxSigner<Signature> for ImpersonatedTxSigner {
         &self,
         _tx: &mut dyn SignableTransaction<Signature>,
     ) -> SignerResult<Signature> {
-        // The sender in `r` gives the transactions of different impersonated senders different
-        // hashes, as anvil's impersonated hash does; a zero `s` never recovers to an address.
-        Ok(Signature::new(U256::from_be_slice(self.address.as_slice()), U256::ZERO, false))
+        Ok(impersonated_signature(self.address))
     }
 }
 
@@ -302,4 +300,10 @@ where
     ) -> Result<Signature, SignError> {
         Err(SignError::CouldNotSign)
     }
+}
+
+/// Keeps impersonated senders distinct in transaction hashes without a recoverable signature.
+pub(crate) fn impersonated_signature(address: Address) -> Signature {
+    // The sender in `r` gives different senders different hashes; a zero `s` cannot recover.
+    Signature::new(U256::from_be_slice(address.as_slice()), U256::ZERO, false)
 }
