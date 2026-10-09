@@ -161,6 +161,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Test GitHub scripts
+        env:
+          RUSTC_WRAPPER: ""
         run: |
           python3 -m unittest discover -s .github/scripts/tests -p 'test_*.py'
 
