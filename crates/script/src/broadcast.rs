@@ -36,10 +36,7 @@ use alloy_signer::Signature;
 use eyre::{Context, ContextCompat, Result, bail};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
-use foundry_cli::{
-    opts::TempoOpts,
-    utils::{has_batch_support, has_different_gas_calc},
-};
+use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{
@@ -318,28 +315,18 @@ where
         };
         if nonce_key == Some(TEMPO_EXPIRING_NONCE_KEY) {
             let sender = planned.tx().from().context("CREATE is missing its planned sender")?;
-            let actual = provider.get_transaction_count(sender).await?;
-            match planned.tx() {
+            let expected = match planned.tx() {
                 TransactionMaybeSigned::Signed { .. } => {
-                    let expected = planned
-                        .contract_address
-                        .context("CREATE is missing its planned address")?;
-                    let actual = sender.create(actual);
-                    if actual != expected {
-                        bail!(
-                            "CREATE address changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider nonce."
-                        );
-                    }
+                    planned.contract_address.context("CREATE is missing its planned address")?
                 }
-                TransactionMaybeSigned::Unsigned(tx) => {
-                    let expected =
-                        tx.nonce().context("CREATE is missing its planned account nonce")?;
-                    if actual != expected {
-                        bail!(
-                            "EOA nonce changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider."
-                        );
-                    }
-                }
+                TransactionMaybeSigned::Unsigned(tx) => sender
+                    .create(tx.nonce().context("CREATE is missing its planned account nonce")?),
+            };
+            let actual = sender.create(provider.get_transaction_count(sender).await?);
+            if actual != expected {
+                bail!(
+                    "CREATE address changed unexpectedly while sending transactions. Expected {expected} got {actual} from provider nonce."
+                );
             }
         }
         Ok(())
@@ -661,10 +648,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
         if self.script_config.tempo.expiring_nonce {
-            reject_expiring_call_before_create(
-                self.sequence.sequences(),
-                &self.script_config.tempo,
-            )?;
+            reject_expiring_call_before_create(self.sequence.sequences())?;
         }
         let remaining_transactions = remaining_unsigned_transactions_for_recovery(&self.sequence);
         let ordering_addresses = remaining_sender_addresses(&self.sequence);
@@ -879,7 +863,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     None
                 };
                 let expiring_nonce_discriminators = self.script_config.tempo.expiring_nonce
-                    && !all_signed
                     && tempo_hardfork.is_some_and(|fork| fork >= TempoHardfork::T12);
 
                 // Iterate through transactions, matching the `from` field with the associated
@@ -1853,10 +1836,8 @@ where
 
 /// Collection increments the sender's protocol nonce for CALLs, but expiring CALLs do not.
 /// Reject a subsequent CREATE before submitting anything, since its simulated address is stale.
-fn reject_expiring_call_before_create<N: Network>(
-    sequences: &[ScriptSequence<N>],
-    tempo: &TempoOpts,
-) -> Result<()>
+/// Called only when expiring nonce mode is enabled.
+fn reject_expiring_call_before_create<N: Network>(sequences: &[ScriptSequence<N>]) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
@@ -1872,13 +1853,7 @@ where
                     );
                 }
                 let expiring = match tx {
-                    TransactionMaybeSigned::Unsigned(request) => {
-                        request.supports_fee_token()
-                            && (tempo.expiring_nonce
-                                || tempo.expires.is_some()
-                                || tempo.nonce_key.or(request.nonce_key())
-                                    == Some(TEMPO_EXPIRING_NONCE_KEY))
-                    }
+                    TransactionMaybeSigned::Unsigned(request) => request.supports_fee_token(),
                     TransactionMaybeSigned::Signed { tx, .. } => {
                         <N::TransactionRequest as From<N::TxEnvelope>>::from(tx.clone()).nonce_key()
                             == Some(TEMPO_EXPIRING_NONCE_KEY)
@@ -2321,7 +2296,6 @@ mod tests {
                 },
             ))
         };
-        let tempo = TempoOpts { expiring_nonce: true, ..Default::default() };
         let mut sequences = [
             ScriptSequence {
                 chain: 4217,
@@ -2341,35 +2315,17 @@ mod tests {
             },
         ];
         assert_eq!(
-            reject_expiring_call_before_create(&sequences, &tempo).unwrap_err().to_string(),
+            reject_expiring_call_before_create(&sequences).unwrap_err().to_string(),
             "Tempo expiring nonce scripts cannot use CREATE after a CALL from the same sender on the same chain; use CREATE2 or disable --tempo.expiring-nonce"
         );
-        reject_expiring_call_before_create(&sequences, &TempoOpts::default()).unwrap();
-        for tempo in [
-            TempoOpts { expires: Some(30), ..Default::default() },
-            TempoOpts { nonce_key: Some(TEMPO_EXPIRING_NONCE_KEY), ..Default::default() },
-        ] {
-            assert!(reject_expiring_call_before_create(&sequences, &tempo).is_err());
-        }
-        let TransactionMaybeSigned::Unsigned(request) = sequences[0].transactions[0].tx_mut()
-        else {
-            unreachable!()
-        };
-        request.set_nonce_key(TEMPO_EXPIRING_NONCE_KEY);
-        assert!(reject_expiring_call_before_create(&sequences, &TempoOpts::default()).is_err());
-        reject_expiring_call_before_create(
-            &sequences,
-            &TempoOpts { nonce_key: Some(U256::ZERO), ..Default::default() },
-        )
-        .unwrap();
         sequences[2].chain = 4219;
-        reject_expiring_call_before_create(&sequences, &tempo).unwrap();
+        reject_expiring_call_before_create(&sequences).unwrap();
         sequences[2].chain = 4217;
         sequences[2].transactions[0] = transaction(Address::with_last_byte(3), None);
-        reject_expiring_call_before_create(&sequences, &tempo).unwrap();
+        reject_expiring_call_before_create(&sequences).unwrap();
         sequences[2].transactions[0] =
             transaction(sender, Some(TxKind::Call(Address::with_last_byte(2))));
-        reject_expiring_call_before_create(&sequences, &tempo).unwrap();
+        reject_expiring_call_before_create(&sequences).unwrap();
 
         let mut ethereum = ScriptSequence::<Ethereum> {
             chain: 1,
@@ -2381,7 +2337,7 @@ mod tests {
             .as_unsigned_mut()
             .unwrap()
             .set_to(Address::with_last_byte(2));
-        reject_expiring_call_before_create(&[ethereum], &tempo).unwrap();
+        reject_expiring_call_before_create(&[ethereum]).unwrap();
     }
 
     #[test]
@@ -2529,17 +2485,11 @@ mod tests {
                     if actual == 7 {
                         result.unwrap();
                     } else {
-                        let expected = if planned.tx().is_unsigned() {
-                            format!(
-                                "EOA nonce changed unexpectedly while sending transactions. Expected 7 got {actual} from provider."
-                            )
-                        } else {
-                            format!(
-                                "CREATE address changed unexpectedly while sending transactions. Expected {} got {} from provider nonce.",
-                                sender.create(7),
-                                sender.create(actual)
-                            )
-                        };
+                        let expected = format!(
+                            "CREATE address changed unexpectedly while sending transactions. Expected {} got {} from provider nonce.",
+                            sender.create(7),
+                            sender.create(actual)
+                        );
                         assert_eq!(result.unwrap_err().to_string(), expected);
                     }
                 }

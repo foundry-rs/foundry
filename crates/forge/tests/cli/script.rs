@@ -6731,7 +6731,7 @@ contract ExpiringCreate is Script {
     assert_eq!(nonce, 1);
     cmd.args(["--resume", "--tempo.expires", "30"]);
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: EOA nonce changed unexpectedly while sending transactions. Expected 0 got 1 from provider.
+Error: CREATE address changed unexpectedly while sending transactions. Expected 0x5FbDB2315678afecb367f032d93F642f64180aa3 got 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 from provider nonce.
 
 "#]]);
     assert_eq!(provider.get_transaction_count(sender).await.unwrap(), nonce);
