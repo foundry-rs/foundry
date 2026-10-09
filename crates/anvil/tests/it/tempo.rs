@@ -523,7 +523,8 @@ async fn test_tempo_fork_ignores_rpc_placeholder_balances() {
     // Return SELFBALANCE, making the imported balance observable in EVM execution.
     source.anvil_set_code(contract, alloy_primitives::bytes!("4760005260206000f3")).await.unwrap();
     source.anvil_set_balance(contract, U256::from(42)).await.unwrap();
-    source.mine_one().await.unwrap();
+    // Mine past the block the overrides were applied on, so the block before the fork has them.
+    source.anvil_mine(Some(U256::from(2)), None).await.unwrap();
     let (proxy, balance_requests) = spawn_rpc_proxy_canned_method(
         source_handle.http_endpoint(),
         "eth_getBalance",
@@ -533,21 +534,21 @@ async fn test_tempo_fork_ignores_rpc_placeholder_balances() {
     let (api, handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(proxy.clone()))
-            .with_fork_block_number(Some(1u64))
+            .with_fork_block_number(Some(2u64))
             .with_chain_id(Some(31337u64))
             .with_no_storage_caching(true),
     )
     .await;
     let provider = handle.http_provider();
     assert_eq!(
-        provider.get_account_info(contract).number(0).await.unwrap().balance,
+        provider.get_account_info(contract).number(1).await.unwrap().balance,
         U256::from(42),
     );
     for reset in [false, true] {
         if reset {
             api.anvil_reset(Some(Forking {
                 json_rpc_url: Some(proxy.clone()),
-                block_number: Some(1),
+                block_number: Some(2),
             }))
             .await
             .unwrap();

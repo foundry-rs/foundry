@@ -10963,7 +10963,10 @@ mod tests {
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::Provider;
-    use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
+    use alloy_rpc_types::{
+        Block, BlockTransactions, TransactionRequest,
+        state::{EvmOverrides, StateOverridesBuilder},
+    };
     use alloy_serde::WithOtherFields;
     use foundry_config::NamedChain;
     use foundry_evm::{
@@ -11141,13 +11144,13 @@ mod tests {
         let contract = Address::repeat_byte(0x22);
 
         // Return the recipient balance followed by NUMBER. At block 0 both are zero; at block 1,
-        // after the queued transfer is mined, both are one.
+        // after the queued transfer is mined, both are one. The code is a call override, so block 0
+        // itself stays untouched.
         let mut code = vec![0x73];
         code.extend_from_slice(recipient.as_slice());
         code.extend_from_slice(&[
             0x31, 0x60, 0x00, 0x52, 0x43, 0x60, 0x20, 0x52, 0x60, 0x40, 0x60, 0x00, 0xf3,
         ]);
-        api.anvil_set_code(contract, code.into()).await.unwrap();
         api.send_transaction(WithOtherFields::new(
             TransactionRequest::default().from(sender).to(recipient).value(U256::ONE),
         ))
@@ -11168,7 +11171,9 @@ mod tests {
             request,
             FeeDetails::zero(),
             Some(BlockRequest::Number(resolved_head)),
-            EvmOverrides::default(),
+            EvmOverrides::state(Some(
+                StateOverridesBuilder::default().with_code(contract, code).build(),
+            )),
         ));
         assert!(futures::poll!(call.as_mut()).is_pending());
 
