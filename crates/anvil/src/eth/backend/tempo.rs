@@ -120,7 +120,7 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         else {
             return Ok((B256::ZERO, Bytecode::default()));
         };
-        let code_hash = info.code_hash;
+        let code_hash = info.code_hash();
         let code = if let Some(code) = info.code {
             code
         } else {

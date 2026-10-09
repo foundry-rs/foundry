@@ -77,6 +77,7 @@ Virtual addresses:
 
 mod vaddr_e2e {
     use super::*;
+    use foundry_cli::utils::parse_json;
     use std::{
         io::{BufRead, BufReader},
         process::Stdio,
@@ -180,7 +181,7 @@ mod vaddr_e2e {
             .stdout_lossy();
 
         let v: serde_json::Value =
-            serde_json::from_str(resolve_out.trim()).expect("resolve --json output is valid JSON");
+            parse_json(resolve_out.trim()).expect("resolve --json output is valid JSON");
         assert_eq!(
             v["address"].as_str().unwrap().to_lowercase(),
             vaddr.to_lowercase(),

@@ -474,7 +474,8 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
     }
 }
 
-// Without isolation mode enabled the gas usage will be incorrect.
+// These expectations cover non-isolated gas accounting.
+/// forge-config: default.isolate = false
 contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastFrameGasFromCall() public {
         _setup();

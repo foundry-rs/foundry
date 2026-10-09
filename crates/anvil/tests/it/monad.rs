@@ -43,6 +43,7 @@ use anvil_core::{
     eth::transaction::PendingTransaction,
     types::{ReorgOptions, TransactionData},
 };
+use foundry_common::provider::redact_url;
 use foundry_evm::{
     hardfork::{FoundryHardfork, MonadHardfork},
     utils::get_blob_params,
@@ -564,10 +565,10 @@ async fn monad_reorg_replays_protocol_system_envelopes() {
     api.anvil_reorg(ReorgOptions {
         depth: 1,
         tx_block_pairs: vec![
-            (TransactionData::JSON(reward_tx), 0),
-            (TransactionData::JSON(ordinary_tx), 0),
-            (TransactionData::JSON(snapshot_tx), 0),
-            (TransactionData::JSON(epoch_tx), 0),
+            (TransactionData::JSON(reward_tx.into()), 0),
+            (TransactionData::JSON(ordinary_tx.into()), 0),
+            (TransactionData::JSON(snapshot_tx.into()), 0),
+            (TransactionData::JSON(epoch_tx.into()), 0),
         ],
     })
     .await
@@ -826,10 +827,10 @@ async fn monad_reorg_rolls_back_failed_protocol_prestate() {
     api.anvil_reorg(ReorgOptions {
         depth: 1,
         tx_block_pairs: vec![
-            (TransactionData::JSON(failed_reward), 0),
-            (TransactionData::JSON(ordinary_tx), 0),
-            (TransactionData::JSON(snapshot_tx), 0),
-            (TransactionData::JSON(epoch_tx), 0),
+            (TransactionData::JSON(failed_reward.into()), 0),
+            (TransactionData::JSON(ordinary_tx.into()), 0),
+            (TransactionData::JSON(snapshot_tx.into()), 0),
+            (TransactionData::JSON(epoch_tx.into()), 0),
         ],
     })
     .await
@@ -908,7 +909,7 @@ async fn monad_reorg_rejects_malformed_and_non_replay_system_envelopes() {
     let error = api
         .anvil_reorg(ReorgOptions {
             depth: 1,
-            tx_block_pairs: vec![(TransactionData::JSON(malformed_json), 0)],
+            tx_block_pairs: vec![(TransactionData::JSON(malformed_json.into()), 0)],
         })
         .await
         .unwrap_err();
@@ -940,7 +941,7 @@ async fn monad_reorg_rejects_malformed_and_non_replay_system_envelopes() {
         depth: 1,
         tx_block_pairs: vec![
             (TransactionData::Raw(malformed_raw_encoded.into()), 0),
-            (TransactionData::JSON(ordinary_tx), 0),
+            (TransactionData::JSON(ordinary_tx.into()), 0),
         ],
     })
     .await
@@ -1429,7 +1430,7 @@ async fn monad_fork_transaction_hash_reorg_restores_inferred_profile() {
         TransactionRequest::default().from(from).to(REORG_RECIPIENT).value(U256::from(2));
     api.anvil_reorg(ReorgOptions {
         depth: 1,
-        tx_block_pairs: vec![(TransactionData::JSON(replacement), 0)],
+        tx_block_pairs: vec![(TransactionData::JSON(replacement.into()), 0)],
     })
     .await
     .unwrap();
@@ -2264,7 +2265,7 @@ async fn monad_anvil_rejects_reset_to_default_and_custom_ethereum_forks() {
 
         let node_info = api.anvil_node_info().await.unwrap();
         assert_eq!(node_info.network, Some("monad".to_string()));
-        assert_eq!(node_info.fork_config.fork_url, Some(monad_origin.http_endpoint()));
+        assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&monad_origin.http_endpoint())));
         assert_eq!(api.anvil_metadata().await.unwrap().instance_id, instance_id);
         assert_eq!(provider.get_balance(marker).await.unwrap(), marker_balance);
     }

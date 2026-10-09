@@ -178,6 +178,12 @@ impl FoundryReceiptBuilder {
                 logs_bloom: receipt.logs_bloom,
             }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
+            FoundryTxType::Celo => {
+                FoundryReceiptEnvelope::Unknown(alloy_network::AnyReceiptEnvelope {
+                    inner: receipt,
+                    r#type: foundry_primitives::CIP64_TX_TYPE,
+                })
+            }
         }
     }
 
@@ -428,7 +434,7 @@ where
                         .transact_system_call(
                             eip4788::SYSTEM_ADDRESS,
                             eip2935::HISTORY_STORAGE_ADDRESS,
-                            Bytes::copy_from_slice(self.parent_hash.as_slice()),
+                            Bytes::from(self.parent_hash),
                         )
                         .map_err(BlockExecutionError::other)?;
                     state_changes.push(result.state.clone());
@@ -443,7 +449,7 @@ where
                         .transact_system_call(
                             eip4788::SYSTEM_ADDRESS,
                             eip4788::BEACON_ROOTS_ADDRESS,
-                            Bytes::copy_from_slice(parent_beacon_block_root.as_slice()),
+                            Bytes::from(parent_beacon_block_root),
                         )
                         .map_err(BlockExecutionError::other)?;
                     state_changes.push(result.state.clone());

@@ -28,7 +28,10 @@ use anvil_core::{
     eth::{EthRequest, transaction::PendingTransaction},
     types::{ReorgOptions, TransactionData},
 };
-use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
+use foundry_common::{
+    provider::redact_url,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
 use foundry_evm::hardfork::EthereumHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
@@ -67,7 +70,7 @@ async fn fork_resets_allow_celo_as_a_non_monad_source() {
         .unwrap();
     let node_info = ethereum_fork.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("ethereum"));
-    assert_eq!(node_info.fork_config.fork_url, Some(celo_origin.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&celo_origin.http_endpoint())));
 
     let (celo_fork, _) = spawn(
         NodeConfig::test()
@@ -85,7 +88,7 @@ async fn fork_resets_allow_celo_as_a_non_monad_source() {
         .unwrap();
     let node_info = celo_fork.anvil_node_info().await.unwrap();
     assert_eq!(node_info.network.as_deref(), Some("celo"));
-    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+    assert_eq!(node_info.fork_config.fork_url, Some(redact_url(&ethereum_origin.http_endpoint())));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -847,7 +850,7 @@ async fn test_set_next_block_prevrandao_evm() {
 
     // post-merge the `PREVRANDAO` opcode (0x44) returns the current block's `prevrandao`
     let difficulty = multicall.getCurrentBlockDifficulty().call().await.unwrap();
-    assert_eq!(difficulty, U256::from_be_bytes(prevrandao.0));
+    assert_eq!(difficulty, Into::<U256>::into(prevrandao));
 
     let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
     assert_eq!(block.header.mix_hash, Some(prevrandao));
@@ -1101,7 +1104,7 @@ async fn flaky_test_reorg() {
         let to = accounts[i + 1].address();
         for j in 0..5 {
             let tx = TransactionRequest::default().from(from).to(to).value(U256::from(j));
-            txs.push((TransactionData::JSON(tx), i as u64));
+            txs.push((TransactionData::JSON(tx.into()), i as u64));
         }
     }
 
@@ -1195,7 +1198,7 @@ async fn flaky_test_reorg() {
     let res = api
         .anvil_reorg(ReorgOptions {
             depth: 1,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 10)],
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default().into()), 10)],
         })
         .await;
     assert!(res.is_err());
@@ -1560,7 +1563,7 @@ async fn test_reorg_zero_depth_with_transactions_is_rejected() {
     let err = api
         .anvil_reorg(ReorgOptions {
             depth: 0,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 0)],
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default().into()), 0)],
         })
         .await
         .unwrap_err();
@@ -1570,7 +1573,7 @@ async fn test_reorg_zero_depth_with_transactions_is_rejected() {
     let err = api
         .anvil_reorg(ReorgOptions {
             depth: 1,
-            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default()), 1)],
+            tx_block_pairs: vec![(TransactionData::JSON(TransactionRequest::default().into()), 1)],
         })
         .await
         .unwrap_err();
@@ -1603,7 +1606,7 @@ async fn test_reorg_blockhash_opcode_consistency() {
     let tx = TransactionRequest::default();
     api.anvil_reorg(ReorgOptions {
         depth: 5,
-        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
     })
     .await
     .unwrap();
@@ -1659,7 +1662,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     let tx = TransactionRequest::default();
     api.anvil_reorg(ReorgOptions {
         depth: 50,
-        tx_block_pairs: vec![(TransactionData::JSON(tx), 0)],
+        tx_block_pairs: vec![(TransactionData::JSON(tx.into()), 0)],
     })
     .await
     .unwrap();
